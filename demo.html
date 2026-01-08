@@ -1,0 +1,818 @@
+        <!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>我的甘特图 (新设计)</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+
+    <link href="https://cdn.dhtmlx.com/gantt/edge/dhtmlxgantt.css" rel="stylesheet">
+
+    <style>
+        /* 2. 定义设计系统变量 (来自 DESIGN_SPEC.md) */
+        :root {
+            /* 2.1 色彩系统 */
+            --primary-color: #4A90E2;
+            --accent-color: #50E3C2;
+            --text-primary: #1F2937;
+            --text-secondary: #6B7280;
+            --border-color: #E5E7EB;
+            --background-gray: #F9FAFB;
+            --background-hover-gray: #F3F4F6;
+            --background-white: #FFFFFF;
+            --color-success: #22C55E;
+            --color-warning: #F59E0B;
+            --color-error: #EF4444;
+            --task-bar-bg: #A5C8F1;
+
+            /* 2.2 字体规范 */
+            --font-family-base: 'Inter', 'Source Han Sans CN', sans-serif;
+            --font-size-body: 14px;
+            --font-size-small: 12px;
+            --font-weight-regular: 400;
+            --font-weight-medium: 500;
+            --font-weight-semibold: 600;
+
+            /* 2.3 布局系统 */
+            --border-radius-small: 4px;
+            --border-radius-medium: 8px;
+            --shadow-standard: 0px 4px 6px -1px rgba(0, 0, 0, 0.1), 0px 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+
+        /* 全局样式 */
+        html, body {
+            height: 100%;
+            padding: 0;
+            margin: 0;
+            overflow: hidden;
+            font-family: var(--font-family-base);
+            color: var(--text-primary);
+            background-color: var(--background-gray);
+        }
+
+        #gantt_here {
+            width: 100%;
+            height: 100%;
+        }
+
+        /* 3. 重写 dhtmlx-gantt 组件样式 */
+
+        /* 容器和边框 */
+        .gantt_container {
+            border: none;
+        }
+        .gantt_grid, .gantt_task {
+            border-top: 1px solid var(--border-color);
+        }
+        .gantt_grid_scale, .gantt_task_scale {
+            background-color: var(--background-white);
+            border-bottom: 1px solid var(--border-color);
+            color: var(--text-secondary);
+        }
+
+        /* 表格区域 (Grid) */
+        .gantt_grid_head_cell {
+            font-weight: var(--font-weight-semibold);
+            font-size: var(--font-size-body);
+            color: var(--text-primary);
+            cursor: move;
+            user-select: none;
+            transition: all 0.2s ease;
+            position: relative;
+        }
+        
+        .gantt_grid_head_cell:hover {
+            background-color: #F3F4F6;
+            transform: translateY(-1px);
+        }
+        
+        .gantt_grid_head_cell.drag-over {
+            background-color: #E3F2FD;
+            border: 2px dashed #4A90E2;
+        }
+        
+        .gantt_grid_head_cell:not(.gantt_grid_head_cell_add)::after {
+            content: '⋮⋮';
+            position: absolute;
+            right: 4px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #9CA3AF;
+            font-size: 12px;
+            opacity: 0;
+            transition: opacity 0.2s ease;
+        }
+        
+        .gantt_grid_head_cell:not(.gantt_grid_head_cell_add):hover::after {
+            opacity: 1;
+        }
+        .gantt_row {
+            border-bottom: 1px solid var(--border-color);
+        }
+        .gantt_row:hover {
+            background-color: var(--background-hover-gray);
+        }
+        .gantt_row.odd { /* 移除斑马纹 */
+            background-color: var(--background-white);
+        }
+        .gantt_grid_data .gantt_cell {
+            font-size: var(--font-size-body);
+            font-weight: var(--font-weight-regular);
+        }
+        .gantt_tree_content {
+            font-weight: var(--font-weight-medium);
+        }
+        .gantt_grid_data {
+            background-color: var(--background-white);
+        }
+
+
+        /* 时间轴 (Timeline) */
+        .gantt_task_scale .gantt_scale_cell {
+            font-size: var(--font-size-small);
+            font-weight: var(--font-weight-regular);
+        }
+        .gantt_data_area {
+             background-color: var(--background-white);
+        }
+        .gantt_task_row {
+            border-bottom: 1px solid var(--border-color);
+        }
+        .gantt_task_row.odd {
+             background-color: var(--background-white);
+        }
+        .weekend { /* 标记周末 */
+            background-color: var(--background-gray) !important;
+        }
+
+        /* 任务条 (Task Bar) */
+        .gantt_task_line {
+            background-color: var(--task-bar-bg);
+            border: 1px solid var(--primary-color);
+            border-radius: var(--border-radius-small);
+        }
+        .gantt_task_line:hover {
+            box-shadow: var(--shadow-standard);
+        }
+        .gantt_task_progress {
+            background-color: var(--accent-color);
+            border-radius: var(--border-radius-small);
+        }
+        
+        /* 逾期任务条样式 */
+        .gantt_task_line.task_overdue {
+            background-color: var(--color-error);
+            border-color: var(--color-error);
+        }
+
+        /* 依赖连线 */
+        .gantt_link_line {
+            stroke: var(--primary-color);
+            stroke-width: 1;
+        }
+        .gantt_link_arrow_right {
+            border-left-color: var(--primary-color);
+        }
+
+        /* 字段管理相关样式 */
+        .sortable-ghost {
+            opacity: 0.4;
+            background: var(--accent-color) !important;
+        }
+
+        .sortable-chosen {
+            opacity: 0.8;
+            background: #e3f2fd !important;
+        }
+
+        .sortable-drag {
+            opacity: 1;
+            background: white !important;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2) !important;
+        }
+
+        .gantt_grid_head_cell {
+            cursor: move !important;
+            user-select: none;
+        }
+
+        .gantt_grid_head_cell:hover {
+            background: var(--background-hover-gray) !important;
+        }
+
+        .sortable-field:hover {
+            background: var(--background-hover-gray) !important;
+        }
+        
+        /* 工具栏按钮悬停效果 */
+        #field-toolbar button:hover {
+            opacity: 0.9;
+            transform: translateY(-1px);
+            transition: all 0.2s ease;
+        }
+        
+        /* 弹窗动画 */
+        #field-config-modal, #field-sort-modal {
+            transition: opacity 0.3s ease;
+        }
+        
+        #field-config-modal > div, #field-sort-modal > div {
+            transition: transform 0.3s ease;
+        }
+
+    </style>
+</head>
+<body>
+    <div id="gantt_here"></div>
+
+     <!-- 字段管理工具栏 -->
+     <div id="field-toolbar" style="position: fixed; top: 10px; right: 10px; z-index: 1000; background: white; padding: 10px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+         <button id="add-field-btn" style="margin-right: 8px; padding: 6px 12px; background: #4A90E2; color: white; border: none; border-radius: 4px; cursor: pointer;">+ 新增字段</button>
+         <button id="config-export-btn" style="margin-right: 8px; padding: 6px 12px; background: #22C55E; color: white; border: none; border-radius: 4px; cursor: pointer;">📤 导出</button>
+         <button id="config-import-btn" style="padding: 6px 12px; background: #6B7280; color: white; border: none; border-radius: 4px; cursor: pointer;">📥 导入</button>
+     </div>
+
+    <!-- 字段配置弹窗 -->
+    <div id="field-config-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 2000;">
+        <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 24px; border-radius: 8px; width: 500px; max-height: 80vh; overflow-y: auto;">
+            <h3 style="margin-top: 0; color: #1F2937;">字段配置</h3>
+            <div style="margin-bottom: 16px;">
+                <label style="display: block; margin-bottom: 8px; font-weight: 500;">字段名称：</label>
+                <input type="text" id="field-name" style="width: 100%; padding: 8px; border: 1px solid #E5E7EB; border-radius: 4px; font-size: 14px;" placeholder="请输入字段名称">
+            </div>
+            <div style="margin-bottom: 16px;">
+                <label style="display: block; margin-bottom: 8px; font-weight: 500;">字段类型：</label>
+                <select id="field-type" style="width: 100%; padding: 8px; border: 1px solid #E5E7EB; border-radius: 4px; font-size: 14px;">
+                    <option value="text">文本</option>
+                    <option value="select">下拉选择（单选）</option>
+                    <option value="multiselect">下拉选择（多选）</option>
+                    <option value="number">数值</option>
+                </select>
+            </div>
+            <div id="options-config" style="margin-bottom: 16px; display: none;">
+                <label style="display: block; margin-bottom: 8px; font-weight: 500;">选项配置：</label>
+                <div id="options-list"></div>
+                <button id="add-option-btn" style="margin-top: 8px; padding: 6px 12px; background: #4A90E2; color: white; border: none; border-radius: 4px; cursor: pointer;">+ 添加选项</button>
+            </div>
+            <div style="text-align: right;">
+                <button id="cancel-field-btn" style="margin-right: 8px; padding: 8px 16px; background: #6B7280; color: white; border: none; border-radius: 4px; cursor: pointer;">取消</button>
+                <button id="save-field-btn" style="padding: 8px 16px; background: #4A90E2; color: white; border: none; border-radius: 4px; cursor: pointer;">保存</button>
+            </div>
+        </div>
+    </div>
+
+
+    <!-- 文件输入（用于导入配置） -->
+    <input type="file" id="config-file-input" style="display: none;" accept=".json">
+
+    <script src="https://cdn.dhtmlx.com/gantt/edge/dhtmlxgantt.js"></script>
+    <script src="https://cdn.dhtmlx.com/gantt/edge/locale/locale_cn.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+    <style>
+        /* 今天标记线样式 - 使用 CSS 伪元素创建 */
+        .gantt_data_area::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background-color: var(--primary-color);
+            z-index: 10;
+            left: calc(var(--today-position, 50%) * 1px);
+            pointer-events: none;
+        }
+    </style>
+    <script>
+        // 字段管理相关变量
+        let customFields = [
+            {name: "priority", label: "优先级", type: "select", options: ["高", "中", "低"], width: 80},
+            {name: "assignee", label: "负责人", type: "text", width: 100},
+            {name: "status", label: "状态", type: "select", options: ["待开始", "进行中", "已完成", "已暂停"], width: 100}
+        ];
+        let fieldOrder = ["text", "priority", "assignee", "status", "start_date", "duration", "progress"];
+        let sortableInstance = null;
+
+        // 1. 定义甘特图的列（支持动态配置）
+        function updateGanttColumns() {
+            const columns = [];
+            
+            // 按照字段顺序添加列
+            fieldOrder.forEach(fieldName => {
+                if (fieldName === "text") {
+                    columns.push({name: "text", label: "任务名称", tree: true, width: 200, resize: true});
+                } else if (fieldName === "start_date") {
+                    columns.push({name: "start_date", label: "开始时间", align: "center", width: 90, resize: true});
+                } else if (fieldName === "duration") {
+                    columns.push({name: "duration", label: "工期(天)", align: "center", width: 80, resize: true});
+                } else if (fieldName === "progress") {
+                    columns.push({name: "progress", label: "进度(%)", align: "center", width: 80, resize: true,
+                        template: function (task) {
+                            return Math.round(task.progress * 100) + "%";
+                        }
+                    });
+                } else {
+                    // 自定义字段
+                    const customField = customFields.find(f => f.name === fieldName);
+                    if (customField) {
+                        columns.push({
+                            name: fieldName,
+                            label: customField.label,
+                            align: "center",
+                            width: customField.width || 100,
+                            resize: true,
+                            template: function(task) {
+                                return task[fieldName] || '';
+                            }
+                        });
+                    }
+                }
+            });
+            
+            // 添加操作列
+            columns.push({name: "add", label: "", width: 44});
+            
+             gantt.config.columns = columns;
+             
+             // 渲染甘特图
+             // 注意：如果是初始化阶段，init会触发渲染，这里不需要重复渲染
+             // 如果是后续更新，render会重新绘制
+             if (gantt.$container) {
+                 gantt.render();
+                 // 重新初始化 Sortable 和 Resizer
+                 initColumnSortable();
+                 initResizer();
+             }
+        }
+
+        // 使用 SortableJS 初始化列拖拽
+        function initColumnSortable() {
+             // 确保清理旧实例
+             if (sortableInstance) {
+                 sortableInstance.destroy();
+                 sortableInstance = null;
+             }
+
+             // 尝试多种选择器找到表头容器
+             let gridHeader = document.querySelector('.gantt_grid_head');
+
+             // 如果找不到，尝试其他选择器
+             if (!gridHeader) {
+                 gridHeader = document.querySelector('.gantt_grid_scale');
+             }
+
+             if (!gridHeader) {
+                 // 打印当前 DOM 结构帮助调试
+                 console.warn('未找到表头元素，当前 gantt 容器内容:');
+                 const ganttContainer = document.querySelector('#gantt_here');
+                 if (ganttContainer) {
+                     console.log('gantt_here 子元素:', ganttContainer.innerHTML.substring(0, 500));
+                 }
+                 return;
+             }
+
+             console.log('找到表头元素:', gridHeader.className);
+             console.log('表头子元素数量:', gridHeader.children.length);
+
+             sortableInstance = new Sortable(gridHeader, {
+                 animation: 150,
+                 filter: '.gantt_grid_head_cell_add, .gantt_last_cell', // 忽略操作列
+                 draggable: '.gantt_grid_head_cell', // 只有这些元素可以被拖拽
+                 ghostClass: 'sortable-ghost',
+                 chosenClass: 'sortable-chosen',
+                 dragClass: 'sortable-drag',
+                 forceFallback: true, // 强制使用 fallback 模式，更兼容
+                 fallbackClass: 'sortable-fallback',
+                 onStart: function(evt) {
+                     console.log('开始拖拽列:', evt.oldIndex);
+                 },
+                 onEnd: function (evt) {
+                     const oldIndex = evt.oldIndex;
+                     const newIndex = evt.newIndex;
+
+                     console.log('拖拽结束 - 从', oldIndex, '到', newIndex);
+
+                     if (newIndex === oldIndex) return;
+
+                     // 检查是否拖拽到了"操作列"之后
+                     // fieldOrder 长度比 columns 少 1 (不包含 add 列)
+                     if (newIndex >= fieldOrder.length) {
+                         console.log('拖到了操作列后面，恢复原状');
+                         updateGanttColumns();
+                         return;
+                     }
+
+                     // 更新 fieldOrder
+                     const movedField = fieldOrder.splice(oldIndex, 1)[0];
+                     fieldOrder.splice(newIndex, 0, movedField);
+
+                     console.log('新的字段顺序:', fieldOrder);
+
+                     // 触发更新
+                     updateGanttColumns();
+                 }
+             });
+
+             console.log('Sortable 初始化成功，可拖拽元素数量:', gridHeader.querySelectorAll('.gantt_grid_head_cell').length);
+        }
+
+        // 初始化自定义 Resizer
+        function initResizer() {
+            const resizer = document.getElementById("custom-resizer");
+            if (!resizer) return;
+            
+            // 避免重复绑定
+            if (resizer._isInitialized) return;
+            resizer._isInitialized = true;
+            
+            resizer.onmousedown = function(e) {
+                e.preventDefault();
+                const startX = e.clientX;
+                const colConfig = gantt.config.layout.cols[0];
+                const startWidth = colConfig.width || 400;
+                
+                function onMouseMove(e) {
+                    const diff = e.clientX - startX;
+                    let newWidth = startWidth + diff;
+                    if (newWidth < 200) newWidth = 200;
+                    
+                    // 更新 Layout 配置并重绘
+                    colConfig.width = newWidth;
+                    gantt.resetLayout();
+                }
+                
+                function onMouseUp() {
+                    document.removeEventListener("mousemove", onMouseMove);
+                    document.removeEventListener("mouseup", onMouseUp);
+
+                    // 保存当前宽度到 localStorage
+                    try {
+                        localStorage.setItem('gantt_grid_width', colConfig.width);
+                    } catch (e) {
+                        console.warn('无法保存宽度设置:', e);
+                    }
+
+                    // 重绘后需要重新绑定事件
+                    initResizer();
+                    initColumnSortable();
+                }
+                
+                document.addEventListener("mousemove", onMouseMove);
+                document.addEventListener("mouseup", onMouseUp);
+            };
+        }
+
+        // 从 localStorage 恢复左侧宽度设置
+        let savedGridWidth = 400; // 默认宽度
+        try {
+            const saved = localStorage.getItem('gantt_grid_width');
+            if (saved) {
+                savedGridWidth = parseInt(saved, 10);
+                if (savedGridWidth < 200) savedGridWidth = 200; // 最小宽度限制
+            }
+        } catch (e) {
+            console.warn('无法读取宽度设置:', e);
+        }
+
+        // 配置 DHTMLX Native Layout
+        // 使用自定义 HTML 元素作为 Resizer，以兼容 Standard 版本
+        gantt.config.layout = {
+            css: "gantt_container",
+            cols: [
+                {
+                    width: savedGridWidth, // 使用保存的宽度
+                    min_width: 200,
+                    rows:[
+                        {view: "grid", scrollX: "gridScroll", scrollY: "scrollVer"},
+                        {view: "scrollbar", id: "gridScroll", group:"horizontal"}
+                    ]
+                },
+                {
+                    width: 4,
+                    html: "<div id='custom-resizer' style='width:100%;height:100%;background:#E5E7EB;cursor:col-resize;border-left:1px solid #D1D5DB;border-right:1px solid #D1D5DB;'></div>"
+                },
+                {
+                    rows:[
+                        {view: "timeline", scrollX: "scrollHor", scrollY: "scrollVer"},
+                        {view: "scrollbar", id: "scrollHor", group:"horizontal"}
+                    ]
+                },
+                {view: "scrollbar", id: "scrollVer"}
+            ]
+        };
+
+        // 初始化列配置
+        updateGanttColumns();
+
+        // 2. 先设置中文语言
+        gantt.i18n.setLocale("cn");
+
+        // 3. 使用 scales 配置替代旧的 scale_unit/date_scale/subscales（更可靠）
+        gantt.config.scales = [
+            {
+                unit: "month",
+                step: 1,
+                format: function(date) {
+                    return date.getFullYear() + "年" + (date.getMonth() + 1) + "月";
+                }
+            },
+            {
+                unit: "day",
+                step: 1,
+                format: function(date) {
+                    return (date.getMonth() + 1) + "月" + date.getDate() + "日";
+                },
+                css: function(date) {
+                    if (date.getDay() === 0 || date.getDay() === 6) {
+                        return "weekend";
+                    }
+                    return "";
+                }
+            }
+        ];
+
+        // 4. 增加 JS 逻辑以实现设计规范中的动态样式
+        // 4.1 计算今天的位置并设置 CSS 变量
+        var today = new Date();
+        gantt.attachEvent("onGanttReady", function() {
+            var todayPosition = gantt.posFromDate(today);
+            document.documentElement.style.setProperty('--today-position', todayPosition + 'px');
+        });
+
+        // 4.2 定义一个模板函数，用于给逾期任务添加自定义 CSS 类
+        gantt.templates.task_class = function (start, end, task) {
+            if (task.progress < 1 && new Date() > end) {
+                return "task_overdue";
+            }
+            return "";
+        };
+
+        // 4.3 自定义任务条模板，显示自定义字段信息
+        gantt.templates.task_text = function(start, end, task) {
+            let text = task.text;
+            
+            // 添加自定义字段信息
+            customFields.forEach(field => {
+                const value = task[field.name];
+                if (value) {
+                    if (field.type === 'multiselect') {
+                        const values = value.split(',').join(', ');
+                        text += `<br><small style="color: #666; font-size: 11px;">${field.label}: ${values}</small>`;
+                    } else {
+                        text += `<br><small style="color: #666; font-size: 11px;">${field.label}: ${value}</small>`;
+                    }
+                }
+            });
+            
+            return text;
+        };
+
+         // 5. 配置lightbox（编辑弹窗）支持自定义字段
+        // 使用form_blocks注册自定义模板区块
+        gantt.form_blocks["custom_fields"] = {
+            render: function(sns) {
+                return "<div class='gantt_cal_ltext gantt_custom_fields_container' style='height:" + sns.height + "px;'></div>";
+            },
+            set_value: function(node, value, task, section) {
+                // 生成自定义字段的HTML
+                let html = '<div class="custom-fields-section" style="padding: 10px; height: 100%; overflow-y: auto;">';
+                html += '<h4 style="margin: 0 0 15px 0; color: #1F2937; font-size: 14px; font-weight: 600;">自定义字段</h4>';
+
+                customFields.forEach(field => {
+                    const fieldValue = task[field.name] || '';
+                    html += `<div class="custom-field-item" style="margin-bottom: 15px;">`;
+                    html += `<label style="display: block; margin-bottom: 5px; font-weight: 500; color: #374151; font-size: 13px;">${field.label}:</label>`;
+
+                    if (field.type === 'text') {
+                        html += `<input type="text" name="${field.name}" value="${fieldValue}" style="width: 100%; padding: 8px; border: 1px solid #D1D5DB; border-radius: 4px; font-size: 13px; box-sizing: border-box;">`;
+                    } else if (field.type === 'number') {
+                        html += `<input type="number" name="${field.name}" value="${fieldValue}" style="width: 100%; padding: 8px; border: 1px solid #D1D5DB; border-radius: 4px; font-size: 13px; box-sizing: border-box;">`;
+                    } else if (field.type === 'select') {
+                        html += `<select name="${field.name}" style="width: 100%; padding: 8px; border: 1px solid #D1D5DB; border-radius: 4px; font-size: 13px; box-sizing: border-box;">`;
+                        html += `<option value="">请选择</option>`;
+                        field.options.forEach(option => {
+                            const selected = fieldValue === option ? 'selected' : '';
+                            html += `<option value="${option}" ${selected}>${option}</option>`;
+                        });
+                        html += `</select>`;
+                    } else if (field.type === 'multiselect') {
+                        const selectedValues = Array.isArray(fieldValue) ? fieldValue : (fieldValue ? fieldValue.split(',') : []);
+                        html += `<select name="${field.name}" multiple style="width: 100%; padding: 8px; border: 1px solid #D1D5DB; border-radius: 4px; height: 80px; font-size: 13px; box-sizing: border-box;">`;
+                        field.options.forEach(option => {
+                            const selected = selectedValues.includes(option) ? 'selected' : '';
+                            html += `<option value="${option}" ${selected}>${option}</option>`;
+                        });
+                        html += `</select>`;
+                    }
+                    html += `</div>`;
+                });
+                html += '</div>';
+
+                node.innerHTML = html;
+            },
+            get_value: function(node, task, section) {
+                // 从输入框中读取值并保存到task对象
+                customFields.forEach(field => {
+                    const input = node.querySelector(`input[name="${field.name}"], select[name="${field.name}"]`);
+                    if (input) {
+                        if (field.type === 'multiselect') {
+                            const selectedOptions = Array.from(input.selectedOptions).map(option => option.value);
+                            task[field.name] = selectedOptions.join(',');
+                        } else {
+                            task[field.name] = input.value;
+                        }
+                    }
+                });
+                return task.custom_fields; // 返回值用于map_to字段
+            },
+            focus: function(node) {
+                // 聚焦到第一个输入框
+                const firstInput = node.querySelector('input, select');
+                if (firstInput) firstInput.focus();
+            }
+        };
+
+        gantt.config.lightbox.sections = [
+            {name: "description", height: 70, map_to: "text", type: "textarea", focus: true},
+            {name: "time", height: 72, type: "duration", map_to: "auto"},
+            {name: "custom_fields", height: 200, type: "custom_fields", map_to: "custom_fields"}
+        ];
+
+        // 刷新Lightbox配置(用于新增字段后立即生效)
+        function refreshLightbox() {
+            // 如果当前有打开的lightbox,先关闭
+            if (gantt.getLightbox()) {
+                gantt.hideLightbox();
+            }
+
+            // 删除现有的lightbox HTML元素(强制重建)
+            const existingLightbox = document.querySelector('.gantt_cal_light');
+            if (existingLightbox) {
+                existingLightbox.remove();
+            }
+
+            // 重新配置sections
+            gantt.config.lightbox.sections = [
+                {name: "description", height: 70, map_to: "text", type: "textarea", focus: true},
+                {name: "time", height: 72, type: "duration", map_to: "auto"},
+                {name: "custom_fields", height: 200, type: "custom_fields", map_to: "custom_fields"}
+            ];
+
+            // 清除内部lightbox缓存
+            gantt._lightbox = null;
+        }
+
+        // 监听 Gantt Ready 事件来初始化 Resizer
+        gantt.attachEvent("onGanttReady", function() {
+            initResizer();
+        });
+
+        // 6. 初始化甘特图
+        gantt.init("gantt_here");
+
+        // 6. 定义示例数据 (与原文件一致)
+        var tasks = {
+            data: [
+                {id: 1, text: "项目 #1", start_date: "2025-10-01", duration: 18, progress: 0.4, open: true, priority: "高", assignee: "张三", status: "进行中"},
+                {id: 2, text: "任务 #1", start_date: "2025-10-02", duration: 8, progress: 0.6, parent: 1, priority: "中", assignee: "李四", status: "进行中"},
+                {id: 3, text: "任务 #2", start_date: "2025-10-11", duration: 8, progress: 0.2, parent: 1, priority: "低", assignee: "王五", status: "待开始"}
+            ],
+            links: [
+                {id: 1, source: 2, target: 3, type: "0"}
+            ]
+        };
+
+        // 7. 加载数据到甘特图
+        gantt.parse(tasks);
+
+        // 8. 在数据完全加载后初始化列拖拽（使用较长延迟确保 DOM 稳定）
+        setTimeout(function() {
+            initColumnSortable();
+            console.log('页面加载完成后初始化 Sortable');
+        }, 500);
+
+        // 8. 字段管理功能实现
+        document.addEventListener('DOMContentLoaded', function() {
+            // 新增字段按钮
+            document.getElementById('add-field-btn').addEventListener('click', function() {
+                document.getElementById('field-config-modal').style.display = 'block';
+                document.getElementById('field-name').value = '';
+                document.getElementById('field-type').value = 'text';
+                document.getElementById('options-config').style.display = 'none';
+                document.getElementById('options-list').innerHTML = '';
+            });
+
+            // 字段类型变化
+            document.getElementById('field-type').addEventListener('change', function() {
+                const type = this.value;
+                const optionsConfig = document.getElementById('options-config');
+                if (type === 'select' || type === 'multiselect') {
+                    optionsConfig.style.display = 'block';
+                } else {
+                    optionsConfig.style.display = 'none';
+                }
+            });
+
+            // 添加选项按钮
+            document.getElementById('add-option-btn').addEventListener('click', function() {
+                const optionsList = document.getElementById('options-list');
+                const optionDiv = document.createElement('div');
+                optionDiv.style.marginBottom = '8px';
+                optionDiv.innerHTML = `
+                    <input type="text" placeholder="选项值" style="width: 70%; padding: 6px; border: 1px solid #E5E7EB; border-radius: 4px; margin-right: 8px;">
+                    <button type="button" onclick="this.parentElement.remove()" style="padding: 6px 12px; background: #EF4444; color: white; border: none; border-radius: 4px; cursor: pointer;">删除</button>
+                `;
+                optionsList.appendChild(optionDiv);
+            });
+
+            // 保存字段配置
+            document.getElementById('save-field-btn').addEventListener('click', function() {
+                const fieldName = document.getElementById('field-name').value.trim();
+                const fieldType = document.getElementById('field-type').value;
+                
+                if (!fieldName) {
+                    alert('请输入字段名称');
+                    return;
+                }
+
+                const fieldConfig = {
+                    name: fieldName.toLowerCase().replace(/\s+/g, '_'),
+                    label: fieldName,
+                    type: fieldType,
+                    width: 100
+                };
+
+                if (fieldType === 'select' || fieldType === 'multiselect') {
+                    const options = [];
+                    document.querySelectorAll('#options-list input[type="text"]').forEach(input => {
+                        if (input.value.trim()) {
+                            options.push(input.value.trim());
+                        }
+                    });
+                    fieldConfig.options = options;
+                }
+
+                customFields.push(fieldConfig);
+                fieldOrder.push(fieldConfig.name);
+                updateGanttColumns();
+                refreshLightbox(); // 刷新Lightbox配置
+
+                document.getElementById('field-config-modal').style.display = 'none';
+            });
+
+            // 取消字段配置
+            document.getElementById('cancel-field-btn').addEventListener('click', function() {
+                document.getElementById('field-config-modal').style.display = 'none';
+            });
+
+
+            // 导出配置
+            document.getElementById('config-export-btn').addEventListener('click', function() {
+                const config = {
+                    customFields: customFields,
+                    fieldOrder: fieldOrder,
+                    exportTime: new Date().toISOString()
+                };
+                
+                const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'gantt-fields-config.json';
+                a.click();
+                URL.revokeObjectURL(url);
+            });
+
+            // 导入配置
+            document.getElementById('config-import-btn').addEventListener('click', function() {
+                document.getElementById('config-file-input').click();
+            });
+
+            document.getElementById('config-file-input').addEventListener('change', function(e) {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    try {
+                        const config = JSON.parse(e.target.result);
+                        if (config.customFields && config.fieldOrder) {
+                            customFields = config.customFields;
+                            fieldOrder = config.fieldOrder;
+                            updateGanttColumns();
+                            refreshLightbox(); // 刷新Lightbox配置
+                            alert('配置导入成功！');
+                        } else {
+                            alert('配置文件格式不正确');
+                        }
+                    } catch (error) {
+                        alert('配置文件解析失败：' + error.message);
+                    }
+                };
+                reader.readAsText(file);
+            });
+        });
+    </script>
+</body>
+</html>

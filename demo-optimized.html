@@ -1,0 +1,1914 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <title>甘特图任务编辑页面优化 - 完整实现</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+
+    <link href="https://cdn.dhtmlx.com/gantt/edge/dhtmlxgantt.css" rel="stylesheet">
+
+    <style>
+        /* 1. 设计系统变量 */
+        :root {
+            /* 色彩系统 */
+            --primary-color: #4A90E2;
+            --accent-color: #50E3C2;
+            --text-primary: #1F2937;
+            --text-secondary: #6B7280;
+            --border-color: #E5E7EB;
+            --background-gray: #F9FAFB;
+            --background-hover-gray: #F3F4F6;
+            --background-white: #FFFFFF;
+            --color-success: #22C55E;
+            --color-warning: #F59E0B;
+            --color-error: #EF4444;
+            --task-bar-bg: #A5C8F1;
+
+            /* 字体规范 */
+            --font-family-base: 'Inter', 'Source Han Sans CN', sans-serif;
+            --font-size-body: 14px;
+            --font-size-small: 12px;
+            --font-weight-regular: 400;
+            --font-weight-medium: 500;
+            --font-weight-semibold: 600;
+
+            /* 布局系统 */
+            --border-radius-small: 4px;
+            --border-radius-medium: 8px;
+            --shadow-standard: 0px 4px 6px -1px rgba(0, 0, 0, 0.1), 0px 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+
+        /* 2. 全局样式 */
+        html,
+        body {
+            height: 100%;
+            padding: 0;
+            margin: 0;
+            overflow: hidden;
+            font-family: var(--font-family-base);
+            color: var(--text-primary);
+            background-color: var(--background-gray);
+        }
+
+        #gantt_here {
+            width: 100%;
+            height: 100%;
+        }
+
+        /* 3. 甘特图组件样式 */
+        .gantt_container {
+            border: none;
+        }
+
+        .gantt_grid,
+        .gantt_task {
+            border-top: 1px solid var(--border-color);
+        }
+
+        .gantt_grid_scale,
+        .gantt_task_scale {
+            background-color: var(--background-white);
+            border-bottom: 1px solid var(--border-color);
+            color: var(--text-secondary);
+        }
+
+        /* 表格区域 */
+        .gantt_grid_head_cell {
+            font-weight: var(--font-weight-semibold);
+            font-size: var(--font-size-body);
+            color: var(--text-primary);
+            cursor: move;
+            user-select: none;
+            transition: all 0.2s ease;
+            position: relative;
+        }
+
+        .gantt_grid_head_cell:hover {
+            background-color: #F3F4F6;
+            transform: translateY(-1px);
+        }
+
+        .gantt_row {
+            border-bottom: 1px solid var(--border-color);
+            transition: background-color 0.2s ease;
+        }
+
+        .gantt_row:hover {
+            background-color: var(--background-hover-gray);
+        }
+
+        .gantt_row.odd {
+            background-color: var(--background-white);
+        }
+
+        .gantt_grid_data .gantt_cell {
+            font-size: var(--font-size-body);
+            font-weight: var(--font-weight-regular);
+        }
+
+        .gantt_tree_content {
+            font-weight: var(--font-weight-medium);
+        }
+
+        .gantt_grid_data {
+            background-color: var(--background-white);
+        }
+
+        /* 时间轴 */
+        .gantt_task_scale .gantt_scale_cell {
+            font-size: var(--font-size-small);
+            font-weight: var(--font-weight-regular);
+        }
+
+        .gantt_data_area {
+            background-color: var(--background-white);
+        }
+
+        .gantt_task_row {
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .gantt_task_row.odd {
+            background-color: var(--background-white);
+        }
+
+        .weekend {
+            background-color: var(--background-gray) !important;
+        }
+
+        /* 任务条 */
+        .gantt_task_line {
+            background-color: var(--task-bar-bg);
+            border: 1px solid var(--primary-color);
+            border-radius: var(--border-radius-small);
+        }
+
+        .gantt_task_line:hover {
+            box-shadow: var(--shadow-standard);
+        }
+
+        .gantt_task_progress {
+            background-color: var(--accent-color);
+            border-radius: var(--border-radius-small);
+        }
+
+        .gantt_task_line.task_overdue {
+            background-color: var(--color-error);
+            border-color: var(--color-error);
+        }
+
+        /* 依赖连线 */
+        .gantt_link_line {
+            stroke: var(--primary-color);
+            stroke-width: 1;
+        }
+
+        .gantt_link_arrow_right {
+            border-left-color: var(--primary-color);
+        }
+
+        /* 4. P0功能: 动态高度自定义字段样式 */
+        .fields-grid.two-column {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+
+        .fields-grid.scrollable {
+            overflow-y: auto;
+            padding-right: 8px;
+        }
+
+        .fields-grid.scrollable::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .fields-grid.scrollable::-webkit-scrollbar-track {
+            background: #E5E7EB;
+            border-radius: 4px;
+        }
+
+        .fields-grid.scrollable::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        /* 12. P1功能: 通用滚动条样式优化 */
+        .gantt_cal_ltext::-webkit-scrollbar,
+        .gantt_custom_fields_container::-webkit-scrollbar,
+        .batch-edit-body::-webkit-scrollbar,
+        .field-management-body::-webkit-scrollbar,
+        .modal-content::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        .gantt_cal_ltext::-webkit-scrollbar-track,
+        .gantt_custom_fields_container::-webkit-scrollbar-track,
+        .batch-edit-body::-webkit-scrollbar-track,
+        .field-management-body::-webkit-scrollbar-track,
+        .modal-content::-webkit-scrollbar-track,
+        .fields-grid.scrollable::-webkit-scrollbar-track {
+            background: #E5E7EB;
+            border-radius: 4px;
+        }
+
+        .gantt_cal_ltext::-webkit-scrollbar-thumb,
+        .gantt_custom_fields_container::-webkit-scrollbar-thumb,
+        .batch-edit-body::-webkit-scrollbar-thumb,
+        .field-management-body::-webkit-scrollbar-thumb,
+        .modal-content::-webkit-scrollbar-thumb,
+        .fields-grid.scrollable::-webkit-scrollbar-thumb {
+            background: #D1D5DB;
+            border-radius: 4px;
+        }
+
+        .gantt_cal_ltext::-webkit-scrollbar-thumb:hover,
+        .gantt_custom_fields_container::-webkit-scrollbar-thumb:hover,
+        .batch-edit-body::-webkit-scrollbar-thumb:hover,
+        .field-management-body::-webkit-scrollbar-thumb:hover,
+        .modal-content::-webkit-scrollbar-thumb:hover,
+        .fields-grid.scrollable::-webkit-scrollbar-thumb:hover {
+            background: #9CA3AF;
+        }
+
+        /* 5. P1功能: 批量编辑面板样式 */
+        #batch-edit-panel {
+            position: fixed;
+            right: -400px;
+            top: 0;
+            width: 400px;
+            max-width: 100%;
+            height: 100vh;
+            background: white;
+            box-shadow: -4px 0px 12px rgba(0, 0, 0, 0.1);
+            z-index: 5000;
+            transition: right 0.3s ease-out;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #batch-edit-panel.open {
+            right: 0;
+        }
+
+        @media (max-width: 768px) {
+            #batch-edit-panel {
+                width: 100%;
+                right: -100%;
+            }
+        }
+
+        .batch-edit-header {
+            padding: 20px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .batch-edit-header h3 {
+            margin: 0;
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .batch-edit-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+        }
+
+        .batch-edit-footer {
+            padding: 16px 20px;
+            border-top: 1px solid var(--border-color);
+            background: var(--background-gray);
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+        }
+
+        /* 6. P1功能: 字段管理面板样式 */
+        #field-management-panel {
+            position: fixed;
+            right: -350px;
+            top: 0;
+            width: 350px;
+            max-width: 100%;
+            height: 100vh;
+            background: var(--background-gray);
+            box-shadow: -4px 0px 12px rgba(0, 0, 0, 0.1);
+            z-index: 6000;
+            transition: right 0.25s ease-out;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #field-management-panel.open {
+            right: 0;
+        }
+
+        @media (max-width: 768px) {
+            #field-management-panel {
+                width: 100%;
+                right: -100%;
+            }
+        }
+
+        .field-management-header {
+            padding: 16px 20px;
+            background: white;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .field-management-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+        }
+
+        .field-item {
+            background: white;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            cursor: move;
+            transition: all 0.2s ease;
+        }
+
+        .field-item:hover {
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .field-drag-handle {
+            color: #9CA3AF;
+            font-size: 16px;
+            cursor: grab;
+        }
+
+        .field-info {
+            flex: 1;
+        }
+
+        .field-name {
+            font-weight: 500;
+            color: var(--text-primary);
+            font-size: 14px;
+        }
+
+        .field-type-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            background: #E5E7EB;
+            border-radius: 4px;
+            font-size: 12px;
+            color: #6B7280;
+            margin-top: 4px;
+        }
+
+        .field-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .field-action-btn {
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 18px;
+            padding: 4px;
+            transition: transform 0.2s;
+        }
+
+        .field-action-btn:hover {
+            transform: scale(1.2);
+        }
+
+        /* 7. 通用按钮样式 */
+        .btn-primary {
+            padding: 10px 24px;
+            background: var(--primary-color);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-primary:hover {
+            background: #3A7BC8;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .btn-secondary {
+            padding: 10px 24px;
+            background: white;
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-secondary:hover {
+            background: var(--background-hover-gray);
+        }
+
+        .btn-danger {
+            padding: 10px 20px;
+            background: white;
+            color: var(--color-error);
+            border: 1px solid var(--color-error);
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-danger:hover {
+            background: #FEF2F2;
+        }
+
+        /* 8. 工具栏样式 */
+        #field-toolbar {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            z-index: 1000;
+            background: white;
+            padding: 10px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            display: flex;
+            gap: 8px;
+        }
+
+        #field-toolbar button {
+            padding: 8px 14px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        #field-toolbar button:hover {
+            opacity: 0.9;
+            transform: translateY(-1px);
+        }
+
+        /* 9. 字段配置弹窗样式 */
+        .modal-backdrop {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 2000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .modal-backdrop.show {
+            opacity: 1;
+        }
+
+        .modal-content {
+            background: white;
+            padding: 24px;
+            border-radius: 12px;
+            width: 500px;
+            max-height: 80vh;
+            overflow-y: auto;
+            transform: scale(0.95);
+            transition: transform 0.3s ease;
+        }
+
+        .modal-backdrop.show .modal-content {
+            transform: scale(1);
+        }
+
+        .modal-content h3 {
+            margin-top: 0;
+            color: var(--text-primary);
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: var(--text-primary);
+            font-size: 13px;
+        }
+
+        .form-control {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            font-size: 14px;
+            box-sizing: border-box;
+            transition: border-color 0.2s;
+        }
+
+        .form-control:focus {
+            outline: none;
+            border-color: var(--primary-color);
+            border-width: 2px;
+        }
+
+        .checkbox-label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+        }
+
+        .checkbox-label input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+        }
+
+        /* 10. 选中任务计数器 */
+        #selected-tasks-counter {
+            position: fixed;
+            top: 70px;
+            right: 10px;
+            z-index: 1000;
+            background: #E0F2FE;
+            padding: 10px 16px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            display: none;
+            align-items: center;
+            gap: 12px;
+        }
+
+        #selected-tasks-counter.show {
+            display: flex;
+        }
+
+        /* 11. P0功能: 自定义Lightbox样式增强 */
+        .gantt_cal_light {
+            border-radius: 12px;
+            box-shadow: 0px 10px 15px -3px rgba(0, 0, 0, 0.1), 0px 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+
+        .gantt_cal_ltext textarea {
+            border: 1px solid #D1D5DB;
+            border-radius: 8px;
+            font-family: var(--font-family-base);
+            transition: border-color 0.2s;
+        }
+
+        .gantt_cal_ltext textarea:focus {
+            border-color: var(--primary-color);
+            border-width: 2px;
+            outline: none;
+        }
+
+        /* 13. 可拖动分隔线样式 */
+        .gantt_resizer,
+        .resizer_cell,
+        .gantt_layout_cell_resizer {
+            width: 6px !important;
+            background: #E5E7EB !important;
+            cursor: col-resize !important;
+            position: relative;
+            transition: background-color 0.2s ease;
+        }
+
+        .gantt_resizer:hover,
+        .resizer_cell:hover,
+        .gantt_layout_cell_resizer:hover {
+            background: var(--primary-color) !important;
+        }
+
+        .gantt_resizer::after,
+        .resizer_cell::after,
+        .gantt_layout_cell_resizer::after {
+            content: '⋮';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #9CA3AF;
+            font-size: 14px;
+            pointer-events: none;
+        }
+
+        .gantt_resizer:hover::after,
+        .resizer_cell:hover::after,
+        .gantt_layout_cell_resizer:hover::after {
+            color: white;
+        }
+
+        .gantt_resizer_x {
+            width: 6px !important;
+            background: #E5E7EB;
+            cursor: col-resize;
+            transition: background-color 0.2s ease;
+        }
+
+        .gantt_resizer_x:hover {
+            background: var(--primary-color) !important;
+        }
+
+        /* 14. 批量选中行的视觉反馈优化 */
+        .gantt_row.gantt-selected,
+        .gantt_grid_data .gantt_row.gantt-selected,
+        .gantt_container .gantt_row.gantt-selected {
+            background-color: rgba(59, 130, 246, 0.15) !important;
+            border-left: 3px solid #3b82f6 !important;
+            transition: all 0.2s ease;
+            box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.1);
+        }
+
+        .gantt_row.gantt-selected.odd,
+        .gantt_grid_data .gantt_row.gantt-selected.odd {
+            background-color: rgba(59, 130, 246, 0.15) !important;
+        }
+
+        .gantt_task_row.gantt-selected,
+        .gantt_data_area .gantt_task_row.gantt-selected,
+        .gantt_container .gantt_task_row.gantt-selected {
+            background-color: rgba(59, 130, 246, 0.15) !important;
+            transition: all 0.2s ease;
+        }
+
+        .gantt_task_row.gantt-selected.odd,
+        .gantt_data_area .gantt_task_row.gantt-selected.odd {
+            background-color: rgba(59, 130, 246, 0.15) !important;
+        }
+
+        .gantt_row.gantt-selected:hover,
+        .gantt_grid_data .gantt_row.gantt-selected:hover {
+            background-color: rgba(59, 130, 246, 0.25) !important;
+        }
+
+        .gantt_task_row.gantt-selected:hover,
+        .gantt_data_area .gantt_task_row.gantt-selected:hover {
+            background-color: rgba(59, 130, 246, 0.25) !important;
+        }
+
+        /* 选中行的单元格样式 */
+        .gantt_row.gantt-selected .gantt_cell,
+        .gantt_grid_data .gantt_row.gantt-selected .gantt_cell {
+            background-color: transparent !important;
+        }
+
+        /* 选中行的复选框高亮 */
+        .gantt_row.gantt-selected .gantt-checkbox-selection {
+            accent-color: #3b82f6;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="gantt_here"></div>
+
+    <!-- 字段管理工具栏 -->
+    <div id="field-toolbar">
+        <button id="add-field-btn" style="background: #4A90E2; color: white;">+ 新增字段</button>
+        <button id="batch-edit-btn" style="background: #6B7280; color: white;">批量编辑</button>
+        <button id="config-export-btn" style="background: #22C55E; color: white;">📤 导出</button>
+        <button id="config-import-btn" style="background: #6B7280; color: white;">📥 导入</button>
+    </div>
+
+    <!-- 选中任务计数器 -->
+    <div id="selected-tasks-counter">
+        <span style="color: #0C4A6E; font-size: 14px; font-weight: 500;">
+            已选中 <span id="selected-count">0</span> 个任务
+        </span>
+        <button id="clear-selection-btn" class="btn-secondary" style="padding: 4px 12px; font-size: 12px;">清除选择</button>
+    </div>
+
+    <!-- P1功能: 批量编辑面板 -->
+    <div id="batch-edit-panel">
+        <div class="batch-edit-header">
+            <h3>批量编辑</h3>
+            <button id="close-batch-edit"
+                style="background: none; border: none; font-size: 24px; color: #6B7280; cursor: pointer;">&times;</button>
+        </div>
+        <div class="batch-edit-body">
+            <div style="background: #E0F2FE; padding: 12px; border-radius: 8px; margin-bottom: 20px;">
+                <span style="color: #0C4A6E; font-size: 14px;">ℹ️ 已选中 <strong id="batch-selected-count">0</strong>
+                    个任务</span>
+            </div>
+            <div class="form-group">
+                <label>选择要修改的字段</label>
+                <select id="batch-field-select" class="form-control">
+                    <option value="">请选择字段</option>
+                </select>
+            </div>
+            <div id="batch-field-input-container" style="display: none;">
+                <div class="form-group">
+                    <label id="batch-field-label">字段值</label>
+                    <div id="batch-field-input"></div>
+                </div>
+            </div>
+        </div>
+        <div class="batch-edit-footer">
+            <button id="batch-cancel-btn" class="btn-secondary">取消</button>
+            <button id="batch-apply-btn" class="btn-primary">应用到所有任务</button>
+        </div>
+    </div>
+
+    <!-- P1功能: 字段管理面板 -->
+    <div id="field-management-panel">
+        <div class="field-management-header">
+            <h4 style="margin: 0; font-size: 14px; font-weight: 600;">字段管理</h4>
+            <button id="close-field-management"
+                style="background: none; border: none; font-size: 24px; color: #6B7280; cursor: pointer;">&times;</button>
+        </div>
+        <div class="field-management-body" id="field-list-container">
+            <!-- 字段列表将在这里动态生成 -->
+        </div>
+        <div style="padding: 16px; background: white; border-top: 1px solid var(--border-color);">
+            <button id="add-field-from-panel-btn" class="btn-secondary" style="width: 100%;">+ 新增字段</button>
+        </div>
+    </div>
+
+    <!-- 字段配置弹窗 -->
+    <div id="field-config-modal" class="modal-backdrop" style="display: none;">
+        <div class="modal-content">
+            <h3>字段配置</h3>
+            <div class="form-group">
+                <label>字段名称</label>
+                <input type="text" id="field-name" class="form-control" placeholder="请输入字段名称">
+            </div>
+            <div class="form-group">
+                <label>字段类型</label>
+                <select id="field-type" class="form-control">
+                    <option value="text">文本</option>
+                    <option value="select">下拉选择(单选)</option>
+                    <option value="multiselect">下拉选择(多选)</option>
+                    <option value="number">数值</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="checkbox-label">
+                    <input type="checkbox" id="field-required">
+                    <span>必填字段</span>
+                </label>
+            </div>
+            <div class="form-group">
+                <label>默认值 (可选)</label>
+                <input type="text" id="field-default-value" class="form-control" placeholder="现有任务将自动填充此值">
+                <div style="font-size: 12px; color: #6B7280; margin-top: 4px;">新增字段时，所有现有任务将被设置为此默认值。</div>
+            </div>
+            <div id="options-config" class="form-group" style="display: none;">
+                <label>选项配置</label>
+                <div id="options-list"></div>
+                <button id="add-option-btn" class="btn-secondary"
+                    style="margin-top: 8px; padding: 6px 12px; font-size: 13px;">+ 添加选项</button>
+            </div>
+            <div style="text-align: right; margin-top: 24px; display: flex; gap: 12px; justify-content: flex-end;">
+                <button id="cancel-field-btn" class="btn-secondary">取消</button>
+                <button id="save-field-btn" class="btn-primary">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 文件输入(用于导入配置) -->
+    <input type="file" id="config-file-input" style="display: none;" accept=".json">
+
+    <script src="https://cdn.dhtmlx.com/gantt/edge/dhtmlxgantt.js"></script>
+    <script src="https://cdn.dhtmlx.com/gantt/edge/locale/locale_cn.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+
+    <script>
+        // ========== 数据和状态管理 ==========
+        let customFields = [
+            { name: "priority", label: "优先级", type: "select", options: ["高", "中", "低"], width: 80, required: false },
+            { name: "assignee", label: "负责人", type: "text", width: 100, required: true },
+            { name: "status", label: "状态", type: "select", options: ["待开始", "进行中", "已完成", "已暂停"], width: 100, required: false }
+        ];
+
+        let fieldOrder = ["text", "priority", "assignee", "status", "start_date", "duration", "progress"];
+        let sortableInstance = null;
+        let selectedTasks = new Set(); // P1功能: 批量选择的任务集合
+        let isCtrlPressed = false;
+
+        // 全局作用域的 addOptionInput 函数
+        function addOptionInput(value = '') {
+            const optionsList = document.getElementById('options-list');
+            const optionDiv = document.createElement('div');
+            optionDiv.style.marginBottom = '8px';
+            optionDiv.style.display = 'flex';
+            optionDiv.style.gap = '8px';
+            optionDiv.innerHTML = `
+                <input type="text" value="${value}" placeholder="选项值" style="flex: 1; padding: 8px 12px; border: 1px solid #E5E7EB; border-radius: 6px; font-size: 13px;">
+                <button type="button" onclick="this.parentElement.remove()" style="padding: 6px 12px; background: #EF4444; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 13px;">删除</button>
+            `;
+            optionsList.appendChild(optionDiv);
+        }
+
+        // ========== P0功能: Toast提示组件 ==========
+        function showToast(message, type = 'success', duration = 2000) {
+            const existingToast = document.querySelector('.gantt-toast');
+            if (existingToast) {
+                existingToast.remove();
+            }
+
+            const toast = document.createElement('div');
+            toast.className = 'gantt-toast';
+
+            const bgColor = type === 'success' ? '#ECFDF5' : '#FEF2F2';
+            const borderColor = type === 'success' ? '#22C55E' : '#EF4444';
+            const textColor = type === 'success' ? '#065F46' : '#991B1B';
+            const icon = type === 'success' ? '✓' : '✗';
+
+            toast.innerHTML = `
+                <div style="background: ${bgColor}; border: 1px solid ${borderColor}; padding: 12px 24px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); display: flex; align-items: center; gap: 12px; cursor: pointer;">
+                    <span style="color: ${borderColor}; font-size: 18px; font-weight: bold;">${icon}</span>
+                    <span style="color: ${textColor}; font-size: 14px; font-weight: 500;">${message}</span>
+                    <span style="background: none; border: none; color: ${textColor}; cursor: pointer; font-size: 18px; margin-left: 8px;">&times;</span>
+                </div>
+            `;
+
+            toast.style.cssText = `
+                position: fixed;
+                top: 20px;
+                left: 50%;
+                transform: translateX(-50%) translateY(-10px);
+                z-index: 99999;
+                opacity: 0;
+                transition: all 0.3s ease;
+            `;
+
+            // 点击整个Toast关闭
+            toast.addEventListener('click', function () {
+                toast.style.opacity = '0';
+                toast.style.transform = 'translateX(-50%) translateY(-10px)';
+                setTimeout(() => toast.remove(), 300);
+            });
+
+            document.body.appendChild(toast);
+
+            setTimeout(() => {
+                toast.style.opacity = '1';
+                toast.style.transform = 'translateX(-50%) translateY(0)';
+            }, 10);
+
+            if (type === 'success' && duration > 0) {
+                setTimeout(() => {
+                    toast.style.opacity = '0';
+                    toast.style.transform = 'translateX(-50%) translateY(-10px)';
+                    setTimeout(() => toast.remove(), 300);
+                }, duration);
+            }
+        }
+
+        // ========== P0功能: 字段验证 ==========
+        function validateField(field, value) {
+            if (field.required && !value) {
+                return { valid: false, message: '此字段为必填项' };
+            }
+            if (field.type === 'number' && value && isNaN(value)) {
+                return { valid: false, message: '请输入有效的数字' };
+            }
+            return { valid: true };
+        }
+
+        // ========== P0功能: 动态高度计算 ==========
+        function calculateCustomFieldsHeight() {
+            const fieldCount = customFields.length;
+            let height;
+
+            if (fieldCount <= 3) {
+                height = fieldCount * 70 + 80;
+            } else if (fieldCount <= 6) {
+                const rows = Math.ceil(fieldCount / 2);
+                height = rows * 86 + 80;
+            } else {
+                height = Math.min(window.innerHeight * 0.4, 400);
+            }
+
+            return Math.max(height, 200);
+        }
+
+        // ========== P1功能: 字段管理面板 ==========
+        function openFieldManagementPanel() {
+            const panel = document.getElementById('field-management-panel');
+            panel.classList.add('open');
+            renderFieldList();
+        }
+
+        function closeFieldManagementPanel() {
+            const panel = document.getElementById('field-management-panel');
+            panel.classList.remove('open');
+        }
+
+        function renderFieldList() {
+            const container = document.getElementById('field-list-container');
+            let html = '';
+
+            customFields.forEach((field, index) => {
+                html += `
+                    <div class="field-item" data-field-name="${field.name}">
+                        <div class="field-drag-handle">⋮⋮</div>
+                        <div class="field-info">
+                            <div class="field-name">${field.label}${field.required ? ' <span style="color: #EF4444;">*</span>' : ''}</div>
+                            <div class="field-type-badge">${getFieldTypeLabel(field.type)}</div>
+                        </div>
+                        <div class="field-actions">
+                            <button class="field-action-btn" onclick="editField('${field.name}')" title="编辑">✏️</button>
+                            <button class="field-action-btn" onclick="deleteField('${field.name}')" title="删除">🗑️</button>
+                        </div>
+                    </div>
+                `;
+            });
+
+            container.innerHTML = html;
+
+            // 初始化字段拖拽排序
+            if (sortableInstance) {
+                sortableInstance.destroy();
+            }
+            sortableInstance = new Sortable(container, {
+                animation: 150,
+                handle: '.field-drag-handle',
+                onEnd: function (evt) {
+                    const movedField = customFields.splice(evt.oldIndex, 1)[0];
+                    customFields.splice(evt.newIndex, 0, movedField);
+
+                    // 更新fieldOrder
+                    fieldOrder = ["text", ...customFields.map(f => f.name), "start_date", "duration", "progress"];
+
+                    updateGanttColumns();
+                    refreshLightbox();
+                }
+            });
+        }
+
+        function getFieldTypeLabel(type) {
+            const labels = {
+                'text': '文本',
+                'number': '数值',
+                'select': '单选',
+                'multiselect': '多选'
+            };
+            return labels[type] || type;
+        }
+
+        function editField(fieldName) {
+            const field = customFields.find(f => f.name === fieldName);
+            if (!field) return;
+
+            document.getElementById('field-name').value = field.label;
+            document.getElementById('field-type').value = field.type;
+            document.getElementById('field-name').value = field.label;
+            document.getElementById('field-type').value = field.type;
+            document.getElementById('field-required').checked = field.required || false;
+            document.getElementById('field-default-value').value = ''; // 编辑时不填充默认值输入框，避免混淆
+
+            const optionsConfig = document.getElementById('options-config');
+            if (field.type === 'select' || field.type === 'multiselect') {
+                optionsConfig.style.display = 'block';
+                const optionsList = document.getElementById('options-list');
+                optionsList.innerHTML = '';
+
+                if (field.options) {
+                    field.options.forEach(option => {
+                        addOptionInput(option);
+                    });
+                }
+            } else {
+                optionsConfig.style.display = 'none';
+            }
+
+            const modal = document.getElementById('field-config-modal');
+            modal.style.display = 'flex';
+            setTimeout(() => modal.classList.add('show'), 10);
+
+            // 标记为编辑模式
+            modal.dataset.editMode = 'true';
+            modal.dataset.editFieldName = fieldName;
+        }
+
+        function deleteField(fieldName) {
+            if (!confirm(`确定要删除字段 "${customFields.find(f => f.name === fieldName)?.label}" 吗?`)) {
+                return;
+            }
+
+            customFields = customFields.filter(f => f.name !== fieldName);
+            fieldOrder = fieldOrder.filter(f => f !== fieldName);
+
+            updateGanttColumns();
+            refreshLightbox();
+            renderFieldList();
+            showToast('字段删除成功', 'success');
+        }
+
+        // ========== P1功能: 批量编辑 ==========
+        function updateSelectedTasksUI() {
+            const counter = document.getElementById('selected-tasks-counter');
+            const count = selectedTasks.size;
+
+            if (count > 0) {
+                counter.classList.add('show');
+                document.getElementById('selected-count').textContent = count;
+            } else {
+                counter.classList.remove('show');
+            }
+
+            // 不调用 gantt.render()，避免重新渲染导致样式丢失
+            // 直接更新 DOM 样式
+
+            // 使用多个延迟时间确保样式被正确应用
+            applySelectionStyles();
+            setTimeout(applySelectionStyles, 50);
+            setTimeout(applySelectionStyles, 150);
+
+            // 更新全选Checkbox状态
+            const selectAll = document.getElementById('select-all-checkbox');
+            if (selectAll) {
+                const allTaskIds = [];
+                gantt.eachTask(task => allTaskIds.push(task.id));
+                const allSelected = allTaskIds.length > 0 && allTaskIds.every(id => selectedTasks.has(id));
+                const someSelected = allTaskIds.some(id => selectedTasks.has(id));
+
+                selectAll.checked = allSelected;
+                selectAll.indeterminate = someSelected && !allSelected;
+            }
+        }
+
+        // 单独的样式应用函数，可被多次调用
+        function applySelectionStyles() {
+            // 首先清除所有选中样式
+            document.querySelectorAll('.gantt_row.gantt-selected').forEach(row => {
+                row.classList.remove('gantt-selected');
+                row.style.backgroundColor = '';
+                row.style.borderLeft = '';
+            });
+            document.querySelectorAll('.gantt_task_row.gantt-selected').forEach(row => {
+                row.classList.remove('gantt-selected');
+                row.style.backgroundColor = '';
+            });
+
+            // 遍历所有选中的任务并应用样式
+            selectedTasks.forEach(taskId => {
+                // 查找左侧表格行 - 使用 task_id 属性
+                const gridRows = document.querySelectorAll(`.gantt_row[task_id="${taskId}"]`);
+                gridRows.forEach(row => {
+                    row.classList.add('gantt-selected');
+                    row.style.backgroundColor = 'rgba(59, 130, 246, 0.15)';
+                    row.style.borderLeft = '3px solid #3b82f6';
+                    row.style.boxSizing = 'border-box';
+
+                    // 同步复选框状态
+                    const checkbox = row.querySelector('.gantt-checkbox-selection');
+                    if (checkbox) {
+                        checkbox.checked = true;
+                    }
+                });
+
+                // 查找右侧时间轴行 - 使用 task_id 属性
+                const taskRows = document.querySelectorAll(`.gantt_task_row[task_id="${taskId}"]`);
+                taskRows.forEach(row => {
+                    row.classList.add('gantt-selected');
+                    row.style.backgroundColor = 'rgba(59, 130, 246, 0.15)';
+                });
+            });
+
+            // 更新未选中任务的复选框状态
+            gantt.eachTask(function (task) {
+                if (!selectedTasks.has(task.id)) {
+                    const checkbox = document.querySelector(`.gantt-checkbox-selection[data-task-id="${task.id}"]`);
+                    if (checkbox) {
+                        checkbox.checked = false;
+                    }
+                }
+            });
+        }
+
+        // 初始化自定义 Resizer（与 demo.html 相同实现）
+        function initResizer() {
+            const resizer = document.getElementById("custom-resizer");
+            if (!resizer) return;
+
+            // 避免重复绑定
+            if (resizer._isInitialized) return;
+            resizer._isInitialized = true;
+
+            resizer.onmousedown = function (e) {
+                e.preventDefault();
+                const startX = e.clientX;
+                const colConfig = gantt.config.layout.cols[0];
+                const startWidth = colConfig.width || 400;
+
+                // 高亮显示 resizer
+                resizer.style.background = '#4A90E2';
+                document.body.style.cursor = 'col-resize';
+                document.body.style.userSelect = 'none';
+
+                function onMouseMove(e) {
+                    const diff = e.clientX - startX;
+                    let newWidth = startWidth + diff;
+                    // 只保留最小宽度限制，移除最大宽度限制，允许用户自由拖动
+                    if (newWidth < 200) newWidth = 200;
+
+                    // 更新 Layout 配置并重绘
+                    colConfig.width = newWidth;
+                    gantt.resetLayout();
+                }
+
+                function onMouseUp() {
+                    document.removeEventListener("mousemove", onMouseMove);
+                    document.removeEventListener("mouseup", onMouseUp);
+
+                    // 恢复样式
+                    resizer.style.background = '';
+                    document.body.style.cursor = '';
+                    document.body.style.userSelect = '';
+
+                    // 保存当前宽度到 localStorage
+                    try {
+                        localStorage.setItem('gantt_grid_width', colConfig.width);
+                    } catch (e) {
+                        console.warn('无法保存宽度设置:', e);
+                    }
+
+                    // 重绘后需要重新绑定事件和应用选中样式
+                    resizer._isInitialized = false;
+                    initResizer();
+                    setTimeout(applySelectionStyles, 100);
+                }
+
+                document.addEventListener("mousemove", onMouseMove);
+                document.addEventListener("mouseup", onMouseUp);
+            };
+        }
+
+        function openBatchEditPanel() {
+            if (selectedTasks.size === 0) {
+                showToast('请先选择要编辑的任务', 'error', 3000);
+                return;
+            }
+
+            const panel = document.getElementById('batch-edit-panel');
+            panel.classList.add('open');
+
+            document.getElementById('batch-selected-count').textContent = selectedTasks.size;
+
+            // 填充字段选择下拉框
+            const select = document.getElementById('batch-field-select');
+            select.innerHTML = '<option value="">请选择字段</option>';
+
+            customFields.forEach(field => {
+                select.innerHTML += `<option value="${field.name}">${field.label}</option>`;
+            });
+        }
+
+        function closeBatchEditPanel() {
+            document.getElementById('batch-edit-panel').classList.remove('open');
+            document.getElementById('batch-field-select').value = '';
+            document.getElementById('batch-field-input-container').style.display = 'none';
+        }
+
+        function applyBatchEdit() {
+            const fieldName = document.getElementById('batch-field-select').value;
+            if (!fieldName) {
+                showToast('请选择要修改的字段', 'error', 3000);
+                return;
+            }
+
+            const field = customFields.find(f => f.name === fieldName);
+            const inputContainer = document.getElementById('batch-field-input');
+            let value;
+
+            if (field.type === 'multiselect') {
+                const select = inputContainer.querySelector('select');
+                value = Array.from(select.selectedOptions).map(o => o.value).join(',');
+            } else {
+                const input = inputContainer.querySelector('input, select');
+                value = input ? input.value : '';
+            }
+
+            // 应用到所有选中的任务
+            let updateCount = 0;
+            selectedTasks.forEach(taskId => {
+                const task = gantt.getTask(taskId);
+                task[fieldName] = value;
+                gantt.updateTask(taskId);
+                updateCount++;
+            });
+
+            showToast(`已成功修改 ${updateCount} 个任务`, 'success');
+            closeBatchEditPanel();
+            selectedTasks.clear();
+            updateSelectedTasksUI();
+        }
+
+        // ========== 甘特图配置 ==========
+        function updateGanttColumns() {
+            const columns = [];
+
+            // P1功能: Checkbox 选择列
+            columns.push({
+                name: "buttons",
+                label: '<input type="checkbox" id="select-all-checkbox" style="cursor: pointer;">',
+                width: 40,
+                align: "center",
+                template: function (task) {
+                    const checked = selectedTasks.has(task.id) ? "checked" : "";
+                    return `<input type="checkbox" class="gantt-checkbox-selection" data-task-id="${task.id}" ${checked} style="cursor: pointer;">`;
+                }
+            });
+
+            fieldOrder.forEach(fieldName => {
+                if (fieldName === "text") {
+                    columns.push({ name: "text", label: "任务名称", tree: true, width: 200, resize: true });
+                } else if (fieldName === "start_date") {
+                    columns.push({ name: "start_date", label: "开始时间", align: "center", width: 90, resize: true });
+                } else if (fieldName === "duration") {
+                    columns.push({ name: "duration", label: "工期(天)", align: "center", width: 80, resize: true });
+                } else if (fieldName === "progress") {
+                    columns.push({
+                        name: "progress", label: "进度(%)", align: "center", width: 80, resize: true,
+                        template: function (task) {
+                            return Math.round(task.progress * 100) + "%";
+                        }
+                    });
+                } else {
+                    const customField = customFields.find(f => f.name === fieldName);
+                    if (customField) {
+                        columns.push({
+                            name: fieldName,
+                            label: customField.label,
+                            align: "center",
+                            width: customField.width || 100,
+                            resize: true,
+                            template: function (task) {
+                                return task[fieldName] || '';
+                            }
+                        });
+                    }
+                }
+            });
+
+            columns.push({ name: "add", label: "", width: 44 });
+
+            gantt.config.columns = columns;
+
+            if (gantt.$container) {
+                gantt.render();
+            }
+        }
+
+        // ========== Lightbox配置 ==========
+        gantt.form_blocks["custom_fields"] = {
+            render: function (sns) {
+                const height = calculateCustomFieldsHeight();
+                return "<div class='gantt_cal_ltext gantt_custom_fields_container' style='height:" + height + "px;'></div>";
+            },
+            set_value: function (node, value, task, section) {
+                const fieldCount = customFields.length;
+                let layoutClass = 'single-column';
+
+                if (fieldCount > 3 && fieldCount <= 6) {
+                    layoutClass = 'two-column';
+                } else if (fieldCount > 6) {
+                    layoutClass = 'two-column scrollable';
+                }
+
+                let html = '<div class="custom-fields-section" style="padding: 16px; height: 100%; box-sizing: border-box;">';
+
+                // 标题和管理字段按钮
+                html += '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">';
+                html += '<h4 style="margin: 0; color: #1F2937; font-size: 14px; font-weight: 600;">自定义字段</h4>';
+                html += '<button id="manage-fields-btn" type="button" style="padding: 6px 12px; background: transparent; color: #4A90E2; border: 1px solid #4A90E2; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; transition: all 0.2s;">⚙️ 管理字段</button>';
+                html += '</div>';
+
+                html += `<div class="fields-grid ${layoutClass}" style="max-height: ${fieldCount > 6 ? 'calc(100% - 60px)' : 'auto'}; overflow-y: ${fieldCount > 6 ? 'auto' : 'visible'};">`;
+
+                customFields.forEach(field => {
+                    const fieldValue = task[field.name] || '';
+                    const requiredMark = field.required ? '<span style="color: #EF4444; margin-left: 4px;">*</span>' : '';
+
+                    html += `<div class="custom-field-item" style="margin-bottom: 16px;">`;
+                    html += `<label style="display: block; margin-bottom: 5px; font-weight: 500; color: #374151; font-size: 13px;">${field.label}${requiredMark}:</label>`;
+
+                    const inputStyle = 'width: 100%; padding: 10px 12px; border: 1px solid #D1D5DB; border-radius: 8px; font-size: 13px; box-sizing: border-box; transition: border-color 0.2s;';
+                    const focusEvents = 'onfocus="this.style.borderColor=\'#4A90E2\'; this.style.borderWidth=\'2px\'" onblur="this.style.borderColor=\'#D1D5DB\'; this.style.borderWidth=\'1px\'"';
+
+                    if (field.type === 'text') {
+                        html += `<input type="text" name="${field.name}" value="${fieldValue}" ${field.required ? 'required' : ''} style="${inputStyle}" ${focusEvents}>`;
+                    } else if (field.type === 'number') {
+                        html += `<input type="number" name="${field.name}" value="${fieldValue}" ${field.required ? 'required' : ''} style="${inputStyle}" ${focusEvents}>`;
+                    } else if (field.type === 'select') {
+                        html += `<select name="${field.name}" ${field.required ? 'required' : ''} style="${inputStyle}" ${focusEvents}>`;
+                        html += `<option value="">请选择</option>`;
+                        field.options.forEach(option => {
+                            const selected = fieldValue === option ? 'selected' : '';
+                            html += `<option value="${option}" ${selected}>${option}</option>`;
+                        });
+                        html += `</select>`;
+                    } else if (field.type === 'multiselect') {
+                        const selectedValues = Array.isArray(fieldValue) ? fieldValue : (fieldValue ? fieldValue.split(',') : []);
+                        html += `<select name="${field.name}" multiple ${field.required ? 'required' : ''} style="${inputStyle} min-height: 80px;" ${focusEvents}>`;
+                        field.options.forEach(option => {
+                            const selected = selectedValues.includes(option) ? 'selected' : '';
+                            html += `<option value="${option}" ${selected}>${option}</option>`;
+                        });
+                        html += `</select>`;
+                    }
+
+                    html += `<div class="field-error" data-field="${field.name}" style="color: #EF4444; font-size: 12px; margin-top: 4px; display: none;"></div>`;
+                    html += `</div>`;
+                });
+
+                html += '</div></div>';
+                node.innerHTML = html;
+
+                setTimeout(() => {
+                    const manageBtn = node.querySelector('#manage-fields-btn');
+                    if (manageBtn) {
+                        manageBtn.addEventListener('click', function (e) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            openFieldManagementPanel();
+                        });
+                    }
+                }, 100);
+            },
+            get_value: function (node, task, section) {
+                let isValid = true;
+                const errors = [];
+
+                customFields.forEach(field => {
+                    const input = node.querySelector(`input[name="${field.name}"], select[name="${field.name}"]`);
+                    const errorDiv = node.querySelector(`.field-error[data-field="${field.name}"]`);
+
+                    if (input) {
+                        let value = '';
+
+                        if (field.type === 'multiselect') {
+                            const selectedOptions = Array.from(input.selectedOptions).map(option => option.value);
+                            value = selectedOptions.join(',');
+                            task[field.name] = value;
+                        } else {
+                            value = input.value;
+                            task[field.name] = value;
+                        }
+
+                        const validation = validateField(field, value);
+                        if (!validation.valid) {
+                            isValid = false;
+                            errors.push({ field: field.name, message: validation.message });
+
+                            input.style.borderColor = '#EF4444';
+                            input.style.borderWidth = '2px';
+                            if (errorDiv) {
+                                errorDiv.textContent = validation.message;
+                                errorDiv.style.display = 'block';
+                            }
+                        } else {
+                            input.style.borderColor = '#D1D5DB';
+                            input.style.borderWidth = '1px';
+                            if (errorDiv) {
+                                errorDiv.style.display = 'none';
+                            }
+                        }
+                    }
+                });
+
+                if (!isValid) {
+                    setTimeout(() => {
+                        showToast(errors[0].message, 'error', 0);
+                    }, 100);
+
+                    const firstErrorField = node.querySelector(`input[name="${errors[0].field}"], select[name="${errors[0].field}"]`);
+                    if (firstErrorField) {
+                        firstErrorField.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        firstErrorField.focus();
+                    }
+                }
+
+                task._validation_passed = isValid;
+                return task.custom_fields;
+            },
+            focus: function (node) {
+                const firstInput = node.querySelector('input, select');
+                if (firstInput) firstInput.focus();
+            }
+        };
+
+        gantt.config.lightbox.sections = [
+            { name: "description", height: 70, map_to: "text", type: "textarea", focus: true },
+            { name: "time", height: 72, type: "duration", map_to: "auto" },
+            { name: "custom_fields", height: calculateCustomFieldsHeight(), type: "custom_fields", map_to: "custom_fields" }
+        ];
+
+        function refreshLightbox() {
+            if (gantt.getLightbox()) {
+                gantt.hideLightbox();
+            }
+
+            const existingLightbox = document.querySelector('.gantt_cal_light');
+            if (existingLightbox) {
+                existingLightbox.remove();
+            }
+
+            gantt.config.lightbox.sections = [
+                { name: "description", height: 70, map_to: "text", type: "textarea", focus: true },
+                { name: "time", height: 72, type: "duration", map_to: "auto" },
+                { name: "custom_fields", height: calculateCustomFieldsHeight(), type: "custom_fields", map_to: "custom_fields" }
+            ];
+
+            gantt._lightbox = null;
+        }
+
+
+
+        // ========== 甘特图初始化 ==========
+        gantt.i18n.setLocale("cn");
+
+        gantt.config.scales = [
+            {
+                unit: "month",
+                step: 1,
+                format: function (date) {
+                    return date.getFullYear() + "年" + (date.getMonth() + 1) + "月";
+                }
+            },
+            {
+                unit: "day",
+                step: 1,
+                format: function (date) {
+                    return (date.getMonth() + 1) + "月" + date.getDate() + "日";
+                },
+                css: function (date) {
+                    if (date.getDay() === 0 || date.getDay() === 6) {
+                        return "weekend";
+                    }
+                    return "";
+                }
+            }
+        ];
+
+        gantt.templates.task_class = function (start, end, task) {
+            if (task.progress < 1 && new Date() > end) {
+                return "task_overdue";
+            }
+            return "";
+        };
+
+        // P1功能: 批量选择 - 网格行高亮模板
+        gantt.templates.grid_row_class = function (start, end, task) {
+            if (selectedTasks.has(task.id)) {
+                return "gantt-selected";
+            }
+            return "";
+        };
+
+        // P1功能: 批量选择 - 时间轴行高亮模板
+        gantt.templates.task_row_class = function (start, end, task) {
+            if (selectedTasks.has(task.id)) {
+                return "gantt-selected";
+            }
+            return "";
+        };
+
+        // 从 localStorage 恢复左侧宽度设置
+        let savedGridWidth = 400; // 默认宽度
+        try {
+            const saved = localStorage.getItem('gantt_grid_width');
+            if (saved) {
+                savedGridWidth = parseInt(saved, 10);
+                // 只保留最小宽度限制，移除最大宽度限制
+                if (savedGridWidth < 200) savedGridWidth = 200;
+            }
+        } catch (e) {
+            console.warn('无法读取宽度设置:', e);
+        }
+
+        // 配置 DHTMLX Native Layout
+        // 使用自定义 HTML 元素作为 Resizer，以兼容 Standard 版本
+        gantt.config.layout = {
+            css: "gantt_container",
+            cols: [
+                {
+                    width: savedGridWidth,
+                    min_width: 200,
+                    rows: [
+                        { view: "grid", scrollX: "gridScroll", scrollY: "scrollVer" },
+                        { view: "scrollbar", id: "gridScroll", group: "horizontal" }
+                    ]
+                },
+                {
+                    width: 6,
+                    html: "<div id='custom-resizer' style='width:100%;height:100%;background:#E5E7EB;cursor:col-resize;border-left:1px solid #D1D5DB;border-right:1px solid #D1D5DB;transition:background 0.2s;'></div>"
+                },
+                {
+                    rows: [
+                        { view: "timeline", scrollX: "scrollHor", scrollY: "scrollVer" },
+                        { view: "scrollbar", id: "scrollHor", group: "horizontal" }
+                    ]
+                },
+                { view: "scrollbar", id: "scrollVer" }
+            ]
+        };
+
+        // 保存网格宽度到 localStorage
+        gantt.attachEvent("onGridResizeEnd", function (old_width, new_width) {
+            localStorage.setItem('gantt_grid_width', new_width);
+            return true;
+        });
+
+        // P0功能: 保存操作拦截和反馈
+        gantt.attachEvent("onLightboxSave", function (id, task, is_new) {
+            if (task._validation_passed === false) {
+                return false; // 阻止保存
+            }
+
+            // 显示保存成功提示
+            showToast('保存成功', 'success', 2000);
+
+            // 1秒后关闭弹窗
+            setTimeout(() => {
+                gantt.hideLightbox();
+            }, 1000);
+
+            return true;
+        });
+
+        // P1功能: 监听任务行点击事件(批量选择)
+        gantt.attachEvent("onTaskClick", function (id, e) {
+            // 如果点击的是复选框或复选框所在的单元格，完全跳过，让复选框事件处理器处理
+            if (e.target) {
+                // 检查是否点击了复选框本身
+                if (e.target.classList && e.target.classList.contains('gantt-checkbox-selection')) {
+                    return true;
+                }
+                // 检查是否点击了复选框所在的单元格（第一列）
+                const cell = e.target.closest('.gantt_cell');
+                if (cell) {
+                    const checkbox = cell.querySelector('.gantt-checkbox-selection');
+                    if (checkbox) {
+                        return true; // 跳过，让复选框处理器处理
+                    }
+                }
+            }
+
+            // 只有按住 Ctrl/Meta 键点击非复选框区域时才触发批量选择
+            if (isCtrlPressed || e.ctrlKey || e.metaKey) {
+                if (selectedTasks.has(id)) {
+                    selectedTasks.delete(id);
+                } else {
+                    selectedTasks.add(id);
+                }
+                updateSelectedTasksUI();
+                return false; // 阻止默认行为
+            }
+            return true;
+        });
+
+        updateGanttColumns();
+
+        gantt.init("gantt_here");
+        var tasks = {
+            data: [
+                { id: 1, text: "项目 #1", start_date: "2025-10-01", duration: 18, progress: 0.4, open: true, priority: "高", assignee: "张三", status: "进行中" },
+                { id: 2, text: "任务 #1", start_date: "2025-10-02", duration: 8, progress: 0.6, parent: 1, priority: "中", assignee: "李四", status: "进行中" },
+                { id: 3, text: "任务 #2", start_date: "2025-10-11", duration: 8, progress: 0.2, parent: 1, priority: "低", assignee: "王五", status: "待开始" }
+            ],
+            links: [
+                { id: 1, source: 2, target: 3, type: "0" }
+            ]
+        };
+
+        gantt.parse(tasks);
+
+        // 甘特图渲染后重新应用选中样式
+        gantt.attachEvent("onGanttRender", function () {
+            if (selectedTasks.size > 0) {
+                setTimeout(updateSelectedTasksUI, 50);
+            }
+        });
+
+        // ========== 事件绑定 ==========
+        document.addEventListener('DOMContentLoaded', function () {
+            // Ctrl键监听
+            document.addEventListener('keydown', function (e) {
+                if (e.ctrlKey || e.metaKey) {
+                    isCtrlPressed = true;
+                }
+            });
+
+            document.addEventListener('keyup', function (e) {
+                if (!e.ctrlKey && !e.metaKey) {
+                    isCtrlPressed = false;
+                }
+            });
+
+            // 复选框事件委托 - 单个任务选择
+            // 使用 change 事件而非 click，避免与 Ctrl+点击冲突
+            gantt.$grid.addEventListener('change', function (e) {
+                if (e.target.classList.contains('gantt-checkbox-selection')) {
+                    const taskId = parseInt(e.target.getAttribute('data-task-id'));
+                    // 直接根据复选框的当前状态来更新
+                    if (e.target.checked) {
+                        selectedTasks.add(taskId);
+                    } else {
+                        selectedTasks.delete(taskId);
+                    }
+                    updateSelectedTasksUI();
+                    e.stopPropagation();
+                }
+            });
+
+            // 全选复选框事件委托
+            gantt.$grid_scale.addEventListener('click', function (e) {
+                if (e.target.id === 'select-all-checkbox') {
+                    const allTaskIds = [];
+                    gantt.eachTask(task => allTaskIds.push(task.id));
+
+                    if (e.target.checked) {
+                        allTaskIds.forEach(id => selectedTasks.add(id));
+                    } else {
+                        selectedTasks.clear();
+                    }
+                    updateSelectedTasksUI();
+                    e.stopPropagation();
+                }
+            });
+
+            // ========== 初始化自定义 Resizer ==========
+            // 与 demo.html 相同的实现，使用 gantt.resetLayout() 实现实时调整
+            initResizer();
+
+            // 新增字段按钮
+            document.getElementById('add-field-btn').addEventListener('click', function () {
+                const modal = document.getElementById('field-config-modal');
+                modal.style.display = 'flex';
+                setTimeout(() => modal.classList.add('show'), 10);
+
+                document.getElementById('field-name').value = '';
+                document.getElementById('field-type').value = 'text';
+                document.getElementById('field-required').checked = false;
+                document.getElementById('field-default-value').value = '';
+                document.getElementById('options-config').style.display = 'none';
+                document.getElementById('options-list').innerHTML = '';
+
+                delete modal.dataset.editMode;
+                delete modal.dataset.editFieldName;
+            });
+
+            document.getElementById('add-field-from-panel-btn').addEventListener('click', function () {
+                document.getElementById('add-field-btn').click();
+            });
+
+            // 批量编辑按钮
+            document.getElementById('batch-edit-btn').addEventListener('click', openBatchEditPanel);
+            document.getElementById('close-batch-edit').addEventListener('click', closeBatchEditPanel);
+            document.getElementById('batch-cancel-btn').addEventListener('click', closeBatchEditPanel);
+            document.getElementById('batch-apply-btn').addEventListener('click', applyBatchEdit);
+
+            // 字段管理面板
+            document.getElementById('close-field-management').addEventListener('click', closeFieldManagementPanel);
+
+            // 清除选择按钮
+            document.getElementById('clear-selection-btn').addEventListener('click', function () {
+                selectedTasks.clear();
+                updateSelectedTasksUI();
+            });
+
+            // 批量编辑字段选择
+            document.getElementById('batch-field-select').addEventListener('change', function () {
+                const fieldName = this.value;
+                const container = document.getElementById('batch-field-input-container');
+                const inputContainer = document.getElementById('batch-field-input');
+                const label = document.getElementById('batch-field-label');
+
+                if (!fieldName) {
+                    container.style.display = 'none';
+                    return;
+                }
+
+                const field = customFields.find(f => f.name === fieldName);
+                label.textContent = field.label;
+                container.style.display = 'block';
+
+                let inputHTML = '';
+                const inputStyle = 'width: 100%; padding: 10px 12px; border: 1px solid #D1D5DB; border-radius: 8px; font-size: 14px; box-sizing: border-box;';
+
+                if (field.type === 'text') {
+                    inputHTML = `<input type="text" class="form-control" placeholder="请输入${field.label}">`;
+                } else if (field.type === 'number') {
+                    inputHTML = `<input type="number" class="form-control" placeholder="请输入${field.label}">`;
+                } else if (field.type === 'select') {
+                    inputHTML = `<select class="form-control"><option value="">请选择</option>`;
+                    field.options.forEach(option => {
+                        inputHTML += `<option value="${option}">${option}</option>`;
+                    });
+                    inputHTML += `</select>`;
+                } else if (field.type === 'multiselect') {
+                    inputHTML = `<select class="form-control" multiple style="min-height: 100px;">`;
+                    field.options.forEach(option => {
+                        inputHTML += `<option value="${option}">${option}</option>`;
+                    });
+                    inputHTML += `</select>`;
+                }
+
+                inputContainer.innerHTML = inputHTML;
+            });
+
+            // 字段类型变化
+            document.getElementById('field-type').addEventListener('change', function () {
+                const type = this.value;
+                const optionsConfig = document.getElementById('options-config');
+                if (type === 'select' || type === 'multiselect') {
+                    optionsConfig.style.display = 'block';
+                } else {
+                    optionsConfig.style.display = 'none';
+                }
+            });
+
+            // 添加选项按钮
+            document.getElementById('add-option-btn').addEventListener('click', function () {
+                addOptionInput('');
+            });
+
+            // 保存字段配置
+            document.getElementById('save-field-btn').addEventListener('click', function () {
+                const fieldName = document.getElementById('field-name').value.trim();
+                const fieldType = document.getElementById('field-type').value;
+                const fieldRequired = document.getElementById('field-required').checked;
+                const fieldDefaultValue = document.getElementById('field-default-value').value.trim();
+                const modal = document.getElementById('field-config-modal');
+
+                if (!fieldName) {
+                    showToast('请输入字段名称', 'error', 3000);
+                    return;
+                }
+
+                const fieldConfig = {
+                    name: fieldName.toLowerCase().replace(/\s+/g, '_'),
+                    label: fieldName,
+                    type: fieldType,
+                    width: 100,
+                    required: fieldRequired
+                };
+
+                if (fieldType === 'select' || fieldType === 'multiselect') {
+                    const options = [];
+                    document.querySelectorAll('#options-list input[type="text"]').forEach(input => {
+                        if (input.value.trim()) {
+                            options.push(input.value.trim());
+                        }
+                    });
+
+                    if (options.length === 0) {
+                        showToast('请至少添加一个选项', 'error', 3000);
+                        return;
+                    }
+
+                    fieldConfig.options = options;
+                }
+
+                // 编辑模式或新增模式
+                if (modal.dataset.editMode === 'true') {
+                    const oldFieldName = modal.dataset.editFieldName;
+                    const fieldIndex = customFields.findIndex(f => f.name === oldFieldName);
+
+                    if (fieldIndex !== -1) {
+                        // 保留原有的 name,只更新 label 和其他属性
+                        customFields[fieldIndex].label = fieldName;
+                        customFields[fieldIndex].type = fieldType;
+                        customFields[fieldIndex].required = fieldRequired;
+
+                        // 更新选项配置(如果是选择类型)
+                        if (fieldType === 'select' || fieldType === 'multiselect') {
+                            const options = [];
+                            document.querySelectorAll('#options-list input[type="text"]').forEach(input => {
+                                if (input.value.trim()) {
+                                    options.push(input.value.trim());
+                                }
+                            });
+
+                            if (options.length === 0) {
+                                showToast('请至少添加一个选项', 'error', 3000);
+                                return;
+                            }
+
+                            customFields[fieldIndex].options = options;
+                        }
+                    }
+
+                    showToast('字段更新成功', 'success');
+                } else {
+                    customFields.push(fieldConfig);
+                    fieldOrder.push(fieldConfig.name);
+
+                    // 应用默认值到所有现有任务
+                    if (fieldDefaultValue) {
+                        gantt.eachTask(function (task) {
+                            task[fieldConfig.name] = fieldDefaultValue;
+                            gantt.updateTask(task.id); // 更新视图
+                        });
+                    }
+
+                    showToast('字段创建成功', 'success');
+                }
+
+                updateGanttColumns();
+                refreshLightbox();
+                renderFieldList();
+
+                modal.classList.remove('show');
+                setTimeout(() => {
+                    modal.style.display = 'none';
+                }, 300);
+            });
+
+            // 取消字段配置
+            document.getElementById('cancel-field-btn').addEventListener('click', function () {
+                const modal = document.getElementById('field-config-modal');
+                modal.classList.remove('show');
+                setTimeout(() => {
+                    modal.style.display = 'none';
+                }, 300);
+            });
+
+            // 导出配置
+            document.getElementById('config-export-btn').addEventListener('click', function () {
+                const config = {
+                    customFields: customFields,
+                    fieldOrder: fieldOrder,
+                    exportTime: new Date().toISOString()
+                };
+
+                const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'gantt-fields-config.json';
+                a.click();
+                URL.revokeObjectURL(url);
+
+                showToast('配置导出成功', 'success');
+            });
+
+            // 导入配置
+            document.getElementById('config-import-btn').addEventListener('click', function () {
+                document.getElementById('config-file-input').click();
+            });
+
+            document.getElementById('config-file-input').addEventListener('change', function (e) {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const reader = new FileReader();
+                reader.onload = function (e) {
+                    try {
+                        const config = JSON.parse(e.target.result);
+                        if (config.customFields && config.fieldOrder) {
+                            customFields = config.customFields;
+                            fieldOrder = config.fieldOrder;
+                            updateGanttColumns();
+                            refreshLightbox();
+                            showToast('配置导入成功', 'success');
+                        } else {
+                            showToast('配置文件格式不正确', 'error', 3000);
+                        }
+                    } catch (error) {
+                        showToast('配置文件解析失败: ' + error.message, 'error', 3000);
+                    }
+                };
+                reader.readAsText(file);
+            });
+        });
+    </script>
+</body>
+
+</html>
