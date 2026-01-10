@@ -140,35 +140,70 @@
             background-color: var(--background-gray) !important;
         }
 
-        /* 任务条 */
+        /* 任务条 - Figma设计双色进度条 */
         .gantt_task_line {
-            background-color: var(--task-bar-bg);
-            border: 1px solid var(--primary-color);
-            border-radius: var(--border-radius-small);
+            background: linear-gradient(135deg, #EF4444 0%, #F87171 100%);
+            /* 红色=未完成 */
+            border: none;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(239, 68, 68, 0.3);
+            overflow: hidden;
         }
 
         .gantt_task_line:hover {
-            box-shadow: var(--shadow-standard);
+            box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
+            transform: translateY(-1px);
         }
 
         .gantt_task_progress {
-            background-color: var(--accent-color);
-            border-radius: var(--border-radius-small);
+            background: linear-gradient(135deg, #22C55E 0%, #4ADE80 100%);
+            /* 绿色=已完成 */
+            border-radius: 8px 0 0 8px;
+            opacity: 1;
         }
 
+        /* 当进度为100%时，整条绿色 */
+        .gantt_task_line.task_completed {
+            background: linear-gradient(135deg, #22C55E 0%, #4ADE80 100%);
+            box-shadow: 0 2px 8px rgba(34, 197, 94, 0.3);
+        }
+
+        .gantt_task_line.task_completed:hover {
+            box-shadow: 0 4px 12px rgba(34, 197, 94, 0.4);
+        }
+
+        /* 逾期任务 - 增强红色 */
         .gantt_task_line.task_overdue {
-            background-color: var(--color-error);
-            border-color: var(--color-error);
+            background: linear-gradient(135deg, #DC2626 0%, #EF4444 100%);
+            box-shadow: 0 2px 8px rgba(220, 38, 38, 0.4);
         }
 
-        /* 依赖连线 */
-        .gantt_link_line {
-            stroke: var(--primary-color);
-            stroke-width: 1;
+        /* 任务条上的文字 - 居中显示任务名 */
+        .gantt_task_content {
+            color: white;
+            font-weight: 500;
+            font-size: 12px;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+            padding: 0 8px;
         }
 
-        .gantt_link_arrow_right {
-            border-left-color: var(--primary-color);
+        /* 依赖连线 - 虚线样式 */
+        .gantt_task_link .gantt_line_wrapper div {
+            background-color: transparent !important;
+            border-top: 1px dashed #94A3B8 !important;
+            margin-top: 2px;
+            /* Adjust for border */
+        }
+
+        .gantt_link_line_path {
+            stroke: #94A3B8 !important;
+            stroke-width: 1.5 !important;
+            stroke-dasharray: 6, 4 !important;
+            fill: none !important;
+        }
+
+        .gantt_link_arrow {
+            fill: #94A3B8 !important;
         }
 
         /* 4. P0功能: 动态高度自定义字段样式 */
@@ -496,52 +531,344 @@
 
         .modal-content {
             background: white;
-            padding: 24px;
-            border-radius: 12px;
-            width: 500px;
-            max-height: 80vh;
-            overflow-y: auto;
+            padding: 0;
+            border-radius: 16px;
+            width: 420px;
+            max-height: 85vh;
+            overflow: hidden;
             transform: scale(0.95);
             transition: transform 0.3s ease;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
         }
 
         .modal-backdrop.show .modal-content {
             transform: scale(1);
         }
 
-        .modal-content h3 {
-            margin-top: 0;
-            color: var(--text-primary);
+        /* 弹窗头部渐变样式 */
+        .modal-header-gradient {
+            background: linear-gradient(135deg, #3B82F6 0%, #8B5CF6 100%);
+            padding: 20px 24px;
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            position: relative;
+        }
+
+        .modal-header-icon {
+            width: 44px;
+            height: 44px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+        }
+
+        .modal-header-text {
+            flex: 1;
+        }
+
+        .modal-header-text h3 {
+            margin: 0;
+            color: white;
             font-size: 18px;
             font-weight: 600;
         }
 
+        .modal-header-text p {
+            margin: 4px 0 0;
+            color: rgba(255, 255, 255, 0.8);
+            font-size: 13px;
+        }
+
+        .modal-close-btn {
+            position: absolute;
+            right: 16px;
+            top: 16px;
+            width: 32px;
+            height: 32px;
+            background: rgba(255, 255, 255, 0.15);
+            border: none;
+            border-radius: 8px;
+            color: white;
+            font-size: 20px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.2s;
+        }
+
+        .modal-close-btn:hover {
+            background: rgba(255, 255, 255, 0.25);
+        }
+
+        /* 弹窗内容区域 */
+        .modal-body {
+            padding: 24px;
+            max-height: calc(85vh - 180px);
+            overflow-y: auto;
+        }
+
         .form-group {
-            margin-bottom: 16px;
+            margin-bottom: 24px;
         }
 
         .form-group label {
-            display: block;
-            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 10px;
             font-weight: 500;
             color: var(--text-primary);
-            font-size: 13px;
+            font-size: 14px;
+        }
+
+        .form-group label .label-icon {
+            font-size: 16px;
+            color: #3B82F6;
         }
 
         .form-control {
             width: 100%;
-            padding: 10px 12px;
+            padding: 12px 14px;
             border: 1px solid var(--border-color);
-            border-radius: 8px;
+            border-radius: 10px;
             font-size: 14px;
             box-sizing: border-box;
-            transition: border-color 0.2s;
+            transition: all 0.2s;
+            background: white;
         }
 
         .form-control:focus {
             outline: none;
             border-color: var(--primary-color);
-            border-width: 2px;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+
+        /* 字段类型选择器样式 */
+        .field-type-selector {
+            width: 100%;
+            padding: 12px 14px;
+            border: 2px solid var(--primary-color);
+            border-radius: 10px;
+            font-size: 14px;
+            box-sizing: border-box;
+            background: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            transition: all 0.2s;
+        }
+
+        .field-type-selector:hover {
+            background: #F8FAFC;
+        }
+
+        .field-type-icon {
+            font-size: 18px;
+            font-weight: 600;
+            width: 24px;
+            text-align: center;
+        }
+
+        .field-type-icon.icon-text {
+            color: #3B82F6;
+        }
+
+        .field-type-icon.icon-number {
+            color: #10B981;
+        }
+
+        .field-type-icon.icon-date {
+            color: #8B5CF6;
+        }
+
+        .field-type-icon.icon-select {
+            color: #6366F1;
+        }
+
+        .field-type-icon.icon-multiselect {
+            color: #EC4899;
+        }
+
+        .field-type-dropdown {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: white;
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            margin-top: 4px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15);
+            z-index: 10;
+            overflow: hidden;
+            display: none;
+        }
+
+        .field-type-dropdown.open {
+            display: block;
+        }
+
+        .field-type-option {
+            padding: 16px 18px;
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            cursor: pointer;
+            transition: background 0.15s;
+            border-bottom: 1px solid #F3F4F6;
+        }
+
+        .field-type-option:last-child {
+            border-bottom: none;
+        }
+
+        .field-type-option:hover {
+            background: #F8FAFC;
+        }
+
+        .field-type-option.selected {
+            background: #EFF6FF;
+        }
+
+        .field-type-option .check-icon {
+            margin-left: auto;
+            color: #3B82F6;
+            font-size: 18px;
+        }
+
+        .required-field-row {
+            display: flex;
+            align-items: center;
+            padding: 16px 18px;
+            background: white;
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-bottom: 24px;
+        }
+
+        .required-field-row:hover {
+            background: #F9FAFB;
+        }
+
+        .required-toggle {
+            width: 24px;
+            height: 24px;
+            border: 2px solid #D1D5DB;
+            border-radius: 50%;
+            margin-right: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            flex-shrink: 0;
+        }
+
+        .required-toggle.active {
+            border-color: #3B82F6;
+            background: #3B82F6;
+        }
+
+        .required-toggle.active::after {
+            content: '✓';
+            color: white;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .required-field-info {
+            flex: 1;
+        }
+
+        .required-field-info .title {
+            font-weight: 500;
+            color: var(--text-primary);
+            font-size: 14px;
+        }
+
+        .required-field-info .subtitle {
+            color: var(--text-secondary);
+            font-size: 12px;
+            margin-top: 2px;
+        }
+
+        .required-field-arrow {
+            color: #9CA3AF;
+            font-size: 16px;
+        }
+
+        /* 默认值信息卡片 */
+        .default-value-card {
+            background: #EFF6FF;
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 20px;
+        }
+
+        .default-value-header {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+
+        .default-value-icon {
+            width: 32px;
+            height: 32px;
+            background: #3B82F6;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 14px;
+            flex-shrink: 0;
+        }
+
+        .default-value-text h4 {
+            margin: 0;
+            font-size: 14px;
+            font-weight: 600;
+            color: #1E40AF;
+        }
+
+        .default-value-text p {
+            margin: 4px 0 0;
+            font-size: 13px;
+            color: #3B82F6;
+        }
+
+        .default-value-note {
+            font-size: 12px;
+            color: #3B82F6;
+            padding-top: 12px;
+            border-top: 1px solid rgba(59, 130, 246, 0.2);
+        }
+
+        /* 弹窗底部按钮 */
+        .modal-footer {
+            padding: 16px 24px 24px;
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+            background: white;
+        }
+
+        .modal-footer .btn-secondary {
+            padding: 12px 28px;
+            border-radius: 10px;
+        }
+
+        .modal-footer .btn-primary {
+            padding: 12px 32px;
+            border-radius: 10px;
         }
 
         .checkbox-label {
@@ -576,23 +903,484 @@
             display: flex;
         }
 
-        /* 11. P0功能: 自定义Lightbox样式增强 */
+        /* 11. P0功能: 自定义Lightbox样式增强 - 新任务弹窗 */
         .gantt_cal_light {
+            border-radius: 16px !important;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25) !important;
+            border: none !important;
+            overflow: visible !important;
+            background: #FFFFFF !important;
+        }
+
+        /* 弹窗头部渐变样式 */
+        .gantt_cal_ltitle {
+            background: linear-gradient(171deg, #615FFF 0%, #9810FA 50%, #E60076 100%) !important;
+            border: none !important;
+            padding: 20px 60px 20px 24px !important;
+            height: auto !important;
+            min-height: 70px !important;
+            display: flex !important;
+            align-items: center !important;
+            position: relative !important;
+            border-radius: 16px 16px 0 0 !important;
+        }
+
+        /* 隐藏原有标题文本，用自定义内容替代 */
+        .gantt_cal_ltitle span {
+            display: none !important;
+        }
+
+        /* 自定义标题内容通过::before和::after伪元素实现 */
+        .gantt_cal_ltitle::before {
+            content: "✦";
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 48px;
+            height: 48px;
+            background: rgba(255, 255, 255, 0.2);
             border-radius: 12px;
-            box-shadow: 0px 10px 15px -3px rgba(0, 0, 0, 0.1), 0px 4px 6px -2px rgba(0, 0, 0, 0.05);
+            font-size: 22px;
+            color: white;
+            margin-right: 14px;
+            flex-shrink: 0;
+        }
+
+        .gantt_cal_ltitle::after {
+            content: "新任务\A创建一个新的任务项目";
+            white-space: pre-line;
+            font-size: 18px;
+            font-weight: 600;
+            color: white;
+            line-height: 1.4;
+            flex: 1;
+        }
+
+        /* 头部关闭按钮(X) - 固定在头部右上角 */
+        .gantt_cal_ltitle_close_btn,
+        .gantt_cal_light .gantt_cal_ltitle_close_btn {
+            position: absolute !important;
+            right: 16px !important;
+            top: 50% !important;
+            transform: translateY(-50%) !important;
+            width: 36px !important;
+            height: 36px !important;
+            background: rgba(255, 255, 255, 0.15) !important;
+            border: none !important;
+            border-radius: 8px !important;
+            color: white !important;
+            font-size: 20px !important;
+            cursor: pointer !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            transition: background 0.2s !important;
+            z-index: 10 !important;
+            text-decoration: none !important;
+        }
+
+        .gantt_cal_ltitle_close_btn:hover {
+            background: rgba(255, 255, 255, 0.25) !important;
+        }
+
+        /* 隐藏头部控制区域的默认位置，使按钮能绝对定位 */
+        .gantt_cal_ltitle_controls {
+            position: absolute !important;
+            right: 16px !important;
+            top: 50% !important;
+            transform: translateY(-50%) !important;
+        }
+
+        /* 弹窗主体区域 */
+        .gantt_cal_larea {
+            background: #FFFFFF !important;
+            padding: 0 !important;
+            border: none !important;
+            overflow: visible !important;
+        }
+
+        /* 各个区段标签样式 */
+        .gantt_cal_lsection {
+            display: flex !important;
+            align-items: center !important;
+            gap: 8px !important;
+            color: #9810FA !important;
+            font-weight: 500 !important;
+            font-size: 14px !important;
+            padding: 16px 24px 8px !important;
+            background: transparent !important;
+            border: none !important;
+            height: auto !important;
+            overflow: visible !important;
+        }
+
+        /* 描述区段图标 */
+        .gantt_cal_lsection:first-of-type::before {
+            content: "✦";
+            font-size: 16px;
+            color: #9810FA;
+        }
+
+        /* 时间范围区段图标 */
+        .gantt_section_time::before {
+            content: "📅";
+            font-size: 16px;
+        }
+
+        /* 隐藏 custom_fields 区段标签 - Only hide the section label, not the content */
+        .gantt_cal_lsection.gantt_section_custom_fields {
+            display: none !important;
+        }
+
+        /* 修复下拉框被遮挡问题 */
+        .gantt_cal_ltext.gantt_custom_fields_container {
+            overflow: visible !important;
+        }
+
+        /* 隐藏 custom_fields 区段标签 - 使用多种选择器确保隐藏 */
+        .gantt_cal_larea>div.gantt_cal_lsection:nth-child(5),
+        .gantt_cal_larea>div.gantt_cal_lsection:nth-child(6),
+        .gantt_cal_larea>div.gantt_cal_lsection:last-child {
+            display: none !important;
+        }
+
+        /* 时间选择器区域 - 修复溢出 */
+        .gantt_section_time {
+            padding: 8px 24px 24px !important;
+            overflow: visible !important;
+            height: auto !important;
+            min-height: 100px !important;
+            /* Increase height for dropdowns */
+            margin-bottom: 10px !important;
+        }
+
+        /* 时间选择器容器样式 */
+        .gantt_time_selects {
+            display: flex !important;
+            flex-wrap: wrap !important;
+            gap: 10px !important;
+            align-items: center !important;
+            margin-bottom: 12px !important;
+            overflow: visible !important;
+        }
+
+        /* 使用 aria-label 进行排序: 年 月 日 (中国习惯) */
+        .gantt_time_selects>select[aria-label="年"] {
+            order: 1 !important;
+        }
+
+        .gantt_time_selects>select[aria-label="月"] {
+            order: 2 !important;
+        }
+
+        .gantt_time_selects>select[aria-label="天"] {
+            order: 3 !important;
+        }
+
+        .gantt_time_selects select {
+            padding: 12px 16px !important;
+            border: 1px solid #E5E7EB !important;
+            border-radius: 10px !important;
+            font-size: 14px !important;
+            color: #374151 !important;
+            background: #FFFFFF !important;
+            min-width: 80px !important;
+            cursor: pointer !important;
+            transition: all 0.2s !important;
+        }
+
+        .gantt_time_selects select:focus {
+            outline: none !important;
+            border-color: #9810FA !important;
+            box-shadow: 0 0 0 3px rgba(152, 16, 250, 0.1) !important;
+        }
+
+        /* 工期输入框样式 */
+        /* 工期输入框样式 - 白底圆角 */
+        .gantt_duration {
+            display: inline-flex !important;
+            align-items: center !important;
+            gap: 0 !important;
+            background: #FFFFFF !important;
+            border: 1px solid #E5E7EB !important;
+            border-radius: 8px !important;
+            padding: 2px !important;
+            overflow: hidden !important;
+            margin-left: 10px !important;
+            vertical-align: middle !important;
+            transition: border-color 0.2s !important;
+        }
+
+        .gantt_duration:hover {
+            border-color: #9810FA !important;
+        }
+
+        .gantt_duration .gantt_duration_dec,
+        .gantt_duration .gantt_duration_inc {
+            width: 32px !important;
+            height: 32px !important;
+            background: #F3F4F6 !important;
+            border-radius: 6px !important;
+            border: none !important;
+            font-size: 16px !important;
+            color: #4B5563 !important;
+            cursor: pointer !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            margin: 2px !important;
+        }
+
+        .gantt_duration .gantt_duration_dec:hover,
+        .gantt_duration .gantt_duration_inc:hover {
+            background: #E5E7EB !important;
+            color: #111827 !important;
+        }
+
+        .gantt_duration .gantt_duration_value,
+        .gantt_duration input {
+            width: 50px !important;
+            text-align: center !important;
+            border: none !important;
+            background: transparent !important;
+            font-size: 14px !important;
+            font-weight: 600 !important;
+            color: #1F2937 !important;
+            padding: 0 !important;
+            margin: 0 4px !important;
+        }
+
+        /* 日期显示标签 */
+        .gantt_cal_larea .gantt_cal_time {
+            display: inline-flex !important;
+            align-items: center !important;
+            gap: 8px !important;
+            padding: 10px 16px !important;
+            background: rgba(152, 16, 250, 0.1) !important;
+            border-radius: 20px !important;
+            font-size: 13px !important;
+            color: #9810FA !important;
+            font-weight: 500 !important;
+            margin-top: 8px !important;
+        }
+
+        .gantt_cal_larea .gantt_cal_time::before {
+            content: "📅";
+            font-size: 14px;
+        }
+
+        /* 文本框区域样式 */
+        .gantt_cal_ltext {
+            padding: 8px 24px 16px !important;
+            height: auto !important;
+            overflow: visible !important;
         }
 
         .gantt_cal_ltext textarea {
-            border: 1px solid #D1D5DB;
-            border-radius: 8px;
-            font-family: var(--font-family-base);
-            transition: border-color 0.2s;
+            width: 100% !important;
+            border: 1px solid #E5E7EB !important;
+            border-radius: 12px !important;
+            font-family: var(--font-family-base) !important;
+            font-size: 14px !important;
+            padding: 16px !important;
+            resize: none !important;
+            transition: all 0.2s !important;
+            box-sizing: border-box !important;
+            color: #374151 !important;
+            line-height: 1.5 !important;
         }
 
         .gantt_cal_ltext textarea:focus {
-            border-color: var(--primary-color);
-            border-width: 2px;
-            outline: none;
+            border-color: #9810FA !important;
+            box-shadow: 0 0 0 3px rgba(152, 16, 250, 0.1) !important;
+            outline: none !important;
+        }
+
+        .gantt_cal_ltext textarea::placeholder {
+            color: #9CA3AF !important;
+        }
+
+        /* 自定义字段区段 - 修复溢出 */
+        .gantt_custom_fields_container {
+            overflow: visible !important;
+        }
+
+        .custom-fields-section {
+            overflow: visible !important;
+        }
+
+        .custom-fields-section h4 {
+            display: flex !important;
+            align-items: center !important;
+            gap: 8px !important;
+            color: #374151 !important;
+        }
+
+        .custom-fields-section h4::before {
+            content: "⚙️";
+            font-size: 16px;
+        }
+
+        #manage-fields-btn {
+            display: inline-flex !important;
+            align-items: center !important;
+            gap: 6px !important;
+            padding: 8px 14px !important;
+            background: transparent !important;
+            color: #9810FA !important;
+            border: 1px solid #9810FA !important;
+            border-radius: 8px !important;
+            cursor: pointer !important;
+            font-size: 13px !important;
+            font-weight: 500 !important;
+            transition: all 0.2s !important;
+        }
+
+        #manage-fields-btn:hover {
+            background: rgba(152, 16, 250, 0.1) !important;
+        }
+
+        /* 字段网格布局修复溢出 */
+        .fields-grid {
+            overflow: visible !important;
+        }
+
+        .custom-field-item {
+            overflow: visible !important;
+        }
+
+        /* 下拉选择框样式 */
+        .custom-field-item select {
+            appearance: none !important;
+            -webkit-appearance: none !important;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%236B7280' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10l-5 5z'/%3E%3C/svg%3E") !important;
+            background-repeat: no-repeat !important;
+            background-position: right 12px center !important;
+            padding-right: 36px !important;
+            overflow: visible !important;
+        }
+
+        /* ========== 底部按钮区域 - 重写布局 ========== */
+
+        /* 底部按钮容器 - 遍历找到底部div */
+        .gantt_cal_light>div:last-child,
+        .gantt_cal_lcontrols {
+            padding: 20px 32px !important;
+            background: #FFFFFF !important;
+            border-top: 1px solid #F3F4F6 !important;
+            display: flex !important;
+            flex-direction: row !important;
+            align-items: center !important;
+            justify-content: space-between !important;
+            gap: 12px !important;
+            border-radius: 0 0 16px 16px !important;
+            flex-wrap: nowrap !important;
+        }
+
+        /* 按钮组基础样式 */
+        .gantt_btn_set {
+            margin: 0 !important;
+            padding: 0 !important;
+            display: inline-flex !important;
+            align-items: center !important;
+            border: none !important;
+            background: none !important;
+            border-radius: 10px !important;
+            overflow: hidden !important;
+            cursor: pointer !important;
+            transition: all 0.2s !important;
+        }
+
+        .gantt_btn_set div {
+            padding: 12px 20px !important;
+            font-size: 14px !important;
+            font-weight: 500 !important;
+            display: inline-flex !important;
+            align-items: center !important;
+            gap: 6px !important;
+            border: none !important;
+            background: transparent !important;
+        }
+
+        /* 隐藏所有按钮的原始图标文字 */
+        .gantt_btn_set .gantt_menu_icon,
+        .gantt_btn_set .dhx_gantt_icon,
+        .gantt_btn_set .gantt_save,
+        .gantt_btn_set .gantt_delete,
+        .gantt_btn_set .gantt_cancel {
+            display: none !important;
+        }
+
+        /* 删除按钮样式 - 使用实际类名 */
+        /* 删除按钮 - 幽灵按钮样式，更和谐 */
+        /* 删除按钮 - 幽灵按钮样式，更和谐 */
+        .gantt_delete_btn_set,
+        .gantt_btn_set.gantt_delete_btn_set {
+            background: transparent !important;
+            border: 1px solid transparent !important;
+            color: #6B7280 !important;
+            box-shadow: none !important;
+            transition: all 0.2s !important;
+            padding: 8px 16px !important;
+        }
+
+        .gantt_delete_btn_set:hover,
+        .gantt_btn_set.gantt_delete_btn_set:hover {
+            background: #FEF2F2 !important;
+            color: #EF4444 !important;
+            border-color: #FECACA !important;
+        }
+
+        .gantt_delete_btn_set .gantt_btn_content,
+        .gantt_btn_set.gantt_delete_btn_set .gantt_btn_content {
+            color: inherit !important;
+            font-weight: 500 !important;
+        }
+
+        /* 关闭按钮样式 - 完全隐藏，因为已经有X按钮 */
+        .gantt_cancel_btn_set,
+        .gantt_btn_set.gantt_cancel_btn_set {
+            display: none !important;
+        }
+
+        /* 保存按钮样式 */
+        .gantt_save_btn_set,
+        .gantt_btn_set.gantt_save_btn_set {
+            background: linear-gradient(135deg, #9810FA 0%, #E60076 100%) !important;
+            border: none !important;
+            order: 100 !important;
+            box-shadow: 0 4px 14px rgba(152, 16, 250, 0.3) !important;
+        }
+
+        .gantt_save_btn_set div {
+            color: white !important;
+        }
+
+        .gantt_save_btn_set:hover {
+            transform: translateY(-1px) !important;
+            box-shadow: 0 6px 20px rgba(152, 16, 250, 0.4) !important;
+        }
+
+        /* 隐藏按钮组内的图标元素，用 CSS 伪元素添加 */
+        .gantt_delete_btn_set .dhx_menu_icon,
+        .gantt_save_btn_set .dhx_menu_icon,
+        .gantt_delete_btn_set .gantt_menu_icon,
+        .gantt_save_btn_set .gantt_menu_icon,
+        .gantt_delete_btn_set i,
+        .gantt_save_btn_set i {
+            display: none !important;
+        }
+
+        /* 删除按钮图标 - 只给第一个span添加图标 */
+        .gantt_delete_btn_set>div>span:first-child::before {
+            content: "🗑️";
+            margin-right: 6px;
+        }
+
+        /* 保存按钮图标 */
+        .gantt_save_btn_set>div>span:first-child::before {
+            content: "💾";
+            margin-right: 6px;
         }
 
         /* 13. 可拖动分隔线样式 */
@@ -689,18 +1477,379 @@
         .gantt_row.gantt-selected .gantt-checkbox-selection {
             accent-color: #3b82f6;
         }
+
+        /* ==================== 15. 任务表格样式优化 (参考 task-list-optimized.html) ==================== */
+
+        /* 15.1 表头样式增强 */
+        .gantt_grid_scale {
+            background: #F9FAFB !important;
+            border-bottom: 2px solid var(--border-color) !important;
+        }
+
+        .gantt_grid_head_cell {
+            padding: 10px 8px !important;
+            font-size: 13px !important;
+            font-weight: 600 !important;
+            color: #6B7280 !important;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            border-right: 1px solid var(--border-color) !important;
+            background: transparent !important;
+            cursor: move !important;
+            user-select: none !important;
+        }
+
+        .gantt_grid_head_cell:last-child {
+            border-right: none !important;
+        }
+
+        .gantt_grid_head_cell:hover {
+            background-color: #EFF6FF !important;
+            color: var(--primary-color) !important;
+        }
+
+        /* 15.2 表格行样式优化 */
+        .gantt_row {
+            border-bottom: 1px solid var(--border-color) !important;
+            transition: all 0.2s ease;
+            overflow: visible !important;
+        }
+
+        .gantt_row:hover {
+            background-color: #F9FAFB !important;
+            box-shadow: inset 0 0 0 1px rgba(74, 144, 226, 0.1);
+        }
+
+        .gantt_row.odd {
+            background-color: var(--background-white) !important;
+        }
+
+        .gantt_row.odd:hover {
+            background-color: #F9FAFB !important;
+        }
+
+        /* 15.3 单元格样式优化 */
+        .gantt_cell {
+            padding: 8px 6px !important;
+            font-size: 14px !important;
+            vertical-align: middle !important;
+            border-right: 1px solid #F3F4F6 !important;
+            color: var(--text-primary);
+            overflow: visible !important;
+            line-height: 1.2 !important;
+            display: flex !important;
+            align-items: center !important;
+        }
+
+        .gantt_cell:last-child {
+            border-right: none !important;
+        }
+
+        /* 15.4 任务名称单元格优化 (树形结构) */
+        .gantt_tree_content {
+            font-weight: 500 !important;
+            color: #111827 !important;
+            line-height: 1.2 !important;
+            overflow: visible !important;
+            width: 100% !important;
+        }
+
+        /* 15.4.1 进度条容器宽度修复 */
+        .progress-cell-gantt {
+            width: 100% !important;
+        }
+
+        .gantt_tree_icon {
+            margin-right: 6px;
+        }
+
+        /* 15.5 复选框样式优化 */
+        .gantt-checkbox-selection {
+            width: 18px !important;
+            height: 18px !important;
+            cursor: pointer;
+            accent-color: #3B82F6;
+            border-radius: 4px;
+        }
+
+        #select-all-checkbox {
+            width: 18px !important;
+            height: 18px !important;
+            cursor: pointer;
+            accent-color: #3B82F6;
+        }
+
+        /* 15.6 添加按钮列样式 */
+        .gantt_add {
+            opacity: 0.5;
+            transition: all 0.2s ease;
+        }
+
+        .gantt_row:hover .gantt_add {
+            opacity: 1;
+        }
+
+        /* 15.7 时间轴区域行样式同步 */
+        .gantt_task_row {
+            border-bottom: 1px solid var(--border-color) !important;
+            transition: background-color 0.2s ease;
+        }
+
+        .gantt_task_row:hover {
+            background-color: #FAFBFC !important;
+        }
+
+        .gantt_task_row.odd {
+            background-color: var(--background-white) !important;
+        }
+
+        .gantt_task_row.odd:hover {
+            background-color: #FAFBFC !important;
+        }
+
+        /* 15.8 表格整体优化 */
+        .gantt_grid {
+            background: var(--background-white);
+        }
+
+        .gantt_grid_data {
+            background: var(--background-white) !important;
+        }
+
+        /* 15.9 行动画效果 */
+        @keyframes ganttSlideIn {
+            from {
+                opacity: 0;
+                transform: translateY(5px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .gantt_row {
+            animation: ganttSlideIn 0.25s ease-out;
+        }
+
+        /* 15.10 状态标签样式 (用于自定义字段渲染) */
+        .status-badge-gantt {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 4px 12px;
+            border-radius: 16px;
+            font-size: 12px;
+            font-weight: 500;
+            white-space: nowrap;
+        }
+
+        .status-badge-gantt.status-pending {
+            background: #F3F4F6;
+            color: #6B7280;
+        }
+
+        .status-badge-gantt.status-progress {
+            background: #EFF6FF;
+            color: #3B82F6;
+        }
+
+        .status-badge-gantt.status-completed {
+            background: #D1FAE5;
+            color: #10B981;
+        }
+
+        .status-badge-gantt.status-paused {
+            background: #FEF3C7;
+            color: #F59E0B;
+        }
+
+        /* 15.11 优先级标签样式 */
+        .priority-badge-gantt {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .priority-badge-gantt.priority-high {
+            background: #FEE2E2;
+            color: #EF4444;
+        }
+
+        .priority-badge-gantt.priority-medium {
+            background: #FEF3C7;
+            color: #F59E0B;
+        }
+
+        .priority-badge-gantt.priority-low {
+            background: #D1FAE5;
+            color: #10B981;
+        }
+
+        /* 15.12 负责人样式 */
+        .assignee-cell-gantt {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .assignee-avatar-gantt {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background: #DBEAFE;
+            color: #3B82F6;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 11px;
+            flex-shrink: 0;
+        }
+
+        .assignee-name-gantt {
+            font-size: 13px;
+            color: #374151;
+        }
+
+        /* 15.13 进度条单元格样式 */
+        .progress-cell-gantt {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .progress-bar-gantt {
+            flex: 1;
+            height: 6px;
+            background: #E5E7EB;
+            border-radius: 3px;
+            overflow: hidden;
+        }
+
+        .progress-bar-fill-gantt {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 0.3s ease;
+        }
+
+        .progress-bar-fill-gantt.low {
+            background: #F59E0B;
+        }
+
+        .progress-bar-fill-gantt.medium {
+            background: #3B82F6;
+        }
+
+        .progress-bar-fill-gantt.high {
+            background: #10B981;
+        }
+
+        .progress-text-gantt {
+            font-size: 12px;
+            font-weight: 600;
+            color: #374151;
+            min-width: 36px;
+            text-align: right;
+        }
+
+        /* 15.14 行号/序号徽章样式 */
+        .task-id-badge-gantt {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 28px;
+            height: 22px;
+            background: var(--primary-color);
+            color: white;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 11px;
+            margin-right: 8px;
+        }
+
+        /* 15.15 工具提示优化 */
+        .gantt_tooltip {
+            background: rgba(17, 24, 39, 0.95) !important;
+            border: none !important;
+            border-radius: 8px !important;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05) !important;
+            padding: 10px 14px !important;
+            font-size: 13px !important;
+            color: white !important;
+            line-height: 1.5 !important;
+        }
+
+        /* 15.16 空状态提示样式 */
+        .gantt_message_area {
+            font-family: var(--font-family-base);
+        }
     </style>
 </head>
 
 <body>
     <div id="gantt_here"></div>
 
-    <!-- 字段管理工具栏 -->
+    <!-- 甘特图图例 -->
+    <div id="gantt-legend" style="
+        position: fixed;
+        bottom: 20px;
+        left: 20px;
+        background: white;
+        padding: 12px 20px;
+        border-radius: 12px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        display: flex;
+        align-items: center;
+        gap: 24px;
+        z-index: 100;
+        font-size: 13px;
+        color: #374151;
+    ">
+        <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="
+                display: inline-block;
+                width: 24px;
+                height: 12px;
+                background: linear-gradient(135deg, #22C55E 0%, #4ADE80 100%);
+                border-radius: 4px;
+            "></span>
+            <span>已完成</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="
+                display: inline-block;
+                width: 24px;
+                height: 12px;
+                background: linear-gradient(135deg, #EF4444 0%, #F87171 100%);
+                border-radius: 4px;
+            "></span>
+            <span>未完成</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="
+                display: inline-block;
+                width: 24px;
+                height: 0;
+                border-top: 2px dashed #94A3B8;
+            "></span>
+            <span>依赖关系</span>
+        </div>
+    </div>
+
+    <!-- 字段管理工具栏 - Figma设计样式 -->
     <div id="field-toolbar">
-        <button id="add-field-btn" style="background: #4A90E2; color: white;">+ 新增字段</button>
-        <button id="batch-edit-btn" style="background: #6B7280; color: white;">批量编辑</button>
-        <button id="config-export-btn" style="background: #22C55E; color: white;">📤 导出</button>
-        <button id="config-import-btn" style="background: #6B7280; color: white;">📥 导入</button>
+        <button id="add-field-btn"
+            style="background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%); color: white;">✏️ 编辑字段</button>
+        <button id="batch-edit-btn"
+            style="background: linear-gradient(135deg, #374151 0%, #1F2937 100%); color: white;">✏️ 编辑模式</button>
+        <button id="config-export-btn"
+            style="background: linear-gradient(135deg, #22C55E 0%, #16A34A 100%); color: white;">📤 导出</button>
+        <button id="config-import-btn"
+            style="background: linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%); color: white;">📥 导入</button>
     </div>
 
     <!-- 选中任务计数器 -->
@@ -760,38 +1909,100 @@
     <!-- 字段配置弹窗 -->
     <div id="field-config-modal" class="modal-backdrop" style="display: none;">
         <div class="modal-content">
-            <h3>字段配置</h3>
-            <div class="form-group">
-                <label>字段名称</label>
-                <input type="text" id="field-name" class="form-control" placeholder="请输入字段名称">
+            <!-- 渐变头部 -->
+            <div class="modal-header-gradient">
+                <div class="modal-header-icon">✦</div>
+                <div class="modal-header-text">
+                    <h3>字段配置</h3>
+                    <p>创建和自定义您的字段</p>
+                </div>
+                <button class="modal-close-btn" id="modal-close-x">×</button>
             </div>
-            <div class="form-group">
-                <label>字段类型</label>
-                <select id="field-type" class="form-control">
-                    <option value="text">文本</option>
-                    <option value="select">下拉选择(单选)</option>
-                    <option value="multiselect">下拉选择(多选)</option>
-                    <option value="number">数值</option>
-                </select>
+
+            <!-- 内容区域 -->
+            <div class="modal-body">
+                <!-- 字段名称 -->
+                <div class="form-group">
+                    <label><span class="label-icon">T</span> 字段名称</label>
+                    <input type="text" id="field-name" class="form-control" placeholder="请输入字段名称">
+                </div>
+
+                <!-- 字段类型 -->
+                <div class="form-group" style="position: relative;">
+                    <label><span class="label-icon">≡</span> 字段类型</label>
+                    <div class="field-type-selector" id="field-type-selector">
+                        <span class="field-type-icon icon-number">#</span>
+                        <span class="field-type-text">数字</span>
+                        <span style="margin-left: auto; color: #9CA3AF;">▼</span>
+                    </div>
+                    <select id="field-type" style="display: none;">
+                        <option value="text">文本</option>
+                        <option value="number" selected>数字</option>
+                        <option value="date">日期</option>
+                        <option value="select">下拉选择</option>
+                        <option value="multiselect">多选</option>
+                    </select>
+                    <div class="field-type-dropdown" id="field-type-dropdown">
+                        <div class="field-type-option" data-value="text">
+                            <span class="field-type-icon icon-text">Ā</span>
+                            <span>文本</span>
+                        </div>
+                        <div class="field-type-option selected" data-value="number">
+                            <span class="field-type-icon icon-number">#</span>
+                            <span>数字</span>
+                            <span class="check-icon">✓</span>
+                        </div>
+                        <div class="field-type-option" data-value="date">
+                            <span class="field-type-icon icon-date">☐</span>
+                            <span>日期</span>
+                        </div>
+                        <div class="field-type-option" data-value="select">
+                            <span class="field-type-icon icon-select">˅</span>
+                            <span>下拉选择</span>
+                        </div>
+                        <div class="field-type-option" data-value="multiselect">
+                            <span class="field-type-icon icon-multiselect">≡</span>
+                            <span>多选</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 必填字段 -->
+                <div class="required-field-row" id="required-field-row">
+                    <div class="required-toggle" id="required-toggle"></div>
+                    <div class="required-field-info">
+                        <div class="title">必填字段</div>
+                        <div class="subtitle">用户必须填写此字段</div>
+                    </div>
+                    <span class="required-field-arrow">›</span>
+                    <input type="checkbox" id="field-required" style="display: none;">
+                </div>
+
+                <!-- 默认值信息卡片 -->
+                <div class="default-value-card">
+                    <div class="default-value-header">
+                        <div class="default-value-icon">ⓘ</div>
+                        <div class="default-value-text">
+                            <h4>默认值 (可选)</h4>
+                            <p>现有任务将自动填充此值</p>
+                        </div>
+                    </div>
+                    <input type="text" id="field-default-value" class="form-control" placeholder="输入默认值..."
+                        style="margin-bottom: 12px;">
+                    <div class="default-value-note">新增字段时，所有现有任务将被设置为此默认值。</div>
+                </div>
+
+                <!-- 选项配置 -->
+                <div id="options-config" class="form-group" style="display: none;">
+                    <label><span class="label-icon">☰</span> 选项配置</label>
+                    <div id="options-list"></div>
+                    <button id="add-option-btn" class="btn-secondary"
+                        style="margin-top: 8px; padding: 8px 14px; font-size: 13px;">+ 添加选项</button>
+                </div>
             </div>
-            <div class="form-group">
-                <label class="checkbox-label">
-                    <input type="checkbox" id="field-required">
-                    <span>必填字段</span>
-                </label>
-            </div>
-            <div class="form-group">
-                <label>默认值 (可选)</label>
-                <input type="text" id="field-default-value" class="form-control" placeholder="现有任务将自动填充此值">
-                <div style="font-size: 12px; color: #6B7280; margin-top: 4px;">新增字段时，所有现有任务将被设置为此默认值。</div>
-            </div>
-            <div id="options-config" class="form-group" style="display: none;">
-                <label>选项配置</label>
-                <div id="options-list"></div>
-                <button id="add-option-btn" class="btn-secondary"
-                    style="margin-top: 8px; padding: 6px 12px; font-size: 13px;">+ 添加选项</button>
-            </div>
-            <div style="text-align: right; margin-top: 24px; display: flex; gap: 12px; justify-content: flex-end;">
+
+            <!-- 底部按钮 -->
+            <div class="modal-footer">
                 <button id="cancel-field-btn" class="btn-secondary">取消</button>
                 <button id="save-field-btn" class="btn-primary">保存</button>
             </div>
@@ -808,9 +2019,9 @@
     <script>
         // ========== 数据和状态管理 ==========
         let customFields = [
-            { name: "priority", label: "优先级", type: "select", options: ["高", "中", "低"], width: 80, required: false },
-            { name: "assignee", label: "负责人", type: "text", width: 100, required: true },
-            { name: "status", label: "状态", type: "select", options: ["待开始", "进行中", "已完成", "已暂停"], width: 100, required: false }
+            { name: "priority", label: "优先级", type: "select", options: ["高", "中", "低"], width: 90, required: false },
+            { name: "assignee", label: "负责人", type: "text", width: 120, required: true },
+            { name: "status", label: "状态", type: "select", options: ["待开始", "进行中", "已完成", "已暂停"], width: 130, required: false }
         ];
 
         let fieldOrder = ["text", "priority", "assignee", "status", "start_date", "duration", "progress"];
@@ -905,7 +2116,7 @@
             let height;
 
             if (fieldCount <= 3) {
-                height = fieldCount * 70 + 80;
+                height = fieldCount * 80 + 90; /* 增加高度防止遮挡 */
             } else if (fieldCount <= 6) {
                 const rows = Math.ceil(fieldCount / 2);
                 height = rows * 86 + 80;
@@ -973,12 +2184,59 @@
         function getFieldTypeLabel(type) {
             const labels = {
                 'text': '文本',
-                'number': '数值',
-                'select': '单选',
+                'number': '数字',
+                'date': '日期',
+                'select': '下拉选择',
                 'multiselect': '多选'
             };
             return labels[type] || type;
         }
+
+        // 更新字段类型选择器UI
+        function updateFieldTypeSelector(value) {
+            const selector = document.getElementById('field-type-selector');
+            const dropdown = document.getElementById('field-type-dropdown');
+
+            // 图标配置
+            const iconMap = {
+                'text': { icon: 'Ā', class: 'icon-text' },
+                'number': { icon: '#', class: 'icon-number' },
+                'date': { icon: '☐', class: 'icon-date' },
+                'select': { icon: '˅', class: 'icon-select' },
+                'multiselect': { icon: '≡', class: 'icon-multiselect' }
+            };
+
+
+            const config = iconMap[value] || iconMap['text'];
+            const label = getFieldTypeLabel(value);
+
+            // 更新选择器显示
+            selector.innerHTML = `
+                <span class="field-type-icon ${config.class}">${config.icon}</span>
+                <span class="field-type-text">${label}</span>
+                <span style="margin-left: auto; color: #9CA3AF;">▼</span>
+            `;
+
+            // 更新下拉菜单选中状态
+            dropdown.querySelectorAll('.field-type-option').forEach(opt => {
+                const isSelected = opt.dataset.value === value;
+                opt.classList.toggle('selected', isSelected);
+
+                // 更新勾选图标
+                let checkIcon = opt.querySelector('.check-icon');
+                if (isSelected) {
+                    if (!checkIcon) {
+                        checkIcon = document.createElement('span');
+                        checkIcon.className = 'check-icon';
+                        checkIcon.textContent = '✓';
+                        opt.appendChild(checkIcon);
+                    }
+                } else if (checkIcon) {
+                    checkIcon.remove();
+                }
+            });
+        }
+
 
         function editField(fieldName) {
             const field = customFields.find(f => f.name === fieldName);
@@ -986,10 +2244,15 @@
 
             document.getElementById('field-name').value = field.label;
             document.getElementById('field-type').value = field.type;
-            document.getElementById('field-name').value = field.label;
-            document.getElementById('field-type').value = field.type;
             document.getElementById('field-required').checked = field.required || false;
             document.getElementById('field-default-value').value = ''; // 编辑时不填充默认值输入框，避免混淆
+
+            // 更新字段类型选择器UI
+            updateFieldTypeSelector(field.type);
+
+            // 更新必填字段切换UI
+            const toggle = document.getElementById('required-toggle');
+            toggle.classList.toggle('active', field.required || false);
 
             const optionsConfig = document.getElementById('options-config');
             if (field.type === 'select' || field.type === 'multiselect') {
@@ -1014,6 +2277,7 @@
             modal.dataset.editMode = 'true';
             modal.dataset.editFieldName = fieldName;
         }
+
 
         function deleteField(fieldName) {
             if (!confirm(`确定要删除字段 "${customFields.find(f => f.name === fieldName)?.label}" 吗?`)) {
@@ -1230,6 +2494,52 @@
         }
 
         // ========== 甘特图配置 ==========
+
+        // 15.17 自定义字段渲染模板函数
+        function renderPriorityBadge(value) {
+            if (!value) return '';
+            const classMap = {
+                '高': 'priority-high',
+                '中': 'priority-medium',
+                '低': 'priority-low'
+            };
+            const badgeClass = classMap[value] || '';
+            return `<span class="priority-badge-gantt ${badgeClass}">${value}</span>`;
+        }
+
+        function renderStatusBadge(value) {
+            if (!value) return '';
+            const classMap = {
+                '待开始': 'status-pending',
+                '进行中': 'status-progress',
+                '已完成': 'status-completed',
+                '已暂停': 'status-paused'
+            };
+            const iconMap = {
+                '待开始': '⏱',
+                '进行中': '▶',
+                '已完成': '✓',
+                '已暂停': '⏸'
+            };
+            const badgeClass = classMap[value] || 'status-pending';
+            const icon = iconMap[value] || '';
+            return `<span class="status-badge-gantt ${badgeClass}">${icon} ${value}</span>`;
+        }
+
+        function renderAssignee(value) {
+            if (!value) return '';
+            const initial = value.charAt(0);
+            return `<span class="assignee-cell-gantt"><span class="assignee-avatar-gantt">${initial}</span><span class="assignee-name-gantt">${value}</span></span>`;
+        }
+
+        function renderProgressBar(task) {
+            const progress = Math.round(task.progress * 100);
+            let progressClass = 'low';
+            if (progress > 70) progressClass = 'high';
+            else if (progress > 30) progressClass = 'medium';
+            return `<div class="progress-cell-gantt"><div class="progress-bar-gantt"><div class="progress-bar-fill-gantt ${progressClass}" style="width: ${progress}%"></div></div><span class="progress-text-gantt">${progress}%</span></div>`;
+        }
+
         function updateGanttColumns() {
             const columns = [];
 
@@ -1253,24 +2563,43 @@
                 } else if (fieldName === "duration") {
                     columns.push({ name: "duration", label: "工期(天)", align: "center", width: 80, resize: true });
                 } else if (fieldName === "progress") {
+                    // 使用增强的进度条渲染
                     columns.push({
-                        name: "progress", label: "进度(%)", align: "center", width: 80, resize: true,
+                        name: "progress", label: "进度", align: "center", width: 120, resize: true,
                         template: function (task) {
-                            return Math.round(task.progress * 100) + "%";
+                            return renderProgressBar(task);
                         }
                     });
                 } else {
                     const customField = customFields.find(f => f.name === fieldName);
                     if (customField) {
+                        // 根据字段名称使用不同的渲染模板
+                        let templateFn;
+                        if (fieldName === 'priority') {
+                            templateFn = function (task) {
+                                return renderPriorityBadge(task[fieldName]);
+                            };
+                        } else if (fieldName === 'status') {
+                            templateFn = function (task) {
+                                return renderStatusBadge(task[fieldName]);
+                            };
+                        } else if (fieldName === 'assignee') {
+                            templateFn = function (task) {
+                                return renderAssignee(task[fieldName]);
+                            };
+                        } else {
+                            templateFn = function (task) {
+                                return task[fieldName] || '';
+                            };
+                        }
+
                         columns.push({
                             name: fieldName,
                             label: customField.label,
                             align: "center",
                             width: customField.width || 100,
                             resize: true,
-                            template: function (task) {
-                                return task[fieldName] || '';
-                            }
+                            template: templateFn
                         });
                     }
                 }
@@ -1305,18 +2634,27 @@
 
                 // 标题和管理字段按钮
                 html += '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">';
-                html += '<h4 style="margin: 0; color: #1F2937; font-size: 14px; font-weight: 600;">自定义字段</h4>';
-                html += '<button id="manage-fields-btn" type="button" style="padding: 6px 12px; background: transparent; color: #4A90E2; border: 1px solid #4A90E2; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; transition: all 0.2s;">⚙️ 管理字段</button>';
+                html += '<h4 style="margin: 0; color: #1F2937; font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px;">自定义字段</h4>';
+                html += '<button id="manage-fields-btn" type="button" style="padding: 6px 12px; background: transparent; color: #9810FA; border: 1px solid #9810FA; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; transition: all 0.2s;">⚙ 管理字段</button>';
                 html += '</div>';
 
                 html += `<div class="fields-grid ${layoutClass}" style="max-height: ${fieldCount > 6 ? 'calc(100% - 60px)' : 'auto'}; overflow-y: ${fieldCount > 6 ? 'auto' : 'visible'};">`;
 
+                // 定义字段图标映射
+                const fieldIconMap = {
+                    'priority': '🚩',
+                    'assignee': '👤',
+                    'status': '📊',
+                    'default': '📝'
+                };
+
                 customFields.forEach(field => {
                     const fieldValue = task[field.name] || '';
                     const requiredMark = field.required ? '<span style="color: #EF4444; margin-left: 4px;">*</span>' : '';
+                    const fieldIcon = fieldIconMap[field.name] || fieldIconMap['default'];
 
                     html += `<div class="custom-field-item" style="margin-bottom: 16px;">`;
-                    html += `<label style="display: block; margin-bottom: 5px; font-weight: 500; color: #374151; font-size: 13px;">${field.label}${requiredMark}:</label>`;
+                    html += `<label style="display: flex; align-items: center; gap: 6px; margin-bottom: 5px; font-weight: 500; color: #374151; font-size: 13px;"><span style="color: #9810FA;">${fieldIcon}</span> ${field.label}${requiredMark}:</label>`;
 
                     const inputStyle = 'width: 100%; padding: 10px 12px; border: 1px solid #D1D5DB; border-radius: 8px; font-size: 13px; box-sizing: border-box; transition: border-color 0.2s;';
                     const focusEvents = 'onfocus="this.style.borderColor=\'#4A90E2\'; this.style.borderWidth=\'2px\'" onblur="this.style.borderColor=\'#D1D5DB\'; this.style.borderWidth=\'1px\'"';
@@ -1453,6 +2791,23 @@
         // ========== 甘特图初始化 ==========
         gantt.i18n.setLocale("cn");
 
+        // 设置中国日期格式 (年-月-日)
+        gantt.config.date_format = "%Y-%m-%d";
+        gantt.config.xml_date = "%Y-%m-%d";
+
+        // 设置 lightbox 时间选择器顺序为: 日 月 年 (从右到左显示为 年 月 日)
+        gantt.config.lightbox_additional_height = 90;
+
+        // 自定义时间显示模板为中文格式
+        gantt.templates.lightbox_header = function (start, end, task) {
+            return "新任务";
+        };
+
+        // 时间显示格式化为中文
+        gantt.templates.time_picker = function (date) {
+            return date.getFullYear() + "年" + (date.getMonth() + 1) + "月" + date.getDate() + "日";
+        };
+
         gantt.config.scales = [
             {
                 unit: "month",
@@ -1477,10 +2832,16 @@
         ];
 
         gantt.templates.task_class = function (start, end, task) {
+            let classes = [];
+            // 逾期任务
             if (task.progress < 1 && new Date() > end) {
-                return "task_overdue";
+                classes.push("task_overdue");
             }
-            return "";
+            // 已完成任务
+            if (task.progress >= 1) {
+                classes.push("task_completed");
+            }
+            return classes.join(" ");
         };
 
         // P1功能: 批量选择 - 网格行高亮模板
@@ -1514,6 +2875,14 @@
 
         // 配置 DHTMLX Native Layout
         // 使用自定义 HTML 元素作为 Resizer，以兼容 Standard 版本
+
+        // 15.18 行高配置 - 增加行高以完整显示内容
+        gantt.config.row_height = 50;
+        gantt.config.scale_height = 40;
+
+        // 15.19 启用表头拖拽排序功能
+        gantt.config.reorder_grid_columns = true;
+
         gantt.config.layout = {
             css: "gantt_container",
             cols: [
@@ -1562,6 +2931,65 @@
             return true;
         });
 
+        // P1功能: Lightbox打开后动态调整布局
+        gantt.attachEvent("onLightbox", function (task_id) {
+            setTimeout(function () {
+                // 1. 隐藏 custom_fields 区段标签
+                var sections = document.querySelectorAll('.gantt_cal_lsection');
+                sections.forEach(function (section) {
+                    if (section.textContent.trim() === 'custom_fields' ||
+                        section.textContent.includes('custom_fields')) {
+                        section.style.display = 'none';
+                    }
+                });
+
+                // 2. 重新排序时间选择器 (年-月-日)
+                var timeSelects = document.querySelector('.gantt_time_selects');
+                if (timeSelects) {
+                    var selects = timeSelects.querySelectorAll('select');
+                    if (selects.length >= 3) {
+                        // 找到年、月、日选择器
+                        var yearSelect = null, monthSelect = null, daySelect = null;
+                        selects.forEach(function (sel) {
+                            var label = sel.getAttribute('aria-label') || '';
+                            if (label.includes('年')) yearSelect = sel;
+                            else if (label.includes('月')) monthSelect = sel;
+                            else if (label.includes('天') || label.includes('日')) daySelect = sel;
+                        });
+
+                        // 重新按 年-月-日 顺序插入
+                        if (yearSelect && monthSelect && daySelect) {
+                            yearSelect.style.order = '-3';
+                            monthSelect.style.order = '-2';
+                            daySelect.style.order = '-1';
+                        }
+                    }
+                }
+
+                // 3. 修复按钮布局: 删除在左, 关闭和保存在右
+                var btnContainer = document.querySelector('.gantt_cal_light > div:last-child');
+                if (btnContainer) {
+                    var deleteBtn = btnContainer.querySelector('.gantt_delete_btn_set');
+                    var cancelBtn = btnContainer.querySelector('.gantt_cancel_btn_set');
+                    var saveBtn = btnContainer.querySelector('.gantt_save_btn_set');
+
+                    if (deleteBtn) {
+                        deleteBtn.style.order = '-1';
+                        deleteBtn.style.marginRight = 'auto';
+                    }
+                    if (cancelBtn) {
+                        cancelBtn.style.order = '1';
+                        cancelBtn.style.marginLeft = '0';
+                    }
+                    if (saveBtn) {
+                        saveBtn.style.order = '2';
+                    }
+                }
+            }, 50);
+
+            return true;
+        });
+
         // P1功能: 监听任务行点击事件(批量选择)
         gantt.attachEvent("onTaskClick", function (id, e) {
             // 如果点击的是复选框或复选框所在的单元格，完全跳过，让复选框事件处理器处理
@@ -1594,6 +3022,28 @@
         });
 
         updateGanttColumns();
+
+        // 动态调整图例位置
+        function updateLegendPosition() {
+            const gridWidth = gantt.config.layout.cols[0].width;
+            const resizerWidth = gantt.config.layout.cols[1].width || 6;
+            const legend = document.getElementById('gantt-legend');
+            if (legend) {
+                legend.style.left = (gridWidth + resizerWidth + 20) + 'px';
+            }
+        }
+
+        // 监听布局变化和调整大小时更新图例位置
+        gantt.attachEvent("onLayoutResize", function () {
+            updateLegendPosition();
+        });
+
+        gantt.attachEvent("onGanttReady", function () {
+            updateLegendPosition();
+        });
+
+        // 初始调用
+        setTimeout(updateLegendPosition, 500);
 
         gantt.init("gantt_here");
         var tasks = {
@@ -1680,9 +3130,64 @@
                 document.getElementById('options-config').style.display = 'none';
                 document.getElementById('options-list').innerHTML = '';
 
+                // 重置字段类型选择器UI
+                updateFieldTypeSelector('text');
+
+                // 重置必填字段切换
+                document.getElementById('required-toggle').classList.remove('active');
+
                 delete modal.dataset.editMode;
                 delete modal.dataset.editFieldName;
             });
+
+            // 字段类型选择器点击事件
+            document.getElementById('field-type-selector').addEventListener('click', function (e) {
+                e.stopPropagation();
+                const dropdown = document.getElementById('field-type-dropdown');
+                dropdown.classList.toggle('open');
+            });
+
+            // 字段类型选项点击事件
+            document.querySelectorAll('.field-type-option').forEach(option => {
+                option.addEventListener('click', function (e) {
+                    e.stopPropagation();
+                    const value = this.dataset.value;
+                    document.getElementById('field-type').value = value;
+                    updateFieldTypeSelector(value);
+                    document.getElementById('field-type-dropdown').classList.remove('open');
+
+                    // 触发字段类型变化逻辑
+                    const optionsConfig = document.getElementById('options-config');
+                    if (value === 'select' || value === 'multiselect') {
+                        optionsConfig.style.display = 'block';
+                    } else {
+                        optionsConfig.style.display = 'none';
+                    }
+                });
+            });
+
+            // 点击外部关闭下拉菜单
+            document.addEventListener('click', function () {
+                document.getElementById('field-type-dropdown').classList.remove('open');
+            });
+
+            // 必填字段行点击事件
+            document.getElementById('required-field-row').addEventListener('click', function () {
+                const checkbox = document.getElementById('field-required');
+                const toggle = document.getElementById('required-toggle');
+                checkbox.checked = !checkbox.checked;
+                toggle.classList.toggle('active', checkbox.checked);
+            });
+
+            // 弹窗关闭按钮
+            document.getElementById('modal-close-x').addEventListener('click', function () {
+                const modal = document.getElementById('field-config-modal');
+                modal.classList.remove('show');
+                setTimeout(() => {
+                    modal.style.display = 'none';
+                }, 300);
+            });
+
 
             document.getElementById('add-field-from-panel-btn').addEventListener('click', function () {
                 document.getElementById('add-field-btn').click();
