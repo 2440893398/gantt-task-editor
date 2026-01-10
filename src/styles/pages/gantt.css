@@ -1,0 +1,1113 @@
+/* ========================================
+   甘特图组件样式
+   ======================================== */
+
+/* 容器 */
+.gantt_container {
+    border: none;
+}
+
+.gantt_grid,
+.gantt_task {
+    border-top: 1px solid var(--border-color);
+}
+
+.gantt_grid_scale,
+.gantt_task_scale {
+    background-color: var(--background-white);
+    border-bottom: 1px solid var(--border-color);
+    color: var(--text-secondary);
+}
+
+/* ========================================
+   表格区域
+   ======================================== */
+
+.gantt_grid_head_cell {
+    font-weight: var(--font-weight-semibold);
+    font-size: var(--font-size-body);
+    color: var(--text-primary);
+    cursor: move;
+    user-select: none;
+    transition: all 0.2s ease;
+    position: relative;
+}
+
+.gantt_grid_head_cell:hover {
+    background-color: #F3F4F6;
+    transform: translateY(-1px);
+}
+
+.gantt_row {
+    border-bottom: 1px solid var(--border-color);
+    transition: background-color 0.2s ease;
+}
+
+.gantt_row:hover {
+    background-color: var(--background-hover-gray);
+}
+
+.gantt_row.odd {
+    background-color: var(--background-white);
+}
+
+.gantt_grid_data .gantt_cell {
+    font-size: var(--font-size-body);
+    font-weight: var(--font-weight-regular);
+}
+
+.gantt_tree_content {
+    font-weight: var(--font-weight-medium);
+}
+
+.gantt_grid_data {
+    background-color: var(--background-white);
+}
+
+/* ========================================
+   时间轴
+   ======================================== */
+
+.gantt_task_scale .gantt_scale_cell {
+    font-size: var(--font-size-small);
+    font-weight: var(--font-weight-regular);
+}
+
+.gantt_data_area {
+    background-color: var(--background-white);
+}
+
+.gantt_task_row {
+    border-bottom: 1px solid var(--border-color);
+}
+
+.gantt_task_row.odd {
+    background-color: var(--background-white);
+}
+
+.weekend {
+    background-color: var(--background-gray) !important;
+}
+
+/* ========================================
+   任务条 - Figma设计双色进度条
+   ======================================== */
+
+.gantt_task_line {
+    background: linear-gradient(135deg, #EF4444 0%, #F87171 100%);
+    /* 红色=未完成 */
+    border: none;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(239, 68, 68, 0.3);
+    overflow: hidden;
+}
+
+.gantt_task_line:hover {
+    box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
+    transform: translateY(-1px);
+}
+
+.gantt_task_progress {
+    background: linear-gradient(135deg, #22C55E 0%, #4ADE80 100%);
+    /* 绿色=已完成 */
+    border-radius: 8px 0 0 8px;
+    opacity: 1;
+}
+
+/* 当进度为100%时，整条绿色 */
+.gantt_task_line.task_completed {
+    background: linear-gradient(135deg, #22C55E 0%, #4ADE80 100%);
+    box-shadow: 0 2px 8px rgba(34, 197, 94, 0.3);
+}
+
+.gantt_task_line.task_completed:hover {
+    box-shadow: 0 4px 12px rgba(34, 197, 94, 0.4);
+}
+
+/* 逾期任务 - 增强红色 */
+.gantt_task_line.task_overdue {
+    background: linear-gradient(135deg, #DC2626 0%, #EF4444 100%);
+    box-shadow: 0 2px 8px rgba(220, 38, 38, 0.4);
+}
+
+/* 任务条上的文字 - 居中显示任务名 */
+.gantt_task_content {
+    color: white;
+    font-weight: 500;
+    font-size: 12px;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+    padding: 0 8px;
+}
+
+/* ========================================
+   依赖连线 - 虚线样式
+   ======================================== */
+
+.gantt_task_link .gantt_line_wrapper div {
+    background-color: transparent !important;
+    border-top: 1px dashed #94A3B8 !important;
+    margin-top: 2px;
+}
+
+.gantt_link_line_path {
+    stroke: #94A3B8 !important;
+    stroke-width: 1.5 !important;
+    stroke-dasharray: 6, 4 !important;
+    fill: none !important;
+}
+
+.gantt_link_arrow {
+    fill: #94A3B8 !important;
+}
+
+/* ========================================
+   工具栏样式
+   ======================================== */
+
+#field-toolbar {
+    position: fixed;
+    top: 10px;
+    right: 10px;
+    z-index: 1000;
+    background: white;
+    padding: 10px;
+    border-radius: 8px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    display: flex;
+    gap: 8px;
+}
+
+#field-toolbar button {
+    padding: 8px 14px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    transition: all 0.2s;
+}
+
+#field-toolbar button:hover {
+    opacity: 0.9;
+    transform: translateY(-1px);
+}
+
+/* ========================================
+   选中任务计数器
+   ======================================== */
+
+#selected-tasks-counter {
+    position: fixed;
+    top: 70px;
+    right: 10px;
+    z-index: 1000;
+    background: #E0F2FE;
+    padding: 10px 16px;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    display: none;
+    align-items: center;
+    gap: 12px;
+}
+
+#selected-tasks-counter.show {
+    display: flex;
+}
+
+/* ========================================
+   自定义Lightbox样式 - 新任务弹窗
+   ======================================== */
+
+.gantt_cal_light {
+    border-radius: 16px !important;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25) !important;
+    border: none !important;
+    overflow: visible !important;
+    background: #FFFFFF !important;
+}
+
+/* 弹窗头部渐变样式 */
+.gantt_cal_ltitle {
+    background: linear-gradient(171deg, #615FFF 0%, #9810FA 50%, #E60076 100%) !important;
+    border: none !important;
+    padding: 20px 60px 20px 24px !important;
+    height: auto !important;
+    min-height: 70px !important;
+    display: flex !important;
+    align-items: center !important;
+    position: relative !important;
+    border-radius: 16px 16px 0 0 !important;
+}
+
+/* 隐藏原有标题文本，用自定义内容替代 */
+.gantt_cal_ltitle span {
+    display: none !important;
+}
+
+/* 自定义标题内容通过::before和::after伪元素实现 */
+.gantt_cal_ltitle::before {
+    content: "✦";
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    height: 48px;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 12px;
+    font-size: 22px;
+    color: white;
+    margin-right: 14px;
+    flex-shrink: 0;
+}
+
+.gantt_cal_ltitle::after {
+    content: "新任务\A创建一个新的任务项目";
+    white-space: pre-line;
+    font-size: 18px;
+    font-weight: 600;
+    color: white;
+    line-height: 1.4;
+    flex: 1;
+}
+
+/* 头部关闭按钮(X) - 固定在头部右上角 */
+.gantt_cal_ltitle_close_btn,
+.gantt_cal_light .gantt_cal_ltitle_close_btn {
+    position: absolute !important;
+    right: 16px !important;
+    top: 50% !important;
+    transform: translateY(-50%) !important;
+    width: 36px !important;
+    height: 36px !important;
+    background: rgba(255, 255, 255, 0.15) !important;
+    border: none !important;
+    border-radius: 8px !important;
+    color: white !important;
+    font-size: 20px !important;
+    cursor: pointer !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    transition: background 0.2s !important;
+    z-index: 10 !important;
+    text-decoration: none !important;
+}
+
+.gantt_cal_ltitle_close_btn:hover {
+    background: rgba(255, 255, 255, 0.25) !important;
+}
+
+/* 隐藏头部控制区域的默认位置，使按钮能绝对定位 */
+.gantt_cal_ltitle_controls {
+    position: absolute !important;
+    right: 16px !important;
+    top: 50% !important;
+    transform: translateY(-50%) !important;
+}
+
+/* 弹窗主体区域 */
+.gantt_cal_larea {
+    background: #FFFFFF !important;
+    padding: 0 !important;
+    border: none !important;
+    overflow: visible !important;
+}
+
+/* 各个区段标签样式 */
+.gantt_cal_lsection {
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+    color: #9810FA !important;
+    font-weight: 500 !important;
+    font-size: 14px !important;
+    padding: 16px 24px 8px !important;
+    background: transparent !important;
+    border: none !important;
+    height: auto !important;
+    overflow: visible !important;
+}
+
+/* 描述区段图标 */
+.gantt_cal_lsection:first-of-type::before {
+    content: "✦";
+    font-size: 16px;
+    color: #9810FA;
+}
+
+/* 时间范围区段图标 */
+.gantt_section_time::before {
+    content: "📅";
+    font-size: 16px;
+}
+
+/* 隐藏 custom_fields 区段标签 */
+.gantt_cal_lsection.gantt_section_custom_fields {
+    display: none !important;
+}
+
+/* 修复下拉框被遮挡问题 */
+.gantt_cal_ltext.gantt_custom_fields_container {
+    overflow: visible !important;
+}
+
+/* 隐藏 custom_fields 区段标签 - 使用多种选择器确保隐藏 */
+.gantt_cal_larea>div.gantt_cal_lsection:nth-child(5),
+.gantt_cal_larea>div.gantt_cal_lsection:nth-child(6),
+.gantt_cal_larea>div.gantt_cal_lsection:last-child {
+    display: none !important;
+}
+
+/* 时间选择器区域 - 修复溢出 */
+.gantt_section_time {
+    padding: 8px 24px 24px !important;
+    overflow: visible !important;
+    height: auto !important;
+    min-height: 100px !important;
+    margin-bottom: 10px !important;
+}
+
+/* 时间选择器容器样式 */
+.gantt_time_selects {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 10px !important;
+    align-items: center !important;
+    margin-bottom: 12px !important;
+    overflow: visible !important;
+}
+
+/* 使用 aria-label 进行排序: 年 月 日 (中国习惯) */
+.gantt_time_selects>select[aria-label="年"] {
+    order: 1 !important;
+}
+
+.gantt_time_selects>select[aria-label="月"] {
+    order: 2 !important;
+}
+
+.gantt_time_selects>select[aria-label="天"] {
+    order: 3 !important;
+}
+
+.gantt_time_selects select {
+    padding: 12px 16px !important;
+    border: 1px solid #E5E7EB !important;
+    border-radius: 10px !important;
+    font-size: 14px !important;
+    color: #374151 !important;
+    background: #FFFFFF !important;
+    min-width: 80px !important;
+    cursor: pointer !important;
+    transition: all 0.2s !important;
+}
+
+.gantt_time_selects select:focus {
+    outline: none !important;
+    border-color: #9810FA !important;
+    box-shadow: 0 0 0 3px rgba(152, 16, 250, 0.1) !important;
+}
+
+/* 工期输入框样式 - 白底圆角 */
+.gantt_duration {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 0 !important;
+    background: #FFFFFF !important;
+    border: 1px solid #E5E7EB !important;
+    border-radius: 8px !important;
+    padding: 2px !important;
+    overflow: hidden !important;
+    margin-left: 10px !important;
+    vertical-align: middle !important;
+    transition: border-color 0.2s !important;
+}
+
+.gantt_duration:hover {
+    border-color: #9810FA !important;
+}
+
+.gantt_duration .gantt_duration_dec,
+.gantt_duration .gantt_duration_inc {
+    width: 32px !important;
+    height: 32px !important;
+    background: #F3F4F6 !important;
+    border-radius: 6px !important;
+    border: none !important;
+    font-size: 16px !important;
+    color: #4B5563 !important;
+    cursor: pointer !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    margin: 2px !important;
+}
+
+.gantt_duration .gantt_duration_dec:hover,
+.gantt_duration .gantt_duration_inc:hover {
+    background: #E5E7EB !important;
+    color: #111827 !important;
+}
+
+.gantt_duration .gantt_duration_value,
+.gantt_duration input {
+    width: 50px !important;
+    text-align: center !important;
+    border: none !important;
+    background: transparent !important;
+    font-size: 14px !important;
+    font-weight: 600 !important;
+    color: #1F2937 !important;
+    padding: 0 !important;
+    margin: 0 4px !important;
+}
+
+/* 日期显示标签 */
+.gantt_cal_larea .gantt_cal_time {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+    padding: 10px 16px !important;
+    background: rgba(152, 16, 250, 0.1) !important;
+    border-radius: 20px !important;
+    font-size: 13px !important;
+    color: #9810FA !important;
+    font-weight: 500 !important;
+    margin-top: 8px !important;
+}
+
+.gantt_cal_larea .gantt_cal_time::before {
+    content: "📅";
+    font-size: 14px;
+}
+
+/* 文本框区域样式 */
+.gantt_cal_ltext {
+    padding: 8px 24px 16px !important;
+    height: auto !important;
+    overflow: visible !important;
+}
+
+.gantt_cal_ltext textarea {
+    width: 100% !important;
+    border: 1px solid #E5E7EB !important;
+    border-radius: 12px !important;
+    font-family: var(--font-family-base) !important;
+    font-size: 14px !important;
+    padding: 16px !important;
+    resize: none !important;
+    transition: all 0.2s !important;
+    box-sizing: border-box !important;
+    color: #374151 !important;
+    line-height: 1.5 !important;
+}
+
+.gantt_cal_ltext textarea:focus {
+    border-color: #9810FA !important;
+    box-shadow: 0 0 0 3px rgba(152, 16, 250, 0.1) !important;
+    outline: none !important;
+}
+
+.gantt_cal_ltext textarea::placeholder {
+    color: #9CA3AF !important;
+}
+
+/* 自定义字段区段 - 修复溢出 */
+.gantt_custom_fields_container {
+    overflow: visible !important;
+}
+
+.custom-fields-section {
+    overflow: visible !important;
+}
+
+.custom-fields-section h4 {
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+    color: #374151 !important;
+}
+
+.custom-fields-section h4::before {
+    content: "⚙️";
+    font-size: 16px;
+}
+
+#manage-fields-btn {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+    padding: 8px 14px !important;
+    background: transparent !important;
+    color: #9810FA !important;
+    border: 1px solid #9810FA !important;
+    border-radius: 8px !important;
+    cursor: pointer !important;
+    font-size: 13px !important;
+    font-weight: 500 !important;
+    transition: all 0.2s !important;
+}
+
+#manage-fields-btn:hover {
+    background: rgba(152, 16, 250, 0.1) !important;
+}
+
+/* 字段网格布局修复溢出 */
+.fields-grid {
+    overflow: visible !important;
+}
+
+.custom-field-item {
+    overflow: visible !important;
+}
+
+/* 下拉选择框样式 */
+.custom-field-item select {
+    appearance: none !important;
+    -webkit-appearance: none !important;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%236B7280' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10l-5 5z'/%3E%3C/svg%3E") !important;
+    background-repeat: no-repeat !important;
+    background-position: right 12px center !important;
+    padding-right: 36px !important;
+    overflow: visible !important;
+}
+
+/* ========================================
+   底部按钮区域
+   ======================================== */
+
+/* 底部按钮容器 */
+.gantt_cal_light>div:last-child,
+.gantt_cal_lcontrols {
+    padding: 20px 32px !important;
+    background: #FFFFFF !important;
+    border-top: 1px solid #F3F4F6 !important;
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    gap: 12px !important;
+    border-radius: 0 0 16px 16px !important;
+    flex-wrap: nowrap !important;
+}
+
+/* 按钮组基础样式 */
+.gantt_btn_set {
+    margin: 0 !important;
+    padding: 0 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    border: none !important;
+    background: none !important;
+    border-radius: 10px !important;
+    overflow: hidden !important;
+    cursor: pointer !important;
+    transition: all 0.2s !important;
+}
+
+.gantt_btn_set div {
+    padding: 12px 20px !important;
+    font-size: 14px !important;
+    font-weight: 500 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+    border: none !important;
+    background: transparent !important;
+}
+
+/* 隐藏所有按钮的原始图标文字 */
+.gantt_btn_set .gantt_menu_icon,
+.gantt_btn_set .dhx_gantt_icon,
+.gantt_btn_set .gantt_save,
+.gantt_btn_set .gantt_delete,
+.gantt_btn_set .gantt_cancel {
+    display: none !important;
+}
+
+/* 删除按钮 - 幽灵按钮样式 */
+.gantt_delete_btn_set,
+.gantt_btn_set.gantt_delete_btn_set {
+    background: transparent !important;
+    border: 1px solid transparent !important;
+    color: #6B7280 !important;
+    box-shadow: none !important;
+    transition: all 0.2s !important;
+    padding: 8px 16px !important;
+}
+
+.gantt_delete_btn_set:hover,
+.gantt_btn_set.gantt_delete_btn_set:hover {
+    background: #FEF2F2 !important;
+    color: #EF4444 !important;
+    border-color: #FECACA !important;
+}
+
+.gantt_delete_btn_set .gantt_btn_content,
+.gantt_btn_set.gantt_delete_btn_set .gantt_btn_content {
+    color: inherit !important;
+    font-weight: 500 !important;
+}
+
+/* 关闭按钮样式 - 完全隐藏，因为已经有X按钮 */
+.gantt_cancel_btn_set,
+.gantt_btn_set.gantt_cancel_btn_set {
+    display: none !important;
+}
+
+/* 保存按钮样式 */
+.gantt_save_btn_set,
+.gantt_btn_set.gantt_save_btn_set {
+    background: linear-gradient(135deg, #9810FA 0%, #E60076 100%) !important;
+    border: none !important;
+    order: 100 !important;
+    box-shadow: 0 4px 14px rgba(152, 16, 250, 0.3) !important;
+}
+
+.gantt_save_btn_set div {
+    color: white !important;
+}
+
+.gantt_save_btn_set:hover {
+    transform: translateY(-1px) !important;
+    box-shadow: 0 6px 20px rgba(152, 16, 250, 0.4) !important;
+}
+
+/* 隐藏按钮组内的图标元素 */
+.gantt_delete_btn_set .dhx_menu_icon,
+.gantt_save_btn_set .dhx_menu_icon,
+.gantt_delete_btn_set .gantt_menu_icon,
+.gantt_save_btn_set .gantt_menu_icon,
+.gantt_delete_btn_set i,
+.gantt_save_btn_set i {
+    display: none !important;
+}
+
+/* 删除按钮图标 */
+.gantt_delete_btn_set>div>span:first-child::before {
+    content: "🗑️";
+    margin-right: 6px;
+}
+
+/* 保存按钮图标 */
+.gantt_save_btn_set>div>span:first-child::before {
+    content: "💾";
+    margin-right: 6px;
+}
+
+/* ========================================
+   可拖动分隔线样式
+   ======================================== */
+
+.gantt_resizer,
+.resizer_cell,
+.gantt_layout_cell_resizer {
+    width: 6px !important;
+    background: #E5E7EB !important;
+    cursor: col-resize !important;
+    position: relative;
+    transition: background-color 0.2s ease;
+}
+
+.gantt_resizer:hover,
+.resizer_cell:hover,
+.gantt_layout_cell_resizer:hover {
+    background: var(--primary-color) !important;
+}
+
+.gantt_resizer::after,
+.resizer_cell::after,
+.gantt_layout_cell_resizer::after {
+    content: '⋮';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: #9CA3AF;
+    font-size: 14px;
+    pointer-events: none;
+}
+
+.gantt_resizer:hover::after,
+.resizer_cell:hover::after,
+.gantt_layout_cell_resizer:hover::after {
+    color: white;
+}
+
+.gantt_resizer_x {
+    width: 6px !important;
+    background: #E5E7EB;
+    cursor: col-resize;
+    transition: background-color 0.2s ease;
+}
+
+.gantt_resizer_x:hover {
+    background: var(--primary-color) !important;
+}
+
+/* ========================================
+   批量选中行的视觉反馈优化
+   ======================================== */
+
+.gantt_row.gantt-selected,
+.gantt_grid_data .gantt_row.gantt-selected,
+.gantt_container .gantt_row.gantt-selected {
+    background-color: rgba(59, 130, 246, 0.15) !important;
+    border-left: 3px solid #3b82f6 !important;
+    transition: all 0.2s ease;
+    box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.1);
+}
+
+.gantt_row.gantt-selected.odd,
+.gantt_grid_data .gantt_row.gantt-selected.odd {
+    background-color: rgba(59, 130, 246, 0.15) !important;
+}
+
+.gantt_task_row.gantt-selected,
+.gantt_data_area .gantt_task_row.gantt-selected,
+.gantt_container .gantt_task_row.gantt-selected {
+    background-color: rgba(59, 130, 246, 0.15) !important;
+    transition: all 0.2s ease;
+}
+
+.gantt_task_row.gantt-selected.odd,
+.gantt_data_area .gantt_task_row.gantt-selected.odd {
+    background-color: rgba(59, 130, 246, 0.15) !important;
+}
+
+.gantt_row.gantt-selected:hover,
+.gantt_grid_data .gantt_row.gantt-selected:hover {
+    background-color: rgba(59, 130, 246, 0.25) !important;
+}
+
+.gantt_task_row.gantt-selected:hover,
+.gantt_data_area .gantt_task_row.gantt-selected:hover {
+    background-color: rgba(59, 130, 246, 0.25) !important;
+}
+
+/* 选中行的单元格样式 */
+.gantt_row.gantt-selected .gantt_cell,
+.gantt_grid_data .gantt_row.gantt-selected .gantt_cell {
+    background-color: transparent !important;
+}
+
+/* 选中行的复选框高亮 */
+.gantt_row.gantt-selected .gantt-checkbox-selection {
+    accent-color: #3b82f6;
+}
+
+/* ========================================
+   任务表格样式优化
+   ======================================== */
+
+/* 表头样式增强 */
+.gantt_grid_scale {
+    background: #F9FAFB !important;
+    border-bottom: 2px solid var(--border-color) !important;
+}
+
+.gantt_grid_head_cell {
+    padding: 10px 8px !important;
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    color: #6B7280 !important;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    border-right: 1px solid var(--border-color) !important;
+    background: transparent !important;
+    cursor: move !important;
+    user-select: none !important;
+}
+
+.gantt_grid_head_cell:last-child {
+    border-right: none !important;
+}
+
+.gantt_grid_head_cell:hover {
+    background-color: #EFF6FF !important;
+    color: var(--primary-color) !important;
+}
+
+/* 表格行样式优化 */
+.gantt_row {
+    border-bottom: 1px solid var(--border-color) !important;
+    transition: all 0.2s ease;
+    overflow: visible !important;
+}
+
+.gantt_row:hover {
+    background-color: #F9FAFB !important;
+    box-shadow: inset 0 0 0 1px rgba(74, 144, 226, 0.1);
+}
+
+.gantt_row.odd {
+    background-color: var(--background-white) !important;
+}
+
+.gantt_row.odd:hover {
+    background-color: #F9FAFB !important;
+}
+
+/* 单元格样式优化 */
+.gantt_cell {
+    padding: 8px 6px !important;
+    font-size: 14px !important;
+    vertical-align: middle !important;
+    border-right: 1px solid #F3F4F6 !important;
+    color: var(--text-primary);
+    overflow: visible !important;
+    line-height: 1.2 !important;
+    display: flex !important;
+    align-items: center !important;
+}
+
+.gantt_cell:last-child {
+    border-right: none !important;
+}
+
+/* 任务名称单元格优化 (树形结构) */
+.gantt_tree_content {
+    font-weight: 500 !important;
+    color: #111827 !important;
+    line-height: 1.2 !important;
+    overflow: visible !important;
+    width: 100% !important;
+}
+
+/* 进度条容器宽度修复 */
+.progress-cell-gantt {
+    width: 100% !important;
+}
+
+.gantt_tree_icon {
+    margin-right: 6px;
+}
+
+/* 复选框样式优化 */
+.gantt-checkbox-selection {
+    width: 18px !important;
+    height: 18px !important;
+    cursor: pointer;
+    accent-color: #3B82F6;
+    border-radius: 4px;
+}
+
+#select-all-checkbox {
+    width: 18px !important;
+    height: 18px !important;
+    cursor: pointer;
+    accent-color: #3B82F6;
+}
+
+/* 添加按钮列样式 */
+.gantt_add {
+    opacity: 0.5;
+    transition: all 0.2s ease;
+}
+
+.gantt_row:hover .gantt_add {
+    opacity: 1;
+}
+
+/* 时间轴区域行样式同步 */
+.gantt_task_row {
+    border-bottom: 1px solid var(--border-color) !important;
+    transition: background-color 0.2s ease;
+}
+
+.gantt_task_row:hover {
+    background-color: #FAFBFC !important;
+}
+
+.gantt_task_row.odd {
+    background-color: var(--background-white) !important;
+}
+
+.gantt_task_row.odd:hover {
+    background-color: #FAFBFC !important;
+}
+
+/* 表格整体优化 */
+.gantt_grid {
+    background: var(--background-white);
+}
+
+.gantt_grid_data {
+    background: var(--background-white) !important;
+}
+
+/* 行动画效果 */
+@keyframes ganttSlideIn {
+    from {
+        opacity: 0;
+        transform: translateY(5px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.gantt_row {
+    animation: ganttSlideIn 0.25s ease-out;
+}
+
+/* ========================================
+   状态标签和徽章样式
+   ======================================== */
+
+/* 状态标签样式 */
+.status-badge-gantt {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 12px;
+    border-radius: 16px;
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.status-badge-gantt.status-pending {
+    background: #F3F4F6;
+    color: #6B7280;
+}
+
+.status-badge-gantt.status-progress {
+    background: #EFF6FF;
+    color: #3B82F6;
+}
+
+.status-badge-gantt.status-completed {
+    background: #D1FAE5;
+    color: #10B981;
+}
+
+.status-badge-gantt.status-paused {
+    background: #FEF3C7;
+    color: #F59E0B;
+}
+
+/* 优先级标签样式 */
+.priority-badge-gantt {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.priority-badge-gantt.priority-high {
+    background: #FEE2E2;
+    color: #EF4444;
+}
+
+.priority-badge-gantt.priority-medium {
+    background: #FEF3C7;
+    color: #F59E0B;
+}
+
+.priority-badge-gantt.priority-low {
+    background: #D1FAE5;
+    color: #10B981;
+}
+
+/* 负责人样式 */
+.assignee-cell-gantt {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.assignee-avatar-gantt {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: #DBEAFE;
+    color: #3B82F6;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    font-size: 11px;
+    flex-shrink: 0;
+}
+
+.assignee-name-gantt {
+    font-size: 13px;
+    color: #374151;
+}
+
+/* 进度条单元格样式 */
+.progress-cell-gantt {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.progress-bar-gantt {
+    flex: 1;
+    height: 6px;
+    background: #E5E7EB;
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.progress-bar-fill-gantt {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.3s ease;
+}
+
+.progress-bar-fill-gantt.low {
+    background: #F59E0B;
+}
+
+.progress-bar-fill-gantt.medium {
+    background: #3B82F6;
+}
+
+.progress-bar-fill-gantt.high {
+    background: #10B981;
+}
+
+.progress-text-gantt {
+    font-size: 12px;
+    font-weight: 600;
+    color: #374151;
+    min-width: 36px;
+    text-align: right;
+}
+
+/* 行号/序号徽章样式 */
+.task-id-badge-gantt {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 28px;
+    height: 22px;
+    background: var(--primary-color);
+    color: white;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 11px;
+    margin-right: 8px;
+}
+
+/* 工具提示优化 */
+.gantt_tooltip {
+    background: rgba(17, 24, 39, 0.95) !important;
+    border: none !important;
+    border-radius: 8px !important;
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05) !important;
+    padding: 10px 14px !important;
+    font-size: 13px !important;
+    color: white !important;
+    line-height: 1.5 !important;
+}
+
+/* 空状态提示样式 */
+.gantt_message_area {
+    font-family: var(--font-family-base);
+}

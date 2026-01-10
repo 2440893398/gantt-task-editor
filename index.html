@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>甘特图任务编辑页面 - 模块化版本</title>
+    <meta name="description" content="甘特图任务编辑器，支持自定义字段、批量编辑等功能">
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+
+    <!-- DHTMLX Gantt -->
+    <link href="https://cdn.dhtmlx.com/gantt/edge/dhtmlxgantt.css" rel="stylesheet">
+    <script src="https://cdn.dhtmlx.com/gantt/edge/dhtmlxgantt.js"></script>
+    <script src="https://cdn.dhtmlx.com/gantt/edge/locale/locale_cn.js"></script>
+
+    <!-- SortableJS -->
+    <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+</head>
+
+<body>
+    <div id="gantt_here"></div>
+
+    <!-- 甘特图图例 -->
+    <div id="gantt-legend" style="
+        position: fixed;
+        bottom: 20px;
+        left: 20px;
+        background: white;
+        padding: 12px 20px;
+        border-radius: 12px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        display: flex;
+        align-items: center;
+        gap: 24px;
+        z-index: 100;
+        font-size: 13px;
+        color: #374151;
+    ">
+        <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="
+                display: inline-block;
+                width: 24px;
+                height: 12px;
+                background: linear-gradient(135deg, #22C55E 0%, #4ADE80 100%);
+                border-radius: 4px;
+            "></span>
+            <span>已完成</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="
+                display: inline-block;
+                width: 24px;
+                height: 12px;
+                background: linear-gradient(135deg, #EF4444 0%, #F87171 100%);
+                border-radius: 4px;
+            "></span>
+            <span>未完成</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="
+                display: inline-block;
+                width: 24px;
+                height: 0;
+                border-top: 2px dashed #94A3B8;
+            "></span>
+            <span>依赖关系</span>
+        </div>
+    </div>
+
+    <!-- 字段管理工具栏 -->
+    <div id="field-toolbar">
+        <button id="add-field-btn"
+            style="background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%); color: white;">✏️ 编辑字段</button>
+        <button id="batch-edit-btn"
+            style="background: linear-gradient(135deg, #374151 0%, #1F2937 100%); color: white;">✏️ 编辑模式</button>
+        <button id="config-export-btn"
+            style="background: linear-gradient(135deg, #22C55E 0%, #16A34A 100%); color: white;">📤 导出</button>
+        <button id="config-import-btn"
+            style="background: linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%); color: white;">📥 导入</button>
+    </div>
+
+    <!-- 选中任务计数器 -->
+    <div id="selected-tasks-counter">
+        <span style="color: #0C4A6E; font-size: 14px; font-weight: 500;">
+            已选中 <span id="selected-count">0</span> 个任务
+        </span>
+        <button id="clear-selection-btn" class="btn-secondary" style="padding: 4px 12px; font-size: 12px;">清除选择</button>
+    </div>
+
+    <!-- 批量编辑面板 -->
+    <div id="batch-edit-panel">
+        <div class="batch-edit-header">
+            <h3>批量编辑</h3>
+            <button id="close-batch-edit"
+                style="background: none; border: none; font-size: 24px; color: #6B7280; cursor: pointer;">&times;</button>
+        </div>
+        <div class="batch-edit-body">
+            <div style="background: #E0F2FE; padding: 12px; border-radius: 8px; margin-bottom: 20px;">
+                <span style="color: #0C4A6E; font-size: 14px;">ℹ️ 已选中 <strong id="batch-selected-count">0</strong>
+                    个任务</span>
+            </div>
+            <div class="form-group">
+                <label>选择要修改的字段</label>
+                <select id="batch-field-select" class="form-control">
+                    <option value="">请选择字段</option>
+                </select>
+            </div>
+            <div id="batch-field-input-container" style="display: none;">
+                <div class="form-group">
+                    <label id="batch-field-label">字段值</label>
+                    <div id="batch-field-input"></div>
+                </div>
+            </div>
+        </div>
+        <div class="batch-edit-footer">
+            <button id="batch-cancel-btn" class="btn-secondary">取消</button>
+            <button id="batch-apply-btn" class="btn-primary">应用到所有任务</button>
+        </div>
+    </div>
+
+    <!-- 字段管理面板 -->
+    <div id="field-management-panel">
+        <div class="field-management-header">
+            <h4 style="margin: 0; font-size: 14px; font-weight: 600;">字段管理</h4>
+            <button id="close-field-management"
+                style="background: none; border: none; font-size: 24px; color: #6B7280; cursor: pointer;">&times;</button>
+        </div>
+        <div class="field-management-body" id="field-list-container">
+            <!-- 字段列表将在这里动态生成 -->
+        </div>
+        <div style="padding: 16px; background: white; border-top: 1px solid var(--border-color);">
+            <button id="add-field-from-panel-btn" class="btn-secondary" style="width: 100%;">+ 新增字段</button>
+        </div>
+    </div>
+
+    <!-- 字段配置弹窗 -->
+    <div id="field-config-modal" class="modal-backdrop" style="display: none;">
+        <div class="modal-content">
+            <!-- 渐变头部 -->
+            <div class="modal-header-gradient">
+                <div class="modal-header-icon">✦</div>
+                <div class="modal-header-text">
+                    <h3>字段配置</h3>
+                    <p>创建和自定义您的字段</p>
+                </div>
+                <button class="modal-close-btn" id="modal-close-x">×</button>
+            </div>
+
+            <!-- 内容区域 -->
+            <div class="modal-body">
+                <!-- 字段名称 -->
+                <div class="form-group">
+                    <label><span class="label-icon">T</span> 字段名称</label>
+                    <input type="text" id="field-name" class="form-control" placeholder="请输入字段名称">
+                </div>
+
+                <!-- 字段类型 -->
+                <div class="form-group" style="position: relative;">
+                    <label><span class="label-icon">≡</span> 字段类型</label>
+                    <div class="field-type-selector" id="field-type-selector">
+                        <span class="field-type-icon icon-number">#</span>
+                        <span class="field-type-text">数字</span>
+                        <span style="margin-left: auto; color: #9CA3AF;">▼</span>
+                    </div>
+                    <select id="field-type" style="display: none;">
+                        <option value="text">文本</option>
+                        <option value="number" selected>数字</option>
+                        <option value="date">日期</option>
+                        <option value="select">下拉选择</option>
+                        <option value="multiselect">多选</option>
+                    </select>
+                    <div class="field-type-dropdown" id="field-type-dropdown">
+                        <div class="field-type-option" data-value="text">
+                            <span class="field-type-icon icon-text">Ā</span>
+                            <span>文本</span>
+                        </div>
+                        <div class="field-type-option selected" data-value="number">
+                            <span class="field-type-icon icon-number">#</span>
+                            <span>数字</span>
+                            <span class="check-icon">✓</span>
+                        </div>
+                        <div class="field-type-option" data-value="date">
+                            <span class="field-type-icon icon-date">☐</span>
+                            <span>日期</span>
+                        </div>
+                        <div class="field-type-option" data-value="select">
+                            <span class="field-type-icon icon-select">˅</span>
+                            <span>下拉选择</span>
+                        </div>
+                        <div class="field-type-option" data-value="multiselect">
+                            <span class="field-type-icon icon-multiselect">≡</span>
+                            <span>多选</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 必填字段 -->
+                <div class="required-field-row" id="required-field-row">
+                    <div class="required-toggle" id="required-toggle"></div>
+                    <div class="required-field-info">
+                        <div class="title">必填字段</div>
+                        <div class="subtitle">用户必须填写此字段</div>
+                    </div>
+                    <span class="required-field-arrow">›</span>
+                    <input type="checkbox" id="field-required" style="display: none;">
+                </div>
+
+                <!-- 默认值信息卡片 -->
+                <div class="default-value-card">
+                    <div class="default-value-header">
+                        <div class="default-value-icon">ⓘ</div>
+                        <div class="default-value-text">
+                            <h4>默认值 (可选)</h4>
+                            <p>现有任务将自动填充此值</p>
+                        </div>
+                    </div>
+                    <input type="text" id="field-default-value" class="form-control" placeholder="输入默认值..."
+                        style="margin-bottom: 12px;">
+                    <div class="default-value-note">新增字段时，所有现有任务将被设置为此默认值。</div>
+                </div>
+
+                <!-- 选项配置 -->
+                <div id="options-config" class="form-group" style="display: none;">
+                    <label><span class="label-icon">☰</span> 选项配置</label>
+                    <div id="options-list"></div>
+                    <button id="add-option-btn" class="btn-secondary"
+                        style="margin-top: 8px; padding: 8px 14px; font-size: 13px;">+ 添加选项</button>
+                </div>
+            </div>
+
+            <!-- 底部按钮 -->
+            <div class="modal-footer">
+                <button id="cancel-field-btn" class="btn-secondary">取消</button>
+                <button id="save-field-btn" class="btn-primary">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 文件输入(用于导入配置) -->
+    <input type="file" id="config-file-input" style="display: none;" accept=".json">
+
+    <!-- 入口 JS -->
+    <script type="module" src="/src/main.js"></script>
+</body>
+
+</html>
