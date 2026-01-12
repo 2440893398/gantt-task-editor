@@ -1356,3 +1356,28 @@
     z-index: 100;
     pointer-events: none;
 }
+
+/* ========================================
+   缩放按钮禁用状态 - BUG-005/006修复
+   ======================================== */
+
+.zoom-btn:disabled,
+.zoom-btn[disabled],
+#zoom-in-btn:disabled,
+#zoom-out-btn:disabled {
+    opacity: 0.5 !important;
+    cursor: not-allowed !important;
+    pointer-events: none !important;
+    background: #E5E7EB !important;
+    color: #9CA3AF !important;
+    box-shadow: none !important;
+    transform: none !important;
+}
+
+.zoom-btn:disabled:hover,
+.zoom-btn[disabled]:hover,
+#zoom-in-btn:disabled:hover,
+#zoom-out-btn:disabled:hover {
+    background: #E5E7EB !important;
+    transform: none !important;
+}

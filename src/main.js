@@ -12,6 +12,8 @@ import './styles/components/modal.css';
 import './styles/components/panel.css';
 import './styles/components/field-management.css';
 import './styles/components/toast.css';
+import './styles/components/shortcuts-panel.css';
+import './styles/components/toolbar.css';
 import './styles/pages/gantt.css';
 
 // ========== 功能模块导入 ==========

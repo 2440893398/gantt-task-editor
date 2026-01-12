@@ -6,9 +6,13 @@
  * 显示 Toast 提示
  * @param {string} message - 提示消息
  * @param {string} type - 类型: 'success' | 'error'
- * @param {number} duration - 显示时长 (ms), 0 表示不自动关闭
+ * @param {number} duration - 显示时长 (ms), 0 表示不自动关闭。默认: success=2000ms, error=3000ms
  */
-export function showToast(message, type = 'success', duration = 2000) {
+export function showToast(message, type = 'success', duration = null) {
+    // 设置默认超时时长
+    if (duration === null) {
+        duration = type === 'error' ? 3000 : 2000;
+    }
     // 移除已存在的 Toast
     const existingToast = document.querySelector('.gantt-toast');
     if (existingToast) {
@@ -56,8 +60,8 @@ export function showToast(message, type = 'success', duration = 2000) {
         toast.style.transform = 'translateX(-50%) translateY(0)';
     }, 10);
 
-    // 自动关闭 (仅 success 类型且 duration > 0)
-    if (type === 'success' && duration > 0) {
+    // 自动关闭 (所有类型，duration > 0 时生效)
+    if (duration > 0) {
         setTimeout(() => {
             toast.style.opacity = '0';
             toast.style.transform = 'translateX(-50%) translateY(-10px)';

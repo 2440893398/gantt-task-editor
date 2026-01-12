@@ -24,52 +24,98 @@
 <body>
     <div id="gantt_here"></div>
 
-    <!-- 甘特图图例 -->
-    <div id="gantt-legend" style="
-        position: fixed;
-        bottom: 20px;
-        left: 20px;
-        background: white;
-        padding: 12px 20px;
-        border-radius: 12px;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-        display: flex;
-        align-items: center;
-        gap: 24px;
-        z-index: 100;
-        font-size: 13px;
-        color: #374151;
-    ">
-        <div style="display: flex; align-items: center; gap: 8px;">
-            <span style="
-                display: inline-block;
-                width: 24px;
-                height: 12px;
-                background: linear-gradient(135deg, #22C55E 0%, #4ADE80 100%);
-                border-radius: 4px;
-            "></span>
-            <span>已完成</span>
+    <!-- 快捷键和图例面板 -->
+    <div class="shortcuts-panel" id="shortcuts-panel">
+        <div class="shortcuts-header" id="shortcuts-header">
+            <div class="shortcuts-title">
+                <span>⌨️</span>
+                <span>快捷键 & 图例</span>
+            </div>
+            <span class="shortcuts-toggle">▼</span>
         </div>
-        <div style="display: flex; align-items: center; gap: 8px;">
-            <span style="
-                display: inline-block;
-                width: 24px;
-                height: 12px;
-                background: linear-gradient(135deg, #EF4444 0%, #F87171 100%);
-                border-radius: 4px;
-            "></span>
-            <span>未完成</span>
-        </div>
-        <div style="display: flex; align-items: center; gap: 8px;">
-            <span style="
-                display: inline-block;
-                width: 24px;
-                height: 0;
-                border-top: 2px dashed #94A3B8;
-            "></span>
-            <span>依赖关系</span>
+        <div class="shortcuts-content">
+            <!-- 导航快捷键 -->
+            <div class="shortcuts-section">
+                <div class="shortcuts-section-title">导航</div>
+                <div class="shortcut-item">
+                    <span class="shortcut-action">平移视图</span>
+                    <div class="shortcut-keys">
+                        <span class="key">Space</span>
+                        <span style="color: #9CA3AF;">+</span>
+                        <span class="key">拖动</span>
+                    </div>
+                </div>
+                <div class="shortcut-item">
+                    <span class="shortcut-action">缩放时间轴</span>
+                    <div class="shortcut-keys">
+                        <span class="key">Ctrl</span>
+                        <span style="color: #9CA3AF;">+</span>
+                        <span class="key">滚轮</span>
+                    </div>
+                </div>
+                <div class="shortcut-item">
+                    <span class="shortcut-action">回到今天</span>
+                    <div class="shortcut-keys">
+                        <span class="key">点击"今天"按钮</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 任务操作 -->
+            <div class="shortcuts-section">
+                <div class="shortcuts-section-title">任务操作</div>
+                <div class="shortcut-item">
+                    <span class="shortcut-action">编辑任务</span>
+                    <div class="shortcut-keys">
+                        <span class="key">双击</span>
+                    </div>
+                </div>
+                <div class="shortcut-item">
+                    <span class="shortcut-action">调整时间</span>
+                    <div class="shortcut-keys">
+                        <span class="key">拖动任务条</span>
+                    </div>
+                </div>
+                <div class="shortcut-item">
+                    <span class="shortcut-action">调整进度</span>
+                    <div class="shortcut-keys">
+                        <span class="key">拖动进度条</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 图例 -->
+            <div class="shortcuts-section legend-section">
+                <div class="shortcuts-section-title">图例</div>
+                <div class="legend-items">
+                    <div class="legend-item">
+                        <span class="legend-color completed"></span>
+                        <span>已完成</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="legend-color incomplete"></span>
+                        <span>未完成</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="legend-color dependency"></span>
+                        <span>依赖关系</span>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
+
+    <script>
+        // 折叠/展开快捷键面板
+        document.addEventListener('DOMContentLoaded', () => {
+            const panel = document.getElementById('shortcuts-panel');
+            const header = document.getElementById('shortcuts-header');
+
+            header.addEventListener('click', () => {
+                panel.classList.toggle('collapsed');
+            });
+        });
+    </script>
 
     <!-- 缩放控件 -->
     <div id="zoom-controls" class="zoom-controls">
@@ -81,29 +127,110 @@
 
     <!-- 字段管理工具栏 -->
     <div id="field-toolbar">
-        <button id="add-field-btn"
-            style="background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%); color: white;">✏️ 编辑字段</button>
-        <button id="batch-edit-btn" data-testid="batch-edit-btn"
-            style="background: linear-gradient(135deg, #374151 0%, #1F2937 100%); color: white;">✏️ 编辑模式</button>
+        <!-- 主要操作按钮 -->
+        <button id="add-field-btn" class="btn-primary-action">
+            ✏️ 编辑字段
+        </button>
+        <button id="batch-edit-btn" class="btn-edit-mode" data-testid="batch-edit-btn">
+            ✏️ 编辑模式
+        </button>
+        <button id="scroll-to-today-btn" class="btn-secondary-action">
+            📅 今天
+        </button>
 
-        <!-- 视图切换下拉框 -->
-        <select id="view-selector" class="view-selector">
-            <option value="day">📅 日视图</option>
-            <option value="week" selected>📅 周视图</option>
-            <option value="month">📅 月视图</option>
-            <option value="quarter">📅 季度视图</option>
-            <option value="year">📅 年视图</option>
-        </select>
+        <!-- 更多操作下拉菜单 -->
+        <div class="toolbar-dropdown" id="more-actions-dropdown">
+            <button class="dropdown-toggle">
+                ⚙️ 更多
+            </button>
+            <div class="dropdown-menu">
+                <!-- 视图控制 -->
+                <div class="dropdown-item" id="dropdown-view-control">
+                    <span class="dropdown-item-icon">📅</span>
+                    <span>视图切换</span>
+                </div>
+                <div class="dropdown-divider"></div>
 
-        <!-- 回到今天按钮 -->
-        <button id="scroll-to-today-btn"
-            style="background: linear-gradient(135deg, #F59E0B 0%, #D97706 100%); color: white;">📅 今天</button>
+                <!-- 导入导出 -->
+                <div class="dropdown-item" id="dropdown-export-excel">
+                    <span class="dropdown-item-icon">📊</span>
+                    <span>导出Excel</span>
+                </div>
+                <div class="dropdown-item" id="dropdown-import-excel">
+                    <span class="dropdown-item-icon">📥</span>
+                    <span>导入Excel</span>
+                </div>
+                <div class="dropdown-divider"></div>
 
-        <button id="config-export-btn" data-testid="config-export-btn"
-            style="background: linear-gradient(135deg, #22C55E 0%, #16A34A 100%); color: white;">📤 导出</button>
-        <button id="config-import-btn"
-            style="background: linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%); color: white;">📥 导入</button>
+                <!-- JSON导入导出(备用) -->
+                <div class="dropdown-item" id="config-export-btn" data-testid="config-export-btn">
+                    <span class="dropdown-item-icon">📤</span>
+                    <span>导出JSON</span>
+                </div>
+                <div class="dropdown-item" id="dropdown-import-json">
+                    <span class="dropdown-item-icon">📂</span>
+                    <span>导入JSON</span>
+                </div>
+            </div>
+        </div>
     </div>
+
+    <!-- 视图选择器（隐藏，通过下拉菜单触发） -->
+    <select id="view-selector" class="view-selector" style="display: none;">
+        <option value="day">📅 日视图</option>
+        <option value="week" selected>📅 周视图</option>
+        <option value="month">📅 月视图</option>
+        <option value="quarter">📅 季度视图</option>
+        <option value="year">📅 年视图</option>
+    </select>
+
+    <script>
+        // 工具栏下拉菜单逻辑
+        document.addEventListener('DOMContentLoaded', () => {
+            const dropdown = document.getElementById('more-actions-dropdown');
+            const toggle = dropdown.querySelector('.dropdown-toggle');
+            const viewSelector = document.getElementById('view-selector');
+
+            // 切换下拉菜单
+            toggle.addEventListener('click', (e) => {
+                e.stopPropagation();
+                dropdown.classList.toggle('active');
+            });
+
+            // 点击外部关闭
+            document.addEventListener('click', (e) => {
+                if (!dropdown.contains(e.target)) {
+                    dropdown.classList.remove('active');
+                }
+            });
+
+            // 视图切换
+            document.getElementById('dropdown-view-control').addEventListener('click', () => {
+                dropdown.classList.remove('active');
+                // 创建临时下拉框
+                const tempSelect = document.createElement('select');
+                tempSelect.innerHTML = viewSelector.innerHTML;
+                tempSelect.value = viewSelector.value;
+                tempSelect.style.cssText = 'position:fixed;top:60px;right:20px;z-index:9999;padding:8px;border-radius:6px;';
+                document.body.appendChild(tempSelect);
+                tempSelect.focus();
+                tempSelect.addEventListener('change', (e) => {
+                    viewSelector.value = e.target.value;
+                    viewSelector.dispatchEvent(new Event('change'));
+                    tempSelect.remove();
+                });
+                tempSelect.addEventListener('blur', () => {
+                    setTimeout(() => tempSelect.remove(), 200);
+                });
+            });
+
+            // 导入JSON
+            document.getElementById('dropdown-import-json').addEventListener('click', () => {
+                dropdown.classList.remove('active');
+                document.getElementById('config-import-btn')?.click();
+            });
+        });
+    </script>
 
     <!-- 选中任务计数器 -->
     <div id="selected-tasks-counter">

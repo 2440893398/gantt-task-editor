@@ -21,72 +21,98 @@ export function initNavigation() {
 
 /**
  * 配置时间轴拖拽
- * 允许用户通过拖拽空白区域平移视图
+ * 强制使用手动实现以支持空格键拖拽
  */
 function configureDragTimeline() {
-    // 检查 drag_timeline 配置是否支持
-    if (gantt.config.drag_timeline !== undefined) {
-        // 配置 drag_timeline，忽略任务条和连线以避免冲突
+    // 禁用默认的 drag_timeline 配置，以免冲突
+    if (gantt.config.drag_timeline) {
         gantt.config.drag_timeline = {
-            ignore: ".gantt_task_line, .gantt_task_link, .gantt_link_line_path",
-            useKey: false  // 不需要按住任何键即可拖拽
+            useKey: "none" // 禁用默认拖拽
         };
-        console.log('🖐️ 时间轴拖拽已配置');
-    } else {
-        console.warn('⚠️ drag_timeline 配置不支持，使用备用方案');
-        // 备用方案：手动实现拖拽
-        setupManualDrag();
     }
+
+    // 使用手动实现的空格键拖拽
+    setupManualDrag();
+    console.log('🖐️ 时间轴拖拽已配置 (空格键模式)');
 }
 
 /**
- * 手动实现拖拽平移（备用方案）
+ * 手动实现拖拽平移（空格键触发）
  */
 function setupManualDrag() {
     let isDragging = false;
     let startX = 0;
-    let startScrollLeft = 0;
+    let startScrollX = 0;
+    let spacePressed = false;
 
     const ganttContainer = document.getElementById('gantt_here');
     if (!ganttContainer) return;
 
-    const dataArea = ganttContainer.querySelector('.gantt_data_area');
-    if (!dataArea) return;
-
-    dataArea.addEventListener('mousedown', (e) => {
-        // 忽略任务条点击
-        if (e.target.closest('.gantt_task_line') || e.target.closest('.gantt_task_link')) {
-            return;
+    // 1. 监听空格键按下/释放 (全局)
+    document.addEventListener('keydown', (e) => {
+        // 仅在不是输入框时响应空格键
+        if (e.code === 'Space' && !e.target.matches('input, textarea, select')) {
+            if (!spacePressed) {
+                spacePressed = true;
+                ganttContainer.classList.add('space-drag-mode');
+                e.preventDefault(); // 防止页面滚动
+            }
         }
+    });
+
+    document.addEventListener('keyup', (e) => {
+        if (e.code === 'Space') {
+            spacePressed = false;
+            isDragging = false; // 释放空格键时同时结束拖拽
+            ganttContainer.classList.remove('space-drag-mode', 'dragging');
+        }
+    });
+
+    // 失去焦点时重置
+    window.addEventListener('blur', () => {
+        spacePressed = false;
+        isDragging = false;
+        ganttContainer.classList.remove('space-drag-mode', 'dragging');
+    });
+
+    // 2. 监听鼠标事件 (在数据区域)
+    // 注意：不仅是 .gantt_data_area，整个 task 区域都应该可以拖动
+    const taskArea = ganttContainer.querySelector('.gantt_task');
+    if (!taskArea) return;
+
+    taskArea.addEventListener('mousedown', (e) => {
+        if (!spacePressed) return;
+
+        // 阻止默认行为（如文本选择）
+        e.preventDefault();
 
         isDragging = true;
         startX = e.pageX;
 
-        const scrollContainer = ganttContainer.querySelector('.gantt_hor_scroll');
-        startScrollLeft = scrollContainer ? scrollContainer.scrollLeft : 0;
+        // 使用 Gantt API 获取当前滚动位置
+        startScrollX = gantt.getScrollState().x;
 
-        dataArea.style.cursor = 'grabbing';
-        e.preventDefault();
+        ganttContainer.classList.add('dragging');
     });
 
     document.addEventListener('mousemove', (e) => {
-        if (!isDragging) return;
+        if (!isDragging || !spacePressed) return;
 
-        const dx = e.pageX - startX;
-        const scrollContainer = ganttContainer.querySelector('.gantt_hor_scroll');
-        if (scrollContainer) {
-            scrollContainer.scrollLeft = startScrollLeft - dx;
-        }
+        e.preventDefault();
+
+        const currentX = e.pageX;
+        const dx = currentX - startX;
+
+        // 使用 Gantt API 进行滚动
+        gantt.scrollTo(startScrollX - dx, null);
     });
 
     document.addEventListener('mouseup', () => {
         if (isDragging) {
             isDragging = false;
-            dataArea.style.cursor = '';
+            ganttContainer.classList.remove('dragging');
         }
     });
-
-    console.log('🖐️ 手动拖拽已设置');
 }
 
 /**
