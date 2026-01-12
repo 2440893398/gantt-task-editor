@@ -1,0 +1,148 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]:
+      - treegrid [ref=e7]:
+        - row "任务名称 优先级 负责人 状态 开始时间 工期(天) 进度 新任務" [ref=e8]:
+          - columnheader [ref=e9]:
+            - checkbox [ref=e10] [cursor=pointer]
+          - columnheader "任务名称" [ref=e11]
+          - columnheader "优先级" [ref=e12]
+          - columnheader "负责人" [ref=e13]
+          - columnheader "状态" [ref=e14]
+          - columnheader "开始时间" [ref=e15]
+          - columnheader "工期(天)" [ref=e16]
+          - columnheader "进度" [ref=e17]
+          - columnheader "新任務" [ref=e18]: 
+        - rowgroup [ref=e19]:
+          - 'row "Task: 项目 #1 Start date: 2025-10-01 End date: 2025-10-19" [expanded] [level=1] [ref=e20]':
+            - gridcell [ref=e21]:
+              - checkbox [ref=e23] [cursor=pointer]
+            - 'gridcell "项目 #1" [ref=e24]':
+              - generic [ref=e25] [cursor=pointer]: 
+              - generic [ref=e26]: "项目 #1"
+            - gridcell "高" [ref=e27]:
+              - generic [ref=e29]: 高
+            - gridcell "张 张三" [ref=e30]:
+              - generic [ref=e32]:
+                - generic [ref=e33]: 张
+                - generic [ref=e34]: 张三
+            - gridcell "▶ 进行中" [ref=e35]:
+              - generic [ref=e37]: ▶ 进行中
+            - gridcell "2025-10-01" [ref=e38]:
+              - generic [ref=e39]: 2025-10-01
+            - gridcell "18" [ref=e40]:
+              - generic [ref=e41]: "18"
+            - gridcell "40%" [ref=e42]:
+              - generic [ref=e47]: 40%
+            - gridcell "新任務" [ref=e48]:
+              - button "新任務" [ref=e49] [cursor=pointer]: 
+          - 'row "Task: 任务 #1 Start date: 2025-10-02 End date: 2025-10-10" [level=2] [ref=e50]':
+            - gridcell [ref=e51]:
+              - checkbox [ref=e53] [cursor=pointer]
+            - 'gridcell "任务 #1" [ref=e54]':
+              - generic [ref=e57]: "任务 #1"
+            - gridcell "中" [ref=e58]:
+              - generic [ref=e60]: 中
+            - gridcell "李 李四" [ref=e61]:
+              - generic [ref=e63]:
+                - generic [ref=e64]: 李
+                - generic [ref=e65]: 李四
+            - gridcell "▶ 进行中" [ref=e66]:
+              - generic [ref=e68]: ▶ 进行中
+            - gridcell "2025-10-02" [ref=e69]:
+              - generic [ref=e70]: 2025-10-02
+            - gridcell "8" [ref=e71]:
+              - generic [ref=e72]: "8"
+            - gridcell "60%" [ref=e73]:
+              - generic [ref=e78]: 60%
+            - gridcell "新任務" [ref=e79]:
+              - button "新任務" [ref=e80] [cursor=pointer]: 
+          - 'row "Task: 任务 #2 Start date: 2025-10-11 End date: 2025-10-19" [level=2] [ref=e81]':
+            - gridcell [ref=e82]:
+              - checkbox [ref=e84] [cursor=pointer]
+            - 'gridcell "任务 #2" [ref=e85]':
+              - generic [ref=e88]: "任务 #2"
+            - gridcell "低" [ref=e89]:
+              - generic [ref=e91]: 低
+            - gridcell "王 王五" [ref=e92]:
+              - generic [ref=e94]:
+                - generic [ref=e95]: 王
+                - generic [ref=e96]: 王五
+            - gridcell "⏱ 待开始" [ref=e97]:
+              - generic [ref=e99]: ⏱ 待开始
+            - gridcell "2025-10-11" [ref=e100]:
+              - generic [ref=e101]: 2025-10-11
+            - gridcell "8" [ref=e102]:
+              - generic [ref=e103]: "8"
+            - gridcell "20%" [ref=e104]:
+              - generic [ref=e109]: 20%
+            - gridcell "新任務" [ref=e110]:
+              - button "新任務" [ref=e111] [cursor=pointer]: 
+      - generic [ref=e122]:
+        - generic [ref=e123]:
+          - generic [ref=e124]:
+            - generic "2025年" [ref=e125]
+            - generic "2026年" [ref=e126]
+          - generic [ref=e127]:
+            - generic "Q3" [ref=e128]
+            - generic "Q4" [ref=e129]
+            - generic "Q1" [ref=e130]
+        - generic [ref=e131]:
+          - generic:
+            - 'img "关联 任务 #1 (结束) 任务 #2 (开始)"':
+              - generic [ref=e161] [cursor=pointer]: 
+          - generic:
+            - 'img "Task: 项目 #1 Start date: 2025-10-01 End date: 2025-10-19" [ref=e162]':
+              - generic [ref=e165] [cursor=pointer]: "项目 #1"
+            - 'img "Task: 任务 #1 Start date: 2025-10-02 End date: 2025-10-10" [ref=e168]':
+              - generic [ref=e171] [cursor=pointer]: "任务 #1"
+            - 'img "Task: 任务 #2 Start date: 2025-10-11 End date: 2025-10-19" [ref=e174]':
+              - generic [ref=e177] [cursor=pointer]: "任务 #2"
+    - iframe [ref=e183]:
+      
+  - generic [ref=e184]:
+    - generic [ref=e187]: 已完成
+    - generic [ref=e190]: 未完成
+    - generic [ref=e193]: 依赖关系
+  - generic [ref=e194]:
+    - button "－" [active] [ref=e195] [cursor=pointer]
+    - slider [ref=e196] [cursor=pointer]: "3"
+    - button "＋" [ref=e197] [cursor=pointer]
+    - generic [ref=e198]: 季度视图
+  - generic [ref=e199]:
+    - button "✏️ 编辑字段" [ref=e200] [cursor=pointer]
+    - button "✏️ 编辑模式" [ref=e201] [cursor=pointer]
+    - combobox [ref=e202] [cursor=pointer]:
+      - option "📅 日视图"
+      - option "📅 周视图"
+      - option "📅 月视图"
+      - option "📅 季度视图" [selected]
+      - option "📅 年视图"
+    - button "📅 今天" [ref=e203] [cursor=pointer]
+    - button "📤 导出" [ref=e204] [cursor=pointer]
+    - button "📥 导入" [ref=e205] [cursor=pointer]
+  - generic [ref=e206]:
+    - generic [ref=e207]:
+      - heading "批量编辑" [level=3] [ref=e208]
+      - button "×" [ref=e209] [cursor=pointer]
+    - generic [ref=e210]:
+      - generic [ref=e212]:
+        - text: ℹ️ 已选中
+        - strong [ref=e213]: "0"
+        - text: 个任务
+      - generic [ref=e214]:
+        - generic [ref=e215]: 选择要修改的字段
+        - combobox [ref=e216]:
+          - option "请选择字段" [selected]
+    - generic [ref=e217]:
+      - button "取消" [ref=e218] [cursor=pointer]
+      - button "应用到所有任务" [ref=e219] [cursor=pointer]
+  - generic [ref=e220]:
+    - generic [ref=e221]:
+      - heading "字段管理" [level=4] [ref=e222]
+      - button "×" [ref=e223] [cursor=pointer]
+    - button "+ 新增字段" [ref=e226] [cursor=pointer]
+```

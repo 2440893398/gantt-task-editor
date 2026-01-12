@@ -22,7 +22,7 @@ export function exportConfig() {
     const a = document.createElement('a');
     a.href = url;
     a.download = 'gantt-fields-config.json';
-    a.click();
+    a.dispatchEvent(new MouseEvent('click'));
     URL.revokeObjectURL(url);
 
     showToast('配置导出成功', 'success');

@@ -9,6 +9,9 @@ import { updateGanttColumns } from './columns.js';
 import { initResizer } from './resizer.js';
 import { registerCustomFieldsBlock, configureLightbox } from '../lightbox/customization.js';
 import { updateSelectedTasksUI, applySelectionStyles } from '../selection/selectionManager.js';
+import { initNavigation } from './navigation.js';
+import { initMarkers } from './markers.js';
+import { initZoom, refreshZoomBindings } from './zoom.js';
 
 /**
  * 初始化甘特图
@@ -249,6 +252,15 @@ export function initGantt() {
     // 初始化甘特图
     gantt.init("gantt_here");
     gantt.parse(defaultTasks);
+
+    // 初始化导航模块（拖拽平移、回到今天）
+    initNavigation();
+
+    // 初始化标记模块（今日线）
+    initMarkers();
+
+    // 初始化缩放模块
+    initZoom();
 
     // 甘特图渲染后重新应用选中样式
     gantt.attachEvent("onGanttRender", function () {

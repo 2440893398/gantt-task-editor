@@ -4,7 +4,11 @@
       "Bash(powershell -Command \"$content = Get-Content ''demo-optimized.html''; $newCode = @\\('''', ''                                // 更新选项配置\\(如果是选择类型\\)'', ''                                if \\(fieldType === ''''select'''' || fieldType === ''''multiselect''''\\) {'', ''                                    const options = [];'', ''                                    document.querySelectorAll\\(''''#options-list input[type=\"\"text\"\"]''''\\).forEach\\(input => {'', ''                                        if \\(input.value.trim\\(\\)\\) {'', ''                                            options.push\\(input.value.trim\\(\\)\\);'', ''                                        }'', ''                                    }\\);'', '''', ''                                    if \\(options.length === 0\\) {'', ''                                        showToast\\(''''请至少添加一个选项'''', ''''error'''', 3000\\);'', ''                                        return;'', ''                                    }'', '''', ''                                    customFields[fieldIndex].options = options;'', ''                                }''\\); $content = $content[0..1549] + $newCode + $content[1550..\\($content.Length-1\\)]; $content | Set-Content ''demo-optimized.html''\")",
       "Bash(git init:*)",
       "Bash(git add:*)",
-      "Bash(git commit -m \"$\\(cat <<''EOF''\n初始提交: 甘特图任务编辑页面优化项目\n\n- 添加主要功能文件 demo-optimized.html 和 demo.html\n- 添加产品需求文档 \\(PRD\\)\n- 添加设计规范文档 \\(DESIGN_SPEC\\)\n- 添加项目配置文件\n\n🤖 Generated with [Claude Code]\\(https://claude.com/claude-code\\)\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")"
+      "Bash(git commit -m \"$\\(cat <<''EOF''\n初始提交: 甘特图任务编辑页面优化项目\n\n- 添加主要功能文件 demo-optimized.html 和 demo.html\n- 添加产品需求文档 \\(PRD\\)\n- 添加设计规范文档 \\(DESIGN_SPEC\\)\n- 添加项目配置文件\n\n🤖 Generated with [Claude Code]\\(https://claude.com/claude-code\\)\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(npm install:*)",
+      "Bash(npm test:*)",
+      "Bash(npm ls:*)",
+      "Bash(npx vitest:*)"
     ]
   }
 }

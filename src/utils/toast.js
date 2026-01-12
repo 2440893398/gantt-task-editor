@@ -16,7 +16,7 @@ export function showToast(message, type = 'success', duration = 2000) {
     }
 
     const toast = document.createElement('div');
-    toast.className = 'gantt-toast';
+    toast.className = `gantt-toast toast ${type}`; // 添加通用 toast 类和类型类 (success/error)
 
     const bgColor = type === 'success' ? '#ECFDF5' : '#FEF2F2';
     const borderColor = type === 'success' ? '#22C55E' : '#EF4444';
