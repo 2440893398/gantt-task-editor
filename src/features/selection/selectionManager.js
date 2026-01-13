@@ -11,9 +11,10 @@ export function updateSelectedTasksUI() {
     const counter = document.getElementById('selected-tasks-counter');
     const count = state.selectedTasks.size;
 
+    document.getElementById('selected-count').textContent = count;
+
     if (count > 0) {
         counter.classList.add('show');
-        document.getElementById('selected-count').textContent = count;
     } else {
         counter.classList.remove('show');
     }

@@ -1,5 +1,7 @@
 import { test, expect } from '@playwright/test';
 
+test.use({ locale: 'zh-CN' });
+
 test.describe('批量编辑功能 E2E 测试', () => {
     test.beforeEach(async ({ page }) => {
         await page.goto('http://localhost:5273/');

@@ -22,10 +22,138 @@
 </head>
 
 <body>
-    <div id="gantt_here"></div>
+    <!-- 应用主容器 - 工具栏与甘特图统一 -->
+    <div id="app-container" class="app-container">
+        <!-- 工具栏 - 绝对定位在甘特图时间轴区域 -->
+        <div id="field-toolbar" class="toolbar-redesign">
+            <!-- 左侧区域：视图选择器 + 日期导航 -->
+            <div class="toolbar-left">
+                <!-- 视图选择器 -->
+                <div class="view-selector-container" id="view-selector-container">
+                    <button class="view-selector-btn" id="view-selector-btn">
+                        <span class="view-icon">📅</span>
+                        <span id="current-view-text" data-i18n="view.day">日视图</span>
+                        <span class="dropdown-arrow">▼</span>
+                    </button>
+                    <div class="view-dropdown-menu" id="view-dropdown-menu">
+                        <div class="view-dropdown-item" data-view="day" data-i18n="view.day">日视图</div>
+                        <div class="view-dropdown-item active" data-view="week" data-i18n="view.week">周视图</div>
+                        <div class="view-dropdown-item" data-view="month" data-i18n="view.month">月视图</div>
+                        <div class="view-dropdown-item" data-view="quarter" data-i18n="view.quarter">季度视图</div>
+                        <div class="view-dropdown-item" data-view="year" data-i18n="view.year">年视图</div>
+                    </div>
+                </div>
 
-    <!-- 快捷键和图例面板 -->
-    <div class="shortcuts-panel" id="shortcuts-panel">
+                <!-- 日期导航 -->
+                <div class="date-navigation">
+                    <button class="nav-btn" id="nav-prev-btn" title="上一周期">◀</button>
+                    <button class="today-btn" id="scroll-to-today-btn" data-i18n="toolbar.today">Today</button>
+                    <button class="nav-btn" id="nav-next-btn" title="下一周期">▶</button>
+                </div>
+            </div>
+
+            <!-- 中间区域：搜索框 -->
+            <div class="toolbar-center">
+                <div class="search-container">
+                    <span class="search-icon">🔍</span>
+                    <input type="text" class="search-input" id="task-search-input" placeholder="Search tasks..."
+                        data-i18n-placeholder="toolbar.searchPlaceholder">
+                </div>
+            </div>
+
+            <!-- 右侧区域：图标按钮组 + More + New Task -->
+            <div class="toolbar-right">
+                <!-- 图标按钮组 -->
+                <div class="icon-btn-group">
+                    <button class="icon-btn" id="add-field-btn" title="编辑字段" data-i18n-title="toolbar.editFields">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <path d="M12 3h7a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7" />
+                            <line x1="12" y1="8" x2="12" y2="16" />
+                            <line x1="8" y1="12" x2="16" y2="12" />
+                        </svg>
+                    </button>
+                    <button class="icon-btn" id="batch-edit-btn" title="批量编辑" data-testid="batch-edit-btn"
+                        data-i18n-title="toolbar.batchEdit">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                        </svg>
+                    </button>
+                    <button class="icon-btn" id="config-export-btn" title="导出" data-testid="config-export-btn"
+                        data-i18n-title="toolbar.export">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                            <polyline points="17 8 12 3 7 8" />
+                            <line x1="12" y1="3" x2="12" y2="15" />
+                        </svg>
+                    </button>
+                </div>
+
+                <!-- 分隔线 -->
+                <div class="toolbar-divider"></div>
+
+                <!-- 更多操作下拉菜单 -->
+                <div class="toolbar-dropdown" id="more-actions-dropdown">
+                    <button class="more-btn">
+                        <span data-i18n="toolbar.more">More</span>
+                        <span class="dropdown-arrow">▼</span>
+                    </button>
+                    <div class="dropdown-menu">
+                        <!-- 导入导出 -->
+                        <div class="dropdown-item" id="dropdown-export-excel">
+                            <span class="dropdown-item-icon">📊</span>
+                            <span data-i18n="toolbar.exportExcel">导出Excel</span>
+                        </div>
+                        <div class="dropdown-item" id="dropdown-import-excel">
+                            <span class="dropdown-item-icon">📥</span>
+                            <span data-i18n="toolbar.importExcel">导入Excel</span>
+                        </div>
+                        <div class="dropdown-divider"></div>
+                        <div class="dropdown-item" id="dropdown-export-json">
+                            <span class="dropdown-item-icon">📤</span>
+                            <span data-i18n="toolbar.exportJSON">导出JSON</span>
+                        </div>
+                        <div class="dropdown-item" id="dropdown-import-json">
+                            <span class="dropdown-item-icon">📂</span>
+                            <span data-i18n="toolbar.importJSON">导入JSON</span>
+                        </div>
+                        <div class="dropdown-divider"></div>
+                        <!-- 语言选择 -->
+                        <div class="dropdown-item dropdown-submenu" id="language-menu">
+                            <span class="dropdown-item-icon">🌐</span>
+                            <span data-i18n="toolbar.language">语言</span>
+                            <span class="submenu-arrow">›</span>
+                            <div class="submenu">
+                                <div class="dropdown-item" data-lang="zh-CN">简体中文</div>
+                                <div class="dropdown-item" data-lang="en-US">English</div>
+                                <div class="dropdown-item" data-lang="ja-JP">日本語</div>
+                                <div class="dropdown-item" data-lang="ko-KR">한국어</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 新建任务按钮 -->
+                <button class="new-task-btn" id="new-task-btn">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="2.5">
+                        <line x1="12" y1="5" x2="12" y2="19"></line>
+                        <line x1="5" y1="12" x2="19" y2="12"></line>
+                    </svg>
+                    <span data-i18n="toolbar.newTask">New Task</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- 甘特图容器 - 全高度 -->
+        <div id="gantt_here"></div>
+    </div>
+
+    <!-- 快捷键和图例面板 - 默认折叠 -->
+    <div class="shortcuts-panel collapsed" id="shortcuts-panel">
         <div class="shortcuts-header" id="shortcuts-header">
             <div class="shortcuts-title">
                 <span>⌨️</span>
@@ -125,55 +253,6 @@
         <span id="zoom-level-display" class="zoom-level-display">周视图</span>
     </div>
 
-    <!-- 字段管理工具栏 -->
-    <div id="field-toolbar">
-        <!-- 主要操作按钮 -->
-        <button id="add-field-btn" class="btn-primary-action">
-            ✏️ 编辑字段
-        </button>
-        <button id="batch-edit-btn" class="btn-edit-mode" data-testid="batch-edit-btn">
-            ✏️ 编辑模式
-        </button>
-        <button id="scroll-to-today-btn" class="btn-secondary-action">
-            📅 今天
-        </button>
-
-        <!-- 更多操作下拉菜单 -->
-        <div class="toolbar-dropdown" id="more-actions-dropdown">
-            <button class="dropdown-toggle">
-                ⚙️ 更多
-            </button>
-            <div class="dropdown-menu">
-                <!-- 视图控制 -->
-                <div class="dropdown-item" id="dropdown-view-control">
-                    <span class="dropdown-item-icon">📅</span>
-                    <span>视图切换</span>
-                </div>
-                <div class="dropdown-divider"></div>
-
-                <!-- 导入导出 -->
-                <div class="dropdown-item" id="dropdown-export-excel">
-                    <span class="dropdown-item-icon">📊</span>
-                    <span>导出Excel</span>
-                </div>
-                <div class="dropdown-item" id="dropdown-import-excel">
-                    <span class="dropdown-item-icon">📥</span>
-                    <span>导入Excel</span>
-                </div>
-                <div class="dropdown-divider"></div>
-
-                <!-- JSON导入导出(备用) -->
-                <div class="dropdown-item" id="config-export-btn" data-testid="config-export-btn">
-                    <span class="dropdown-item-icon">📤</span>
-                    <span>导出JSON</span>
-                </div>
-                <div class="dropdown-item" id="dropdown-import-json">
-                    <span class="dropdown-item-icon">📂</span>
-                    <span>导入JSON</span>
-                </div>
-            </div>
-        </div>
-    </div>
 
     <!-- 视图选择器（隐藏，通过下拉菜单触发） -->
     <select id="view-selector" class="view-selector" style="display: none;">
@@ -188,13 +267,39 @@
         // 工具栏下拉菜单逻辑
         document.addEventListener('DOMContentLoaded', () => {
             const dropdown = document.getElementById('more-actions-dropdown');
-            const toggle = dropdown.querySelector('.dropdown-toggle');
+            const moreBtn = dropdown.querySelector('.more-btn');
             const viewSelector = document.getElementById('view-selector');
+            const viewSelectorContainer = document.getElementById('view-selector-container');
+            const viewSelectorBtn = document.getElementById('view-selector-btn');
+            const viewDropdownMenu = document.getElementById('view-dropdown-menu');
+            const currentViewText = document.getElementById('current-view-text');
 
-            // 切换下拉菜单
-            toggle.addEventListener('click', (e) => {
+            // 切换更多下拉菜单
+            moreBtn?.addEventListener('click', (e) => {
                 e.stopPropagation();
                 dropdown.classList.toggle('active');
+            });
+
+            // 视图选择器下拉菜单
+            viewSelectorBtn?.addEventListener('click', (e) => {
+                e.stopPropagation();
+                viewSelectorContainer.classList.toggle('active');
+            });
+
+            // 视图选择
+            viewDropdownMenu?.addEventListener('click', (e) => {
+                const item = e.target.closest('.view-dropdown-item');
+                if (item) {
+                    const view = item.dataset.view;
+                    viewSelector.value = view;
+                    viewSelector.dispatchEvent(new Event('change'));
+
+                    // 更新显示
+                    currentViewText.textContent = item.textContent;
+                    viewDropdownMenu.querySelectorAll('.view-dropdown-item').forEach(i => i.classList.remove('active'));
+                    item.classList.add('active');
+                    viewSelectorContainer.classList.remove('active');
+                }
             });
 
             // 点击外部关闭
@@ -202,32 +307,77 @@
                 if (!dropdown.contains(e.target)) {
                     dropdown.classList.remove('active');
                 }
+                if (!viewSelectorContainer?.contains(e.target)) {
+                    viewSelectorContainer?.classList.remove('active');
+                }
             });
 
-            // 视图切换
-            document.getElementById('dropdown-view-control').addEventListener('click', () => {
-                dropdown.classList.remove('active');
-                // 创建临时下拉框
-                const tempSelect = document.createElement('select');
-                tempSelect.innerHTML = viewSelector.innerHTML;
-                tempSelect.value = viewSelector.value;
-                tempSelect.style.cssText = 'position:fixed;top:60px;right:20px;z-index:9999;padding:8px;border-radius:6px;';
-                document.body.appendChild(tempSelect);
-                tempSelect.focus();
-                tempSelect.addEventListener('change', (e) => {
-                    viewSelector.value = e.target.value;
-                    viewSelector.dispatchEvent(new Event('change'));
-                    tempSelect.remove();
+            // 语言选择
+            document.querySelectorAll('#language-menu .submenu .dropdown-item').forEach(item => {
+                item.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const lang = item.dataset.lang;
+                    if (lang && window.i18n) {
+                        window.i18n.setLanguage(lang);
+                    }
+                    dropdown.classList.remove('active');
                 });
-                tempSelect.addEventListener('blur', () => {
-                    setTimeout(() => tempSelect.remove(), 200);
+            });
+
+            // 新建任务按钮
+            document.getElementById('new-task-btn')?.addEventListener('click', () => {
+                gantt.createTask({
+                    text: '',
+                    start_date: new Date(),
+                    duration: 1
+                });
+            });
+
+            // 日期导航
+            document.getElementById('nav-prev-btn')?.addEventListener('click', () => {
+                const state = gantt.getState();
+                const unit = state.scale_mode === 'day' ? 'day' :
+                    state.scale_mode === 'week' ? 'week' :
+                        state.scale_mode === 'month' ? 'month' : 'quarter';
+                const newDate = gantt.date.add(state.min_date, -1, unit);
+                gantt.scrollTo(newDate);
+            });
+
+            document.getElementById('nav-next-btn')?.addEventListener('click', () => {
+                const state = gantt.getState();
+                const unit = state.scale_mode === 'day' ? 'day' :
+                    state.scale_mode === 'week' ? 'week' :
+                        state.scale_mode === 'month' ? 'month' : 'quarter';
+                const newDate = gantt.date.add(state.min_date, 1, unit);
+                gantt.scrollTo(newDate);
+            });
+
+            // 任务搜索
+            const searchInput = document.getElementById('task-search-input');
+            searchInput?.addEventListener('input', (e) => {
+                const query = e.target.value.toLowerCase().trim();
+                gantt.eachTask(task => {
+                    const matches = !query || task.text.toLowerCase().includes(query);
+                    const el = gantt.getTaskRowNode(task.id);
+                    if (el) {
+                        el.style.display = matches ? '' : 'none';
+                    }
                 });
             });
 
             // 导入JSON
-            document.getElementById('dropdown-import-json').addEventListener('click', () => {
+            document.getElementById('dropdown-import-json')?.addEventListener('click', () => {
                 dropdown.classList.remove('active');
                 document.getElementById('config-import-btn')?.click();
+            });
+
+            // 导出JSON (兼容旧ID)  
+            document.getElementById('dropdown-export-json')?.addEventListener('click', () => {
+                dropdown.classList.remove('active');
+                // 触发原有的导出功能
+                if (window.exportConfig) {
+                    window.exportConfig();
+                }
             });
         });
     </script>

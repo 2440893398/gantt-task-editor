@@ -150,7 +150,7 @@ export function registerCustomFieldsBlock() {
 
             if (!isValid) {
                 setTimeout(() => {
-                    showToast(errors[0].message, 'error', 0);
+                    showToast(errors[0].message, 'error', 3000);
                 }, 100);
 
                 const firstErrorField = node.querySelector(`input[name="${errors[0].field}"], select[name="${errors[0].field}"]`);

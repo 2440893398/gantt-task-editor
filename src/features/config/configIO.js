@@ -56,7 +56,7 @@ export function importConfig(file) {
 }
 
 /**
- * 导出Excel
+ * 导出Excel (带下拉字段数据验证)
  */
 export function exportToExcel() {
     try {
@@ -68,7 +68,7 @@ export function exportToExcel() {
 
         // 添加自定义字段到表头
         state.customFields.forEach(field => {
-            headers.push(field.name);
+            headers.push(field.label || field.name);
         });
 
         // 准备数据行
@@ -96,7 +96,7 @@ export function exportToExcel() {
 
             // 添加自定义字段数据
             state.customFields.forEach(field => {
-                row.push(task[field.id] || '');
+                row.push(task[field.id] || task[field.name] || '');
             });
 
             rows.push(row);
@@ -109,6 +109,37 @@ export function exportToExcel() {
         // 设置列宽
         const colWidths = headers.map(() => ({ wch: 15 }));
         ws['!cols'] = colWidths;
+
+        // 为下拉字段添加数据验证
+        const dataValidations = [];
+        state.customFields.forEach((field, fieldIndex) => {
+            if (field.type === 'select' || field.type === 'multiselect') {
+                const colIndex = 6 + fieldIndex; // 前6列是固定列
+                const colLetter = XLSX.utils.encode_col(colIndex);
+
+                // 数据验证适用于第2行到第1000行（排除表头）
+                const sqref = `${colLetter}2:${colLetter}1000`;
+
+                // 选项用逗号分隔
+                const options = (field.options || []).join(',');
+
+                dataValidations.push({
+                    type: 'list',
+                    sqref: sqref,
+                    formula1: `"${options}"`,
+                    showDropDown: true,
+                    allowBlank: !field.required,
+                    errorStyle: 'warning',
+                    errorTitle: '无效输入',
+                    error: `请从列表中选择有效的选项`
+                });
+            }
+        });
+
+        // 应用数据验证到工作表
+        if (dataValidations.length > 0) {
+            ws['!dataValidation'] = dataValidations;
+        }
 
         XLSX.utils.book_append_sheet(wb, ws, '任务列表');
 

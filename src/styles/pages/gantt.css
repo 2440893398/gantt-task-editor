@@ -2,9 +2,10 @@
    甘特图组件样式
    ======================================== */
 
-/* 容器 */
+/* 容器 - 为顶部工具栏预留空间 */
 .gantt_container {
     border: none;
+    padding-top: 44px !important;
 }
 
 .gantt_grid,
@@ -12,6 +13,7 @@
     border-top: 1px solid var(--border-color);
 }
 
+/* 甘特图头部刻度行 */
 .gantt_grid_scale,
 .gantt_task_scale {
     background-color: var(--background-white);
@@ -161,37 +163,11 @@
 }
 
 /* ========================================
-   工具栏样式
+   工具栏样式 - 由 toolbar.css 统一管理
    ======================================== */
 
-#field-toolbar {
-    position: fixed;
-    top: 10px;
-    right: 10px;
-    z-index: 1000;
-    background: white;
-    padding: 10px;
-    border-radius: 8px;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-}
+/* 工具栏按钮在此文件不再定义，见 toolbar.css */
 
-#field-toolbar button {
-    padding: 8px 14px;
-    border: none;
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 13px;
-    font-weight: 500;
-    transition: all 0.2s;
-}
-
-#field-toolbar button:hover {
-    opacity: 0.9;
-    transform: translateY(-1px);
-}
 
 /* ========================================
    选中任务计数器

@@ -20,11 +20,19 @@ import './styles/pages/gantt.css';
 import { initGantt, setupGlobalEvents } from './features/gantt/init.js';
 import { initCustomFieldsUI } from './features/customFields/manager.js';
 import { initBatchEdit } from './features/selection/batchEdit.js';
-import { initConfigIO } from './features/config/configIO.js';
+import { initConfigIO, exportConfig } from './features/config/configIO.js';
+import { i18n } from './utils/i18n.js';
+
+// 挂载 exportConfig 到 window 以便 HTML 中调用
+window.exportConfig = exportConfig;
 
 // ========== 应用初始化 ==========
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
     console.log('🚀 甘特图任务编辑器启动中...');
+
+    // 初始化国际化
+    await i18n.init();
+    console.log('🌐 国际化初始化完成，当前语言:', i18n.getLanguage());
 
     // 初始化甘特图
     initGantt();

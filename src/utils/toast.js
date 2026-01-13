@@ -67,5 +67,14 @@ export function showToast(message, type = 'success', duration = null) {
             toast.style.transform = 'translateX(-50%) translateY(-10px)';
             setTimeout(() => toast.remove(), 300);
         }, duration);
+    } else {
+        // 保底机制：即使 duration=0，也在 10 秒后强制关闭
+        setTimeout(() => {
+            if (document.body.contains(toast)) {
+                toast.style.opacity = '0';
+                toast.style.transform = 'translateX(-50%) translateY(-10px)';
+                setTimeout(() => toast.remove(), 300);
+            }
+        }, 10000);
     }
 }
