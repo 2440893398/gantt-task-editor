@@ -162,6 +162,35 @@
     background: #F3F4F6;
 }
 
+/* 今日按钮增强版 - 右侧工具栏 */
+.today-btn-enhanced {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%);
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    color: white;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+}
+
+.today-btn-enhanced:hover {
+    background: linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+}
+
+.today-btn-enhanced svg {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+}
+
 /* 中间区域 - 搜索框 */
 .toolbar-center {
     flex: 1;

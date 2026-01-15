@@ -5,13 +5,14 @@
 import { state } from '../../core/store.js';
 import { showToast } from '../../utils/toast.js';
 import { updateSelectedTasksUI } from './selectionManager.js';
+import { i18n } from '../../utils/i18n.js';
 
 /**
  * 打开批量编辑面板
  */
 export function openBatchEditPanel() {
     if (state.selectedTasks.size === 0) {
-        showToast('请先选择要编辑的任务', 'error', 3000);
+        showToast(i18n.t('message.noData'), 'error', 3000);
         return;
     }
 
@@ -22,7 +23,7 @@ export function openBatchEditPanel() {
 
     // 填充字段选择下拉框
     const select = document.getElementById('batch-field-select');
-    select.innerHTML = '<option value="">请选择字段</option>';
+    select.innerHTML = `<option value="">${i18n.t('form.selectPlaceholder')}</option>`;
 
     state.customFields.forEach(field => {
         select.innerHTML += `<option value="${field.name}">${field.label}</option>`;
@@ -44,7 +45,7 @@ export function closeBatchEditPanel() {
 export function applyBatchEdit() {
     const fieldName = document.getElementById('batch-field-select').value;
     if (!fieldName) {
-        showToast('请选择要修改的字段', 'error', 3000);
+        showToast(i18n.t('batchEdit.selectField'), 'error', 3000);
         return;
     }
 
@@ -69,7 +70,7 @@ export function applyBatchEdit() {
         updateCount++;
     });
 
-    showToast(`已成功修改 ${updateCount} 个任务`, 'success');
+    showToast(i18n.t('message.updateSuccess', { count: updateCount }), 'success');
     closeBatchEditPanel();
     state.selectedTasks.clear();
     updateSelectedTasksUI();
@@ -109,11 +110,11 @@ export function initBatchEdit() {
         let inputHTML = '';
 
         if (field.type === 'text') {
-            inputHTML = `<input type="text" class="form-control" placeholder="请输入${field.label}">`;
+            inputHTML = `<input type="text" class="form-control" placeholder="${field.label}">`;
         } else if (field.type === 'number') {
-            inputHTML = `<input type="number" class="form-control" placeholder="请输入${field.label}">`;
+            inputHTML = `<input type="number" class="form-control" placeholder="${field.label}">`;
         } else if (field.type === 'select') {
-            inputHTML = `<select class="form-control"><option value="">请选择</option>`;
+            inputHTML = `<select class="form-control"><option value="">${i18n.t('form.selectPlaceholder')}</option>`;
             field.options.forEach(option => {
                 inputHTML += `<option value="${option}">${option}</option>`;
             });

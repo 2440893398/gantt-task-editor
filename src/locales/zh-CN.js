@@ -24,7 +24,36 @@ export default {
         week: '周视图',
         month: '月视图',
         quarter: '季度视图',
-        year: '年视图'
+        year: '年视图',
+        zoomOut: '缩小时间跨度',
+        zoomIn: '扩大时间跨度'
+    },
+
+    // 列名称（表格标题）
+    columns: {
+        hierarchy: '层级',
+        text: '任务名称',
+        start_date: '开始时间',
+        duration: '工期(天)',
+        progress: '进度(%)',
+        priority: '优先级',
+        assignee: '负责人',
+        status: '状态'
+    },
+
+    // 枚举值 (内部值 → 本地化显示值)
+    enums: {
+        priority: {
+            'high': '高',
+            'medium': '中',
+            'low': '低'
+        },
+        status: {
+            'pending': '待开始',
+            'in_progress': '进行中',
+            'completed': '已完成',
+            'suspended': '已取消'
+        }
     },
 
     // 任务
@@ -56,7 +85,10 @@ export default {
         importSuccess: '导入成功，共 {{count}} 条数据',
         exportSuccess: '导出成功',
         validationError: '请检查表单填写是否正确',
-        noData: '暂无数据'
+        noData: '暂无数据',
+        confirmTitle: '确认操作',
+        deleteLink: '确定删除依赖关系吗？',
+        deleteTask: '确定删除任务吗？'
     },
 
     // 快捷键面板
@@ -64,12 +96,18 @@ export default {
         title: '快捷键 & 图例',
         navigation: '导航',
         panView: '平移视图',
+        drag: '拖动',
         zoomTimeline: '缩放时间轴',
+        scroll: '滚轮',
         goToToday: '回到今天',
+        clickToday: '点击"今天"按钮',
         taskOperations: '任务操作',
         editTask: '编辑任务',
+        doubleClick: '双击',
         adjustTime: '调整时间',
+        dragTask: '拖动任务条',
         adjustProgress: '调整进度',
+        dragProgress: '拖动进度条',
         legend: '图例',
         completed: '已完成',
         incomplete: '未完成',
@@ -94,13 +132,36 @@ export default {
         fieldType: '字段类型',
         required: '必填字段',
         defaultValue: '默认值',
+        createSubtitle: '创建和自定义您的字段',
+        placeholderName: '请输入字段名称',
+        requiredDesc: '用户必须填写此字段',
+        defaultOneTime: '默认值 (可选)',
+        defaultDesc: '现有任务将自动填充此值',
+        defaultPlaceholder: '输入默认值...',
+        defaultNote: '新增字段时，所有现有任务将被设置为此默认值。',
+        selectionCount: '已选中 {{count}} 个任务',
         options: '选项配置',
+        optionValue: '选项值',
+        remove: '删除',
         addOption: '添加选项',
         typeText: '文本',
         typeNumber: '数字',
         typeDate: '日期',
         typeSelect: '下拉选择',
         typeMultiselect: '多选'
+    },
+
+    // Lightbox
+    lightbox: {
+        customFields: '自定义字段',
+        manageFields: '管理字段',
+        pleaseSelect: '请选择'
+    },
+
+    // 验证
+    validation: {
+        required: '此字段为必填项',
+        number: '请输入有效的数字'
     },
 
     // DHTMLX Gantt 标签

@@ -5,13 +5,32 @@
 import { PRIORITY_COLORS, STATUS_COLORS, STATUS_ICONS } from '../../config/constants.js';
 
 /**
+ * 获取枚举值的本地化翻译
+ * @param {string} type - 枚举类型 (priority/status)
+ * @param {string} value - 枚举值
+ * @returns {string} 本地化的值
+ */
+function getLocalizedEnumValue(type, value) {
+    if (!value) return '';
+    if (window.i18n && typeof window.i18n.t === 'function') {
+        const translated = window.i18n.t(`enums.${type}.${value}`);
+        // 如果翻译存在则返回，否则返回原值
+        if (translated !== `enums.${type}.${value}`) {
+            return translated;
+        }
+    }
+    return value;
+}
+
+/**
  * 渲染优先级徽章
  * @param {string} value - 优先级值 (高/中/低)
  */
 export function renderPriorityBadge(value) {
     if (!value) return '';
     const badgeClass = PRIORITY_COLORS[value] || '';
-    return `<span class="priority-badge-gantt ${badgeClass}">${value}</span>`;
+    const displayValue = getLocalizedEnumValue('priority', value);
+    return `<span class="priority-badge-gantt ${badgeClass}">${displayValue}</span>`;
 }
 
 /**
@@ -22,7 +41,8 @@ export function renderStatusBadge(value) {
     if (!value) return '';
     const badgeClass = STATUS_COLORS[value] || 'status-pending';
     const icon = STATUS_ICONS[value] || '';
-    return `<span class="status-badge-gantt ${badgeClass}">${icon} ${value}</span>`;
+    const displayValue = getLocalizedEnumValue('status', value);
+    return `<span class="status-badge-gantt ${badgeClass}">${icon} ${displayValue}</span>`;
 }
 
 /**

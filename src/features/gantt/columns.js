@@ -6,6 +6,33 @@ import { state } from '../../core/store.js';
 import { renderPriorityBadge, renderStatusBadge, renderAssignee, renderProgressBar } from './templates.js';
 
 /**
+ * 获取本地化的列名称
+ * @param {string} key - 列名键
+ * @returns {string} 本地化的列名称
+ */
+function getColumnLabel(key) {
+    // 如果 i18n 可用，使用本地化文本
+    if (window.i18n && typeof window.i18n.t === 'function') {
+        const translated = window.i18n.t(`columns.${key}`);
+        // 如果翻译键不存在会返回键本身，则使用默认值
+        if (translated !== `columns.${key}`) {
+            return translated;
+        }
+    }
+    // 默认中文
+    const defaults = {
+        text: '任务名称',
+        start_date: '开始时间',
+        duration: '工期(天)',
+        progress: '进度',
+        priority: '优先级',
+        assignee: '负责人',
+        status: '状态'
+    };
+    return defaults[key] || key;
+}
+
+/**
  * 更新甘特图列配置
  */
 export function updateGanttColumns() {
@@ -25,14 +52,14 @@ export function updateGanttColumns() {
 
     state.fieldOrder.forEach(fieldName => {
         if (fieldName === "text") {
-            columns.push({ name: "text", label: "任务名称", tree: true, width: 200, resize: true });
+            columns.push({ name: "text", label: getColumnLabel("text"), tree: true, width: 200, resize: true });
         } else if (fieldName === "start_date") {
-            columns.push({ name: "start_date", label: "开始时间", align: "center", width: 90, resize: true });
+            columns.push({ name: "start_date", label: getColumnLabel("start_date"), align: "center", width: 90, resize: true });
         } else if (fieldName === "duration") {
-            columns.push({ name: "duration", label: "工期(天)", align: "center", width: 80, resize: true });
+            columns.push({ name: "duration", label: getColumnLabel("duration"), align: "center", width: 80, resize: true });
         } else if (fieldName === "progress") {
             columns.push({
-                name: "progress", label: "进度", align: "center", width: 120, resize: true,
+                name: "progress", label: getColumnLabel("progress"), align: "center", width: 120, resize: true,
                 template: function (task) {
                     return renderProgressBar(task);
                 }
@@ -59,9 +86,12 @@ export function updateGanttColumns() {
                     };
                 }
 
+                // 使用本地化列名，优先使用翻译，其次使用customField.label
+                const label = getColumnLabel(fieldName);
+
                 columns.push({
                     name: fieldName,
-                    label: customField.label,
+                    label: label,
                     align: "center",
                     width: customField.width || 100,
                     resize: true,

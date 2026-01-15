@@ -8,6 +8,7 @@ import { updateGanttColumns } from '../gantt/columns.js';
 import { refreshLightbox } from '../lightbox/customization.js';
 import { FIELD_TYPE_CONFIG } from '../../config/constants.js';
 import { addOptionInput } from '../../utils/dom.js';
+import { i18n } from '../../utils/i18n.js';
 
 let sortableInstance = null;
 
@@ -17,6 +18,23 @@ let sortableInstance = null;
 export function getFieldTypeLabel(type) {
     const config = FIELD_TYPE_CONFIG[type];
     return config ? config.label : type;
+}
+
+function getLocalizedFieldTypeLabel(type) {
+    const config = FIELD_TYPE_CONFIG[type];
+    if (!config) return type;
+
+    // Map type to i18n key
+    // assuming type is 'text', 'number', 'date', 'select', 'multiselect'
+    const keyMap = {
+        'text': 'fieldManagement.typeText',
+        'number': 'fieldManagement.typeNumber',
+        'date': 'fieldManagement.typeDate',
+        'select': 'fieldManagement.typeSelect',
+        'multiselect': 'fieldManagement.typeMultiselect'
+    };
+
+    return i18n.t(keyMap[type] || 'fieldManagement.typeText');
 }
 
 /**
@@ -49,11 +67,11 @@ export function renderFieldList() {
                 <div class="field-drag-handle">⋮⋮</div>
                 <div class="field-info">
                     <div class="field-name">${field.label}${field.required ? ' <span style="color: #EF4444;">*</span>' : ''}</div>
-                    <div class="field-type-badge">${getFieldTypeLabel(field.type)}</div>
+                    <div class="field-type-badge">${getLocalizedFieldTypeLabel(field.type)}</div>
                 </div>
                 <div class="field-actions">
-                    <button class="field-action-btn" data-action="edit" data-field="${field.name}" title="编辑">✏️</button>
-                    <button class="field-action-btn" data-action="delete" data-field="${field.name}" title="删除">🗑️</button>
+                    <button class="field-action-btn" data-action="edit" data-field="${field.name}" title="✏️">✏️</button>
+                    <button class="field-action-btn" data-action="delete" data-field="${field.name}" title="🗑️">🗑️</button>
                 </div>
             </div>
         `;
@@ -178,7 +196,7 @@ export function editField(fieldName) {
  */
 export function deleteField(fieldName) {
     const field = getCustomFieldByName(fieldName);
-    if (!confirm(`确定要删除字段 "${field?.label}" 吗?`)) {
+    if (!confirm(i18n.t('message.deleteConfirm', { name: field?.label }))) {
         return;
     }
 
@@ -186,7 +204,7 @@ export function deleteField(fieldName) {
     updateGanttColumns();
     refreshLightbox();
     renderFieldList();
-    showToast('字段删除成功', 'success');
+    showToast(i18n.t('message.deleteSuccess'), 'success');
 }
 
 /**
@@ -296,7 +314,7 @@ export function initCustomFieldsUI() {
         const modal = document.getElementById('field-config-modal');
 
         if (!fieldName) {
-            showToast('请输入字段名称', 'error', 3000);
+            showToast(i18n.t('message.validationError'), 'error', 3000);
             return;
         }
 
@@ -317,7 +335,7 @@ export function initCustomFieldsUI() {
             });
 
             if (options.length === 0) {
-                showToast('请至少添加一个选项', 'error', 3000);
+                showToast(i18n.t('message.validationError'), 'error', 3000);
                 return;
             }
 
@@ -343,7 +361,7 @@ export function initCustomFieldsUI() {
                     });
 
                     if (options.length === 0) {
-                        showToast('请至少添加一个选项', 'error', 3000);
+                        showToast(i18n.t('message.validationError'), 'error', 3000);
                         return;
                     }
 
@@ -351,7 +369,7 @@ export function initCustomFieldsUI() {
                 }
             }
 
-            showToast('字段更新成功', 'success');
+            showToast(i18n.t('message.saveSuccess'), 'success');
         } else {
             state.customFields.push(fieldConfig);
             state.fieldOrder.push(fieldConfig.name);
@@ -364,7 +382,7 @@ export function initCustomFieldsUI() {
                 });
             }
 
-            showToast('字段创建成功', 'success');
+            showToast(i18n.t('message.saveSuccess'), 'success');
         }
 
         updateGanttColumns();

@@ -1280,6 +1280,43 @@
     text-align: center;
 }
 
+/* 缩放控件内分隔线 */
+.zoom-divider {
+    width: 1px;
+    height: 20px;
+    background: #E5E7EB;
+    margin: 0 4px;
+}
+
+/* 缩放控件内视图选择器 */
+.zoom-view-selector {
+    padding: 6px 28px 6px 10px;
+    border: 1px solid #E5E7EB;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    color: #374151;
+    background: white;
+    cursor: pointer;
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%236B7280' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10l-5 5z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 8px center;
+    transition: all 0.2s;
+    min-width: 90px;
+}
+
+.zoom-view-selector:hover {
+    border-color: #9810FA;
+}
+
+.zoom-view-selector:focus {
+    outline: none;
+    border-color: #9810FA;
+    box-shadow: 0 0 0 3px rgba(152, 16, 250, 0.1);
+}
+
 /* ========================================
    视图切换下拉框样式
    ======================================== */

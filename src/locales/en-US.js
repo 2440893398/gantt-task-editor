@@ -24,7 +24,36 @@ export default {
         week: 'Week',
         month: 'Month',
         quarter: 'Quarter',
-        year: 'Year'
+        year: 'Year',
+        zoomOut: 'Zoom Out',
+        zoomIn: 'Zoom In'
+    },
+
+    // Columns (table headers)
+    columns: {
+        hierarchy: 'Hierarchy',
+        text: 'Task Name',
+        start_date: 'Start Date',
+        duration: 'Duration (days)',
+        progress: 'Progress (%)',
+        priority: 'Priority',
+        assignee: 'Assignee',
+        status: 'Status'
+    },
+
+    // Enum values (internal value → localized display value)
+    enums: {
+        priority: {
+            'high': 'High',
+            'medium': 'Medium',
+            'low': 'Low'
+        },
+        status: {
+            'pending': 'Pending',
+            'in_progress': 'In Progress',
+            'completed': 'Completed',
+            'suspended': 'Cancelled'
+        }
     },
 
     // Task
@@ -56,7 +85,10 @@ export default {
         importSuccess: 'Imported {{count}} items successfully',
         exportSuccess: 'Exported successfully',
         validationError: 'Please check the form fields',
-        noData: 'No data available'
+        noData: 'No data available',
+        confirmTitle: 'Confirm',
+        deleteLink: 'Delete this link?',
+        deleteTask: 'Delete this task?'
     },
 
     // Shortcuts Panel
@@ -64,12 +96,18 @@ export default {
         title: 'Shortcuts & Legend',
         navigation: 'Navigation',
         panView: 'Pan View',
+        drag: 'Drag',
         zoomTimeline: 'Zoom Timeline',
+        scroll: 'Scroll',
         goToToday: 'Go to Today',
+        clickToday: 'Click "Today"',
         taskOperations: 'Task Operations',
         editTask: 'Edit Task',
+        doubleClick: 'Double Click',
         adjustTime: 'Adjust Time',
+        dragTask: 'Drag Task Bar',
         adjustProgress: 'Adjust Progress',
+        dragProgress: 'Drag Progress Bar',
         legend: 'Legend',
         completed: 'Completed',
         incomplete: 'Incomplete',
@@ -94,13 +132,36 @@ export default {
         fieldType: 'Field Type',
         required: 'Required Field',
         defaultValue: 'Default Value',
+        createSubtitle: 'Create and customize your fields',
+        placeholderName: 'Enter field name',
+        requiredDesc: 'User must fill this field',
+        defaultOneTime: 'Default Value (Optional)',
+        defaultDesc: 'Existing tasks will be auto-filled',
+        defaultPlaceholder: 'Enter default value...',
+        defaultNote: 'All existing tasks will be set to this default value.',
+        selectionCount: '{{count}} tasks selected',
         options: 'Options',
+        optionValue: 'Option Value',
+        remove: 'Remove',
         addOption: 'Add Option',
         typeText: 'Text',
         typeNumber: 'Number',
         typeDate: 'Date',
         typeSelect: 'Select',
         typeMultiselect: 'Multi-select'
+    },
+
+    // Lightbox
+    lightbox: {
+        customFields: 'Custom Fields',
+        manageFields: 'Manage Fields',
+        pleaseSelect: 'Please Select'
+    },
+
+    // Validation
+    validation: {
+        required: 'This field is required',
+        number: 'Please enter a valid number'
     },
 
     // DHTMLX Gantt Labels

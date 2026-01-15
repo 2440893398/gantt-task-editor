@@ -24,7 +24,36 @@ export default {
         week: '週',
         month: '月',
         quarter: '四半期',
-        year: '年'
+        year: '年',
+        zoomOut: '縮小',
+        zoomIn: '拡大'
+    },
+
+    // カラム名（テーブルヘッダー）
+    columns: {
+        hierarchy: '階層',
+        text: 'タスク名',
+        start_date: '開始日',
+        duration: '期間(日)',
+        progress: '進捗(%)',
+        priority: '優先度',
+        assignee: '担当者',
+        status: 'ステータス'
+    },
+
+    // 列挙値 (内部値 → ローカライズ表示値)
+    enums: {
+        priority: {
+            'high': '高',
+            'medium': '中',
+            'low': '低'
+        },
+        status: {
+            'pending': '未着手',
+            'in_progress': '進行中',
+            'completed': '完了',
+            'suspended': 'キャンセル'
+        }
     },
 
     // タスク
@@ -56,7 +85,10 @@ export default {
         importSuccess: '{{count}}件のデータをインポートしました',
         exportSuccess: 'エクスポートしました',
         validationError: 'フォームの入力内容を確認してください',
-        noData: 'データがありません'
+        noData: 'データがありません',
+        confirmTitle: '確認',
+        deleteLink: 'この依存関係を削除しますか？',
+        deleteTask: 'このタスクを削除しますか？'
     },
 
     // ショートカットパネル
@@ -64,12 +96,18 @@ export default {
         title: 'ショートカット & 凡例',
         navigation: 'ナビゲーション',
         panView: 'ビューをパン',
+        drag: 'ドラッグ',
         zoomTimeline: 'タイムラインをズーム',
+        scroll: 'スクロール',
         goToToday: '今日に移動',
+        clickToday: '「今日」をクリック',
         taskOperations: 'タスク操作',
         editTask: 'タスク編集',
+        doubleClick: 'ダブルクリック',
         adjustTime: '時間調整',
+        dragTask: 'タスクバーをドラッグ',
         adjustProgress: '進捗調整',
+        dragProgress: '進捗バーをドラッグ',
         legend: '凡例',
         completed: '完了',
         incomplete: '未完了',
@@ -94,13 +132,36 @@ export default {
         fieldType: 'フィールドタイプ',
         required: '必須フィールド',
         defaultValue: 'デフォルト値',
+        createSubtitle: 'フィールドの作成とカスタマイズ',
+        placeholderName: 'フィールド名を入力',
+        requiredDesc: '必須入力項目',
+        defaultOneTime: 'デフォルト値 (任意)',
+        defaultDesc: '既存のタスクに自動入力されます',
+        defaultPlaceholder: 'デフォルト値を入力...',
+        defaultNote: '新しいフィールドを追加すると、すべての既存タスクにこのデフォルト値が設定されます。',
+        selectionCount: '{{count}}件のタスクを選択中',
         options: 'オプション設定',
+        optionValue: 'オプション値',
+        remove: '削除',
         addOption: 'オプション追加',
         typeText: 'テキスト',
         typeNumber: '数値',
         typeDate: '日付',
         typeSelect: 'セレクト',
         typeMultiselect: 'マルチセレクト'
+    },
+
+    // Lightbox
+    lightbox: {
+        customFields: 'カスタムフィールド',
+        manageFields: 'フィールド管理',
+        pleaseSelect: '選択してください'
+    },
+
+    // バリデーション
+    validation: {
+        required: 'このフィールドは必須です',
+        number: '有効な数値を入力してください'
     },
 
     // DHTMLX Gantt ラベル

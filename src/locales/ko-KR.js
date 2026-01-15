@@ -24,7 +24,36 @@ export default {
         week: '주',
         month: '월',
         quarter: '분기',
-        year: '년'
+        year: '년',
+        zoomOut: '축소',
+        zoomIn: '확대'
+    },
+
+    // 열 이름 (테이블 헤더)
+    columns: {
+        hierarchy: '계층',
+        text: '작업 이름',
+        start_date: '시작일',
+        duration: '기간(일)',
+        progress: '진행률(%)',
+        priority: '우선순위',
+        assignee: '담당자',
+        status: '상태'
+    },
+
+    // 열거값 (내부값 → 로컬라이즈된 표시값)
+    enums: {
+        priority: {
+            'high': '높음',
+            'medium': '중간',
+            'low': '낮음'
+        },
+        status: {
+            'pending': '대기중',
+            'in_progress': '진행중',
+            'completed': '완료',
+            'suspended': '취소'
+        }
     },
 
     // 작업
@@ -56,7 +85,10 @@ export default {
         importSuccess: '{{count}}개의 데이터를 가져왔습니다',
         exportSuccess: '내보내기가 완료되었습니다',
         validationError: '양식을 확인해 주세요',
-        noData: '데이터가 없습니다'
+        noData: '데이터가 없습니다',
+        confirmTitle: '확인',
+        deleteLink: '이 종속성을 삭제하시겠습니까?',
+        deleteTask: '이 작업을 삭제하시겠습니까?'
     },
 
     // 단축키 패널
@@ -64,12 +96,18 @@ export default {
         title: '단축키 & 범례',
         navigation: '탐색',
         panView: '뷰 이동',
+        drag: '드래그',
         zoomTimeline: '타임라인 확대/축소',
+        scroll: '스크롤',
         goToToday: '오늘로 이동',
+        clickToday: '"오늘" 클릭',
         taskOperations: '작업 조작',
         editTask: '작업 편집',
+        doubleClick: '더블 클릭',
         adjustTime: '시간 조정',
+        dragTask: '작업 바 드래그',
         adjustProgress: '진행률 조정',
+        dragProgress: '진행률 바 드래그',
         legend: '범례',
         completed: '완료',
         incomplete: '미완료',
@@ -94,13 +132,36 @@ export default {
         fieldType: '필드 유형',
         required: '필수 필드',
         defaultValue: '기본값',
+        createSubtitle: '필드 생성 및 사용자 정의',
+        placeholderName: '필드 이름 입력',
+        requiredDesc: '필수 입력 항목',
+        defaultOneTime: '기본값 (선택)',
+        defaultDesc: '기존 작업에 자동 채우기',
+        defaultPlaceholder: '기본값 입력...',
+        defaultNote: '새 필드를 추가하면 모든 기존 작업이 이 기본값으로 설정됩니다.',
+        selectionCount: '{{count}}개 작업 선택됨',
         options: '옵션 설정',
+        optionValue: '옵션 값',
+        remove: '삭제',
         addOption: '옵션 추가',
         typeText: '텍스트',
         typeNumber: '숫자',
         typeDate: '날짜',
         typeSelect: '선택',
         typeMultiselect: '다중 선택'
+    },
+
+    // Lightbox
+    lightbox: {
+        customFields: '사용자 정의 필드',
+        manageFields: '필드 관리',
+        pleaseSelect: '선택하세요'
+    },
+
+    // 유효성 검사
+    validation: {
+        required: '필수 입력 항목입니다',
+        number: '유효한 숫자를 입력하세요'
     },
 
     // DHTMLX Gantt 라벨

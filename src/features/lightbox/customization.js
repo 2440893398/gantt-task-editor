@@ -7,6 +7,7 @@ import { showToast } from '../../utils/toast.js';
 import { validateField } from '../../utils/dom.js';
 import { FIELD_ICONS } from '../../config/constants.js';
 import { openFieldManagementPanel } from '../customFields/manager.js';
+import { i18n } from '../../utils/i18n.js';
 
 /**
  * 计算自定义字段区域高度
@@ -50,8 +51,8 @@ export function registerCustomFieldsBlock() {
 
             // 标题和管理字段按钮
             html += '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">';
-            html += '<h4 style="margin: 0; color: #1F2937; font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px;">自定义字段</h4>';
-            html += '<button id="manage-fields-btn" type="button" style="padding: 6px 12px; background: transparent; color: #9810FA; border: 1px solid #9810FA; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; transition: all 0.2s;">⚙ 管理字段</button>';
+            html += `<h4 style="margin: 0; color: #1F2937; font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px;">${i18n.t('lightbox.customFields')}</h4>`;
+            html += `<button id="manage-fields-btn" type="button" style="padding: 6px 12px; background: transparent; color: #9810FA; border: 1px solid #9810FA; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; transition: all 0.2s;">⚙ ${i18n.t('lightbox.manageFields')}</button>`;
             html += '</div>';
 
             html += `<div class="fields-grid ${layoutClass}" style="max-height: ${fieldCount > 6 ? 'calc(100% - 60px)' : 'auto'}; overflow-y: ${fieldCount > 6 ? 'auto' : 'visible'};">`;
@@ -73,7 +74,7 @@ export function registerCustomFieldsBlock() {
                     html += `<input type="number" name="${field.name}" value="${fieldValue}" ${field.required ? 'required' : ''} style="${inputStyle}" ${focusEvents}>`;
                 } else if (field.type === 'select') {
                     html += `<select name="${field.name}" ${field.required ? 'required' : ''} style="${inputStyle}" ${focusEvents}>`;
-                    html += `<option value="">请选择</option>`;
+                    html += `<option value="">${i18n.t('lightbox.pleaseSelect')}</option>`;
                     field.options.forEach(option => {
                         const selected = fieldValue === option ? 'selected' : '';
                         html += `<option value="${option}" ${selected}>${option}</option>`;

@@ -20,6 +20,23 @@ import {
   reorderFields
 } from '../../src/core/store.js';
 
+// Mock i18n
+vi.mock('../../src/utils/i18n.js', () => ({
+  i18n: {
+    t: vi.fn((key, params) => {
+      const map = {
+        'fieldManagement.typeText': '文本',
+        'fieldManagement.typeNumber': '数字',
+        'fieldManagement.typeDate': '日期',
+        'fieldManagement.typeSelect': '下拉选择',
+        'fieldManagement.typeMultiselect': '多选',
+        'message.deleteConfirm': `Are you sure you want to delete field "${params?.name}"?`
+      };
+      return map[key] || key;
+    })
+  }
+}));
+
 describe('字段管理面板', () => {
   beforeEach(() => {
     // 设置 DOM
@@ -196,7 +213,7 @@ describe('字段删除', () => {
   it('应该在删除前请求确认', () => {
     deleteField('priority');
 
-    expect(global.confirm).toHaveBeenCalledWith('确定要删除字段 "优先级" 吗?');
+    expect(global.confirm).toHaveBeenCalledWith('Are you sure you want to delete field "优先级"?');
   });
 
   it('应该在用户取消时不删除字段', () => {

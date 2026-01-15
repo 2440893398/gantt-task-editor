@@ -123,7 +123,23 @@ function updatePageTranslations() {
     // 更新 data-i18n 属性的元素
     document.querySelectorAll('[data-i18n]').forEach(el => {
         const key = el.getAttribute('data-i18n');
-        el.textContent = t(key);
+        const paramsAttr = el.getAttribute('data-i18n-params');
+        let params = {};
+        if (paramsAttr) {
+            try {
+                params = JSON.parse(paramsAttr);
+            } catch (e) {
+                console.warn('Invalid i18n params:', paramsAttr);
+            }
+        }
+        // 特殊处理：带参数的翻译
+        const translated = t(key, params);
+        // 对于 OPTION 元素，只更新文本内容
+        if (el.tagName === 'OPTION') {
+            el.textContent = translated;
+        } else {
+            el.textContent = translated;
+        }
     });
 
     // 更新 data-i18n-placeholder 属性的元素
@@ -158,8 +174,14 @@ function updateGanttLocale(lang) {
     const format = dateFormats[lang] || dateFormats['en-US'];
     gantt.config.date_format = format.date.replace('YYYY', '%Y').replace('MM', '%m').replace('DD', '%d');
 
-    // 刷新甘特图
-    gantt.render();
+    // 动态导入并更新列配置（确保列名本地化）
+    import('../features/gantt/columns.js').then(({ updateGanttColumns }) => {
+        updateGanttColumns();
+    }).catch(err => {
+        console.warn('Failed to update gantt columns:', err);
+        // 如果动态导入失败，至少刷新甘特图
+        gantt.render();
+    });
 }
 
 /**
@@ -223,6 +245,24 @@ async function init() {
     await setLanguage(browserLang);
 }
 
+/**
+ * 加载所有支持的语言包
+ * 用于Excel导入时的跨语言表头识别
+ */
+async function loadAllLocales() {
+    const supportedLanguages = ['zh-CN', 'en-US', 'ja-JP', 'ko-KR'];
+    const promises = supportedLanguages.map(lang => loadLocale(lang));
+    await Promise.all(promises);
+}
+
+/**
+ * 获取所有已加载的语言包
+ * @returns {Object} 语言包对象 { 'zh-CN': {...}, 'en-US': {...} }
+ */
+function getAllLocales() {
+    return { ...locales };
+}
+
 // 导出
 export const i18n = {
     t,
@@ -230,7 +270,9 @@ export const i18n = {
     getLanguage,
     formatDate,
     init,
-    detectBrowserLanguage
+    detectBrowserLanguage,
+    loadAllLocales,
+    getAllLocales
 };
 
 // 挂载到 window 对象，便于在 HTML 中使用
