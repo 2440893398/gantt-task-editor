@@ -44,27 +44,9 @@
 
     /* 隐藏工具栏部分按钮 */
     #scroll-to-today-btn,
-    .zoom-controls,
-    #zoom-in-btn,
-    #zoom-out-btn,
-    #zoom-slider,
-    #view-selector,
+    #zoom-controls,
     #gantt-legend {
         display: none !important;
-    }
-
-    /* 工具栏简化 */
-    .toolbar {
-        padding: 8px 12px !important;
-        flex-wrap: wrap !important;
-        gap: 8px !important;
-    }
-
-    .toolbar-left,
-    .toolbar-center,
-    .toolbar-right {
-        flex: 1 1 100% !important;
-        justify-content: center !important;
     }
 
     /* 甘特图容器调整 */

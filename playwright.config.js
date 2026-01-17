@@ -8,8 +8,10 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   /* Retry on CI only */
   retries: process.env.CI ? 2 : 0,
-  /* Opt out of parallel tests on CI. */
-  workers: process.env.CI ? 1 : undefined,
+  /* Limit workers to 4 for stability */
+  workers: process.env.CI ? 1 : 4,
+  /* Global timeout for each test */
+  timeout: 60 * 1000,
   /* Reporter to use. See https://playwright.dev/docs/test-reporters */
   reporter: [
     ['html', { outputFolder: 'doc/testdoc/playwright-report' }],
@@ -19,7 +21,10 @@ export default defineConfig({
   use: {
     /* Base URL to use in actions like `await page.goto('/')`. */
     baseURL: 'http://localhost:5273',
-
+    /* Action timeout */
+    actionTimeout: 30 * 1000,
+    /* Navigation timeout */
+    navigationTimeout: 60 * 1000,
     /* Collect trace when retrying the failed test. See https://playwright.dev/docs/trace-viewer */
     trace: 'on-first-retry',
   },

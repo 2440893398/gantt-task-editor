@@ -10,7 +10,15 @@
       "Bash(npm ls:*)",
       "Bash(npx vitest:*)",
       "Bash(npx playwright test:*)",
-      "Bash(npm run test:*)"
+      "Bash(npm run test:*)",
+      "Bash(dir /b \"c:\\\\Users\\\\24408\\\\Desktop\\\\新建文件夹\\\\tests\")",
+      "Skill(playwright-skill)",
+      "Skill(playwright-skill:*)",
+      "Bash(node run.js:*)",
+      "Bash(Get-Date -Format \"yyyy-MM-dd\")"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\24408\\AppData\\Local\\Temp"
     ]
   }
 }

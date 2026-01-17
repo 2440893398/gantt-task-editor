@@ -77,7 +77,15 @@ export function registerCustomFieldsBlock() {
                     html += `<option value="">${i18n.t('lightbox.pleaseSelect')}</option>`;
                     field.options.forEach(option => {
                         const selected = fieldValue === option ? 'selected' : '';
-                        html += `<option value="${option}" ${selected}>${option}</option>`;
+                        // 如果字段有 i18nKey，则翻译选项值
+                        let displayValue = option;
+                        if (field.i18nKey) {
+                            const translated = i18n.t(`${field.i18nKey}.${option}`);
+                            if (translated !== `${field.i18nKey}.${option}`) {
+                                displayValue = translated;
+                            }
+                        }
+                        html += `<option value="${option}" ${selected}>${displayValue}</option>`;
                     });
                     html += `</select>`;
                 } else if (field.type === 'multiselect') {
@@ -85,7 +93,15 @@ export function registerCustomFieldsBlock() {
                     html += `<select name="${field.name}" multiple ${field.required ? 'required' : ''} style="${inputStyle} min-height: 80px;" ${focusEvents}>`;
                     field.options.forEach(option => {
                         const selected = selectedValues.includes(option) ? 'selected' : '';
-                        html += `<option value="${option}" ${selected}>${option}</option>`;
+                        // 如果字段有 i18nKey，则翻译选项值
+                        let displayValue = option;
+                        if (field.i18nKey) {
+                            const translated = i18n.t(`${field.i18nKey}.${option}`);
+                            if (translated !== `${field.i18nKey}.${option}`) {
+                                displayValue = translated;
+                            }
+                        }
+                        html += `<option value="${option}" ${selected}>${displayValue}</option>`;
                     });
                     html += `</select>`;
                 }

@@ -1,106 +1,107 @@
-/**
- * 主样式文件 - 全局样式和 CSS 变量
- */
-
-/* 导入响应式样式 */
+@import "tailwindcss";
 @import './responsive/mobile.css';
 
-:root {
-    /* 色彩系统 */
-    --primary-color: #4A90E2;
-    --accent-color: #50E3C2;
-    --text-primary: #1F2937;
-    --text-secondary: #6B7280;
-    --border-color: #E5E7EB;
-    --background-gray: #F9FAFB;
-    --background-hover-gray: #F3F4F6;
-    --background-white: #FFFFFF;
-    --color-success: #22C55E;
-    --color-warning: #F59E0B;
-    --color-error: #EF4444;
-    --task-bar-bg: #A5C8F1;
-
-    /* 字体规范 */
-    --font-family-base: 'Inter', 'Source Han Sans CN', sans-serif;
-    --font-size-body: 14px;
-    --font-size-small: 12px;
-    --font-weight-regular: 400;
-    --font-weight-medium: 500;
-    --font-weight-semibold: 600;
-
-    /* 布局系统 */
-    --border-radius-small: 4px;
-    --border-radius-medium: 8px;
-    --shadow-standard: 0px 4px 6px -1px rgba(0, 0, 0, 0.1), 0px 2px 4px -1px rgba(0, 0, 0, 0.06);
-
-    /* 兼容旧变量名 */
-    --primary-hover: #3a7bc8;
-    --success-color: #52c41a;
-    --warning-color: #faad14;
-    --danger-color: #ff4d4f;
-    --text-color: #333;
-    --background-color: #f5f5f5;
-    --white: #fff;
-
-    /* 间距 */
-    --spacing-xs: 4px;
-    --spacing-sm: 8px;
-    --spacing-md: 16px;
-    --spacing-lg: 24px;
-
-    /* 圆角 */
-    --border-radius-sm: 4px;
-    --border-radius-md: 8px;
-    --border-radius-lg: 12px;
-
-    /* 阴影 */
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.1);
-    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.15);
-    --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.2);
-
-    /* 过渡 */
-    --transition-fast: 0.15s ease;
-    --transition-normal: 0.3s ease;
+@plugin "daisyui" {
+    themes: light --default;
 }
 
-* {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
+/* 自定义主题扩展 */
+@theme {
+    --color-primary: #4A90E2;
+    --color-primary-hover: #3a7bc8;
+    --color-secondary: #6B7280;
+    --color-accent: #50E3C2;
 }
 
-html,
-body {
-    height: 100%;
-    padding: 0;
-    margin: 0;
-    overflow: hidden;
-    font-family: var(--font-family-base);
-    color: var(--text-primary);
-    background-color: var(--background-gray);
+/* 基础样式层 */
+@layer base {
+    :root {
+        /* 色彩系统 - 保持兼容性，但建议逐步迁移到 Tailwind 类 */
+        --primary-color: #4A90E2;
+        --accent-color: #50E3C2;
+        --text-primary: #1F2937;
+        --text-secondary: #6B7280;
+        --border-color: #E5E7EB;
+        --background-gray: #F9FAFB;
+        --background-hover-gray: #F3F4F6;
+        --background-white: #FFFFFF;
+        --color-success: #22C55E;
+        --color-warning: #F59E0B;
+        --color-error: #EF4444;
+        --task-bar-bg: #A5C8F1;
+
+        /* 字体规范 */
+        --font-family-base: 'Inter', 'Source Han Sans CN', sans-serif;
+        --font-size-body: 14px;
+        --font-size-small: 12px;
+
+        /* 圆角 */
+        --border-radius-small: 4px;
+        /* existing var */
+        --radius: 0.5rem;
+        /* shadcn convention often used */
+
+        /* 兼容旧变量名 */
+        --primary-hover: #3a7bc8;
+        --success-color: #52c41a;
+        --warning-color: #faad14;
+        --danger-color: #ff4d4f;
+        --text-color: #333;
+        --background-color: #f5f5f5;
+        --white: #fff;
+    }
+
+    html,
+    body {
+        height: 100%;
+        overflow: hidden;
+        background-color: #F9FAFB;
+        color: #1F2937;
+        font-family: var(--font-family-base);
+    }
+
+    /* Gantt container needs explicit height */
+    #gantt_here {
+        width: 100%;
+        height: 100%;
+        min-height: 400px;
+        /* 确保在 flex 布局中正确显示 */
+        flex: 1 1 auto;
+    }
+
+    /* 修复工具栏 SVG 图标尺寸异常问题 */
+    #field-toolbar svg {
+        width: 1rem !important;
+        height: 1rem !important;
+        max-width: 1rem !important;
+        max-height: 1rem !important;
+        flex-shrink: 0;
+    }
+
+    /* 搜索框内的图标 */
+    #field-toolbar .form-control svg {
+        width: 1rem !important;
+        height: 1rem !important;
+    }
+
+    /* 按钮内的图标 */
+    #field-toolbar button svg {
+        width: 1rem !important;
+        height: 1rem !important;
+    }
 }
 
-#gantt_here {
-    width: 100%;
-    height: 100%;
-}
+@media (prefers-reduced-motion: reduce) {
 
-/* 滚动条样式 */
-::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
-}
-
-::-webkit-scrollbar-track {
-    background: #E5E7EB;
-    border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb {
-    background: #D1D5DB;
-    border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-    background: #9CA3AF;
+    *,
+    ::before,
+    ::after {
+        animation-delay: -1ms !important;
+        animation-duration: 1ms !important;
+        animation-iteration-count: 1 !important;
+        background-attachment: initial !important;
+        scroll-behavior: auto !important;
+        transition-duration: 0s !important;
+        transition-delay: 0s !important;
+    }
 }

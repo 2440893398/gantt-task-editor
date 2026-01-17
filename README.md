@@ -32,7 +32,7 @@ This project builds a comprehensive and interactive project management system ba
 
 ## 技术栈 | Tech Stack
 
-- **Core**: HTML5, CSS3 (CSS Variables for Theming), JavaScript (ES6+)
+- **Core**: HTML5, Tailwind CSS + DaisyUI, JavaScript (ES6+)
 - **Build Tool**: [Vite](https://vitejs.dev/) - 极速的开发服务器和构建工具
 - **Gantt Library**: [DHTMLX Gantt](https://dhtmlx.com/docs/products/dhtmlxGantt/) (Pro features partially implemented)
 - **Utilities**: 
@@ -124,4 +124,4 @@ npx playwright show-report
 
 MIT License
 
-> Last Updated: 2026-01-17
+> Last Updated: 2026-01-18

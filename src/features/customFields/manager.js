@@ -2,7 +2,7 @@
  * 自定义字段管理
  */
 
-import { state, reorderFields, removeCustomField, getCustomFieldByName } from '../../core/store.js';
+import { state, reorderFields, removeCustomField, getCustomFieldByName, persistCustomFields } from '../../core/store.js';
 import { showToast } from '../../utils/toast.js';
 import { updateGanttColumns } from '../gantt/columns.js';
 import { refreshLightbox } from '../lightbox/customization.js';
@@ -63,15 +63,24 @@ export function renderFieldList() {
 
     state.customFields.forEach((field, index) => {
         html += `
-            <div class="field-item" data-field-name="${field.name}">
-                <div class="field-drag-handle">⋮⋮</div>
-                <div class="field-info">
-                    <div class="field-name">${field.label}${field.required ? ' <span style="color: #EF4444;">*</span>' : ''}</div>
-                    <div class="field-type-badge">${getLocalizedFieldTypeLabel(field.type)}</div>
+            <div class="flex items-center gap-3 p-3 bg-base-100 border border-base-200 rounded-lg shadow-sm hover:shadow-md transition-all group" data-field-name="${field.name}">
+                <div class="field-drag-handle cursor-move text-base-content/30 hover:text-primary flex flex-col justify-center leading-none text-xs">⋮⋮</div>
+                <div class="flex-1 min-w-0">
+                    <div class="font-medium text-sm truncate flex items-center gap-1">
+                        ${field.label}
+                        ${field.required ? '<span class="text-error" title="Required">*</span>' : ''}
+                    </div>
+                    <div class="mt-1">
+                        <span class="badge badge-sm badge-ghost text-xs text-base-content/70">${getLocalizedFieldTypeLabel(field.type)}</span>
+                    </div>
                 </div>
-                <div class="field-actions">
-                    <button class="field-action-btn" data-action="edit" data-field="${field.name}" title="✏️">✏️</button>
-                    <button class="field-action-btn" data-action="delete" data-field="${field.name}" title="🗑️">🗑️</button>
+                <div class="flex gap-1 opacity-100 sm:opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button class="field-action-btn btn btn-ghost btn-xs btn-square" data-action="edit" data-field="${field.name}" title="编辑">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                    </button>
+                    <button class="field-action-btn btn btn-ghost btn-xs btn-square text-error" data-action="delete" data-field="${field.name}" title="删除">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                    </button>
                 </div>
             </div>
         `;
@@ -106,6 +115,8 @@ export function renderFieldList() {
                 reorderFields(evt.oldIndex, evt.newIndex);
                 updateGanttColumns();
                 refreshLightbox();
+                // 持久化字段顺序到缓存
+                persistCustomFields();
             }
         });
     }
@@ -123,22 +134,25 @@ export function updateFieldTypeSelector(value) {
 
     // 更新选择器显示
     selector.innerHTML = `
-        <span class="field-type-icon ${config.class}">${config.icon}</span>
-        <span class="field-type-text">${label}</span>
-        <span style="margin-left: auto; color: #9CA3AF;">▼</span>
+        <span class="badge badge-primary badge-outline font-mono">${config.icon}</span>
+        <span class="flex-1 font-medium text-sm ml-2">${label}</span>
+        <span class="text-gray-400 text-xs ml-auto">▼</span>
     `;
 
     // 更新下拉菜单选中状态
     dropdown.querySelectorAll('.field-type-option').forEach(opt => {
         const isSelected = opt.dataset.value === value;
-        opt.classList.toggle('selected', isSelected);
+        // Tailwind styling for selection state
+        opt.classList.toggle('bg-primary/10', isSelected);
+        opt.classList.toggle('text-primary', isSelected);
+        opt.classList.toggle('hover:bg-base-200', !isSelected);
 
         // 更新勾选图标
         let checkIcon = opt.querySelector('.check-icon');
         if (isSelected) {
             if (!checkIcon) {
                 checkIcon = document.createElement('span');
-                checkIcon.className = 'check-icon';
+                checkIcon.className = 'check-icon ml-auto font-bold';
                 checkIcon.textContent = '✓';
                 opt.appendChild(checkIcon);
             }
@@ -204,6 +218,10 @@ export function deleteField(fieldName) {
     updateGanttColumns();
     refreshLightbox();
     renderFieldList();
+
+    // 持久化字段配置到缓存
+    persistCustomFields();
+
     showToast(i18n.t('message.deleteSuccess'), 'success');
 }
 
@@ -388,6 +406,9 @@ export function initCustomFieldsUI() {
         updateGanttColumns();
         refreshLightbox();
         renderFieldList();
+
+        // 持久化字段配置到缓存
+        persistCustomFields();
 
         modal.classList.remove('show');
         setTimeout(() => {

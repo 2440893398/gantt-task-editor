@@ -66,6 +66,19 @@ export default {
         description: '설명'
     },
 
+    // 툴팁
+    tooltip: {
+        task: '작업',
+        start: '시작',
+        end: '종료',
+        assignee: '담당자',
+        progress: '진행률',
+        priority: '우선순위',
+        status: '상태',
+        duration: '기간',
+        days: '일'
+    },
+
     // 폼
     form: {
         required: '필수 입력 항목입니다',
@@ -88,7 +101,11 @@ export default {
         noData: '데이터가 없습니다',
         confirmTitle: '확인',
         deleteLink: '이 종속성을 삭제하시겠습니까?',
-        deleteTask: '이 작업을 삭제하시겠습니까?'
+        deleteTask: '이 작업을 삭제하시겠습니까?',
+        confirmClearCache: '모든 캐시를 삭제하시겠습니까? 저장된 모든 작업과 설정이 삭제됩니다.',
+        cacheCleared: '캐시가 삭제되었습니다',
+        dataRestored: '{{count}}개의 작업이 복원되었습니다',
+        updateSuccess: '{{count}}개의 작업이 업데이트되었습니다'
     },
 
     // 단축키 패널
@@ -161,7 +178,16 @@ export default {
     // 유효성 검사
     validation: {
         required: '필수 입력 항목입니다',
-        number: '유효한 숫자를 입력하세요'
+        number: '유효한 숫자를 입력하세요',
+        invalidInput: '잘못된 입력',
+        selectFromList: '목록에서 선택하세요',
+        numberRequired: '유효한 숫자를 입력하세요',
+        progressRange: '진행률은 0에서 100 사이여야 합니다'
+    },
+
+    // Excel
+    excel: {
+        sheetName: '작업 목록'
     },
 
     // DHTMLX Gantt 라벨

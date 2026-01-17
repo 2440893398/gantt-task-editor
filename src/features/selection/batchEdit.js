@@ -116,13 +116,29 @@ export function initBatchEdit() {
         } else if (field.type === 'select') {
             inputHTML = `<select class="form-control"><option value="">${i18n.t('form.selectPlaceholder')}</option>`;
             field.options.forEach(option => {
-                inputHTML += `<option value="${option}">${option}</option>`;
+                // 如果字段有 i18nKey，则翻译选项值
+                let displayValue = option;
+                if (field.i18nKey) {
+                    const translated = i18n.t(`${field.i18nKey}.${option}`);
+                    if (translated !== `${field.i18nKey}.${option}`) {
+                        displayValue = translated;
+                    }
+                }
+                inputHTML += `<option value="${option}">${displayValue}</option>`;
             });
             inputHTML += `</select>`;
         } else if (field.type === 'multiselect') {
             inputHTML = `<select class="form-control" multiple style="min-height: 100px;">`;
             field.options.forEach(option => {
-                inputHTML += `<option value="${option}">${option}</option>`;
+                // 如果字段有 i18nKey，则翻译选项值
+                let displayValue = option;
+                if (field.i18nKey) {
+                    const translated = i18n.t(`${field.i18nKey}.${option}`);
+                    if (translated !== `${field.i18nKey}.${option}`) {
+                        displayValue = translated;
+                    }
+                }
+                inputHTML += `<option value="${option}">${displayValue}</option>`;
             });
             inputHTML += `</select>`;
         }

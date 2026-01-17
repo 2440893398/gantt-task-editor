@@ -391,27 +391,29 @@ function bindWheelZoom() {
  * 绑定缩放控件事件
  */
 function bindZoomControls() {
-    // + 按钮：扩大时间跨度（切换到更粗粒度视图）
+    // + 按钮：滑块往左移动（缩小时间跨度 → Day = 更细粒度 = Zoom In）
+    // 通常 UI 上 + 号表示放大（看更细），对应 Zoom In
     const zoomInBtn = document.getElementById('zoom-in-btn');
     if (zoomInBtn) {
         zoomInBtn.addEventListener('click', (e) => {
             e.preventDefault();
-            zoomOut(); // + 对应更大时间跨度
+            zoomIn(); // + 放大视图 (Day)
         });
-        console.log('🔍 缩放 + 按钮已绑定 (扩大时间跨度)');
+        console.log('🔍 缩放 + 按钮已绑定 (放大视图)');
     }
 
-    // - 按钮：缩小时间跨度（切换到更细粒度视图）
+    // - 按钮：滑块往右移动（扩大时间跨度 → Year = 更粗粒度 = Zoom Out）
+    // 通常 UI 上 - 号表示缩小（看更粗），对应 Zoom Out
     const zoomOutBtn = document.getElementById('zoom-out-btn');
     if (zoomOutBtn) {
         zoomOutBtn.addEventListener('click', (e) => {
             e.preventDefault();
-            zoomIn(); // - 对应更小时间跨度
+            zoomOut(); // - 缩小视图 (Year)
         });
-        console.log('🔍 缩放 - 按钮已绑定 (缩小时间跨度)');
+        console.log('🔍 缩放 - 按钮已绑定 (缩小视图)');
     }
 
-    // 缩放滑块 - 滑块值现在对应: 0=day(最小跨度) 到 4=year(最大跨度)
+    // 缩放滑块 - 滑块值: 0=day(左) 到 4=year(右)
     const zoomSlider = document.getElementById('zoom-slider');
     if (zoomSlider) {
         zoomSlider.addEventListener('input', (e) => {
@@ -463,16 +465,16 @@ function updateZoomUI() {
     }
 
     // 更新按钮禁用状态
-    // + 按钮在最大时间跨度(year)时禁用
-    // - 按钮在最小时间跨度(day)时禁用
+    // + 按钮 (Zoom In) 在最左侧(day, index 0)时禁用
+    // - 按钮 (Zoom Out) 在最右侧(year, index 4)时禁用
     const zoomInBtn = document.getElementById('zoom-in-btn');
     const zoomOutBtn = document.getElementById('zoom-out-btn');
 
     if (zoomInBtn) {
-        zoomInBtn.disabled = currentIndex === ZOOM_ORDER.length - 1; // + 在year时禁用
+        zoomInBtn.disabled = currentIndex === 0; // + 在 day 时禁用 (最大放大)
     }
     if (zoomOutBtn) {
-        zoomOutBtn.disabled = currentIndex === 0; // - 在day时禁用
+        zoomOutBtn.disabled = currentIndex === ZOOM_ORDER.length - 1; // - 在 year 时禁用 (最大缩小)
     }
 }
 

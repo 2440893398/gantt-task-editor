@@ -2,10 +2,10 @@
    甘特图组件样式
    ======================================== */
 
-/* 容器 - 为顶部工具栏预留空间 */
+/* 容器 - 工具栏已移到外部，无需内边距 */
 .gantt_container {
     border: none;
-    padding-top: 44px !important;
+    padding-top: 0 !important;
 }
 
 .gantt_grid,
@@ -1471,4 +1471,66 @@
 #zoom-out-btn:disabled:hover {
     background: #E5E7EB !important;
     transform: none !important;
+}
+
+/* ========================================
+   Tooltip 样式
+   ======================================== */
+
+/* Tooltip 容器 */
+.gantt-tooltip-container {
+    padding: 8px;
+    line-height: 1.6;
+}
+
+/* Tooltip 标题行 */
+.gantt-tooltip-title {
+    font-weight: 600;
+    margin-bottom: 8px;
+    font-size: 14px;
+}
+
+/* Tooltip 信息行 */
+.gantt-tooltip-row {
+    margin-bottom: 4px;
+}
+
+/* Tooltip 字段标签（灰色） */
+.gantt-tooltip-label {
+    color: #64748b;
+}
+
+/* Tooltip emoji 图标容器 */
+.gantt-tooltip-icon {
+    display: inline;
+}
+
+/* 优先级颜色 */
+.gantt-tooltip-priority-high {
+    color: #EF4444;
+}
+
+.gantt-tooltip-priority-medium {
+    color: #F59E0B;
+}
+
+.gantt-tooltip-priority-low {
+    color: #10B981;
+}
+
+/* 状态颜色 */
+.gantt-tooltip-status-completed {
+    color: #10B981;
+}
+
+.gantt-tooltip-status-in-progress {
+    color: #3B82F6;
+}
+
+.gantt-tooltip-status-suspended {
+    color: #EF4444;
+}
+
+.gantt-tooltip-status-pending {
+    color: #F59E0B;
 }

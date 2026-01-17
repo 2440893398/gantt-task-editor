@@ -253,7 +253,42 @@ function getInternalEnumValue(fieldName, displayValue) {
 }
 
 /**
+ * 构建下拉选项参考数据
+ * @returns {Object} { fieldName: { options: [], colLetter: '' } }
+ */
+function buildDropdownOptionsData() {
+    const dropdownFields = {};
+
+    // 优先级
+    dropdownFields['priority'] = {
+        options: INTERNAL_PRIORITY_VALUES.map(k => getLocalizedEnumValue('priority', k)),
+        internalValues: INTERNAL_PRIORITY_VALUES
+    };
+
+    // 状态
+    dropdownFields['status'] = {
+        options: INTERNAL_STATUS_VALUES.map(k => getLocalizedEnumValue('status', k)),
+        internalValues: INTERNAL_STATUS_VALUES
+    };
+
+    // 其他自定义选择字段
+    state.customFields.forEach(field => {
+        if ((field.type === 'select' || field.type === 'multiselect') &&
+            field.name !== 'priority' && field.name !== 'status' &&
+            field.options && field.options.length > 0) {
+            dropdownFields[field.name] = {
+                options: field.options,
+                internalValues: field.options
+            };
+        }
+    });
+
+    return dropdownFields;
+}
+
+/**
  * 导出Excel (按表格视图字段顺序, 使用层级字段)
+ * BUG-002: 添加下拉选项数据验证
  */
 export function exportToExcel() {
     try {
@@ -316,68 +351,166 @@ export function exportToExcel() {
             rows.push(row);
         });
 
-        // 创建工作簿和工作表
+        // 创建工作簿
         const wb = XLSX.utils.book_new();
+
+        // ========================================
+        // BUG-002: 创建选项参考表（隐藏工作表）
+        // ========================================
+        const dropdownFields = buildDropdownOptionsData();
+        const optionsSheetData = [];
+        const optionsSheetHeaders = [];
+        const optionRanges = {}; // 记录每个字段的选项范围，用于数据验证
+
+        // 构建选项表头和数据
+        Object.keys(dropdownFields).forEach((fieldName, colIndex) => {
+            const fieldData = dropdownFields[fieldName];
+            optionsSheetHeaders.push(fieldName);
+
+            // 记录此字段在选项表中的范围
+            const colLetter = XLSX.utils.encode_col(colIndex);
+            optionRanges[fieldName] = {
+                colLetter,
+                startRow: 2,
+                endRow: fieldData.options.length + 1
+            };
+        });
+
+        if (optionsSheetHeaders.length > 0) {
+            optionsSheetData.push(optionsSheetHeaders);
+
+            // 找出最长的选项列表
+            const maxOptions = Math.max(...Object.values(dropdownFields).map(f => f.options.length));
+
+            // 填充选项数据
+            for (let rowIndex = 0; rowIndex < maxOptions; rowIndex++) {
+                const row = [];
+                Object.keys(dropdownFields).forEach(fieldName => {
+                    const options = dropdownFields[fieldName].options;
+                    row.push(options[rowIndex] || '');
+                });
+                optionsSheetData.push(row);
+            }
+
+            // 创建选项工作表
+            const wsOptions = XLSX.utils.aoa_to_sheet(optionsSheetData);
+            XLSX.utils.book_append_sheet(wb, wsOptions, '_Options');
+        }
+
+        // ========================================
+        // 创建主任务工作表
+        // ========================================
         const ws = XLSX.utils.aoa_to_sheet(rows);
 
         // 设置列宽
-        const colWidths = headers.map((h, i) => ({ wch: i === 0 ? 10 : 15 }));
+        const colWidths = headers.map((h, idx) => {
+            if (idx === 0) return { wch: 10 }; // 层级列
+            const fieldName = fieldMapping[idx];
+            if (fieldName === 'text') return { wch: 25 };
+            if (fieldName === 'start_date') return { wch: 12 };
+            if (fieldName === 'duration') return { wch: 10 };
+            if (fieldName === 'progress') return { wch: 10 };
+            return { wch: 15 };
+        });
         ws['!cols'] = colWidths;
 
-        // 为下拉字段添加数据验证
+        // ========================================
+        // BUG-002: 添加数据验证
+        // ========================================
+        // 注意：xlsx 免费版对数据验证的支持有限
+        // 我们使用 !dataValidation 属性（部分 Excel 版本支持）
+
+        // 计算数据行数（用于数据验证范围）
+        const dataRowCount = Math.max(tasks.length + 1, 100); // 至少支持100行
+
         const dataValidations = [];
-        // 从index=1开始遍历（跳过hierarchy）
+
+        // 遍历字段，添加数据验证
         for (let i = 1; i < fieldMapping.length; i++) {
             const fieldName = fieldMapping[i];
-            const customField = state.customFields.find(f => f.name === fieldName);
+            const colLetter = XLSX.utils.encode_col(i);
 
-            if (customField && (customField.type === 'select' || customField.type === 'multiselect')) {
-                const colIndex = i; // 直接对应Excel列索引 (0是Hierarchy, 1是第一个字段...)
-                const colLetter = XLSX.utils.encode_col(colIndex);
-                const sqref = `${colLetter}2:${colLetter}1000`;
-
-                let options = [];
-                // 对于 priority 和 status，动态生成本地化选项
-                if (fieldName === 'priority') {
-                    options = INTERNAL_PRIORITY_VALUES.map(k => getLocalizedEnumValue('priority', k));
-                } else if (fieldName === 'status') {
-                    options = INTERNAL_STATUS_VALUES.map(k => getLocalizedEnumValue('status', k));
-                } else {
-                    // 其他自定义字段使用配置的options
-                    options = customField.options || [];
-                }
-
+            // 下拉选择字段
+            if (dropdownFields[fieldName]) {
+                const options = dropdownFields[fieldName].options;
+                // xlsx 库支持直接在 formula1 中使用逗号分隔的选项列表
                 const optionsStr = options.join(',');
 
-                if (options.length > 0) {
-                    dataValidations.push({
-                        type: 'list',
-                        sqref: sqref,
-                        formula1: `"${optionsStr}"`,
-                        showDropDown: true,
-                        allowBlank: !customField.required,
-                        errorStyle: 'warning',
-                        errorTitle: '无效输入',
-                        error: '请从列表中选择有效的选项'
-                    });
-                }
+                dataValidations.push({
+                    sqref: `${colLetter}2:${colLetter}${dataRowCount}`,
+                    type: 'list',
+                    formula1: `"${optionsStr}"`,
+                    showDropDown: true,
+                    allowBlank: true,
+                    showErrorMessage: true,
+                    errorStyle: 'warning',
+                    errorTitle: i18n.t('validation.invalidInput') || 'Invalid Input',
+                    error: i18n.t('validation.selectFromList') || 'Please select from the list'
+                });
+            }
+
+            // 数值字段添加数字验证
+            if (fieldName === 'duration') {
+                dataValidations.push({
+                    sqref: `${colLetter}2:${colLetter}${dataRowCount}`,
+                    type: 'whole',
+                    operator: 'greaterThanOrEqual',
+                    formula1: '0',
+                    allowBlank: true,
+                    showErrorMessage: true,
+                    errorStyle: 'stop',
+                    errorTitle: i18n.t('validation.invalidInput') || 'Invalid Input',
+                    error: i18n.t('validation.numberRequired') || 'Please enter a valid number'
+                });
+            }
+
+            // 进度字段添加百分比验证 (0-100)
+            if (fieldName === 'progress') {
+                dataValidations.push({
+                    sqref: `${colLetter}2:${colLetter}${dataRowCount}`,
+                    type: 'whole',
+                    operator: 'between',
+                    formula1: '0',
+                    formula2: '100',
+                    allowBlank: true,
+                    showErrorMessage: true,
+                    errorStyle: 'stop',
+                    errorTitle: i18n.t('validation.invalidInput') || 'Invalid Input',
+                    error: i18n.t('validation.progressRange') || 'Progress must be between 0 and 100'
+                });
+            }
+
+            // 自定义数字字段
+            const customField = state.customFields.find(f => f.name === fieldName);
+            if (customField && customField.type === 'number' && !dropdownFields[fieldName]) {
+                dataValidations.push({
+                    sqref: `${colLetter}2:${colLetter}${dataRowCount}`,
+                    type: 'decimal',
+                    allowBlank: !customField.required,
+                    showErrorMessage: true,
+                    errorStyle: customField.required ? 'stop' : 'warning',
+                    errorTitle: i18n.t('validation.invalidInput') || 'Invalid Input',
+                    error: i18n.t('validation.numberRequired') || 'Please enter a valid number'
+                });
             }
         }
 
+        // 应用数据验证
         if (dataValidations.length > 0) {
             ws['!dataValidation'] = dataValidations;
         }
 
-        XLSX.utils.book_append_sheet(wb, ws, '任务列表');
+        // 添加主工作表
+        XLSX.utils.book_append_sheet(wb, ws, i18n.t('excel.sheetName') || '任务列表');
 
         // 导出文件
         const filename = `gantt-tasks-${new Date().toISOString().split('T')[0]}.xlsx`;
         XLSX.writeFile(wb, filename);
 
-        showToast('Excel导出成功', 'success');
+        showToast(i18n.t('message.exportSuccess') || 'Excel导出成功', 'success');
     } catch (error) {
         console.error('Excel导出失败:', error);
-        showToast('Excel导出失败: ' + error.message, 'error');
+        showToast((i18n.t('message.exportError') || 'Excel导出失败') + ': ' + error.message, 'error');
     }
 }
 

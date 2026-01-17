@@ -66,6 +66,19 @@ export default {
         description: '説明'
     },
 
+    // ツールチップ
+    tooltip: {
+        task: 'タスク',
+        start: '開始',
+        end: '終了',
+        assignee: '担当者',
+        progress: '進捗',
+        priority: '優先度',
+        status: 'ステータス',
+        duration: '期間',
+        days: '日'
+    },
+
     // フォーム
     form: {
         required: 'このフィールドは必須です',
@@ -88,7 +101,11 @@ export default {
         noData: 'データがありません',
         confirmTitle: '確認',
         deleteLink: 'この依存関係を削除しますか？',
-        deleteTask: 'このタスクを削除しますか？'
+        deleteTask: 'このタスクを削除しますか？',
+        confirmClearCache: 'すべてのキャッシュを削除しますか？保存されたタスクと設定がすべて削除されます。',
+        cacheCleared: 'キャッシュを削除しました',
+        dataRestored: '{{count}}件のタスクを復元しました',
+        updateSuccess: '{{count}}件のタスクを更新しました'
     },
 
     // ショートカットパネル
@@ -161,7 +178,16 @@ export default {
     // バリデーション
     validation: {
         required: 'このフィールドは必須です',
-        number: '有効な数値を入力してください'
+        number: '有効な数値を入力してください',
+        invalidInput: '無効な入力',
+        selectFromList: 'リストから選択してください',
+        numberRequired: '有効な数値を入力してください',
+        progressRange: '進捗は0から100の間でなければなりません'
+    },
+
+    // Excel
+    excel: {
+        sheetName: 'タスク一覧'
     },
 
     // DHTMLX Gantt ラベル

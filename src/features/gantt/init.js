@@ -16,14 +16,17 @@ import { initScheduler } from './scheduler.js';
 import { initResponsive } from './responsive.js';
 import { initInlineEdit, addInlineEditStyles } from './inline-edit.js';
 import { initCriticalPath } from './critical-path.js';
+import { i18n } from '../../utils/i18n.js';
 
 /**
  * 初始化甘特图
  */
 export function initGantt() {
-    // 启用插件：tooltip（任务悬浮详情）、marker（今日标记线）、drag_timeline（拖拽平移）、auto_scheduling（自动调度）
+    // 启用插件：marker（今日标记线）、drag_timeline（拖拽平移）、auto_scheduling（自动调度）
+    // OPT-001: 移除 tooltip 插件，用户反馈悬浮详情会干扰操作
+    // 修正: 用户指出只需移除表格中的 tooltip，甘特图(时间轴)中仍需保留
     gantt.plugins({
-        tooltip: true,
+        tooltip: true,   // 启用悬浮详情 (通过事件控制仅在时间轴显示)
         marker: true,
         drag_timeline: true,
         auto_scheduling: true  // 启用自动调度引擎
@@ -60,41 +63,85 @@ export function initGantt() {
     gantt.setWorkTime({ day: 4, hours: true });  // 周四工作日
     gantt.setWorkTime({ day: 5, hours: true });  // 周五工作日
 
-    // 配置 Tooltip 模板 - 悬停显示任务详情
-    gantt.templates.tooltip_text = function (start, end, task) {
-        const format = gantt.date.date_to_str("%Y-%m-%d");
-        const progress = Math.round((task.progress || 0) * 100);
+    // OPT-001: Tooltip 显示控制
+    // 修正: 仅在甘特图(时间轴)区域显示 Tooltip，屏蔽表格区域
+    // 保存鼠标位置信息
+    let lastMouseEvent = null;
+    document.addEventListener('mousemove', function(e) {
+        lastMouseEvent = e;
+    }, true);
 
-        // 获取本地化的优先级和状态显示
-        let priorityText = task.priority || '-';
-        let statusText = task.status || '-';
-
-        // 如果有 i18n，使用本地化翻译
-        if (window.i18n && typeof window.i18n.t === 'function') {
-            if (task.priority) {
-                const translated = window.i18n.t(`enums.priority.${task.priority}`);
-                if (translated !== `enums.priority.${task.priority}`) {
-                    priorityText = translated;
-                }
-            }
-            if (task.status) {
-                const translated = window.i18n.t(`enums.status.${task.status}`);
-                if (translated !== `enums.status.${task.status}`) {
-                    statusText = translated;
-                }
+    // 使用tooltip模板控制显示（支持国际化，样式通过CSS类管理）
+    gantt.templates.tooltip_text = function(start, end, task) {
+        // 检查鼠标是否在表格区域
+        if (lastMouseEvent) {
+            const target = lastMouseEvent.target;
+            if (target && (
+                target.closest('.gantt_grid') ||
+                target.closest('.gantt_grid_data') ||
+                target.closest('.gantt_grid_scale') ||
+                target.closest('.gantt_row') ||
+                target.closest('.gantt_cell')
+            )) {
+                // 在表格区域，不显示tooltip
+                return '';
             }
         }
 
-        return `<div class="gantt-tooltip-content">
-            <div class="tooltip-title"><b>📋 ${task.text}</b></div>
-            <div class="tooltip-divider"></div>
-            <div class="tooltip-row"><span class="tooltip-label">📅 开始:</span> ${format(start)}</div>
-            <div class="tooltip-row"><span class="tooltip-label">📅 结束:</span> ${format(end)}</div>
-            <div class="tooltip-row"><span class="tooltip-label">👤 负责人:</span> ${task.assignee || '未指派'}</div>
-            <div class="tooltip-row"><span class="tooltip-label">📊 进度:</span> ${progress}%</div>
-            <div class="tooltip-row"><span class="tooltip-label">🔥 优先级:</span> ${priorityText}</div>
-            <div class="tooltip-row"><span class="tooltip-label">📌 状态:</span> ${statusText}</div>
-        </div>`;
+        // 在时间轴区域，显示详细的tooltip（支持国际化）
+        // 格式化日期
+        const formatDate = (date) => {
+            if (!date) return '';
+            const d = date instanceof Date ? date : new Date(date);
+            const year = d.getFullYear();
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        };
+
+        // 获取本地化的枚举值
+        const getPriorityText = (priority) => {
+            return i18n.t(`enums.priority.${priority}`) || priority;
+        };
+
+        const getStatusText = (status) => {
+            return i18n.t(`enums.status.${status}`) || status;
+        };
+
+        // 构建tooltip内容
+        const lines = [];
+
+        // 任务名称
+        lines.push(`<div class="gantt-tooltip-title">📋 ${i18n.t('tooltip.task')} #${task.id}</div>`);
+
+        // 开始日期
+        lines.push(`<div class="gantt-tooltip-row">📅 <span class="gantt-tooltip-label">${i18n.t('tooltip.start')}:</span> ${formatDate(task.start_date)}</div>`);
+
+        // 结束日期
+        lines.push(`<div class="gantt-tooltip-row">📅 <span class="gantt-tooltip-label">${i18n.t('tooltip.end')}:</span> ${formatDate(end)}</div>`);
+
+        // 负责人
+        if (task.assignee) {
+            lines.push(`<div class="gantt-tooltip-row">👤 <span class="gantt-tooltip-label">${i18n.t('tooltip.assignee')}:</span> ${task.assignee}</div>`);
+        }
+
+        // 进度
+        const progressPercent = Math.round((task.progress || 0) * 100);
+        lines.push(`<div class="gantt-tooltip-row">📊 <span class="gantt-tooltip-label">${i18n.t('tooltip.progress')}:</span> ${progressPercent}%</div>`);
+
+        // 优先级
+        if (task.priority) {
+            const priorityEmoji = task.priority === 'high' ? '🔴' : task.priority === 'medium' ? '🟡' : '🟢';
+            lines.push(`<div class="gantt-tooltip-row">${priorityEmoji} <span class="gantt-tooltip-label">${i18n.t('tooltip.priority')}:</span> ${getPriorityText(task.priority)}</div>`);
+        }
+
+        // 状态
+        if (task.status) {
+            const statusEmoji = task.status === 'completed' ? '✅' : task.status === 'in_progress' ? '🔄' : task.status === 'suspended' ? '❌' : '⏸️';
+            lines.push(`<div class="gantt-tooltip-row">${statusEmoji} <span class="gantt-tooltip-label">${i18n.t('tooltip.status')}:</span> ${getStatusText(task.status)}</div>`);
+        }
+
+        return `<div class="gantt-tooltip-container">${lines.join('')}</div>`;
     };
 
     // 设置语言
@@ -166,7 +213,7 @@ export function initGantt() {
     };
 
     // 从 localStorage 恢复左侧宽度
-    let savedGridWidth = 400;
+    let savedGridWidth = 600;
     try {
         const saved = localStorage.getItem('gantt_grid_width');
         if (saved) {

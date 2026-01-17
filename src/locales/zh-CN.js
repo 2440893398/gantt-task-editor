@@ -68,6 +68,19 @@ export default {
         description: '描述'
     },
 
+    // Tooltip 提示信息
+    tooltip: {
+        task: '任务',
+        start: '开始',
+        end: '结束',
+        assignee: '负责人',
+        progress: '进度',
+        priority: '优先级',
+        status: '状态',
+        duration: '工期',
+        days: '天'
+    },
+
     // 表单
     form: {
         required: '此字段必填',
@@ -90,7 +103,11 @@ export default {
         noData: '暂无数据',
         confirmTitle: '确认操作',
         deleteLink: '确定删除依赖关系吗？',
-        deleteTask: '确定删除任务吗？'
+        deleteTask: '确定删除任务吗？',
+        confirmClearCache: '确定清除所有缓存数据吗？这将删除所有保存的任务和配置。',
+        cacheCleared: '缓存已清除',
+        dataRestored: '已恢复 {{count}} 个任务',
+        updateSuccess: '已更新 {{count}} 个任务'
     },
 
     // 快捷键面板
@@ -163,7 +180,16 @@ export default {
     // 验证
     validation: {
         required: '此字段为必填项',
-        number: '请输入有效的数字'
+        number: '请输入有效的数字',
+        invalidInput: '无效输入',
+        selectFromList: '请从列表中选择有效的选项',
+        numberRequired: '请输入有效的数字',
+        progressRange: '进度必须在0到100之间'
+    },
+
+    // Excel
+    excel: {
+        sheetName: '任务列表'
     },
 
     // DHTMLX Gantt 标签

@@ -10,12 +10,11 @@ import { i18n } from './i18n.js';
 export function addOptionInput(value = '') {
     const optionsList = document.getElementById('options-list');
     const optionDiv = document.createElement('div');
-    optionDiv.style.marginBottom = '8px';
-    optionDiv.style.display = 'flex';
-    optionDiv.style.gap = '8px';
+    optionDiv.className = 'flex gap-2 mb-2';
+
     optionDiv.innerHTML = `
-        <input type="text" value="${value}" placeholder="${i18n.t('fieldManagement.optionValue')}" style="flex: 1; padding: 8px 12px; border: 1px solid #E5E7EB; border-radius: 6px; font-size: 13px;">
-        <button type="button" class="remove-option-btn" style="padding: 6px 12px; background: #EF4444; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 13px;">${i18n.t('fieldManagement.remove')}</button>
+        <input type="text" value="${value}" placeholder="${i18n.t('fieldManagement.optionValue')}" class="input input-sm input-bordered flex-1 text-sm">
+        <button type="button" class="btn btn-sm btn-error text-white remove-option-btn">${i18n.t('fieldManagement.remove')}</button>
     `;
 
     // 绑定删除事件

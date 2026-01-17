@@ -31,11 +31,10 @@ test.describe('Bug Fixes Verification', () => {
         // Try clicking the standard Cancel button first as it's easier to verify behavior?
         // Or strictly test the X as per bug report.
         // Let's assume standard DHTMLX Close Icon
-        const closeIcon = page.locator('.gantt_cal_quick_info').or(page.locator('.gantt_cal_header .gantt_cal_icon_close')).or(page.locator('.gantt_cancel_btn'));
-        // NOTE: DHTMLX structure might vary. Let's try the cancel button which is definitely there.
-        const cancelBtn = page.locator('div.gantt_cancel_btn');
-
-        await cancelBtn.click();
+        // Try to click the X button (first priority) or Cancel button
+        // DHTMLX often has .gantt_cal_icon_close in the header
+        const closeBtn = page.locator('.gantt_cal_icon_close').or(page.locator('.gantt_cancel_btn')).first();
+        await closeBtn.click();
 
         // 3. Verify Lightbox closed
         await expect(lightbox).toBeHidden();

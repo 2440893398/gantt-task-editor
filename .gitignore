@@ -5,7 +5,9 @@ node_modules/
 dist/
 
 # IDE
-.idea/
+.idea
+.claude/skills/
+.agent/skills/
 .vscode/
 *.swp
 *.swo
@@ -20,6 +22,34 @@ Thumbs.db
 .env.*.local
 
 # Testing
+.playwright-report/
+.playwright-mcp/
 playwright-report/
 test-results/
 doc/testdoc/playwright-report/
+doc/testdoc/screenshot/
+doc/testdoc/screenshots/
+coverage/
+
+# Output files
+output*.txt
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+tmp/
+temp/
+*~
+.*.swp
+.*.swo
+
+# Local configuration
+*.local.json
+
+# Cache
+.cache/
+.parcel-cache/
+.next/
+.nuxt/
+.tmp/

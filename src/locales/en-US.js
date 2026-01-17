@@ -68,6 +68,19 @@ export default {
         description: 'Description'
     },
 
+    // Tooltip
+    tooltip: {
+        task: 'Task',
+        start: 'Start',
+        end: 'End',
+        assignee: 'Assignee',
+        progress: 'Progress',
+        priority: 'Priority',
+        status: 'Status',
+        duration: 'Duration',
+        days: 'days'
+    },
+
     // Form
     form: {
         required: 'This field is required',
@@ -90,7 +103,11 @@ export default {
         noData: 'No data available',
         confirmTitle: 'Confirm',
         deleteLink: 'Delete this link?',
-        deleteTask: 'Delete this task?'
+        deleteTask: 'Delete this task?',
+        confirmClearCache: 'Clear all cached data? This will delete all saved tasks and configurations.',
+        cacheCleared: 'Cache cleared',
+        dataRestored: 'Restored {{count}} tasks',
+        updateSuccess: 'Updated {{count}} tasks'
     },
 
     // Shortcuts Panel
@@ -163,7 +180,16 @@ export default {
     // Validation
     validation: {
         required: 'This field is required',
-        number: 'Please enter a valid number'
+        number: 'Please enter a valid number',
+        invalidInput: 'Invalid Input',
+        selectFromList: 'Please select from the list',
+        numberRequired: 'Please enter a valid number',
+        progressRange: 'Progress must be between 0 and 100'
+    },
+
+    // Excel
+    excel: {
+        sheetName: 'Tasks'
     },
 
     // DHTMLX Gantt Labels

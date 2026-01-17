@@ -22,26 +22,86 @@
 </head>
 
 <body>
+    <!-- Loading 遮罩层 - 解决 FOUC 问题 -->
+    <div id="app-loading" style="
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        z-index: 9999;
+        transition: opacity 0.3s ease-out;
+    ">
+        <div style="
+            width: 48px;
+            height: 48px;
+            border: 4px solid #e2e8f0;
+            border-top-color: #4A90E2;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        "></div>
+        <p style="
+            margin-top: 16px;
+            color: #64748b;
+            font-family: Inter, system-ui, sans-serif;
+            font-size: 14px;
+        ">加载中...</p>
+    </div>
+    <style>
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        /* 隐藏主内容直到加载完成 */
+        #app-container {
+            opacity: 0;
+            transition: opacity 0.3s ease-in;
+        }
+
+        #app-container.loaded {
+            opacity: 1;
+        }
+    </style>
+
     <!-- 应用主容器 - 工具栏与甘特图统一 -->
-    <div id="app-container" class="app-container">
-        <!-- 工具栏 - 绝对定位在甘特图时间轴区域 -->
-        <div id="field-toolbar" class="toolbar-redesign">
+    <div id="app-container" class="relative flex flex-col w-full h-full overflow-hidden">
+        <!-- 工具栏 - navbar component -->
+        <div id="field-toolbar"
+            class="navbar min-h-[3.5rem] h-14 bg-base-100 border-b border-base-200 px-4 gap-2 z-20 shadow-sm">
             <!-- 左侧区域 (占位) -->
-            <div class="toolbar-left"></div>
+            <div class="flex-none"></div>
 
             <!-- 中间区域：搜索框 -->
-            <div class="toolbar-center">
-                <div class="search-container">
-                    <span class="search-icon">🔍</span>
-                    <input type="text" class="search-input" id="task-search-input" placeholder="Search tasks..."
-                        data-i18n-placeholder="toolbar.searchPlaceholder">
+            <div class="flex-1 max-w-md mx-auto">
+                <div class="form-control w-full relative h-8">
+                    <span
+                        class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4 flex items-center justify-center shrink-0">
+                        <!-- 内联 width/height 防止 FOUC (Flash of Unstyled Content) -->
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" class="w-4 h-4 shrink-0"
+                            fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        </svg>
+                    </span>
+                    <input type="text" id="task-search-input"
+                        class="input input-bordered input-sm w-full pl-9 focus:input-primary rounded-full transition-all"
+                        placeholder="Search tasks..." data-i18n-placeholder="toolbar.searchPlaceholder">
                 </div>
             </div>
 
             <!-- 右侧区域：今日按钮 + 图标按钮组 + More + New Task -->
-            <div class="toolbar-right">
+            <div class="flex-none flex items-center gap-2">
                 <!-- 今日按钮 -->
-                <button class="today-btn-enhanced" id="scroll-to-today-btn" data-i18n="toolbar.today">
+                <button id="scroll-to-today-btn"
+                    class="btn btn-sm btn-primary gap-2 font-medium text-white shadow-md hover:shadow-lg transition-all"
+                    data-i18n="toolbar.today">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
                         <line x1="16" y1="2" x2="16" y2="6" />
@@ -53,180 +113,231 @@
                 </button>
 
                 <!-- 分隔线 -->
-                <div class="toolbar-divider"></div>
+                <div class="divider divider-horizontal mx-1 my-1"></div>
 
                 <!-- 图标按钮组 -->
-                <div class="icon-btn-group">
-                    <button class="icon-btn" id="add-field-btn" title="编辑字段" data-i18n-title="toolbar.editFields">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                <div class="join">
+                    <button
+                        class="join-item btn btn-sm btn-ghost btn-square text-gray-500 hover:text-primary tooltip tooltip-bottom"
+                        id="add-field-btn" data-tip="编辑字段" data-i18n-title="toolbar.editFields">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                             stroke-width="2">
                             <path d="M12 3h7a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7" />
                             <line x1="12" y1="8" x2="12" y2="16" />
                             <line x1="8" y1="12" x2="16" y2="12" />
                         </svg>
                     </button>
-                    <button class="icon-btn" id="batch-edit-btn" title="批量编辑" data-testid="batch-edit-btn"
+                    <button
+                        class="join-item btn btn-sm btn-ghost btn-square text-gray-500 hover:text-primary tooltip tooltip-bottom"
+                        id="batch-edit-btn" data-testid="batch-edit-btn" data-tip="批量编辑"
                         data-i18n-title="toolbar.batchEdit">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                             stroke-width="2">
                             <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
                             <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
                         </svg>
                     </button>
-                    <button class="icon-btn" id="config-export-btn" title="导出" data-testid="config-export-btn"
-                        data-i18n-title="toolbar.export">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    <!-- OPT-004: 使用Excel图标，因为默认导出是Excel -->
+                    <button
+                        class="join-item btn btn-sm btn-ghost btn-square text-green-600 hover:text-green-700 hover:bg-green-50 tooltip tooltip-bottom"
+                        id="config-export-btn" data-testid="config-export-btn" data-tip="导出Excel"
+                        data-i18n-title="toolbar.exportExcel">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                             stroke-width="2">
-                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                            <polyline points="17 8 12 3 7 8" />
-                            <line x1="12" y1="3" x2="12" y2="15" />
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                            <polyline points="14 2 14 8 20 8" />
+                            <line x1="8" y1="13" x2="16" y2="13" />
+                            <line x1="8" y1="17" x2="16" y2="17" />
+                            <line x1="10" y1="9" x2="10" y2="9" />
                         </svg>
                     </button>
                 </div>
 
                 <!-- 分隔线 -->
-                <div class="toolbar-divider"></div>
+                <div class="divider divider-horizontal mx-1 my-1"></div>
 
-                <!-- 更多操作下拉菜单 -->
-                <div class="toolbar-dropdown" id="more-actions-dropdown">
-                    <button class="more-btn">
+                <!-- 更多操作下拉菜单 (DaisyUI Dropdown) -->
+                <div class="dropdown dropdown-end" id="more-actions-dropdown">
+                    <label tabindex="0" class="btn btn-sm btn-ghost gap-1 text-gray-600 font-normal more-btn">
                         <span data-i18n="toolbar.more">More</span>
-                        <span class="dropdown-arrow">▼</span>
-                    </button>
-                    <div class="dropdown-menu">
-                        <!-- 导入导出 -->
-                        <div class="dropdown-item" id="dropdown-export-excel">
-                            <span class="dropdown-item-icon">📊</span>
-                            <span data-i18n="toolbar.exportExcel">导出Excel</span>
-                        </div>
-                        <div class="dropdown-item" id="dropdown-import-excel">
-                            <span class="dropdown-item-icon">📥</span>
-                            <span data-i18n="toolbar.importExcel">导入Excel</span>
-                        </div>
-                        <div class="dropdown-divider"></div>
-                        <div class="dropdown-item" id="dropdown-export-json">
-                            <span class="dropdown-item-icon">📤</span>
-                            <span data-i18n="toolbar.exportJSON">导出JSON</span>
-                        </div>
-                        <div class="dropdown-item" id="dropdown-import-json">
-                            <span class="dropdown-item-icon">📂</span>
-                            <span data-i18n="toolbar.importJSON">导入JSON</span>
-                        </div>
-                        <div class="dropdown-divider"></div>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" class="dropdown-arrow">
+                            <path d="m6 9 6 6 6-6" />
+                        </svg>
+                    </label>
+                    <ul tabindex="0"
+                        class="dropdown-content z-[1] menu p-2 shadow-lg bg-base-100 rounded-box w-52 border border-base-200 mt-1">
+                        <!-- OPT-004: 优化导入导出图标 - 使用更直观的图标组合 -->
+                        <!-- Excel 操作 -->
+                        <li><a id="dropdown-export-excel" class="flex items-center gap-2">
+                                <span
+                                    class="flex items-center justify-center w-6 h-6 bg-green-100 text-green-600 rounded text-xs font-bold">XLS</span>
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"
+                                    class="h-4 w-4 text-green-600" fill="none" viewBox="0 0 24 24"
+                                    stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                                </svg>
+                                <span data-i18n="toolbar.exportExcel">导出Excel</span>
+                            </a></li>
+                        <li><a id="dropdown-import-excel" class="flex items-center gap-2">
+                                <span
+                                    class="flex items-center justify-center w-6 h-6 bg-green-100 text-green-600 rounded text-xs font-bold">XLS</span>
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"
+                                    class="h-4 w-4 text-green-600" fill="none" viewBox="0 0 24 24"
+                                    stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m4-4l-4 4m0 0l-4-4m4 4V4" />
+                                </svg>
+                                <span data-i18n="toolbar.importExcel">导入Excel</span>
+                            </a></li>
+                        <div class="divider my-0"></div>
+                        <!-- JSON 操作 -->
+                        <li><a id="dropdown-export-json" class="flex items-center gap-2">
+                                <span
+                                    class="flex items-center justify-center w-6 h-6 bg-blue-100 text-blue-600 rounded text-xs font-bold">{}</span>
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"
+                                    class="h-4 w-4 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                                </svg>
+                                <span data-i18n="toolbar.exportJSON">导出JSON</span>
+                            </a></li>
+                        <li><a id="dropdown-import-json" class="flex items-center gap-2">
+                                <span
+                                    class="flex items-center justify-center w-6 h-6 bg-blue-100 text-blue-600 rounded text-xs font-bold">{}</span>
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"
+                                    class="h-4 w-4 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m4-4l-4 4m0 0l-4-4m4 4V4" />
+                                </svg>
+                                <span data-i18n="toolbar.importJSON">导入JSON</span>
+                            </a></li>
+                        <div class="divider my-0"></div>
                         <!-- 关键路径开关 -->
-                        <div class="dropdown-item" id="toggle-critical-path">
-                            <span class="dropdown-item-icon">🔥</span>
-                            <span data-i18n="toolbar.criticalPath">关键路径</span>
-                            <span class="toggle-indicator" id="cpm-indicator"
-                                style="margin-left: auto; font-size: 12px; color: #9CA3AF;">○</span>
-                        </div>
-                        <div class="dropdown-divider"></div>
-                        <!-- 语言选择 -->
-                        <div class="dropdown-item dropdown-submenu" id="language-menu">
-                            <span class="dropdown-item-icon">🌐</span>
-                            <span data-i18n="toolbar.language">语言</span>
-                            <span class="submenu-arrow">›</span>
-                            <div class="submenu">
-                                <div class="dropdown-item" data-lang="zh-CN">简体中文</div>
-                                <div class="dropdown-item" data-lang="en-US">English</div>
-                                <div class="dropdown-item" data-lang="ja-JP">日本語</div>
-                                <div class="dropdown-item" data-lang="ko-KR">한국어</div>
-                            </div>
-                        </div>
-                    </div>
+                        <li>
+                            <a id="toggle-critical-path" class="justify-between">
+                                <div class="flex items-center"><span class="mr-2">🔥</span><span
+                                        data-i18n="toolbar.criticalPath">关键路径</span></div>
+                                <span class="toggle-indicator text-gray-300 text-xs" id="cpm-indicator">○</span>
+                            </a>
+                        </li>
+                        <div class="divider my-0"></div>
+                        <!-- 语言选择 (Nested dropdown) -->
+                        <li>
+                            <details id="language-menu">
+                                <summary><span class="mr-2">🌐</span><span data-i18n="toolbar.language">语言</span>
+                                </summary>
+                                <ul>
+                                    <li><a class="dropdown-item" data-lang="zh-CN">简体中文</a></li>
+                                    <li><a class="dropdown-item" data-lang="en-US">English</a></li>
+                                    <li><a class="dropdown-item" data-lang="ja-JP">日本語</a></li>
+                                    <li><a class="dropdown-item" data-lang="ko-KR">한국어</a></li>
+                                </ul>
+                            </details>
+                        </li>
+                    </ul>
                 </div>
 
                 <!-- 新建任务按钮 -->
-                <button class="new-task-btn" id="new-task-btn">
+                <button class="btn btn-sm gap-2 shadow-md hover:shadow-lg transition-all text-white font-medium"
+                    id="new-task-btn"
+                    style="background: linear-gradient(135deg, #4A90E2 0%, #6366F1 100%); border: none;">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                         stroke-width="2.5">
                         <line x1="12" y1="5" x2="12" y2="19"></line>
                         <line x1="5" y1="12" x2="19" y2="12"></line>
                     </svg>
-                    <span data-i18n="toolbar.newTask">New Task</span>
+                    <span data-i18n="toolbar.newTask">+ 新建任务</span>
                 </button>
             </div>
         </div>
 
         <!-- 甘特图容器 - 全高度 -->
-        <div id="gantt_here"></div>
+        <div id="gantt_here" class="flex-1 min-h-0"></div>
     </div>
 
     <!-- 快捷键和图例面板 - 默认折叠 -->
-    <div class="shortcuts-panel collapsed" id="shortcuts-panel">
-        <div class="shortcuts-header" id="shortcuts-header">
-            <div class="shortcuts-title">
-                <span>⌨️</span>
-                <span data-i18n="shortcuts.title">快捷键 & 图例</span>
-            </div>
-            <span class="shortcuts-toggle">▼</span>
-        </div>
-        <div class="shortcuts-content">
-            <!-- 导航快捷键 -->
-            <div class="shortcuts-section">
-                <div class="shortcuts-section-title" data-i18n="shortcuts.navigation">导航</div>
-                <div class="shortcut-item">
-                    <span class="shortcut-action" data-i18n="shortcuts.panView">平移视图</span>
-                    <div class="shortcut-keys">
-                        <span class="key">Space</span>
-                        <span style="color: #9CA3AF;">+</span>
-                        <span class="key" data-i18n="shortcuts.drag">拖动</span>
-                    </div>
+    <div id="shortcuts-panel"
+        class="card card-compact fixed bottom-4 left-4 z-40 w-64 shadow-2xl transition-transform duration-300 overflow-hidden"
+        style="transform: translateY(0); border-radius: 12px;">
+        <div class="card-body p-0">
+            <div class="flex items-center justify-between p-3 cursor-pointer transition-colors" id="shortcuts-header"
+                style="background: linear-gradient(135deg, #4A90E2 0%, #6366F1 50%, #9333EA 100%);">
+                <div class="flex items-center gap-2 font-semibold text-white">
+                    <span>⌨️</span>
+                    <span data-i18n="shortcuts.title">快捷键 & 图例</span>
                 </div>
-                <div class="shortcut-item">
-                    <span class="shortcut-action" data-i18n="shortcuts.zoomTimeline">缩放时间轴</span>
-                    <div class="shortcut-keys">
-                        <span class="key">Ctrl</span>
-                        <span style="color: #9CA3AF;">+</span>
-                        <span class="key" data-i18n="shortcuts.scroll">滚轮</span>
-                    </div>
-                </div>
-                <div class="shortcut-item">
-                    <span class="shortcut-action" data-i18n="shortcuts.goToToday">回到今天</span>
-                    <div class="shortcut-keys">
-                        <span class="key" data-i18n="shortcuts.clickToday">点击"今天"按钮</span>
-                    </div>
-                </div>
+                <span class="shortcuts-toggle transform transition-transform duration-300 text-white">▲</span>
             </div>
 
-            <!-- 任务操作 -->
-            <div class="shortcuts-section">
-                <div class="shortcuts-section-title" data-i18n="shortcuts.taskOperations">任务操作</div>
-                <div class="shortcut-item">
-                    <span class="shortcut-action" data-i18n="shortcuts.editTask">编辑任务</span>
-                    <div class="shortcut-keys">
-                        <span class="key" data-i18n="shortcuts.doubleClick">双击</span>
+            <div class="shortcuts-content p-4 space-y-4 max-h-[60vh] overflow-y-auto bg-white">
+                <!-- 导航快捷键 -->
+                <div>
+                    <div class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2"
+                        data-i18n="shortcuts.navigation">导航</div>
+                    <div class="space-y-2">
+                        <div class="flex justify-between text-sm">
+                            <span class="text-gray-600" data-i18n="shortcuts.panView">平移视图</span>
+                            <div class="flex gap-1">
+                                <kbd class="kbd kbd-sm">Space</kbd>
+                                <span class="text-gray-400">+</span>
+                                <span class="text-gray-500" data-i18n="shortcuts.drag">拖动</span>
+                            </div>
+                        </div>
+                        <div class="flex justify-between text-sm">
+                            <span class="text-gray-600" data-i18n="shortcuts.zoomTimeline">缩放时间轴</span>
+                            <div class="flex gap-1">
+                                <kbd class="kbd kbd-sm">Ctrl</kbd>
+                                <span class="text-gray-400">+</span>
+                                <span class="text-gray-500" data-i18n="shortcuts.scroll">滚轮</span>
+                            </div>
+                        </div>
+                        <div class="flex justify-between text-sm">
+                            <span class="text-gray-600" data-i18n="shortcuts.goToToday">回到今天</span>
+                            <div class="text-gray-500 text-xs" data-i18n="shortcuts.clickToday">点击"今天"按钮</div>
+                        </div>
                     </div>
                 </div>
-                <div class="shortcut-item">
-                    <span class="shortcut-action" data-i18n="shortcuts.adjustTime">调整时间</span>
-                    <div class="shortcut-keys">
-                        <span class="key" data-i18n="shortcuts.dragTask">拖动任务条</span>
-                    </div>
-                </div>
-                <div class="shortcut-item">
-                    <span class="shortcut-action" data-i18n="shortcuts.adjustProgress">调整进度</span>
-                    <div class="shortcut-keys">
-                        <span class="key" data-i18n="shortcuts.dragProgress">拖动进度条</span>
-                    </div>
-                </div>
-            </div>
 
-            <!-- 图例 -->
-            <div class="shortcuts-section legend-section">
-                <div class="shortcuts-section-title" data-i18n="shortcuts.legend">图例</div>
-                <div class="legend-items">
-                    <div class="legend-item">
-                        <span class="legend-color completed"></span>
-                        <span data-i18n="shortcuts.completed">已完成</span>
+                <!-- 任务操作 -->
+                <div>
+                    <div class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2"
+                        data-i18n="shortcuts.taskOperations">任务操作</div>
+                    <div class="space-y-2">
+                        <div class="flex justify-between text-sm">
+                            <span class="text-gray-600" data-i18n="shortcuts.editTask">编辑任务</span>
+                            <span class="text-gray-500" data-i18n="shortcuts.doubleClick">双击</span>
+                        </div>
+                        <div class="flex justify-between text-sm">
+                            <span class="text-gray-600" data-i18n="shortcuts.adjustTime">调整时间</span>
+                            <span class="text-gray-500" data-i18n="shortcuts.dragTask">拖动任务条</span>
+                        </div>
+                        <div class="flex justify-between text-sm">
+                            <span class="text-gray-600" data-i18n="shortcuts.adjustProgress">调整进度</span>
+                            <span class="text-gray-500" data-i18n="shortcuts.dragProgress">拖动进度条</span>
+                        </div>
                     </div>
-                    <div class="legend-item">
-                        <span class="legend-color incomplete"></span>
-                        <span data-i18n="shortcuts.incomplete">未完成</span>
-                    </div>
-                    <div class="legend-item">
-                        <span class="legend-color dependency"></span>
-                        <span data-i18n="shortcuts.dependency">依赖关系</span>
+                </div>
+
+                <!-- 图例 -->
+                <div class="legend-section">
+                    <div class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2"
+                        data-i18n="shortcuts.legend">图例</div>
+                    <div class="flex flex-wrap gap-3">
+                        <div class="flex items-center gap-2 text-sm text-gray-600">
+                            <span
+                                class="w-3 h-3 rounded-full bg-gradient-to-br from-green-400 to-green-500 shadow-sm"></span>
+                            <span data-i18n="shortcuts.completed">已完成</span>
+                        </div>
+                        <div class="flex items-center gap-2 text-sm text-gray-600">
+                            <span class="w-3 h-3 rounded-md bg-gradient-to-br from-red-400 to-red-500 shadow-sm"></span>
+                            <span data-i18n="shortcuts.incomplete">未完成</span>
+                        </div>
+                        <div class="flex items-center gap-2 text-sm text-gray-600">
+                            <span class="w-8 border-t-2 border-dashed border-slate-400"></span>
+                            <span data-i18n="shortcuts.dependency">依赖关系</span>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -238,24 +349,40 @@
         document.addEventListener('DOMContentLoaded', () => {
             const panel = document.getElementById('shortcuts-panel');
             const header = document.getElementById('shortcuts-header');
+            const toggleIcon = header.querySelector('.shortcuts-toggle');
+            let isCollapsed = true; // Default collapsed
+
+            // Initial state
+            panel.style.transform = 'translateY(calc(100% - 3.5rem))';
+            toggleIcon.style.transform = 'rotate(180deg)';
 
             header.addEventListener('click', () => {
-                panel.classList.toggle('collapsed');
+                isCollapsed = !isCollapsed;
+                if (isCollapsed) {
+                    panel.style.transform = 'translateY(calc(100% - 3.5rem))';
+                    toggleIcon.style.transform = 'rotate(180deg)';
+                } else {
+                    panel.style.transform = 'translateY(0)';
+                    toggleIcon.style.transform = 'rotate(0deg)';
+                }
             });
         });
     </script>
 
     <!-- 缩放控件 -->
-    <div id="zoom-controls" class="zoom-controls">
-        <button id="zoom-out-btn" class="zoom-btn" title="缩小时间跨度" data-i18n-title="view.zoomOut">－</button>
-        <input type="range" id="zoom-slider" min="0" max="4" value="1" class="zoom-slider">
-        <button id="zoom-in-btn" class="zoom-btn" title="扩大时间跨度" data-i18n-title="view.zoomIn">＋</button>
-        <div class="zoom-divider"></div>
-        <select id="view-selector" class="zoom-view-selector" data-testid="view-selector">
+    <div id="zoom-controls"
+        class="fixed bottom-4 right-4 z-50 flex items-center gap-1 bg-base-100/90 backdrop-blur px-2 py-1.5 rounded-lg shadow-lg border border-base-200">
+        <button id="zoom-out-btn" class="btn btn-circle btn-xs btn-ghost text-base leading-none" title="缩小（更粗）"
+            data-i18n-title="view.zoomOut">－</button>
+        <input type="range" id="zoom-slider" min="0" max="4" value="1" class="range range-xs range-primary w-20">
+        <button id="zoom-in-btn" class="btn btn-circle btn-xs btn-ghost text-base leading-none" title="放大（更细）"
+            data-i18n-title="view.zoomIn">＋</button>
+        <div class="w-px h-5 bg-base-300 mx-0.5"></div>
+        <select id="view-selector" class="select select-bordered select-xs w-20 text-xs" data-testid="view-selector">
             <option value="day" data-i18n="view.day">日视图</option>
             <option value="week" selected data-i18n="view.week">周视图</option>
             <option value="month" data-i18n="view.month">月视图</option>
-            <option value="quarter" data-i18n="view.quarter">季度视图</option>
+            <option value="quarter" data-i18n="view.quarter">季度</option>
             <option value="year" data-i18n="view.year">年视图</option>
         </select>
     </div>
@@ -279,13 +406,17 @@
                 }
             });
 
-            // 语言选择
-            document.querySelectorAll('#language-menu .submenu .dropdown-item').forEach(item => {
+            // 语言选择 - 修复选择器以匹配 details > ul 结构
+            document.querySelectorAll('#language-menu ul .dropdown-item[data-lang]').forEach(item => {
                 item.addEventListener('click', (e) => {
                     e.stopPropagation();
                     const lang = item.dataset.lang;
+                    console.log('[i18n] Language switch clicked:', lang);
                     if (lang && window.i18n) {
                         window.i18n.setLanguage(lang);
+                        // 关闭 details 菜单
+                        const details = document.getElementById('language-menu');
+                        if (details) details.removeAttribute('open');
                     }
                     dropdown.classList.remove('active');
                 });
@@ -349,176 +480,261 @@
         });
     </script>
 
+    <style>
+        /* JS Toggle States Helpers */
+        #batch-edit-panel.open,
+        #field-management-panel.open {
+            transform: translateX(0);
+        }
+
+        #field-config-modal.show {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        #field-config-modal.show .modal-box {
+            transform: scale(1);
+        }
+    </style>
+
     <!-- 选中任务计数器 -->
-    <div id="selected-tasks-counter">
-        <span style="color: #0C4A6E; font-size: 14px; font-weight: 500;" id="selected-count-text"
-            data-i18n="batchEdit.selectedCount" data-i18n-params='{"count":0}'>
+    <div id="selected-tasks-counter"
+        class="fixed top-20 right-4 z-30 hidden items-center gap-3 bg-blue-50/90 backdrop-blur border border-blue-100 px-4 py-2 rounded-lg shadow-lg text-blue-900 transition-all">
+        <span class="text-sm font-medium" id="selected-count-text" data-i18n="batchEdit.selectedCount"
+            data-i18n-params='{"count":0}'>
             已选中 0 个任务
         </span>
-        <button id="clear-selection-btn" class="btn-secondary" style="padding: 4px 12px; font-size: 12px;"
+        <button id="clear-selection-btn" class="btn btn-xs btn-ghost text-blue-700 hover:bg-blue-100"
             data-i18n="batchEdit.clear">清除选择</button>
     </div>
 
     <!-- 批量编辑面板 -->
-    <div id="batch-edit-panel">
-        <div class="batch-edit-header">
-            <h3 data-i18n="batchEdit.title">批量编辑</h3>
-            <button id="close-batch-edit"
-                style="background: none; border: none; font-size: 24px; color: #6B7280; cursor: pointer;">&times;</button>
+    <div id="batch-edit-panel"
+        class="fixed right-0 top-0 h-full w-80 bg-base-100 shadow-2xl z-50 transform translate-x-full transition-transform duration-300 flex flex-col border-l border-base-200">
+        <div class="flex items-center justify-between p-4 border-b border-base-200 bg-base-100/50 backdrop-blur">
+            <h3 class="font-semibold text-lg" data-i18n="batchEdit.title">批量编辑</h3>
+            <button id="close-batch-edit" class="btn btn-sm btn-circle btn-ghost text-gray-500">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" class="h-5 w-5" fill="none"
+                    viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+            </button>
         </div>
-        <div class="batch-edit-body">
-            <div style="background: #E0F2FE; padding: 12px; border-radius: 8px; margin-bottom: 20px;">
-                <span style="color: #0C4A6E; font-size: 14px; font-weight: 500;">
-                    <span id="batch-selected-count-text" data-i18n="batchEdit.selectedCount"
-                        data-i18n-params='{"count":0}'>ℹ️ 已选中 0 个任务</span>
-                </span>
+
+        <div class="flex-1 overflow-y-auto p-4 space-y-4">
+            <div class="alert alert-info bg-blue-50 text-blue-900 border-blue-100 text-sm py-2">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24"
+                    class="stroke-current shrink-0 w-5 h-5">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                </svg>
+                <span id="batch-selected-count-text" data-i18n="batchEdit.selectedCount"
+                    data-i18n-params='{"count":0}'>ℹ️ 已选中 0 个任务</span>
             </div>
-            <div class="form-group">
-                <label data-i18n="batchEdit.selectField">选择要修改的字段</label>
-                <select id="batch-field-select" class="form-control">
+
+            <div class="form-control w-full">
+                <label class="label">
+                    <span class="label-text font-medium" data-i18n="batchEdit.selectField">选择要修改的字段</span>
+                </label>
+                <select id="batch-field-select" class="select select-bordered w-full">
                     <option value="" data-i18n="form.selectPlaceholder">请选择字段</option>
                 </select>
             </div>
-            <div id="batch-field-input-container" style="display: none;">
-                <div class="form-group">
-                    <label id="batch-field-label" data-i18n="batchEdit.fieldValue">字段值</label>
+
+            <div id="batch-field-input-container" class="hidden">
+                <div class="form-control w-full">
+                    <label class="label">
+                        <span class="label-text font-medium" id="batch-field-label"
+                            data-i18n="batchEdit.fieldValue">字段值</span>
+                    </label>
                     <div id="batch-field-input"></div>
                 </div>
             </div>
         </div>
-        <div class="batch-edit-footer">
-            <button id="batch-cancel-btn" class="btn-secondary" data-i18n="form.cancel">取消</button>
-            <button id="batch-apply-btn" class="btn-primary" data-i18n="batchEdit.apply">应用到所有任务</button>
+
+        <div class="p-4 border-t border-base-200 bg-base-100/50 backdrop-blur flex justify-end gap-2">
+            <button id="batch-cancel-btn" class="btn btn-ghost" data-i18n="form.cancel">取消</button>
+            <button id="batch-apply-btn" class="btn btn-primary" data-i18n="batchEdit.apply">应用到所有任务</button>
         </div>
     </div>
 
     <!-- 字段管理面板 -->
-    <div id="field-management-panel">
-        <div class="field-management-header">
-            <h4 style="margin: 0; font-size: 14px; font-weight: 600;" data-i18n="fieldManagement.title">字段管理</h4>
-            <button id="close-field-management"
-                style="background: none; border: none; font-size: 24px; color: #6B7280; cursor: pointer;">&times;</button>
+    <div id="field-management-panel"
+        class="fixed right-0 top-0 h-full w-96 bg-base-100 shadow-2xl z-50 transform translate-x-full transition-transform duration-300 flex flex-col border-l border-base-200">
+        <div class="flex items-center justify-between p-4 border-b border-base-200 bg-base-100/50 backdrop-blur">
+            <h4 class="font-semibold text-lg" data-i18n="fieldManagement.title">字段管理</h4>
+            <button id="close-field-management" class="btn btn-sm btn-circle btn-ghost text-gray-500">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" class="h-5 w-5" fill="none"
+                    viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+            </button>
         </div>
-        <div class="field-management-body" id="field-list-container">
+
+        <div class="field-management-body flex-1 overflow-y-auto p-4 space-y-2" id="field-list-container">
             <!-- 字段列表将在这里动态生成 -->
         </div>
-        <div style="padding: 16px; background: white; border-top: 1px solid var(--border-color);">
-            <button id="add-field-from-panel-btn" class="btn-secondary" style="width: 100%;"
-                data-i18n="fieldManagement.addField">+ 新增字段</button>
+
+        <div class="p-4 border-t border-base-200 bg-base-100/50 backdrop-blur">
+            <button id="add-field-from-panel-btn" class="btn btn-outline btn-primary w-full gap-2"
+                data-i18n="fieldManagement.addField">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" class="h-4 w-4" viewBox="0 0 20 20"
+                    fill="currentColor">
+                    <path fill-rule="evenodd"
+                        d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z"
+                        clip-rule="evenodd" />
+                </svg>
+                新增字段
+            </button>
         </div>
     </div>
 
     <!-- 字段配置弹窗 -->
-    <div id="field-config-modal" class="modal-backdrop" style="display: none;">
-        <div class="modal-content">
-            <!-- 渐变头部 -->
-            <div class="modal-header-gradient">
-                <div class="modal-header-icon">✦</div>
-                <div class="modal-header-text">
-                    <h3 data-i18n="fieldManagement.title">字段配置</h3>
-                    <p data-i18n="fieldManagement.createSubtitle">创建和自定义您的字段</p>
+    <div id="field-config-modal"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm opacity-0 pointer-events-none transition-opacity duration-200">
+        <div
+            class="modal-box w-11/12 max-w-lg bg-base-100 shadow-2xl rounded-2xl p-0 overflow-hidden transform scale-95 transition-transform duration-200">
+            <!-- 头部 -->
+            <div class="bg-gradient-to-r from-primary to-accent p-6 text-white relative">
+                <div class="flex items-start gap-4">
+                    <div class="p-3 bg-white/20 rounded-xl backdrop-blur-sm">
+                        <span class="text-2xl">✦</span>
+                    </div>
+                    <div class="flex-1">
+                        <h3 class="text-xl font-bold" data-i18n="fieldManagement.title">字段配置</h3>
+                        <p class="text-white/80 text-sm mt-1" data-i18n="fieldManagement.createSubtitle">创建和自定义您的字段</p>
+                    </div>
                 </div>
-                <button class="modal-close-btn" id="modal-close-x">×</button>
+                <button class="btn btn-sm btn-circle btn-ghost absolute right-4 top-4 text-white hover:bg-white/20"
+                    id="modal-close-x">✕</button>
             </div>
 
             <!-- 内容区域 -->
-            <div class="modal-body">
+            <div class="p-6 space-y-4">
                 <!-- 字段名称 -->
-                <div class="form-group">
-                    <label><span class="label-icon">T</span> <span
-                            data-i18n="fieldManagement.fieldName">字段名称</span></label>
-                    <input type="text" id="field-name" data-testid="field-name-input" class="form-control"
-                        placeholder="请输入字段名称" data-i18n-placeholder="fieldManagement.placeholderName">
+                <div class="form-control w-full">
+                    <label class="label">
+                        <span class="label-text font-medium flex items-center gap-2"><span class="text-primary">T</span>
+                            <span data-i18n="fieldManagement.fieldName">字段名称</span></span>
+                    </label>
+                    <input type="text" id="field-name" data-testid="field-name-input"
+                        class="input input-bordered w-full focus:input-primary" placeholder="请输入字段名称"
+                        data-i18n-placeholder="fieldManagement.placeholderName">
                 </div>
 
-                <!-- 字段类型 -->
-                <div class="form-group" style="position: relative;">
-                    <label><span class="label-icon">≡</span> <span
-                            data-i18n="fieldManagement.fieldType">字段类型</span></label>
-                    <div class="field-type-selector" id="field-type-selector">
-                        <span class="field-type-icon icon-number">#</span>
-                        <span class="field-type-text" data-i18n="fieldManagement.typeNumber">数字</span>
-                        <span style="margin-left: auto; color: #9CA3AF;">▼</span>
+                <!-- 字段类型 (Complex custom selector replacement) -->
+                <!-- Keeping existing structure ID-wise but styling with Tailwind -->
+                <div class="form-control w-full relative group">
+                    <label class="label">
+                        <span class="label-text font-medium flex items-center gap-2"><span class="text-primary">≡</span>
+                            <span data-i18n="fieldManagement.fieldType">字段类型</span></span>
+                    </label>
+                    <div class="field-type-selector p-3 border border-base-300 rounded-lg cursor-pointer hover:border-primary transition-colors flex items-center gap-3 bg-base-100"
+                        id="field-type-selector">
+                        <span class="badge badge-primary badge-outline font-mono">#</span>
+                        <span class="field-type-text flex-1" data-i18n="fieldManagement.typeNumber">数字</span>
+                        <span class="text-gray-400">▼</span>
                     </div>
-                    <select id="field-type" style="display: none;">
+                    <select id="field-type" class="hidden">
                         <option value="text">文本</option>
                         <option value="number" selected>数字</option>
                         <option value="date">日期</option>
                         <option value="select">下拉选择</option>
                         <option value="multiselect">多选</option>
                     </select>
-                    <div class="field-type-dropdown" id="field-type-dropdown">
-                        <div class="field-type-option" data-value="text">
-                            <span class="field-type-icon icon-text">Ā</span>
-                            <span data-i18n="fieldManagement.typeText">文本</span>
-                        </div>
-                        <div class="field-type-option selected" data-value="number">
-                            <span class="field-type-icon icon-number">#</span>
-                            <span data-i18n="fieldManagement.typeNumber">数字</span>
-                            <span class="check-icon">✓</span>
-                        </div>
-                        <div class="field-type-option" data-value="date">
-                            <span class="field-type-icon icon-date">☐</span>
-                            <span data-i18n="fieldManagement.typeDate">日期</span>
-                        </div>
-                        <div class="field-type-option" data-value="select">
-                            <span class="field-type-icon icon-select">˅</span>
-                            <span data-i18n="fieldManagement.typeSelect">下拉选择</span>
-                        </div>
-                        <div class="field-type-option" data-value="multiselect">
-                            <span class="field-type-icon icon-multiselect">≡</span>
-                            <span data-i18n="fieldManagement.typeMultiselect">多选</span>
+                    <!-- Custom Dropdown implementation mimicking existing structure -->
+                    <div class="field-type-dropdown absolute top-full left-0 right-0 mt-1 bg-base-100 border border-base-200 shadow-xl rounded-xl z-20 hidden group-hover:block transition-all"
+                        id="field-type-dropdown">
+                        <!-- Options will be handled by JS, but here are the static ones for structure -->
+                        <div class="p-1 space-y-1">
+                            <div class="field-type-option flex items-center gap-3 p-2 hover:bg-base-200 rounded-lg cursor-pointer"
+                                data-value="text">
+                                <span class="badge badge-ghost font-mono">Ā</span>
+                                <span data-i18n="fieldManagement.typeText">文本</span>
+                            </div>
+                            <div class="field-type-option flex items-center gap-3 p-2 bg-primary/10 text-primary rounded-lg cursor-pointer selected"
+                                data-value="number">
+                                <span class="badge badge-primary badge-outline font-mono">#</span>
+                                <span data-i18n="fieldManagement.typeNumber">数字</span>
+                                <span class="check-icon ml-auto">✓</span>
+                            </div>
+                            <!-- ... other options ... -->
+                            <div class="field-type-option flex items-center gap-3 p-2 hover:bg-base-200 rounded-lg cursor-pointer"
+                                data-value="date">
+                                <span class="badge badge-ghost font-mono">☐</span>
+                                <span data-i18n="fieldManagement.typeDate">日期</span>
+                            </div>
+                            <div class="field-type-option flex items-center gap-3 p-2 hover:bg-base-200 rounded-lg cursor-pointer"
+                                data-value="select">
+                                <span class="badge badge-ghost font-mono">˅</span>
+                                <span data-i18n="fieldManagement.typeSelect">下拉选择</span>
+                            </div>
+                            <div class="field-type-option flex items-center gap-3 p-2 hover:bg-base-200 rounded-lg cursor-pointer"
+                                data-value="multiselect">
+                                <span class="badge badge-ghost font-mono">≡</span>
+                                <span data-i18n="fieldManagement.typeMultiselect">多选</span>
+                            </div>
                         </div>
                     </div>
                 </div>
 
                 <!-- 必填字段 -->
-                <div class="required-field-row" id="required-field-row">
-                    <div class="required-toggle" id="required-toggle"></div>
-                    <div class="required-field-info">
-                        <div class="title" data-i18n="fieldManagement.required">必填字段</div>
-                        <div class="subtitle" data-i18n="fieldManagement.requiredDesc">用户必须填写此字段</div>
-                    </div>
-                    <span class="required-field-arrow">›</span>
-                    <input type="checkbox" id="field-required" style="display: none;">
-                </div>
-
-                <!-- 默认值信息卡片 -->
-                <div class="default-value-card">
-                    <div class="default-value-header">
-                        <div class="default-value-icon">ⓘ</div>
-                        <div class="default-value-text">
-                            <h4 data-i18n="fieldManagement.defaultOneTime">默认值 (可选)</h4>
-                            <p data-i18n="fieldManagement.defaultDesc">现有任务将自动填充此值</p>
+                <div class="flex items-center gap-4 p-3 bg-base-200/50 rounded-xl cursor-pointer hover:bg-base-200 transition-colors"
+                    id="required-field-row">
+                    <div class="required-toggle w-10 h-6 bg-gray-300 rounded-full relative transition-colors"
+                        id="required-toggle">
+                        <div class="absolute left-1 top-1 w-4 h-4 bg-white rounded-full shadow transition-transform">
                         </div>
                     </div>
-                    <input type="text" id="field-default-value" class="form-control" placeholder="输入默认值..."
-                        data-i18n-placeholder="fieldManagement.defaultPlaceholder" style="margin-bottom: 12px;">
-                    <div class="default-value-note" data-i18n="fieldManagement.defaultNote">新增字段时，所有现有任务将被设置为此默认值。</div>
+                    <div class="flex-1">
+                        <div class="font-medium text-sm" data-i18n="fieldManagement.required">必填字段</div>
+                        <div class="text-xs text-gray-500" data-i18n="fieldManagement.requiredDesc">用户必须填写此字段</div>
+                    </div>
+                    <input type="checkbox" id="field-required" class="hidden">
+                    <span class="text-gray-400">›</span>
+                </div>
+
+                <!-- 默认值信息卡片 (DaisyUI Alert/Card) -->
+                <div class="alert bg-base-200 border-none rounded-xl block text-left p-4">
+                    <div class="flex items-start gap-3 mb-2">
+                        <div class="text-primary mt-0.5">ⓘ</div>
+                        <div>
+                            <h4 class="font-medium text-sm" data-i18n="fieldManagement.defaultOneTime">默认值 (可选)</h4>
+                            <p class="text-xs text-gray-500" data-i18n="fieldManagement.defaultDesc">现有任务将自动填充此值</p>
+                        </div>
+                    </div>
+                    <input type="text" id="field-default-value"
+                        class="input input-sm input-bordered w-full bg-white mb-2" placeholder="输入默认值..."
+                        data-i18n-placeholder="fieldManagement.defaultPlaceholder">
+                    <div class="text-xs text-gray-400" data-i18n="fieldManagement.defaultNote">新增字段时，所有现有任务将被设置为此默认值。
+                    </div>
                 </div>
 
                 <!-- 选项配置 -->
-                <div id="options-config" class="form-group" style="display: none;">
-                    <label><span class="label-icon">☰</span> <span
-                            data-i18n="fieldManagement.options">选项配置</span></label>
-                    <div id="options-list"></div>
-                    <button id="add-option-btn" class="btn-secondary"
-                        style="margin-top: 8px; padding: 8px 14px; font-size: 13px;"
-                        data-i18n="fieldManagement.addOption">+ 添加选项</button>
+                <div id="options-config" class="form-control w-full hidden">
+                    <label class="label">
+                        <span class="label-text font-medium flex items-center gap-2">☰ <span
+                                data-i18n="fieldManagement.options">选项配置</span></span>
+                    </label>
+                    <div id="options-list" class="space-y-2 mb-2"></div>
+                    <button id="add-option-btn" class="btn btn-sm btn-ghost btn-outline border-dashed w-full gap-2"
+                        data-i18n="fieldManagement.addOption">
+                        + 添加选项
+                    </button>
                 </div>
             </div>
 
             <!-- 底部按钮 -->
-            <div class="modal-footer">
-                <button id="cancel-field-btn" class="btn-secondary" data-i18n="form.cancel">取消</button>
-                <button id="save-field-btn" data-testid="save-field-btn" class="btn-primary"
+            <div class="p-4 bg-base-100 border-t border-base-200 flex justify-end gap-3 rounded-b-2xl">
+                <button id="cancel-field-btn" class="btn btn-ghost" data-i18n="form.cancel">取消</button>
+                <button id="save-field-btn" data-testid="save-field-btn" class="btn btn-primary px-6"
                     data-i18n="form.save">保存</button>
             </div>
         </div>
     </div>
 
     <!-- 文件输入(用于导入配置) -->
-    <input type="file" id="config-file-input" style="display: none;" accept=".json">
+    <input type="file" id="config-file-input" class="hidden" accept=".json">
 
     <!-- 入口 JS -->
     <script type="module" src="/src/main.js"></script>
