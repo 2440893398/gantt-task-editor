@@ -12,11 +12,91 @@ import { updateSelectedTasksUI, applySelectionStyles } from '../selection/select
 import { initNavigation } from './navigation.js';
 import { initMarkers } from './markers.js';
 import { initZoom, refreshZoomBindings } from './zoom.js';
+import { initScheduler } from './scheduler.js';
+import { initResponsive } from './responsive.js';
+import { initInlineEdit, addInlineEditStyles } from './inline-edit.js';
+import { initCriticalPath } from './critical-path.js';
 
 /**
  * 初始化甘特图
  */
 export function initGantt() {
+    // 启用插件：tooltip（任务悬浮详情）、marker（今日标记线）、drag_timeline（拖拽平移）、auto_scheduling（自动调度）
+    gantt.plugins({
+        tooltip: true,
+        marker: true,
+        drag_timeline: true,
+        auto_scheduling: true  // 启用自动调度引擎
+    });
+
+    // ========================================
+    // 性能优化配置 (PRD-竞品改进-v1.0)
+    // ========================================
+
+    // 启用智能渲染 - 仅渲染视口内 DOM 元素，支持 1000+ 任务流畅滚动
+    gantt.config.smart_rendering = true;
+
+    // 启用静态背景渲染优化
+    gantt.config.static_background = true;
+
+    // ========================================
+    // 智能调度配置 (PRD-竞品改进-v1.0)
+    // ========================================
+
+    // 启用工作日历 - 跳过周末进行排程计算
+    gantt.config.work_time = true;
+
+    // 启用自动调度 - 依赖变动时自动级联更新
+    gantt.config.auto_scheduling = true;
+    gantt.config.auto_scheduling_strict = true;  // 严格模式：后继任务不能早于前置任务结束
+    gantt.config.auto_scheduling_compatibility = false;  // 使用新版调度算法
+
+    // 设置工作时间 (周一至周五)
+    gantt.setWorkTime({ day: 0, hours: false }); // 周日非工作日
+    gantt.setWorkTime({ day: 6, hours: false }); // 周六非工作日
+    gantt.setWorkTime({ day: 1, hours: true });  // 周一工作日
+    gantt.setWorkTime({ day: 2, hours: true });  // 周二工作日
+    gantt.setWorkTime({ day: 3, hours: true });  // 周三工作日
+    gantt.setWorkTime({ day: 4, hours: true });  // 周四工作日
+    gantt.setWorkTime({ day: 5, hours: true });  // 周五工作日
+
+    // 配置 Tooltip 模板 - 悬停显示任务详情
+    gantt.templates.tooltip_text = function (start, end, task) {
+        const format = gantt.date.date_to_str("%Y-%m-%d");
+        const progress = Math.round((task.progress || 0) * 100);
+
+        // 获取本地化的优先级和状态显示
+        let priorityText = task.priority || '-';
+        let statusText = task.status || '-';
+
+        // 如果有 i18n，使用本地化翻译
+        if (window.i18n && typeof window.i18n.t === 'function') {
+            if (task.priority) {
+                const translated = window.i18n.t(`enums.priority.${task.priority}`);
+                if (translated !== `enums.priority.${task.priority}`) {
+                    priorityText = translated;
+                }
+            }
+            if (task.status) {
+                const translated = window.i18n.t(`enums.status.${task.status}`);
+                if (translated !== `enums.status.${task.status}`) {
+                    statusText = translated;
+                }
+            }
+        }
+
+        return `<div class="gantt-tooltip-content">
+            <div class="tooltip-title"><b>📋 ${task.text}</b></div>
+            <div class="tooltip-divider"></div>
+            <div class="tooltip-row"><span class="tooltip-label">📅 开始:</span> ${format(start)}</div>
+            <div class="tooltip-row"><span class="tooltip-label">📅 结束:</span> ${format(end)}</div>
+            <div class="tooltip-row"><span class="tooltip-label">👤 负责人:</span> ${task.assignee || '未指派'}</div>
+            <div class="tooltip-row"><span class="tooltip-label">📊 进度:</span> ${progress}%</div>
+            <div class="tooltip-row"><span class="tooltip-label">🔥 优先级:</span> ${priorityText}</div>
+            <div class="tooltip-row"><span class="tooltip-label">📌 状态:</span> ${statusText}</div>
+        </div>`;
+    };
+
     // 设置语言
     gantt.i18n.setLocale("cn");
 
@@ -261,6 +341,19 @@ export function initGantt() {
 
     // 初始化缩放模块
     initZoom();
+
+    // 初始化智能调度引擎
+    initScheduler();
+
+    // 初始化响应式布局
+    initResponsive();
+
+    // 初始化内联编辑
+    initInlineEdit();
+    addInlineEditStyles();
+
+    // 初始化关键路径模块
+    initCriticalPath();
 
     // 甘特图渲染后重新应用选中样式
     gantt.attachEvent("onGanttRender", function () {

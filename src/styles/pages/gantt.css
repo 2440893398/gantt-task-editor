@@ -163,6 +163,46 @@
 }
 
 /* ========================================
+   关键路径 (CPM) 高亮样式
+   ======================================== */
+
+/* 关键路径任务条 - 深红色高亮 */
+.gantt_task_line.critical-path {
+    background: linear-gradient(135deg, #DC2626 0%, #B91C1C 100%) !important;
+    box-shadow: 0 0 12px rgba(220, 38, 38, 0.6), 0 4px 8px rgba(220, 38, 38, 0.3) !important;
+    border: 2px solid #991B1B !important;
+    z-index: 10;
+}
+
+.gantt_task_line.critical-path:hover {
+    box-shadow: 0 0 16px rgba(220, 38, 38, 0.8), 0 6px 12px rgba(220, 38, 38, 0.4) !important;
+}
+
+.gantt_task_line.critical-path .gantt_task_progress {
+    background: linear-gradient(135deg, #7F1D1D 0%, #991B1B 100%) !important;
+}
+
+.gantt_task_line.critical-path .gantt_task_content {
+    font-weight: 600 !important;
+}
+
+/* 关键路径连线 - 红色实线加粗 */
+.gantt_task_link.critical-link .gantt_line_wrapper div {
+    border-top: 2.5px solid #DC2626 !important;
+    border-top-style: solid !important;
+}
+
+.gantt_task_link.critical-link .gantt_link_line_path {
+    stroke: #DC2626 !important;
+    stroke-width: 2.5 !important;
+    stroke-dasharray: none !important;
+}
+
+.gantt_task_link.critical-link .gantt_link_arrow {
+    fill: #DC2626 !important;
+}
+
+/* ========================================
    工具栏样式 - 由 toolbar.css 统一管理
    ======================================== */
 
@@ -1129,12 +1169,50 @@
 .gantt_tooltip {
     background: rgba(17, 24, 39, 0.95) !important;
     border: none !important;
-    border-radius: 8px !important;
-    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05) !important;
-    padding: 10px 14px !important;
+    border-radius: 12px !important;
+    box-shadow: 0 10px 25px -3px rgba(0, 0, 0, 0.2), 0 4px 6px -2px rgba(0, 0, 0, 0.1) !important;
+    padding: 0 !important;
     font-size: 13px !important;
     color: white !important;
     line-height: 1.5 !important;
+    max-width: 280px !important;
+    overflow: hidden !important;
+}
+
+/* Tooltip 内容容器 */
+.gantt-tooltip-content {
+    padding: 14px 16px;
+}
+
+/* Tooltip 标题 */
+.gantt-tooltip-content .tooltip-title {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 8px;
+    color: #FFFFFF;
+}
+
+/* Tooltip 分隔线 */
+.gantt-tooltip-content .tooltip-divider {
+    height: 1px;
+    background: rgba(255, 255, 255, 0.15);
+    margin: 8px 0 10px;
+}
+
+/* Tooltip 行 */
+.gantt-tooltip-content .tooltip-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 0;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.9);
+}
+
+/* Tooltip 标签 */
+.gantt-tooltip-content .tooltip-label {
+    color: rgba(255, 255, 255, 0.6);
+    min-width: 65px;
 }
 
 /* 空状态提示样式 */

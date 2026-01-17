@@ -15,7 +15,9 @@ export default {
         exportJSON: 'Export JSON',
         importJSON: 'Import JSON',
         language: 'Language',
-        searchPlaceholder: 'Search tasks...'
+        searchPlaceholder: 'Search tasks...',
+        criticalPath: 'Critical Path',
+        lag: 'Lag (days)'
     },
 
     // View

@@ -21,19 +21,19 @@ export function initNavigation() {
 
 /**
  * 配置时间轴拖拽
- * 强制使用手动实现以支持空格键拖拽
+ * 支持直接拖拽空白区域进行视图平移
  */
 function configureDragTimeline() {
-    // 禁用默认的 drag_timeline 配置，以免冲突
-    if (gantt.config.drag_timeline) {
-        gantt.config.drag_timeline = {
-            useKey: "none" // 禁用默认拖拽
-        };
-    }
+    // 配置 drag_timeline 插件 - 允许直接鼠标拖拽
+    gantt.config.drag_timeline = {
+        ignore: ".gantt_task_line, .gantt_task_link, .gantt_task_content",
+        useKey: false,  // 不需要按键即可拖拽
+        render: true
+    };
 
-    // 使用手动实现的空格键拖拽
+    // 同时保留空格键拖拽作为辅助功能
     setupManualDrag();
-    console.log('🖐️ 时间轴拖拽已配置 (空格键模式)');
+    console.log('🖐️ 时间轴拖拽已配置 (支持直接拖拽和空格键模式)');
 }
 
 /**

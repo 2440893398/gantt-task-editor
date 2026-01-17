@@ -1,0 +1,173 @@
+/**
+ * 移动端样式
+ * 
+ * 实现 PRD-竞品改进-v1.0 中的移动端适配样式：
+ * - 隐藏时间轴
+ * - Grid 全宽显示
+ * - 卡片式布局
+ */
+
+/* ========================================
+   移动端模式 - 视口 < 768px
+   ======================================== */
+
+@media (max-width: 767px) {
+
+    /* 隐藏时间轴区域 */
+    .gantt_task,
+    .gantt_task_scale,
+    .gantt_data_area,
+    .gantt_hor_scroll,
+    .gantt_ver_scroll,
+    .gantt_layout_cell:not(:first-child) {
+        display: none !important;
+    }
+
+    /* Grid 全宽显示 */
+    .gantt_grid {
+        width: 100% !important;
+        max-width: 100% !important;
+        border-right: none !important;
+    }
+
+    .gantt_layout_cell:first-child {
+        width: 100% !important;
+        max-width: 100% !important;
+    }
+
+    /* 隐藏分隔线 */
+    .gantt_resizer,
+    .gantt_layout_cell_resizer,
+    #custom-resizer {
+        display: none !important;
+    }
+
+    /* 隐藏工具栏部分按钮 */
+    #scroll-to-today-btn,
+    .zoom-controls,
+    #zoom-in-btn,
+    #zoom-out-btn,
+    #zoom-slider,
+    #view-selector,
+    #gantt-legend {
+        display: none !important;
+    }
+
+    /* 工具栏简化 */
+    .toolbar {
+        padding: 8px 12px !important;
+        flex-wrap: wrap !important;
+        gap: 8px !important;
+    }
+
+    .toolbar-left,
+    .toolbar-center,
+    .toolbar-right {
+        flex: 1 1 100% !important;
+        justify-content: center !important;
+    }
+
+    /* 甘特图容器调整 */
+    .gantt_container {
+        padding-top: 100px !important;
+        /* 为工具栏多行预留空间 */
+    }
+
+    /* 任务行卡片化 */
+    .gantt_row {
+        border: 1px solid var(--border-color, #E5E7EB) !important;
+        border-radius: 12px !important;
+        margin: 8px 12px !important;
+        padding: 12px !important;
+        background: white !important;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1) !important;
+        display: flex !important;
+        flex-wrap: wrap !important;
+        gap: 8px !important;
+    }
+
+    .gantt_row:hover {
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15) !important;
+    }
+
+    /* 隐藏表头 */
+    .gantt_grid_scale {
+        display: none !important;
+    }
+
+    /* 单元格样式调整 */
+    .gantt_cell {
+        border: none !important;
+        padding: 4px 8px !important;
+    }
+
+    /* 任务名称突出显示 */
+    .gantt_cell[data-column-name="text"] {
+        flex: 1 1 100% !important;
+        font-size: 16px !important;
+        font-weight: 600 !important;
+        color: #1F2937 !important;
+    }
+
+    /* 日期、状态、负责人横排显示 */
+    .gantt_cell[data-column-name="start_date"],
+    .gantt_cell[data-column-name="status"],
+    .gantt_cell[data-column-name="assignee"] {
+        flex: 0 0 auto !important;
+        background: #F3F4F6 !important;
+        border-radius: 6px !important;
+        font-size: 12px !important;
+    }
+
+    /* 隐藏不必要的列 */
+    .gantt_cell[data-column-name="duration"],
+    .gantt_cell[data-column-name="progress"],
+    .gantt_cell[data-column-name="add"] {
+        display: none !important;
+    }
+
+    /* 复选框样式 */
+    .gantt_cell:first-child {
+        position: absolute !important;
+        top: 8px !important;
+        right: 8px !important;
+    }
+
+    /* 禁用拖拽时的光标 */
+    .gantt_row,
+    .gantt_cell {
+        cursor: pointer !important;
+    }
+
+    /* 快捷键面板隐藏 */
+    #shortcuts-panel {
+        display: none !important;
+    }
+}
+
+/* ========================================
+   移动端模式 (通过 JS 类名切换)
+   ======================================== */
+
+body.mobile-mode .gantt_task,
+body.mobile-mode .gantt_task_scale {
+    display: none !important;
+}
+
+body.mobile-mode .gantt_grid {
+    width: 100% !important;
+}
+
+/* ========================================
+   平板适配 (768px - 1024px)
+   ======================================== */
+
+@media (min-width: 768px) and (max-width: 1024px) {
+    .gantt_grid {
+        width: 350px !important;
+    }
+
+    .toolbar {
+        padding: 8px 16px !important;
+    }
+}

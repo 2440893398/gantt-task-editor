@@ -15,7 +15,9 @@ export default {
         exportJSON: '导出JSON',
         importJSON: '导入JSON',
         language: '语言',
-        searchPlaceholder: '搜索任务...'
+        searchPlaceholder: '搜索任务...',
+        criticalPath: '关键路径',
+        lag: '延迟(天)'
     },
 
     // 视图

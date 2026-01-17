@@ -2,6 +2,9 @@
  * 主样式文件 - 全局样式和 CSS 变量
  */
 
+/* 导入响应式样式 */
+@import './responsive/mobile.css';
+
 :root {
     /* 色彩系统 */
     --primary-color: #4A90E2;
