@@ -31,7 +31,11 @@ const STORAGE_KEYS = {
     COLUMNS_CONFIG: 'gantt_columns_config',
     CUSTOM_FIELDS_DEF: 'gantt_custom_fields_def',
     FIELD_ORDER: 'gantt_field_order',
-    GRID_WIDTH: 'gantt_grid_width'
+    GRID_WIDTH: 'gantt_grid_width',
+    // AI 配置相关
+    AI_CONFIG: 'gantt_ai_config',
+    // System field settings
+    SYSTEM_FIELD_SETTINGS: 'gantt_system_field_settings'
 };
 
 // ========================================
@@ -149,6 +153,22 @@ export function saveFieldOrder(fieldOrder) {
  */
 export function getFieldOrder() {
     return getLocalStorage(STORAGE_KEYS.FIELD_ORDER);
+}
+
+/**
+ * Save system field settings
+ * @param {Object} settings - { enabled: {}, typeOverrides: {} }
+ */
+export function saveSystemFieldSettings(settings) {
+    setLocalStorage(STORAGE_KEYS.SYSTEM_FIELD_SETTINGS, settings);
+}
+
+/**
+ * Get system field settings
+ * @returns {Object|null}
+ */
+export function getSystemFieldSettings() {
+    return getLocalStorage(STORAGE_KEYS.SYSTEM_FIELD_SETTINGS);
 }
 
 /**
@@ -433,6 +453,52 @@ export async function checkStorageAvailability() {
     }
 
     return result;
+}
+
+// ========================================
+// AI 配置存储
+// ========================================
+
+/**
+ * 保存 AI 配置
+ * @param {Object} config - { apiKey, baseUrl, model }
+ */
+export function saveAiConfig(config) {
+    // 安全处理：不明文存储完整 Key，仅存储必要信息
+    const safeConfig = {
+        apiKey: config.apiKey || '',
+        baseUrl: config.baseUrl || 'https://api.openai.com/v1',
+        model: config.model || 'gpt-3.5-turbo'
+    };
+    setLocalStorage(STORAGE_KEYS.AI_CONFIG, safeConfig);
+}
+
+/**
+ * 获取 AI 配置
+ * @returns {Object|null} - { apiKey, baseUrl, model }
+ */
+export function getAiConfig() {
+    return getLocalStorage(STORAGE_KEYS.AI_CONFIG, {
+        apiKey: '',
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-3.5-turbo'
+    });
+}
+
+/**
+ * 清除 AI 配置
+ */
+export function clearAiConfig() {
+    removeLocalStorage(STORAGE_KEYS.AI_CONFIG);
+}
+
+/**
+ * 检查 AI 是否已配置
+ * @returns {boolean}
+ */
+export function isAiConfigured() {
+    const config = getAiConfig();
+    return !!(config && config.apiKey && config.baseUrl);
 }
 
 // 导出数据库实例（供调试使用）
