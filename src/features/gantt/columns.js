@@ -2,7 +2,8 @@
  * 甘特图列配置
  */
 
-import { state } from '../../core/store.js';
+import { state, isFieldEnabled } from '../../core/store.js';
+import { INTERNAL_FIELDS } from '../../data/fields.js';
 import { renderPriorityBadge, renderStatusBadge, renderAssignee, renderProgressBar } from './templates.js';
 
 /**
@@ -27,9 +28,26 @@ function getColumnLabel(key) {
         progress: '进度',
         priority: '优先级',
         assignee: '负责人',
-        status: '状态'
+        status: '状态',
+        summary: '概述'  // F-112
     };
     return defaults[key] || key;
+}
+
+/**
+ * HTML 转义
+ */
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+/**
+ * 属性值转义
+ */
+function escapeAttr(text) {
+    return String(text || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/\n/g, ' ');
 }
 
 /**
@@ -50,7 +68,13 @@ export function updateGanttColumns() {
         }
     });
 
-    state.fieldOrder.forEach(fieldName => {
+    // Filter out disabled system fields and internal fields
+    const visibleFields = state.fieldOrder.filter(fieldName => {
+        if (INTERNAL_FIELDS.includes(fieldName)) return false;
+        return isFieldEnabled(fieldName);
+    });
+
+    visibleFields.forEach(fieldName => {
         if (fieldName === "text") {
             columns.push({ name: "text", label: getColumnLabel("text"), tree: true, width: 200, resize: true });
         } else if (fieldName === "start_date") {
@@ -62,6 +86,26 @@ export function updateGanttColumns() {
                 name: "progress", label: getColumnLabel("progress"), align: "center", width: 120, resize: true,
                 template: function (task) {
                     return renderProgressBar(task);
+                }
+            });
+        } else if (fieldName === "summary") {
+            // F-112: 任务概述字段 - 省略显示 + 悬停展开
+            columns.push({
+                name: "summary",
+                label: getColumnLabel("summary"),
+                width: 200,
+                resize: true,
+                template: function (task) {
+                    const text = task.summary || '';
+                    if (!text) {
+                        return '<span class="text-base-content/40 text-xs italic">—</span>';
+                    }
+                    // 截断显示（最多显示50个字符）
+                    const truncated = text.length > 50 ? text.substring(0, 50) + '...' : text;
+                    // 使用 DaisyUI tooltip
+                    return `<div class="gantt-summary-cell tooltip tooltip-bottom cursor-pointer" data-tip="${escapeAttr(text)}">
+                        <span class="line-clamp-1 text-sm">${escapeHtml(truncated)}</span>
+                    </div>`;
                 }
             });
         } else {
