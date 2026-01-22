@@ -2,7 +2,7 @@
  * Lightbox 自定义
  */
 
-import { state } from '../../core/store.js';
+import { state, isFieldEnabled } from '../../core/store.js';
 import { showToast } from '../../utils/toast.js';
 import { validateField } from '../../utils/dom.js';
 import { FIELD_ICONS } from '../../config/constants.js';
@@ -38,7 +38,9 @@ export function registerCustomFieldsBlock() {
             return "<div class='gantt_cal_ltext gantt_custom_fields_container' style='height:" + height + "px;'></div>";
         },
         set_value: function (node, value, task, section) {
-            const fieldCount = state.customFields.length;
+            // Filter out disabled fields
+            const visibleFields = state.customFields.filter(field => isFieldEnabled(field.name));
+            const fieldCount = visibleFields.length;
             let layoutClass = 'single-column';
 
             if (fieldCount > 3 && fieldCount <= 6) {
@@ -57,7 +59,7 @@ export function registerCustomFieldsBlock() {
 
             html += `<div class="fields-grid ${layoutClass}" style="max-height: ${fieldCount > 6 ? 'calc(100% - 60px)' : 'auto'}; overflow-y: ${fieldCount > 6 ? 'auto' : 'visible'};">`;
 
-            state.customFields.forEach(field => {
+            visibleFields.forEach(field => {
                 const fieldValue = task[field.name] || '';
                 const requiredMark = field.required ? '<span style="color: #EF4444; margin-left: 4px;">*</span>' : '';
                 const fieldIcon = FIELD_ICONS[field.name] || FIELD_ICONS['default'];
@@ -128,7 +130,10 @@ export function registerCustomFieldsBlock() {
             let isValid = true;
             const errors = [];
 
-            state.customFields.forEach(field => {
+            // Filter out disabled fields
+            const visibleFields = state.customFields.filter(field => isFieldEnabled(field.name));
+
+            visibleFields.forEach(field => {
                 const input = node.querySelector(`input[name="${field.name}"], select[name="${field.name}"]`);
                 const errorDiv = node.querySelector(`.field-error[data-field="${field.name}"]`);
 
@@ -189,13 +194,60 @@ export function registerCustomFieldsBlock() {
 
 /**
  * 配置 Lightbox sections
+ * F-112: 添加 summary 任务概述字段
  */
 export function configureLightbox() {
     gantt.config.lightbox.sections = [
-        { name: "description", height: 70, map_to: "text", type: "textarea", focus: true },
+        { name: "description", height: 40, map_to: "text", type: "textarea", focus: true },  // 改为单行，高度减少
+        { name: "summary", height: 60, map_to: "summary", type: "textarea" },  // F-112
         { name: "time", height: 72, type: "duration", map_to: "auto" },
         { name: "custom_fields", height: calculateCustomFieldsHeight(), type: "custom_fields", map_to: "custom_fields" }
     ];
+
+    // 修改 section 标签: 描述 → 任务名
+    gantt.locale.labels.section_description = i18n.t('task.name') || '任务名称';
+    // F-112: 添加 summary 区域的标签翻译
+    gantt.locale.labels.section_summary = i18n.t('columns.summary') || '概述';
+}
+
+/**
+ * 注册任务名称输入控件 (限制100字符)
+ */
+export function registerNameInput() {
+    // 用 CSS 限制 description 区域的 textarea 为单行样式
+    const style = document.createElement('style');
+    style.textContent = `
+        .gantt_cal_lsection[label="${i18n.t('task.name') || '任务名称'}"] + .gantt_cal_larea textarea,
+        .gantt_section_description textarea {
+            resize: none;
+            height: 32px !important;
+            min-height: 32px !important;
+            padding: 8px 12px;
+            font-size: 14px;
+            line-height: 1.2;
+            overflow: hidden;
+            white-space: nowrap;
+        }
+    `;
+    document.head.appendChild(style);
+
+    // 为 description 添加100字符限制
+    gantt.attachEvent("onLightbox", function (id) {
+        setTimeout(() => {
+            const descSection = document.querySelector('.gantt_section_description textarea');
+            if (descSection) {
+                descSection.maxLength = 100;
+                descSection.placeholder = i18n.t('task.namePlaceholder') || '请输入任务名称（最多100字符）';
+                // 监听输入防止换行
+                descSection.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                    }
+                });
+            }
+        }, 50);
+        return true;
+    });
 }
 
 /**
