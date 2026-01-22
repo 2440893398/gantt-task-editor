@@ -134,17 +134,20 @@ export default {
     // 一括編集
     batchEdit: {
         title: '一括編集',
+        subtitle: '複数のタスクを同時に変更',
         selectedCount: '{{count}}件のタスクを選択中',
         selectField: '変更するフィールドを選択',
         fieldValue: 'フィールド値',
-        apply: 'すべてのタスクに適用',
+        apply: '変更を適用',
         clear: '選択解除'
     },
 
     // フィールド管理
     fieldManagement: {
         title: 'フィールド管理',
+        subtitle: 'ドラッグして並び替え、クリックして編集',
         addField: 'フィールド追加',
+        fieldIcon: 'アイコン',
         fieldName: 'フィールド名',
         fieldType: 'フィールドタイプ',
         required: '必須フィールド',
@@ -155,6 +158,8 @@ export default {
         defaultOneTime: 'デフォルト値 (任意)',
         defaultDesc: '既存のタスクに自動入力されます',
         defaultPlaceholder: 'デフォルト値を入力...',
+        defaultSelectHint: '下にオプションを追加してからデフォルト値を選択',
+        defaultMultiselectHint: 'Ctrlキーで複数選択、下にオプションを追加してください',
         defaultNote: '新しいフィールドを追加すると、すべての既存タスクにこのデフォルト値が設定されます。',
         selectionCount: '{{count}}件のタスクを選択中',
         options: 'オプション設定',
@@ -162,10 +167,35 @@ export default {
         remove: '削除',
         addOption: 'オプション追加',
         typeText: 'テキスト',
+        typeTextDesc: '単行または複数行のテキスト',
         typeNumber: '数値',
+        typeNumberDesc: '数値データタイプ',
         typeDate: '日付',
+        typeDateDesc: '日付/時刻の選択',
         typeSelect: 'セレクト',
-        typeMultiselect: 'マルチセレクト'
+        typeSelectDesc: '単一選択ドロップダウン',
+        typeMultiselect: 'マルチセレクト',
+        typeMultiselectDesc: '複数選択ドロップダウン',
+        deleteTitle: '削除の確認',
+        deleteMessage: 'フィールド「{{name}}」を削除しますか？この操作は取り消せません。',
+        editSystemField: 'システムフィールドを編集',
+        systemFieldNameHint: 'システムフィールド名は変更できません',
+        typeNotEditable: 'このフィールドタイプは変更できません',
+        systemTag: 'システム',
+        customTag: 'カスタム',
+        enableField: '有効',
+        disableField: '無効',
+        linkedFieldsHint: '関連フィールドも一緒に{{action}}されます'
+    },
+
+    // Field types
+    fieldTypes: {
+        text: 'テキスト',
+        number: '数値',
+        date: '日付',
+        datetime: '日時',
+        select: '単一選択',
+        multiselect: '複数選択'
     },
 
     // Lightbox
@@ -213,6 +243,55 @@ export default {
             type_task: 'タスク',
             type_project: 'プロジェクト',
             type_milestone: 'マイルストーン'
+        }
+    },
+
+    // AIアシスタント
+    ai: {
+        // フローティングボタン
+        floatingBtn: {
+            label: 'AIアシスタントを開く'
+        },
+        // 設定モーダル
+        config: {
+            title: 'AI設定',
+            subtitle: 'AIアシスタントを有効にするためにAPIキーを設定してください',
+            apiKey: 'APIキー',
+            apiKeyHint: 'キーはローカルにのみ保存され、アップロードされません',
+            apiKeyRequired: 'APIキーを入力してください',
+            baseUrl: 'ベースURL',
+            localHint: 'ローカルモデルの場合はOllamaが起動していることを確認してください',
+            model: 'モデル',
+            test: '接続テスト',
+            testing: 'テスト中...',
+            saved: '設定を保存しました'
+        },
+        // ドロワー
+        drawer: {
+            title: 'AIアシスタント',
+            original: '元の内容：',
+            waiting: '生成を待っています...',
+            retry: 'リトライ',
+            apply: '変更を適用',
+            copied: 'クリップボードにコピーしました',
+            applied: '変更を適用しました'
+        },
+        // エージェント
+        agents: {
+            taskRefine: 'タスク改善',
+            bugReport: 'バグレポート',
+            taskBreakdown: 'タスク分解',
+            timeEstimate: '工数見積り'
+        },
+        // エラー
+        error: {
+            notConfigured: '先にAI設定を行ってください',
+            agentNotFound: 'エージェントが見つかりません',
+            noContext: 'タスクを選択するかコンテンツを入力してください',
+            invalidKey: 'APIキーが無効です。設定を確認してください',
+            rateLimit: 'リクエストが多すぎます。後でもう一度お試しください',
+            network: 'ネットワークエラー。接続を確認してください',
+            unknown: '不明なエラーが発生しました'
         }
     }
 };

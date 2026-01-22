@@ -40,7 +40,8 @@ export default {
         progress: '进度(%)',
         priority: '优先级',
         assignee: '负责人',
-        status: '状态'
+        status: '状态',
+        summary: '概述'  // F-112
     },
 
     // 枚举值 (内部值 → 本地化显示值)
@@ -136,17 +137,20 @@ export default {
     // 批量编辑
     batchEdit: {
         title: '批量编辑',
+        subtitle: '同时修改多个任务',
         selectedCount: '已选中 {{count}} 个任务',
         selectField: '选择要修改的字段',
         fieldValue: '字段值',
-        apply: '应用到所有任务',
+        apply: '应用修改',
         clear: '清除选择'
     },
 
     // 字段管理
     fieldManagement: {
         title: '字段管理',
+        subtitle: '拖拽排序，点击编辑',
         addField: '新增字段',
+        fieldIcon: '图标',
         fieldName: '字段名称',
         fieldType: '字段类型',
         required: '必填字段',
@@ -157,6 +161,8 @@ export default {
         defaultOneTime: '默认值 (可选)',
         defaultDesc: '现有任务将自动填充此值',
         defaultPlaceholder: '输入默认值...',
+        defaultSelectHint: '请先在下方添加选项，然后选择默认值',
+        defaultMultiselectHint: '按住 Ctrl 键可多选，请先在下方添加选项',
         defaultNote: '新增字段时，所有现有任务将被设置为此默认值。',
         selectionCount: '已选中 {{count}} 个任务',
         options: '选项配置',
@@ -164,10 +170,35 @@ export default {
         remove: '删除',
         addOption: '添加选项',
         typeText: '文本',
+        typeTextDesc: '单行或多行文本内容',
         typeNumber: '数字',
+        typeNumberDesc: '数值类型数据',
         typeDate: '日期',
+        typeDateDesc: '日期时间选择',
         typeSelect: '下拉选择',
-        typeMultiselect: '多选'
+        typeSelectDesc: '单选下拉列表',
+        typeMultiselect: '多选',
+        typeMultiselectDesc: '多选下拉列表',
+        deleteTitle: '确认删除',
+        deleteMessage: '确定要删除字段 "{{name}}" 吗？此操作无法撤销。',
+        editSystemField: '编辑系统字段',
+        systemFieldNameHint: '系统字段名称不可修改',
+        typeNotEditable: '此字段类型不可修改',
+        systemTag: '系统',
+        customTag: '自定义',
+        enableField: '启用',
+        disableField: '禁用',
+        linkedFieldsHint: '关联字段将一起{{action}}'
+    },
+
+    // Field types
+    fieldTypes: {
+        text: '文本',
+        number: '数字',
+        date: '日期',
+        datetime: '日期时间',
+        select: '单选',
+        multiselect: '多选'
     },
 
     // Lightbox
@@ -186,6 +217,55 @@ export default {
         numberRequired: '请输入有效的数字',
         progressRange: '进度必须在0到100之间'
     },
+
+    // F-112: 任务详情面板
+    taskDetails: {
+        newTask: '新任务',
+        newSubtask: '新子任务',
+        titlePlaceholder: '任务标题',
+        description: '描述',
+        descPlaceholder: '输入详细描述，支持 Markdown 语法...',
+        subtasks: '子任务',
+        addSubtask: '添加子任务',
+        noSubtasks: '暂无子任务',
+        properties: '属性',
+        settings: '设置',
+        assignee: '负责人',
+        priority: '优先级',
+        schedule: '排期',
+        planStart: '计划开始',
+        planEnd: '计划截止',
+        actualStart: '实际开始',
+        actualEnd: '实际结束',
+        notStarted: '未开始',
+        notCompleted: '未完成',
+        workload: '工时',
+        estimatedHours: '预计工时',
+        actualHours: '实际工时',
+        dayUnit: '人天',
+        noData: '0 人天',
+        customFields: '自定义字段',
+        addField: '添加字段',
+        copyLink: '复制链接',
+        fullscreen: '全屏',
+        more: '更多',
+        confirmDelete: '确定要删除此任务吗？',
+        deleteTaskTitle: '删除任务',
+        deleteTaskConfirm: '确定要删除任务 "{{name}}" 吗？此操作无法撤销。',
+        dragToResize: '拖动底部边缘可调整大小',
+        featureNotReady: '功能开发中'
+    },
+
+    // 富文本编辑器
+    editor: {
+        bold: '粗体',
+        italic: '斜体',
+        heading: '标题',
+        list: '列表',
+        quote: '引用',
+        code: '代码'
+    },
+
 
     // Excel
     excel: {
@@ -215,6 +295,121 @@ export default {
             type_task: '任务',
             type_project: '项目',
             type_milestone: '里程碑'
+        }
+    },
+
+    // AI 智能助手 (v2.0 增强)
+    ai: {
+        // 悬浮按钮
+        floatingBtn: {
+            label: '打开AI助手'
+        },
+        // 配置弹窗 (F-101, F-102, F-103)
+        config: {
+            title: 'AI 设置',
+            subtitle: '配置您的模型密钥以启用智能助手',
+            apiKey: 'API Key',
+            apiKeyHint: '密钥仅保存在本地，不会上传到服务器',
+            apiKeyRequired: '请输入 API Key',
+            baseUrl: 'Base URL',
+            localHint: '本地模型需确保 Ollama 已启动',
+            model: '模型',
+            modelHint: '可直接输入任意模型名称',
+            test: '测试连接',
+            testing: '测试中...',
+            saved: '配置已保存',
+            // F-102 Combobox
+            availableModels: '可用模型',
+            recommended: '推荐',
+            noMatch: '无匹配结果',
+            willUseInput: '将使用输入值',
+            modelsAvailable: '个可用',
+            // F-103 Refresh
+            refresh: '刷新',
+            refreshing: '刷新中...',
+            refreshed: '已更新',
+            refreshFailed: '刷新失败',
+            modelsUpdated: '模型列表已更新'
+        },
+        // 抽屉 (F-105, F-106)
+        drawer: {
+            title: '智能助手',
+            original: '原始内容：',
+            waiting: '等待生成...',
+            retry: '重新生成',
+            apply: '应用修改',
+            copied: '已复制到剪贴板',
+            applied: '已应用修改',
+            // F-106 多轮对话
+            clear: '清空对话',
+            clearTitle: '清空对话',
+            clearConfirm: '确定要清空所有对话记录吗？此操作无法撤销。',
+            cleared: '对话已清空',
+            empty: '开始新对话',
+            you: '你',
+            copy: '复制',
+            session: '本次会话',
+            // F-111 Token 统计
+            tokens: 'Tokens',
+            tokenUsage: '令牌使用',
+            chatPlaceholder: '输入消息继续对话/提问...',
+            chatHint: 'Enter 发送，Shift+Enter 换行',
+            send: '发送'
+        },
+        // 智能体
+        agents: {
+            taskRefine: '任务润色',
+            bugReport: 'Bug报告',
+            taskBreakdown: '任务分解',
+            timeEstimate: '工时估算'
+        },
+        // 结果展示 (F-107)
+        result: {
+            original: '原始',
+            optimized: '优化后',
+            reasoning: '查看优化理由',
+            apply: '应用',
+            undo: '撤回',
+            applied: '已应用',
+            originalTask: '原始任务',
+            subtasks: '拆分后子任务',
+            createSubtasks: '创建子任务'
+        },
+        // 提示词编辑 (F-109)
+        prompt: {
+            additionalInstruction: '附加指令 (可选)',
+            placeholder: '输入额外的指令或要求...',
+            hint: '例如："请用更正式的语气" 或 "添加验收标准"'
+        },
+        // 错误信息 (F-104 增强)
+        error: {
+            title: '请求失败',
+            notConfigured: '请先配置 AI 设置',
+            agentNotFound: '未找到该智能体',
+            noContext: '请先选择任务或输入内容',
+            // F-104 智能错误提示
+            quotaExceeded: '额度已用尽',
+            quotaExceededMsg: '当前模型免费额度已用完',
+            quotaAction: '切换模型或充值',
+            invalidKey: 'API Key 无效',
+            invalidKeyMsg: '请检查您的 API Key 是否正确配置',
+            checkConfig: '检查配置',
+            rateLimit: '请求过于频繁',
+            rateLimitMsg: '请稍后再试',
+            waitRetry: '稍后重试',
+            modelNotFound: '模型不存在',
+            modelNotFoundMsg: '请求的模型未找到',
+            selectOther: '选择其他模型',
+            network: '网络连接失败',
+            networkMsg: '无法连接到 AI 服务',
+            checkNetwork: '检查网络或 Base URL',
+            contextLength: '内容过长',
+            contextLengthMsg: '输入内容超出模型上下文限制',
+            shortenInput: '缩短输入内容',
+            unknown: '未知错误',
+            unknownMsg: '发生未知错误',
+            viewDetails: '查看详情',
+            originalError: '原始错误信息'
         }
     }
 };

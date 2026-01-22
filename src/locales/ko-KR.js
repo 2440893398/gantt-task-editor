@@ -134,17 +134,20 @@ export default {
     // 일괄 편집
     batchEdit: {
         title: '일괄 편집',
+        subtitle: '여러 작업을 동시에 수정',
         selectedCount: '{{count}}개 작업 선택됨',
         selectField: '수정할 필드 선택',
         fieldValue: '필드 값',
-        apply: '모든 작업에 적용',
+        apply: '변경 적용',
         clear: '선택 해제'
     },
 
     // 필드 관리
     fieldManagement: {
         title: '필드 관리',
+        subtitle: '드래그하여 정렬, 클릭하여 편집',
         addField: '필드 추가',
+        fieldIcon: '아이콘',
         fieldName: '필드 이름',
         fieldType: '필드 유형',
         required: '필수 필드',
@@ -155,6 +158,8 @@ export default {
         defaultOneTime: '기본값 (선택)',
         defaultDesc: '기존 작업에 자동 채우기',
         defaultPlaceholder: '기본값 입력...',
+        defaultSelectHint: '아래에 옵션을 추가한 후 기본값을 선택하세요',
+        defaultMultiselectHint: 'Ctrl 키로 다중 선택, 아래에 옵션을 추가하세요',
         defaultNote: '새 필드를 추가하면 모든 기존 작업이 이 기본값으로 설정됩니다.',
         selectionCount: '{{count}}개 작업 선택됨',
         options: '옵션 설정',
@@ -162,10 +167,35 @@ export default {
         remove: '삭제',
         addOption: '옵션 추가',
         typeText: '텍스트',
+        typeTextDesc: '단일 또는 다중 행 텍스트',
         typeNumber: '숫자',
+        typeNumberDesc: '숫자 데이터 유형',
         typeDate: '날짜',
+        typeDateDesc: '날짜/시간 선택',
         typeSelect: '선택',
-        typeMultiselect: '다중 선택'
+        typeSelectDesc: '단일 선택 드롭다운',
+        typeMultiselect: '다중 선택',
+        typeMultiselectDesc: '다중 선택 드롭다운',
+        deleteTitle: '삭제 확인',
+        deleteMessage: '필드 "{{name}}"을(를) 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.',
+        editSystemField: '시스템 필드 편집',
+        systemFieldNameHint: '시스템 필드 이름은 수정할 수 없습니다',
+        typeNotEditable: '이 필드 유형은 수정할 수 없습니다',
+        systemTag: '시스템',
+        customTag: '사용자 정의',
+        enableField: '활성화',
+        disableField: '비활성화',
+        linkedFieldsHint: '연결된 필드도 함께 {{action}}됩니다'
+    },
+
+    // Field types
+    fieldTypes: {
+        text: '텍스트',
+        number: '숫자',
+        date: '날짜',
+        datetime: '날짜 시간',
+        select: '단일 선택',
+        multiselect: '다중 선택'
     },
 
     // Lightbox
@@ -213,6 +243,55 @@ export default {
             type_task: '작업',
             type_project: '프로젝트',
             type_milestone: '마일스톤'
+        }
+    },
+
+    // AI 어시스턴트
+    ai: {
+        // 플로팅 버튼
+        floatingBtn: {
+            label: 'AI 어시스턴트 열기'
+        },
+        // 설정 모달
+        config: {
+            title: 'AI 설정',
+            subtitle: 'AI 어시스턴트를 활성화하려면 API 키를 설정하세요',
+            apiKey: 'API 키',
+            apiKeyHint: '키는 로컬에만 저장되며 업로드되지 않습니다',
+            apiKeyRequired: 'API 키를 입력하세요',
+            baseUrl: 'Base URL',
+            localHint: '로컬 모델의 경우 Ollama가 실행 중인지 확인하세요',
+            model: '모델',
+            test: '연결 테스트',
+            testing: '테스트 중...',
+            saved: '설정이 저장되었습니다'
+        },
+        // 드로어
+        drawer: {
+            title: 'AI 어시스턴트',
+            original: '원본 내용:',
+            waiting: '응답 대기 중...',
+            retry: '다시 시도',
+            apply: '변경 적용',
+            copied: '클립보드에 복사됨',
+            applied: '변경이 적용되었습니다'
+        },
+        // 에이전트
+        agents: {
+            taskRefine: '작업 개선',
+            bugReport: '버그 리포트',
+            taskBreakdown: '작업 분해',
+            timeEstimate: '시간 추정'
+        },
+        // 오류
+        error: {
+            notConfigured: '먼저 AI 설정을 해주세요',
+            agentNotFound: '에이전트를 찾을 수 없습니다',
+            noContext: '작업을 선택하거나 내용을 입력하세요',
+            invalidKey: 'API 키가 유효하지 않습니다. 설정을 확인하세요',
+            rateLimit: '요청이 너무 많습니다. 나중에 다시 시도하세요',
+            network: '네트워크 오류. 연결을 확인하세요',
+            unknown: '알 수 없는 오류가 발생했습니다'
         }
     }
 };

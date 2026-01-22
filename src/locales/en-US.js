@@ -136,17 +136,20 @@ export default {
     // Batch Edit
     batchEdit: {
         title: 'Batch Edit',
+        subtitle: 'Modify multiple tasks at once',
         selectedCount: '{{count}} tasks selected',
         selectField: 'Select field to modify',
         fieldValue: 'Field Value',
-        apply: 'Apply to All Tasks',
+        apply: 'Apply Changes',
         clear: 'Clear Selection'
     },
 
     // Field Management
     fieldManagement: {
         title: 'Field Management',
+        subtitle: 'Drag to reorder, click to edit',
         addField: 'Add Field',
+        fieldIcon: 'Icon',
         fieldName: 'Field Name',
         fieldType: 'Field Type',
         required: 'Required Field',
@@ -157,6 +160,8 @@ export default {
         defaultOneTime: 'Default Value (Optional)',
         defaultDesc: 'Existing tasks will be auto-filled',
         defaultPlaceholder: 'Enter default value...',
+        defaultSelectHint: 'Add options below first, then select default',
+        defaultMultiselectHint: 'Hold Ctrl to multi-select, add options below first',
         defaultNote: 'All existing tasks will be set to this default value.',
         selectionCount: '{{count}} tasks selected',
         options: 'Options',
@@ -164,10 +169,35 @@ export default {
         remove: 'Remove',
         addOption: 'Add Option',
         typeText: 'Text',
+        typeTextDesc: 'Single or multi-line text',
         typeNumber: 'Number',
+        typeNumberDesc: 'Numeric data type',
         typeDate: 'Date',
+        typeDateDesc: 'Date/time picker',
         typeSelect: 'Select',
-        typeMultiselect: 'Multi-select'
+        typeSelectDesc: 'Single-choice dropdown',
+        typeMultiselect: 'Multi-select',
+        typeMultiselectDesc: 'Multi-choice dropdown',
+        deleteTitle: 'Confirm Delete',
+        deleteMessage: 'Are you sure you want to delete field "{{name}}"? This action cannot be undone.',
+        editSystemField: 'Edit System Field',
+        systemFieldNameHint: 'System field name cannot be modified',
+        typeNotEditable: 'This field type cannot be modified',
+        systemTag: 'System',
+        customTag: 'Custom',
+        enableField: 'Enable',
+        disableField: 'Disable',
+        linkedFieldsHint: 'Linked fields will be {{action}} together'
+    },
+
+    // Field types
+    fieldTypes: {
+        text: 'Text',
+        number: 'Number',
+        date: 'Date',
+        datetime: 'Date Time',
+        select: 'Select',
+        multiselect: 'Multi-select'
     },
 
     // Lightbox
@@ -185,6 +215,44 @@ export default {
         selectFromList: 'Please select from the list',
         numberRequired: 'Please enter a valid number',
         progressRange: 'Progress must be between 0 and 100'
+    },
+
+    // Task Details Panel
+    taskDetails: {
+        newTask: 'New Task',
+        newSubtask: 'New Subtask',
+        titlePlaceholder: 'Task title',
+        description: 'Description',
+        descPlaceholder: 'Enter detailed description, supports Markdown...',
+        subtasks: 'Subtasks',
+        addSubtask: 'Add Subtask',
+        noSubtasks: 'No subtasks',
+        properties: 'Properties',
+        settings: 'Settings',
+        assignee: 'Assignee',
+        priority: 'Priority',
+        schedule: 'Schedule',
+        planStart: 'Start',
+        planEnd: 'Due',
+        actualStart: 'Actual Start',
+        actualEnd: 'Actual End',
+        notStarted: 'Not Started',
+        notCompleted: 'Not Completed',
+        workload: 'Workload',
+        estimatedHours: 'Estimated',
+        actualHours: 'Actual',
+        dayUnit: 'days',
+        noData: '0 days',
+        customFields: 'Custom Fields',
+        addField: 'Add Field',
+        copyLink: 'Copy Link',
+        fullscreen: 'Fullscreen',
+        more: 'More',
+        confirmDelete: 'Are you sure you want to delete this task?',
+        deleteTaskTitle: 'Delete Task',
+        deleteTaskConfirm: 'Are you sure you want to delete task "{{name}}"? This action cannot be undone.',
+        dragToResize: 'Drag bottom edge to resize',
+        featureNotReady: 'Feature in development'
     },
 
     // Excel
@@ -215,6 +283,55 @@ export default {
             type_task: 'Task',
             type_project: 'Project',
             type_milestone: 'Milestone'
+        }
+    },
+
+    // AI Assistant
+    ai: {
+        // Floating Button
+        floatingBtn: {
+            label: 'Open AI Assistant'
+        },
+        // Config Modal
+        config: {
+            title: 'AI Settings',
+            subtitle: 'Configure your API key to enable AI assistant',
+            apiKey: 'API Key',
+            apiKeyHint: 'Key is stored locally only, never uploaded',
+            apiKeyRequired: 'Please enter API Key',
+            baseUrl: 'Base URL',
+            localHint: 'Ensure Ollama is running for local models',
+            model: 'Model',
+            test: 'Test Connection',
+            testing: 'Testing...',
+            saved: 'Settings saved'
+        },
+        // Drawer
+        drawer: {
+            title: 'AI Assistant',
+            original: 'Original:',
+            waiting: 'Waiting for response...',
+            retry: 'Retry',
+            apply: 'Apply Changes',
+            copied: 'Copied to clipboard',
+            applied: 'Changes applied'
+        },
+        // Agents
+        agents: {
+            taskRefine: 'Task Refine',
+            bugReport: 'Bug Report',
+            taskBreakdown: 'Task Breakdown',
+            timeEstimate: 'Time Estimate'
+        },
+        // Errors
+        error: {
+            notConfigured: 'Please configure AI settings first',
+            agentNotFound: 'Agent not found',
+            noContext: 'Please select a task or enter content',
+            invalidKey: 'Invalid API Key, please check settings',
+            rateLimit: 'Too many requests, please try again later',
+            network: 'Network error, please check connection',
+            unknown: 'An unknown error occurred'
         }
     }
 };
