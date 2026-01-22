@@ -3,7 +3,7 @@
  * 集成 localStorage + IndexedDB 混合存储
  */
 
-import { defaultCustomFields, defaultFieldOrder } from '../data/fields.js';
+import { defaultCustomFields, defaultFieldOrder, SYSTEM_FIELD_CONFIG, INTERNAL_FIELDS } from '../data/fields.js';
 import {
     saveCustomFieldsDef,
     getCustomFieldsDef,
@@ -15,7 +15,12 @@ import {
     clearAllCache,
     getStorageStatus,
     saveLocale,
-    getLocale
+    getLocale,
+    saveAiConfig,
+    getAiConfig,
+    isAiConfigured,
+    saveSystemFieldSettings,
+    getSystemFieldSettings
 } from './storage.js';
 
 // 全局状态
@@ -25,7 +30,26 @@ export const state = {
     selectedTasks: new Set(),
     sortableInstance: null,
     isCtrlPressed: false,
-    isDataLoaded: false  // 标记数据是否已从缓存加载
+    isDataLoaded: false,  // 标记数据是否已从缓存加载
+    // AI 配置状态
+    aiConfig: {
+        apiKey: '',
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-3.5-turbo'
+    },
+    aiStatus: 'idle', // idle | loading | streaming | error
+    // System field settings
+    systemFieldSettings: {
+        enabled: {
+            status: true,
+            progress: true,
+            duration: true,
+            actual_start: true,
+            actual_end: true,
+            actual_hours: true
+        },
+        typeOverrides: {}
+    }
 };
 
 // ========================================
@@ -48,8 +72,29 @@ export async function restoreStateFromCache() {
         // 恢复字段顺序
         const cachedFieldOrder = getStoredFieldOrder();
         if (cachedFieldOrder && Array.isArray(cachedFieldOrder) && cachedFieldOrder.length > 0) {
+            // F-112: 确保 summary 字段存在 (兼容旧缓存)
+            if (!cachedFieldOrder.includes('summary')) {
+                // 插入 summary 到 start_date 之前
+                const insertIndex = cachedFieldOrder.indexOf('start_date');
+                if (insertIndex >= 0) {
+                    cachedFieldOrder.splice(insertIndex, 0, 'summary');
+                } else {
+                    cachedFieldOrder.push('summary');
+                }
+                console.log('[Store] Added missing summary field to fieldOrder');
+            }
             state.fieldOrder = cachedFieldOrder;
             console.log('[Store] Restored field order from cache');
+        }
+
+        // Restore system field settings
+        const cachedSystemFieldSettings = getSystemFieldSettings();
+        if (cachedSystemFieldSettings) {
+            state.systemFieldSettings = {
+                ...state.systemFieldSettings,
+                ...cachedSystemFieldSettings
+            };
+            console.log('[Store] Restored system field settings from cache');
         }
 
         state.isDataLoaded = true;
@@ -209,6 +254,166 @@ export function reorderFields(oldIndex, newIndex) {
     const movedField = state.customFields.splice(oldIndex, 1)[0];
     state.customFields.splice(newIndex, 0, movedField);
 
-    // 更新 fieldOrder
-    state.fieldOrder = ["text", ...state.customFields.map(f => f.name), "start_date", "duration", "progress"];
+    // 更新 fieldOrder (F-112: 包含 summary)
+    state.fieldOrder = ["text", ...state.customFields.map(f => f.name), "summary", "start_date", "duration", "progress"];
+}
+
+// ========================================
+// AI 配置管理
+// ========================================
+
+/**
+ * 从缓存恢复 AI 配置
+ */
+export function restoreAiConfig() {
+    const cached = getAiConfig();
+    if (cached) {
+        state.aiConfig = { ...state.aiConfig, ...cached };
+        console.log('[Store] Restored AI config from cache');
+    }
+}
+
+/**
+ * 更新 AI 配置
+ * @param {Object} config - { apiKey, baseUrl, model }
+ */
+export function updateAiConfig(config) {
+    state.aiConfig = { ...state.aiConfig, ...config };
+    saveAiConfig(state.aiConfig);
+    console.log('[Store] AI config updated and persisted');
+}
+
+/**
+ * 获取当前 AI 配置
+ * @returns {Object}
+ */
+export function getAiConfigState() {
+    return { ...state.aiConfig };
+}
+
+/**
+ * 检查 AI 是否已配置
+ * @returns {boolean}
+ */
+export function checkAiConfigured() {
+    return isAiConfigured();
+}
+
+/**
+ * 设置 AI 状态
+ * @param {'idle' | 'loading' | 'streaming' | 'error'} status
+ */
+export function setAiStatus(status) {
+    state.aiStatus = status;
+    // 触发状态变更事件
+    document.dispatchEvent(new CustomEvent('aiStatusChanged', { detail: { status } }));
+}
+
+/**
+ * 获取 AI 状态
+ * @returns {string}
+ */
+export function getAiStatus() {
+    return state.aiStatus;
+}
+
+// ========================================
+// System Field Management
+// ========================================
+
+/**
+ * Persist system field settings to storage
+ */
+export function persistSystemFieldSettings() {
+    saveSystemFieldSettings(state.systemFieldSettings);
+    console.log('[Store] Persisted system field settings');
+}
+
+/**
+ * Check if a field is a system field
+ * @param {string} fieldName
+ * @returns {boolean}
+ */
+export function isSystemField(fieldName) {
+    return !!SYSTEM_FIELD_CONFIG[fieldName];
+}
+
+/**
+ * Check if a field is enabled
+ * @param {string} fieldName
+ * @returns {boolean}
+ */
+export function isFieldEnabled(fieldName) {
+    if (!SYSTEM_FIELD_CONFIG[fieldName]) return true;
+    if (!SYSTEM_FIELD_CONFIG[fieldName].canDisable) return true;
+    return state.systemFieldSettings.enabled[fieldName] ?? true;
+}
+
+/**
+ * Get the actual type of a field (considering overrides)
+ * @param {string} fieldName
+ * @returns {string}
+ */
+export function getFieldType(fieldName) {
+    if (state.systemFieldSettings.typeOverrides[fieldName]) {
+        return state.systemFieldSettings.typeOverrides[fieldName];
+    }
+    if (SYSTEM_FIELD_CONFIG[fieldName]) {
+        return SYSTEM_FIELD_CONFIG[fieldName].type;
+    }
+    const customField = state.customFields.find(f => f.name === fieldName);
+    return customField?.type || 'text';
+}
+
+/**
+ * Toggle system field enabled state (handles linked groups)
+ * @param {string} fieldName
+ * @param {boolean} enabled
+ */
+export function toggleSystemFieldEnabled(fieldName, enabled) {
+    const config = SYSTEM_FIELD_CONFIG[fieldName];
+    if (!config || !config.canDisable) return;
+
+    // If field has a linked group, toggle all fields in the group
+    if (config.linkedGroup) {
+        Object.keys(SYSTEM_FIELD_CONFIG).forEach(f => {
+            if (SYSTEM_FIELD_CONFIG[f].linkedGroup === config.linkedGroup) {
+                state.systemFieldSettings.enabled[f] = enabled;
+            }
+        });
+    } else {
+        state.systemFieldSettings.enabled[fieldName] = enabled;
+    }
+
+    persistSystemFieldSettings();
+}
+
+/**
+ * Set system field type override
+ * @param {string} fieldName
+ * @param {string} newType
+ */
+export function setSystemFieldType(fieldName, newType) {
+    const config = SYSTEM_FIELD_CONFIG[fieldName];
+    if (!config || !config.allowedTypes.includes(newType)) return;
+
+    if (newType === config.type) {
+        // Remove override if setting back to default
+        delete state.systemFieldSettings.typeOverrides[fieldName];
+    } else {
+        state.systemFieldSettings.typeOverrides[fieldName] = newType;
+    }
+
+    persistSystemFieldSettings();
+}
+
+/**
+ * Get visible fields (excluding disabled and internal fields)
+ * @returns {string[]}
+ */
+export function getVisibleFields() {
+    return state.fieldOrder.filter(fieldName => {
+        if (INTERNAL_FIELDS.includes(fieldName)) return false;
+        return isFieldEnabled(fieldName);
+    });
 }
