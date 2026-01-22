@@ -10,5 +10,106 @@ export const defaultCustomFields = [
 
 /**
  * 字段显示顺序
+ * F-112: 添加 summary 任务概述字段
  */
-export const defaultFieldOrder = ["text", "priority", "assignee", "status", "start_date", "duration", "progress"];
+export const defaultFieldOrder = ["text", "priority", "assignee", "status", "summary", "start_date", "duration", "progress"];
+
+/**
+ * System field configuration
+ * Defines which system fields are manageable and their constraints
+ */
+export const SYSTEM_FIELD_CONFIG = {
+    text: {
+        i18nKey: 'columns.text',
+        type: 'text',
+        canDisable: false,
+        allowedTypes: ['text'],
+        linkedGroup: null
+    },
+    description: {
+        i18nKey: 'task.description',
+        type: 'text',
+        canDisable: false,
+        allowedTypes: ['text'],
+        linkedGroup: null
+    },
+    priority: {
+        i18nKey: 'columns.priority',
+        type: 'select',
+        canDisable: false,
+        allowedTypes: ['select'],
+        linkedGroup: null
+    },
+    assignee: {
+        i18nKey: 'columns.assignee',
+        type: 'select',
+        canDisable: false,
+        allowedTypes: ['text', 'select', 'multiselect'],
+        linkedGroup: null
+    },
+    start_date: {
+        i18nKey: 'columns.start_date',
+        type: 'date',
+        canDisable: false,
+        allowedTypes: ['date', 'datetime'],
+        linkedGroup: null
+    },
+    end_date: {
+        i18nKey: 'taskDetails.planEnd',
+        type: 'date',
+        canDisable: false,
+        allowedTypes: ['date', 'datetime'],
+        linkedGroup: null
+    },
+    status: {
+        i18nKey: 'columns.status',
+        type: 'select',
+        canDisable: true,
+        allowedTypes: ['select'],
+        linkedGroup: null
+    },
+    progress: {
+        i18nKey: 'columns.progress',
+        type: 'number',
+        canDisable: true,
+        allowedTypes: ['number'],
+        linkedGroup: null
+    },
+    duration: {
+        i18nKey: 'columns.duration',
+        type: 'number',
+        canDisable: true,
+        allowedTypes: ['number'],
+        linkedGroup: null
+    },
+    actual_start: {
+        i18nKey: 'taskDetails.actualStart',
+        type: 'date',
+        canDisable: true,
+        allowedTypes: ['date', 'datetime'],
+        linkedGroup: 'actual'
+    },
+    actual_end: {
+        i18nKey: 'taskDetails.actualEnd',
+        type: 'date',
+        canDisable: true,
+        allowedTypes: ['date', 'datetime'],
+        linkedGroup: 'actual'
+    },
+    actual_hours: {
+        i18nKey: 'taskDetails.actualHours',
+        type: 'number',
+        canDisable: true,
+        allowedTypes: ['number'],
+        linkedGroup: 'actual'
+    }
+};
+
+/**
+ * Internal fields that should never be shown in field management
+ */
+export const INTERNAL_FIELDS = [
+    'summary', 'parent', 'id', 'open', 'type', 'render',
+    '$level', '$open', '$virtual', 'estimated_hours'
+];
+
