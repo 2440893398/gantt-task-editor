@@ -439,7 +439,21 @@ export function updateDefaultValueOptions() {
 /**
  * 编辑字段
  */
+/**
+ * Edit field (routes to appropriate modal)
+ */
 export function editField(fieldName) {
+    if (isSystemField(fieldName)) {
+        openSystemFieldEditModal(fieldName);
+    } else {
+        openCustomFieldEditModal(fieldName);
+    }
+}
+
+/**
+ * Open edit modal for custom field (original logic)
+ */
+function openCustomFieldEditModal(fieldName) {
     const field = getCustomFieldByName(fieldName);
     if (!field) return;
 
@@ -448,13 +462,9 @@ export function editField(fieldName) {
     document.getElementById('field-required').checked = field.required || false;
     document.getElementById('field-default-value').value = '';
 
-    // 更新图标选择器 UI
     updateIconSelector(field.icon || DEFAULT_FIELD_ICON);
-
-    // 更新字段类型选择器 UI
     updateFieldTypeSelector(field.type);
 
-    // 更新必填字段切换 UI
     const toggle = document.getElementById('required-toggle');
     toggle.classList.toggle('active', field.required || false);
 
@@ -477,9 +487,97 @@ export function editField(fieldName) {
     modal.style.display = 'flex';
     setTimeout(() => modal.classList.add('show'), 10);
 
-    // 标记为编辑模式
     modal.dataset.editMode = 'true';
     modal.dataset.editFieldName = fieldName;
+}
+
+/**
+ * Open edit modal for system field
+ */
+function openSystemFieldEditModal(fieldName) {
+    const config = SYSTEM_FIELD_CONFIG[fieldName];
+    if (!config) return;
+
+    const currentType = state.systemFieldSettings.typeOverrides[fieldName] || config.type;
+    const fieldLabel = i18n.t(config.i18nKey) || fieldName;
+
+    // Create modal HTML
+    const modalHtml = `
+        <div id="system-field-modal" class="modal modal-open">
+            <div class="modal-box max-w-md">
+                <h3 class="font-bold text-lg mb-4">${i18n.t('fieldManagement.editSystemField')}</h3>
+
+                <div class="form-control mb-4">
+                    <label class="label">
+                        <span class="label-text">${i18n.t('fieldManagement.fieldName')}</span>
+                    </label>
+                    <input type="text" value="${fieldLabel}" disabled class="input input-bordered input-disabled bg-base-200">
+                    <label class="label">
+                        <span class="label-text-alt text-base-content/60">${i18n.t('fieldManagement.systemFieldNameHint')}</span>
+                    </label>
+                </div>
+
+                <div class="form-control mb-4">
+                    <label class="label">
+                        <span class="label-text">${i18n.t('fieldManagement.fieldType')}</span>
+                    </label>
+                    ${config.allowedTypes.length > 1 ? `
+                        <select id="system-field-type-select" class="select select-bordered w-full">
+                            ${config.allowedTypes.map(type => `
+                                <option value="${type}" ${type === currentType ? 'selected' : ''}>
+                                    ${i18n.t('fieldTypes.' + type)}
+                                </option>
+                            `).join('')}
+                        </select>
+                    ` : `
+                        <input type="text" value="${i18n.t('fieldTypes.' + config.type)}" disabled class="input input-bordered input-disabled bg-base-200">
+                        <label class="label">
+                            <span class="label-text-alt text-base-content/60">${i18n.t('fieldManagement.typeNotEditable')}</span>
+                        </label>
+                    `}
+                </div>
+
+                <div class="modal-action">
+                    <button id="system-field-cancel-btn" class="btn">${i18n.t('form.cancel')}</button>
+                    <button id="system-field-save-btn" class="btn btn-primary">${i18n.t('form.save')}</button>
+                </div>
+            </div>
+            <div class="modal-backdrop" id="system-field-backdrop"></div>
+        </div>
+    `;
+
+    // Remove existing modal if any
+    const existingModal = document.getElementById('system-field-modal');
+    if (existingModal) existingModal.remove();
+
+    // Add modal to body
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+
+    // Bind events
+    const modal = document.getElementById('system-field-modal');
+    const cancelBtn = document.getElementById('system-field-cancel-btn');
+    const saveBtn = document.getElementById('system-field-save-btn');
+    const backdrop = document.getElementById('system-field-backdrop');
+    const typeSelect = document.getElementById('system-field-type-select');
+
+    const closeModal = () => modal.remove();
+
+    cancelBtn.addEventListener('click', closeModal);
+    backdrop.addEventListener('click', closeModal);
+
+    saveBtn.addEventListener('click', () => {
+        if (typeSelect) {
+            const newType = typeSelect.value;
+            if (newType !== currentType) {
+                setSystemFieldType(fieldName, newType);
+                updateGanttColumns();
+                refreshLightbox();
+                renderFieldList();
+                showToast(i18n.t('message.saveSuccess'), 'success');
+            }
+        }
+        closeModal();
+    });
 }
 
 // 待删除的字段名称
