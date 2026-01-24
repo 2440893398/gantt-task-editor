@@ -8,6 +8,7 @@ dist/
 .idea
 .claude/skills/
 .agent/skills/
+.codex/skills/
 .vscode/
 *.swp
 *.swo
@@ -43,6 +44,7 @@ temp/
 *~
 .*.swp
 .*.swo
+.worktrees/
 
 # Local configuration
 *.local.json
