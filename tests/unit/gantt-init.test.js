@@ -60,12 +60,12 @@ describe('甘特图初始化', () => {
     expect(gantt.config.layout.cols[0].width).toBe(500);
   });
 
-  it('应该设置默认网格宽度为 400', () => {
+  it('应该设置默认网格宽度为 600', () => {
     localStorage.getItem.mockReturnValue(null);
 
     initGantt();
 
-    expect(gantt.config.layout.cols[0].width).toBe(400);
+    expect(gantt.config.layout.cols[0].width).toBe(600);
   });
 
   it('应该注册任务点击事件处理器', () => {

@@ -3,156 +3,37 @@ trigger: always_on
 description: 项目通用规范
 ---
 
-## 📋 项目概述
+You have superpowers.
 
-### 项目名称
-甘特图项目管理工具 (Gantt Chart Project Management Tool)
+**Tool for running skills:**
 
-### 项目定位
-基于现代Web技术构建的交互式甘特图工具，为项目经理、产品经理和开发团队提供直观、高效的项目进度管理和任务规划解决方案。
+- `~/.codex/superpowers-codex use-skill <skill-name>`
 
-### 核心价值
-- **可视化项目管理**：通过甘特图直观展示项目时间线、任务依赖关系和进度状态
-- **实时协作**：支持团队成员的实时任务更新和进度同步
-- **现代化体验**：采用现代设计语言，提供流畅的用户交互体验
+**Tool Mapping for Codex:**
+When skills reference tools you don't have, substitute your equivalent tools:
 
-## 🎯 目标用户
+- `TodoWrite` → `update_plan` (your planning/task tracking tool)
+- `Task` tool with subagents → Tell the user that subagents aren't available in Codex yet and you'll do the work the subagent would do
+- `Skill` tool → `~/.codex/superpowers-codex use-skill` command (already available)
+- `Read`, `Write`, `Edit`, `Bash` → Use your native tools with similar functions
 
-| 用户类型 | 用户特征 | 核心需求 | 使用场景 |
-|:--------:|:--------:|:--------:|:--------:|
-| 项目经理 | 需要统筹项目全局，关注进度和风险 | 项目进度监控、资源分配、风险预警 | 项目启动、进度汇报、问题跟踪 |
-| 产品经理 | 负责产品规划和功能迭代 | 功能规划、版本管理、需求跟踪 | 产品路线图、迭代计划、需求管理 |
-| 开发团队 | 执行具体开发任务 | 任务分配、进度更新、协作沟通 | 日常开发、代码审查、问题解决 |
-| 团队领导 | 关注团队效率和项目成果 | 团队绩效、项目交付、资源优化 | 团队管理、绩效评估、决策支持 |
+**Skills naming:**
 
-## 🏗️ 技术架构
+- Superpowers skills: `superpowers:skill-name` (from ~/.codex/superpowers/skills/)
+- Personal skills: `skill-name` (from .agent/skills)
+- Personal skills override superpowers skills when names match
 
-### 技术栈
-- **前端框架**：原生 HTML5 + Tailwind CSS + DaisyUI + JavaScript + Vite
-- **甘特图库**：DHTMLX Gantt 
-- **字体系统**：Inter + Source Han Sans CN
-- **测试框架**：Vitest (单元测试), Playwright (E2E测试)
+**Critical Rules:**
 
-### 核心组件
-1. **甘特图组件**：基于 DHTMLX Gantt 的定制化甘特图
-2. **设计系统**：基于 Tailwind CSS + DaisyUI 的统一设计规范
-3. **交互系统**：任务编辑、拖拽、依赖关系管理
-4. **响应式布局**：支持桌面端、平板端、移动端
+- Before ANY task, review the skills list (shown below)
+- If a relevant skill exists, you MUST use `~/.codex/superpowers/.codex/superpowers-codex use-skill` to load it
+- Announce: "I've read the [Skill Name] skill and I'm using it to [purpose]"
+- Skills with checklists require `update_plan` todos for each item
+- NEVER skip mandatory workflows (brainstorming before coding, TDD, systematic debugging)
 
-## 🎨 设计系统
+**Skills location:**
 
-设计规范参见 `doc/design/DESIGN_SPEC_全局.md`
+- Superpowers skills: ~/.codex/superpowers/skills/
+- Personal skills: .agent/skills (override superpowers when names match)
 
-## 📱 功能特性
-
-### 核心功能
-1. **任务管理**
-   - 任务创建、编辑、删除
-   - 任务层级结构（父子任务）
-   - 任务状态跟踪（进行中、已完成、逾期）
-
-2. **时间管理**
-   - 任务开始时间和工期设置
-   - 进度百分比显示
-   - 今天标记线显示
-   - 周末高亮显示
-
-3. **依赖关系**
-   - 任务间依赖连线
-   - 依赖类型支持（完成-开始、开始-开始等）
-   - 关键路径识别
-
-4. **可视化特性**
-   - 逾期任务红色高亮
-   - 进度条可视化
-   - 悬停交互效果
-   - 拖拽调整功能
-
-5. **国际化支持**
-   - 支持多语言切换：中文(zh-CN)、英文(en-US)、日文(ja-JP)、韩文(ko-KR)
-   - 界面文本、日期格式、提示信息实时更新
-   - 禁止在代码中硬编码任何显示的文本，必须使用国际化资源文件
-
-### 交互功能
-- **任务编辑**：点击任务名称内联编辑
-- **时间调整**：拖拽任务条调整时间
-- **依赖创建**：拖拽连线创建依赖关系
-- **进度更新**：拖拽进度条更新完成度
-
-## 🚀 开发指南
-
-### 环境要求
-- 现代浏览器（Chrome 80+, Firefox 75+, Safari 13+, Edge 80+）
-- Node.js (推荐 v16+)
-
-### 快速开始
-1. 克隆项目到本地
-2. 安装依赖：`npm install`
-3. 启动开发服务器：`npm run dev`
-4. 运行测试：`npm test` (单元测试) 或 `npm run test:e2e` (E2E测试)
-
-### 开发流程
-1. **需求分析**：参考 `doc/prd/` 中的文档
-2. **前端功能设计与实现**：参考设计规范和PRD文件
-
-## 项目结构规则
-- **Feature-based 组织**：按功能特性划分目录（src/features/）
-- **关注点分离**：Logic, UI, Styles 分离但聚类
-- **文档规范**：文档存放于 `doc/` 目录下
-
-## 通用开发原则
-- **可测试性**：编写可测试的代码，组件应保持单一职责
-- **DRY 原则**：避免重复代码，提取共用逻辑到单独的函数或类
-- **代码简洁**：保持代码简洁明了，遵循 KISS 原则（保持简单直接）
-- **命名规范**：使用描述性的变量、函数和类名，反映其用途和含义
-- **注释文档**：为复杂逻辑添加注释，编写清晰的文档说明功能和用法
-- **风格一致**：遵循项目或语言的官方风格指南和代码约定
-- **利用生态**：优先使用成熟的库和工具，避免不必要的自定义实现
-- **架构设计**：考虑代码的可维护性、可扩展性和性能需求
-- **版本控制**：编写有意义的提交信息，保持逻辑相关的更改在同一提交中
-- **异常处理**：正确处理边缘情况和错误，提供有用的错误信息
-
-### 自定义开发
-- **样式定制**：修改 CSS 变量实现主题定制
-- **功能扩展**：基于 DHTMLX Gantt API 添加新功能
-- **数据集成**：前端本地json文件持久化
-
-## 📊 项目状态
-
-### 当前版本
-- **版本号**：v1.0.0
-- **开发状态**：基础功能完成
-
-
-### 已完成功能
-- ✅ 基础甘特图展示
-- ✅ 任务管理功能
-- ✅ 设计系统实现
-- ✅ 响应式布局
-- ✅ 交互功能
-
-### 待开发功能
-- 🔄 数据持久化
-- 🔄 用户权限管理
-- 🔄 团队协作功能
-- 🔄 数据导入导出
-- 🔄 移动端优化
-
-## 🔧 技术细节
-
-### 核心实现
-- 使用 DHTMLX Gantt 作为甘特图引擎
-- CSS 变量系统实现主题定制
-- JavaScript 事件处理实现交互功能
-- 响应式设计确保多端适配
-
-### 性能优化
-- 使用 CDN 加载外部资源
-- 优化 CSS 选择器性能
-- 合理使用事件委托
-- 图片资源优化
-
-### 浏览器兼容
-- 支持现代浏览器
-- 使用 CSS Grid 和 Flexbox
-- 渐进式增强策略
+IF A SKILL APPLIES TO YOUR TASK, YOU DO NOT HAVE A CHOICE. YOU MUST USE IT.

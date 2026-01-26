@@ -35,8 +35,8 @@ export default {
     columns: {
         hierarchy: '层级',
         text: '任务名称',
-        start_date: '开始时间',
-        duration: '工期(天)',
+        start_date: '计划开始',
+        duration: '预计工期',
         progress: '进度(%)',
         priority: '优先级',
         assignee: '负责人',
@@ -232,6 +232,7 @@ export default {
         settings: '设置',
         assignee: '负责人',
         priority: '优先级',
+        progress: '进度',
         schedule: '排期',
         planStart: '计划开始',
         planEnd: '计划截止',
@@ -249,11 +250,29 @@ export default {
         copyLink: '复制链接',
         fullscreen: '全屏',
         more: '更多',
+        predecessors: '前置任务',
+        addPredecessor: '添加依赖',
+        noPredecessors: '无前置任务',
+        confirmDeleteLink: '确定要删除此依赖关系吗？',
+        linkType: '类型',
+        selectTask: '选择任务',
         confirmDelete: '确定要删除此任务吗？',
         deleteTaskTitle: '删除任务',
         deleteTaskConfirm: '确定要删除任务 "{{name}}" 吗？此操作无法撤销。',
         dragToResize: '拖动底部边缘可调整大小',
-        featureNotReady: '功能开发中'
+        featureNotReady: '功能开发中',
+        // 任务新增页面优化
+        required: '必填',
+        systemField: '系统',
+        quickDate: '今天',
+        dateRangeError: '实际开始时间不能晚于实际结束时间',
+        fieldDisabled: '此字段已禁用',
+        // 子任务删除功能
+        deleteSubtask: '删除子任务',
+        deleteSubtaskTitle: '删除子任务',
+        deleteSubtaskConfirm: '确定要删除此子任务吗？此操作无法撤销。',
+        subtaskDeleted: '子任务已删除',
+        openSubtask: '打开详情'
     },
 
     // 富文本编辑器
@@ -264,6 +283,24 @@ export default {
         list: '列表',
         quote: '引用',
         code: '代码'
+    },
+
+    // 新建任务模态框
+    newTask: {
+        title: '新建任务',
+        nameLabel: '任务名称',
+        namePlaceholder: '请输入任务名称',
+        assigneeLabel: '负责人',
+        assigneePlaceholder: '请选择负责人',
+        cancel: '取消',
+        create: '创建',
+        nameRequired: '任务名称不能为空'
+    },
+
+    // 摘要字段
+    summary: {
+        viewFull: '查看完整摘要',
+        empty: '无摘要'
     },
 
 
@@ -359,6 +396,7 @@ export default {
         // 智能体
         agents: {
             taskRefine: '任务润色',
+            chat: 'AI 对话',
             bugReport: 'Bug报告',
             taskBreakdown: '任务分解',
             timeEstimate: '工时估算'

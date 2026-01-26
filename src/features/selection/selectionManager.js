@@ -11,7 +11,10 @@ export function updateSelectedTasksUI() {
     const counter = document.getElementById('selected-tasks-counter');
     const count = state.selectedTasks.size;
 
-    document.getElementById('selected-count').textContent = count;
+    const countEl = document.getElementById('selected-count-text');
+    if (countEl) {
+        countEl.textContent = `已选中 ${count} 个任务`;
+    }
 
     if (count > 0) {
         counter.classList.add('show');

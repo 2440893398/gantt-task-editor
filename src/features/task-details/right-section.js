@@ -4,8 +4,11 @@
  */
 
 import { i18n } from '../../utils/i18n.js';
-import { state, isFieldEnabled } from '../../core/store.js';
+import { state, isFieldEnabled, getFieldType, getSystemFieldOptions } from '../../core/store.js';
+
 import { showToast } from '../../utils/toast.js';
+import { escapeAttr } from '../../utils/dom.js';
+import { renderSelectHTML, setupSelect } from '../../components/common/dropdown.js';
 
 // 系统默认字段 - 这些字段在面板中有固定展示位置，不应在自定义字段区域重复显示
 const SYSTEM_FIELDS = [
@@ -38,11 +41,17 @@ const PRIORITY_CONFIG = {
 export function renderRightSection(task) {
     // Check which sections should be visible based on field enabled status
     const showStatus = isFieldEnabled('status');
+    const showProgress = isFieldEnabled('progress');
     const showDuration = isFieldEnabled('duration');
     const showActualHours = isFieldEnabled('actual_hours');
+    const showActualStart = isFieldEnabled('actual_start');
+    const showActualEnd = isFieldEnabled('actual_end');
 
     // Show workload section if any of its fields are enabled
     const showWorkloadSection = showDuration || showActualHours;
+
+    // Show actual dates if enabled
+    const showActualDates = showActualStart || showActualEnd;
 
     return `
         <!-- 状态选择器 - 更紧凑 -->
@@ -54,9 +63,11 @@ export function renderRightSection(task) {
 
         <!-- 基本属性 -->
         <div class="space-y-1">
-            ${renderPropertyRow('assignee', i18n.t('taskDetails.assignee') || '负责人', task.assignee, 'user')}
+            ${renderAssigneeRow(task.assignee)}
             ${renderPriorityRow(task.priority)}
+            ${showProgress ? renderProgressRow(task.progress) : ''}
         </div>
+
 
         <!-- 排期区块 -->
         <div class="border-t border-base-200/50 pt-3 mt-3">
@@ -67,6 +78,12 @@ export function renderRightSection(task) {
                 ${renderDateRow('start-date', i18n.t('taskDetails.planStart') || '开始', formatDateValue(task.start_date), 'calendar')}
                 ${renderDateRow('end-date', i18n.t('taskDetails.planEnd') || '截止', formatDateValue(getEndDate(task)), 'calendar-check')}
             </div>
+            ${showActualDates ? `
+            <div class="mt-2 pt-2 border-t border-base-200/30 space-y-1">
+                ${showActualStart ? renderDateRow('actual-start', i18n.t('taskDetails.actualStart') || '实际开始', formatDateValue(task.actual_start), 'play', true) : ''}
+                ${showActualEnd ? renderDateRow('actual-end', i18n.t('taskDetails.actualEnd') || '实际结束', formatDateValue(task.actual_end), 'stop', true) : ''}
+            </div>
+            ` : ''}
         </div>
 
         <!-- 工时区块 -->
@@ -81,6 +98,10 @@ export function renderRightSection(task) {
             </div>
         </div>
         ` : ''}
+        
+        <!-- 前置任务区块 -->
+        ${renderDependenciesSection(task)}
+
 
         <!-- 自定义字段区块 -->
         ${renderCustomFieldsSection(task)}
@@ -113,16 +134,30 @@ export function bindRightSectionEvents(panel, task) {
         showToast(i18n.t('message.saveSuccess') || '保存成功', 'success');
     });
 
-    // 负责人
-    const assigneeInput = panel.querySelector('#task-assignee-input');
-    if (assigneeInput) {
-        assigneeInput.addEventListener('blur', () => {
-            if (task.assignee !== assigneeInput.value) {
-                task.assignee = assigneeInput.value;
-                gantt.updateTask(task.id);
-            }
+    // 负责人 (支持文本或下拉)
+    const assigneeType = getFieldType('assignee');
+    const assigneeOptions = getSystemFieldOptions('assignee');
+
+    if ((assigneeType === 'select' || assigneeType === 'multiselect') && assigneeOptions && assigneeOptions.length > 0) {
+        // Dropdown mode
+        bindDropdown(panel, 'task-assignee', (value) => {
+            task.assignee = value;
+            gantt.updateTask(task.id);
+            showToast(i18n.t('message.saveSuccess') || '保存成功', 'success');
         });
+    } else {
+        // Text input mode
+        const assigneeInput = panel.querySelector('#task-assignee-input');
+        if (assigneeInput) {
+            assigneeInput.addEventListener('blur', () => {
+                if (task.assignee !== assigneeInput.value) {
+                    task.assignee = assigneeInput.value;
+                    gantt.updateTask(task.id);
+                }
+            });
+        }
     }
+
 
     // 优先级 (自定义下拉)
     bindDropdown(panel, 'task-priority', (value) => {
@@ -136,6 +171,42 @@ export function bindRightSectionEvents(panel, task) {
     bindDateInput(panel, '#task-end-date', task, 'end_date', true);
     bindDateInput(panel, '#task-actual-start', task, 'actual_start');
     bindDateInput(panel, '#task-actual-end', task, 'actual_end');
+
+    // 进度字段
+    const progressInput = panel.querySelector('#task-progress-input');
+    const progressSlider = panel.querySelector('#task-progress-slider');
+    if (progressInput && progressSlider) {
+        const updateProgress = (value) => {
+            let val = parseFloat(value);
+            if (isNaN(val)) val = 0;
+            if (val < 0) val = 0;
+            if (val > 100) val = 100;
+
+            task.progress = val / 100;
+            gantt.updateTask(task.id);
+
+            // Sync inputs
+            progressInput.value = val;
+            progressSlider.value = val;
+
+            // Auto-update status if 100%
+            if (val === 100 && task.status !== 'completed') {
+                task.status = 'completed';
+                gantt.updateTask(task.id);
+                refreshTaskDetailsPanel();
+            } else if (val < 100 && task.status === 'completed') {
+                task.status = 'in_progress';
+                gantt.updateTask(task.id);
+                refreshTaskDetailsPanel();
+            }
+        };
+
+        progressInput.addEventListener('change', (e) => updateProgress(e.target.value));
+        progressSlider.addEventListener('input', (e) => {
+            progressInput.value = e.target.value;
+        });
+        progressSlider.addEventListener('change', (e) => updateProgress(e.target.value));
+    }
 
     // 工时字段
     const durationInput = panel.querySelector('#task-duration-input');
@@ -176,51 +247,12 @@ export function bindRightSectionEvents(panel, task) {
 
     // 绑定自定义字段事件
     bindCustomFieldEvents(panel, task);
+
+    // 绑定前置任务事件
+    bindDependencyEvents(panel, task);
 }
 
-/**
- * 绑定自定义字段事件
- */
-function bindCustomFieldEvents(panel, task) {
-    if (!state.customFields || state.customFields.length === 0) return;
 
-    // 过滤掉系统字段
-    const userCustomFields = state.customFields.filter(
-        field => !SYSTEM_FIELDS.includes(field.name)
-    );
-
-    userCustomFields.forEach(field => {
-        const element = panel.querySelector(`#custom-field-${field.name}`);
-        if (!element) return;
-
-        if (field.type === 'select') {
-            element.addEventListener('change', () => {
-                task[field.name] = element.value;
-                gantt.updateTask(task.id);
-                showToast(i18n.t('message.saveSuccess') || '保存成功', 'success');
-            });
-        } else {
-            element.addEventListener('blur', () => {
-                let newValue = element.value;
-
-                // 类型转换
-                if (field.type === 'number') {
-                    newValue = newValue ? parseFloat(newValue) : null;
-                } else if (field.type === 'date') {
-                    newValue = newValue ? new Date(newValue) : null;
-                } else if (field.type === 'multiselect') {
-                    newValue = newValue ? newValue.split(',').map(s => s.trim()).filter(Boolean) : [];
-                }
-
-                if (task[field.name] !== newValue) {
-                    task[field.name] = newValue;
-                    gantt.updateTask(task.id);
-                    showToast(i18n.t('message.saveSuccess') || '保存成功', 'success');
-                }
-            });
-        }
-    });
-}
 
 /**
  * 渲染状态选择器（带彩色圆点）
@@ -264,6 +296,55 @@ function renderPropertyRow(id, label, value, iconType) {
 }
 
 /**
+ * 渲染负责人行（支持动态类型）
+ */
+function renderAssigneeRow(currentValue) {
+    const label = i18n.t('taskDetails.assignee') || '负责人';
+    const iconSvg = getPropertyIcon('user');
+
+    // Check if assignee field has a type override
+    const effectiveType = getFieldType('assignee');
+    const systemOptions = getSystemFieldOptions('assignee');
+
+    if ((effectiveType === 'select' || effectiveType === 'multiselect') && systemOptions && systemOptions.length > 0) {
+        // Render as dropdown
+        const options = systemOptions.map(opt => ({
+            value: opt,
+            label: opt
+        }));
+
+        const renderLabel = (opt) => `<span>${opt.label}</span>`;
+
+        return `
+            <div class="flex items-center justify-between py-2">
+                <div class="flex items-center gap-2 text-sm text-base-content/70">
+                    ${iconSvg}
+                    <span>${label}</span>
+                </div>
+                <div class="w-28">
+                    ${renderDropdownHTML('task-assignee', options, currentValue, renderLabel, '-', true)}
+                </div>
+            </div>
+        `;
+    } else {
+        // Render as text input (default)
+        return `
+            <div class="flex items-center justify-between py-2">
+                <div class="flex items-center gap-2 text-sm text-base-content/70">
+                    ${iconSvg}
+                    <span>${label}</span>
+                </div>
+                <input type="text" 
+                       id="task-assignee-input" 
+                       class="input input-ghost input-xs w-24 text-right p-0" 
+                       value="${escapeHtml(currentValue || '')}" 
+                       placeholder="-" />
+            </div>
+        `;
+    }
+}
+
+/**
  * 渲染优先级行
  */
 function renderPriorityRow(currentPriority) {
@@ -303,6 +384,37 @@ function getPriorityColorClass(priority) {
         low: 'bg-info/15 text-info border border-info/20'
     };
     return priorityColors[priority] || 'text-base-content/70';
+}
+
+/**
+ * 渲染进度行
+ */
+function renderProgressRow(progress) {
+    const value = Math.round((progress || 0) * 100);
+    const label = i18n.t('taskDetails.progress') || '进度';
+
+    return `
+        <div class="flex items-center justify-between py-2">
+            <div class="flex items-center gap-2 text-sm text-base-content/70">
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z" />
+                    <path d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z" />
+                </svg>
+                <span>${label}</span>
+            </div>
+            <div class="flex items-center gap-2 w-28">
+                <input type="range" id="task-progress-slider" min="0" max="100" value="${escapeAttr(value)}" class="range range-xs range-primary flex-1" />
+                <div class="relative w-10">
+                    <input type="number"
+                           id="task-progress-input"
+                           class="input input-ghost input-xs w-full text-right p-0 pr-3"
+                           value="${escapeAttr(value)}"
+                           min="0" max="100" />
+                    <span class="absolute right-0 top-1/2 -translate-y-1/2 text-xs text-base-content/50">%</span>
+                </div>
+            </div>
+        </div>
+    `;
 }
 
 /**
@@ -405,6 +517,8 @@ function renderCustomFieldsSection(task) {
     return html;
 }
 
+
+
 /**
  * 渲染自定义字段输入控件
  */
@@ -421,44 +535,28 @@ function renderCustomFieldInput(field, value, fieldId) {
 
     switch (field.type) {
         case 'select':
-            const options = (field.options || []).map(opt => {
-                const optValue = typeof opt === 'string' ? opt : opt.value;
-                const optLabel = field.i18nKey
-                    ? (i18n.t(`${field.i18nKey}.${optValue}`) !== `${field.i18nKey}.${optValue}`
-                        ? i18n.t(`${field.i18nKey}.${optValue}`)
-                        : optValue)
-                    : (typeof opt === 'string' ? opt : opt.label || opt.value);
-                const selected = value === optValue ? 'selected' : '';
-                return `<option value="${escapeHtml(optValue)}" ${selected}>${escapeHtml(optLabel)}</option>`;
-            }).join('');
-            return `
-                <div class="relative">
-                    <select id="${fieldId}" data-field="${field.name}"
-                            class="select h-7 min-h-0 px-2 pr-6
-                                   bg-transparent hover:bg-base-200/50
-                                   border border-transparent hover:border-base-300/50
-                                   rounded-md text-sm text-right
-                                   focus:outline-none focus:ring-2 focus:ring-primary/20
-                                   transition-all duration-200 cursor-pointer
-                                   appearance-none">
-                        <option value="">-</option>
-                        ${options}
-                    </select>
-                    <div class="absolute right-1 top-1/2 -translate-y-1/2 pointer-events-none">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3 text-base-content/40" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                            <path d="M19 9l-7 7-7-7"/>
-                        </svg>
-                    </div>
-                </div>
-            `;
+            // 使用自定义下拉组件
+            return renderSelectHTML(fieldId, value, field.options || [], {
+                placeholder: '-',
+                width: 'w-32', // 定宽以保持整洁
+                isMulti: false
+            });
 
         case 'multiselect':
-            return `
-                <input type="text" id="${fieldId}" data-field="${field.name}"
-                       class="${inputBaseClass} w-28"
-                       value="${escapeHtml(Array.isArray(value) ? value.join(', ') : value)}"
-                       placeholder="-" />
-            `;
+            // 使用自定义多选组件
+            // value 可能是 Array 或逗号分割的字符串，统一转为 Array
+            let arrayValue = [];
+            if (Array.isArray(value)) {
+                arrayValue = value;
+            } else if (typeof value === 'string' && value.trim()) {
+                arrayValue = value.split(',').map(s => s.trim());
+            }
+
+            return renderSelectHTML(fieldId, arrayValue, field.options || [], {
+                placeholder: '-',
+                width: 'w-40',
+                isMulti: true
+            });
 
         case 'number':
             return `
@@ -516,6 +614,76 @@ function bindDateInput(panel, selector, task, fieldName, isEndDate = false) {
 }
 
 /**
+ * 绑定自定义字段事件
+ */
+function bindCustomFieldEvents(panel, task) {
+    if (!state.customFields || state.customFields.length === 0) return;
+
+    const userCustomFields = state.customFields.filter(
+        field => !SYSTEM_FIELDS.includes(field.name)
+    );
+
+    userCustomFields.forEach(field => {
+        const fieldId = `custom-field-${field.name}`;
+
+        if (field.type === 'select') {
+            setupSelect(fieldId, field.options || [], task[field.name], (val) => {
+                task[field.name] = val;
+                gantt.updateTask(task.id);
+                showToast(i18n.t('message.saveSuccess'), 'success');
+            }, { isMulti: false });
+
+        } else if (field.type === 'multiselect') {
+            // 解析初始值
+            let initialValue = [];
+            const rawVal = task[field.name];
+            if (Array.isArray(rawVal)) {
+                initialValue = rawVal;
+            } else if (typeof rawVal === 'string' && rawVal.trim()) {
+                initialValue = rawVal.split(',').map(s => s.trim());
+            }
+
+            setupSelect(fieldId, field.options || [], initialValue, (val) => {
+                // 多选值保存为数组，如果后端需要字符串，可以在这里转换，
+                // 但通常建议保持 state 为数组，仅在 DHTMLX 序列化时转字符串
+                // 这里我们假设 DHTMLX 可以处理数组属性，或者我们需要转字符串？
+                // 检查 renderSelectHTML 逻辑 -> 它接受数组。
+                // 检查 bindSelect -> 它传递数组。
+                // 我们在 task 上存储数组是最佳实践，但在 display template 中可能需要处理。
+                task[field.name] = val; // Store as array
+
+                // 注意：DHTMLX Gantt 默认序列化可能不支持数组，
+                // 如果导出到 Excel/JSON 可能需要处理。
+                // 但此处我们先只更新状态。
+                gantt.updateTask(task.id);
+                showToast(i18n.t('message.saveSuccess'), 'success');
+            }, { isMulti: true, placeholder: i18n.t('form.selectPlaceholder') || '请选择' });
+
+        } else {
+            // 常规 input 处理
+            const element = panel.querySelector(`#${fieldId}`);
+            if (!element) return;
+
+            element.addEventListener('blur', () => {
+                let newValue = element.value;
+
+                if (field.type === 'number') {
+                    newValue = newValue ? parseFloat(newValue) : null;
+                } else if (field.type === 'date') {
+                    newValue = newValue ? new Date(newValue) : null;
+                }
+
+                if (task[field.name] !== newValue) {
+                    task[field.name] = newValue;
+                    gantt.updateTask(task.id);
+                    showToast(i18n.t('message.saveSuccess'), 'success');
+                }
+            });
+        }
+    });
+}
+
+/**
  * 获取属性图标
  */
 function getPropertyIcon(type) {
@@ -563,13 +731,9 @@ function getEndDate(task) {
 }
 
 /**
- * 渲染下拉组件 HTML
- * @param {string} id - 组件ID前缀
- * @param {Array} options - 选项数组
- * @param {string} currentValue - 当前值
- * @param {Function} renderLabelFn - 标签渲染函数
- * @param {string} placeholder - 占位符
- * @param {boolean} isCompact - 是否紧凑模式
+ * 渲染下拉组件 HTML (Deprecating internal renderDropdownHTML in favor of imported component for custom fields,
+ * but keeping this helper for Status/Priority if we don't refactor them yet.
+ * Based on file review, renderStatusSelect and renderPriorityRow use renderDropdownHTML)
  */
 function renderDropdownHTML(id, options, currentValue, renderLabelFn, placeholder = '-', isCompact = false) {
     const selected = options.find(o => o.value === currentValue);
@@ -605,7 +769,7 @@ function renderDropdownHTML(id, options, currentValue, renderLabelFn, placeholde
 }
 
 /**
- * 绑定自定义下拉组件事件
+ * 绑定自定义下拉组件事件 (Internal one for Status/Priority)
  */
 function bindDropdown(panel, id, onSelect) {
     const wrapper = panel.querySelector(`#${id}-wrapper`);
@@ -695,4 +859,146 @@ function escapeHtml(str) {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
+}
+
+/**
+ * 渲染前置任务区块
+ */
+function renderDependenciesSection(task) {
+    const links = task.$target || [];
+
+    let html = `
+        <div class="border-t border-base-200/50 pt-3 mt-3">
+            <h4 class="text-xs font-medium text-base-content/50 mb-2 uppercase tracking-wider">
+                ${i18n.t('taskDetails.predecessors') || '前置任务'}
+            </h4>
+            <div class="space-y-1" id="predecessors-list">
+    `;
+
+    if (links.length > 0) {
+        links.forEach(linkId => {
+            const link = gantt.getLink(linkId);
+            if (!link) return;
+
+            const sourceTask = gantt.getTask(link.source);
+            if (!sourceTask) return;
+
+            const linkTypeLabel = getLinkTypeLabel(link.type);
+
+            html += `
+                <div class="flex items-center justify-between py-2 group">
+                    <div class="flex items-center gap-2 text-sm text-base-content/70 overflow-hidden">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                        </svg>
+                        <span class="truncate" title="${escapeHtml(sourceTask.text)}">${escapeHtml(sourceTask.text)}</span>
+                        <span class="text-xs bg-base-200 px-1 rounded text-base-content/50 ml-1">${linkTypeLabel}</span>
+                    </div>
+                    <button class="btn btn-ghost btn-xs btn-square text-base-content/30 hover:text-error opacity-0 group-hover:opacity-100 transition-opacity delete-link-btn" 
+                            data-link-id="${linkId}" title="${i18n.t('form.delete')}">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+            `;
+        });
+    } else {
+        html += `<div class="text-sm text-base-content/40 py-1">${i18n.t('taskDetails.noPredecessors') || '无前置任务'}</div>`;
+    }
+
+    // 添加依赖按钮
+    html += `
+            </div>
+            <div class="mt-2">
+                 <button type="button" id="add-predecessor-btn"
+                        class="btn btn-ghost btn-xs w-full justify-center gap-1.5
+                               text-base-content/50 border border-dashed border-base-300/50
+                               hover:border-primary/50 hover:text-primary transition-colors">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                    </svg>
+                    ${i18n.t('taskDetails.addPredecessor') || '添加依赖'}
+                </button>
+            </div>
+        </div>
+    `;
+
+    return html;
+}
+
+/**
+ * 绑定依赖管理事件
+ */
+function bindDependencyEvents(panel, task) {
+    // 删除链接
+    panel.querySelectorAll('.delete-link-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const linkId = e.currentTarget.dataset.linkId;
+            if (linkId) {
+                if (confirm(i18n.t('message.confirmDeleteLink') || 'Delete this link?')) {
+                    gantt.deleteLink(linkId);
+                    import('./panel.js').then(({ refreshTaskDetailsPanel }) => {
+                        refreshTaskDetailsPanel();
+                    });
+                    showToast(i18n.t('message.deleteSuccess'), 'success');
+                }
+            }
+        });
+    });
+
+    // 添加链接
+    const addBtn = panel.querySelector('#add-predecessor-btn');
+    if (addBtn) {
+        addBtn.addEventListener('click', () => {
+            const container = addBtn.parentElement;
+
+            // Get potential predecessors
+            const tasks = [];
+            gantt.eachTask((t) => {
+                if (t.id != task.id) {
+                    tasks.push({ value: t.id, label: t.text });
+                }
+            });
+
+            const selectId = 'new-predecessor-select';
+            const wrapper = document.createElement('div');
+            wrapper.className = "w-full";
+            wrapper.id = selectId;
+            container.innerHTML = '';
+            container.appendChild(wrapper);
+            wrapper.innerHTML = renderSelectHTML(selectId, null, tasks, { placeholder: i18n.t('taskDetails.selectTask') || '选择任务...', width: 'w-full' });
+
+            setupSelect(selectId, tasks, null, (sourceId) => {
+                if (sourceId) {
+                    const link = { source: sourceId, target: task.id, type: "0" };
+                    if (gantt.isLinkAllowed(link)) {
+                        gantt.addLink(link);
+                        import('./panel.js').then(({ refreshTaskDetailsPanel }) => {
+                            refreshTaskDetailsPanel();
+                        });
+                        showToast(i18n.t('message.saveSuccess'), 'success');
+                    } else {
+                        import('./panel.js').then(({ refreshTaskDetailsPanel }) => {
+                            refreshTaskDetailsPanel();
+                        });
+                        showToast(i18n.t('message.error') + ': Cyclic dependency or invalid link', 'error');
+                    }
+                }
+            }, { placeholder: i18n.t('taskDetails.selectTask') || '选择任务...', width: 'w-full' });
+
+            // Hack to auto-open dropdown not supported easily in setupSelect without modification.
+            // User will just see the dropdown input field and can click it.
+        });
+    }
+}
+
+function getLinkTypeLabel(type) {
+    switch (type) {
+        case "0": return "FS";
+        case "1": return "SS";
+        case "2": return "FF";
+        case "3": return "SF";
+        default: return "FS";
+    }
 }

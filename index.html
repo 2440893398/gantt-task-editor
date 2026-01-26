@@ -15,6 +15,23 @@
     <!-- DHTMLX Gantt -->
     <link href="https://cdn.dhtmlx.com/gantt/edge/dhtmlxgantt.css" rel="stylesheet">
     <script src="https://cdn.dhtmlx.com/gantt/edge/dhtmlxgantt.js"></script>
+    <script>
+        // Shim for potential capitalization issues or missing reference in locale files
+        window.Gantt = window.Gantt || window.gantt || {};
+        if (!window.Gantt.plugin) {
+            window.Gantt.plugin = function (callback) {
+                // locale_cn.js uses Gantt.plugin(function(gantt){...}) to set locales
+                // We pass the global gantt instance to it
+                if (window.gantt) {
+                    callback(window.gantt);
+                } else {
+                    // If gantt not ready yet, queue it? Or just wait.
+                    // Usually dhtmlxgantt.js is loaded before this script.
+                    console.warn('Gantt instance not found during plugin initialization');
+                }
+            };
+        }
+    </script>
     <script src="https://docs.dhtmlx.com/gantt/codebase/locale/locale_cn.js"></script>
 
     <!-- SortableJS -->
@@ -67,6 +84,42 @@
 
         #app-container.loaded {
             opacity: 1;
+        }
+
+        /* 摘要字段弹窗样式 */
+        .summary-popover {
+            max-width: 400px;
+            max-height: 300px;
+            overflow-y: auto;
+            background: hsl(var(--b1));
+            border: 1px solid hsl(var(--bc) / 0.2);
+            border-radius: var(--rounded-box);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            padding: 16px;
+        }
+
+        .summary-popover .ql-editor {
+            padding: 0;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        .summary-popover .ql-editor p {
+            margin-bottom: 8px;
+        }
+
+        .summary-popover .ql-editor ul,
+        .summary-popover .ql-editor ol {
+            padding-left: 20px;
+            margin-bottom: 8px;
+        }
+
+        .summary-popover .ql-editor strong {
+            font-weight: 600;
+        }
+
+        .summary-popover .ql-editor em {
+            font-style: italic;
         }
     </style>
 
@@ -422,13 +475,58 @@
                 });
             });
 
-            // 新建任务按钮
+            // 新建任务按钮 - 打开模态框
             document.getElementById('new-task-btn')?.addEventListener('click', () => {
-                gantt.createTask({
-                    text: '',
+                // 打开模态框而非直接创建任务
+                document.getElementById('new-task-modal').showModal();
+                // 聚焦到任务名称输入框
+                setTimeout(() => {
+                    document.getElementById('new-task-name')?.focus();
+                }, 100);
+            });
+
+            // 新建任务表单提交事件
+            document.getElementById('new-task-form')?.addEventListener('submit', function(e) {
+                e.preventDefault();
+
+                const taskName = document.getElementById('new-task-name').value.trim();
+                const assignee = document.getElementById('new-task-assignee').value.trim();
+
+                // 验证任务名称
+                if (!taskName) {
+                    document.getElementById('name-error').classList.remove('hidden');
+                    return;
+                }
+
+                // 创建任务
+                const newTask = {
+                    text: taskName,
+                    assignee: assignee || '',
                     start_date: new Date(),
-                    duration: 1
-                });
+                    duration: 1,
+                    progress: 0
+                };
+
+                const taskId = gantt.addTask(newTask);
+
+                // 关闭模态框
+                document.getElementById('new-task-modal').close();
+
+                // 重置表单
+                document.getElementById('new-task-form').reset();
+                document.getElementById('name-error').classList.add('hidden');
+
+                // 打开任务详情面板
+                if (window.openTaskDetailsPanel) {
+                    window.openTaskDetailsPanel(taskId);
+                }
+            });
+
+            // 任务名称输入时隐藏错误提示
+            document.getElementById('new-task-name')?.addEventListener('input', function() {
+                if (this.value.trim()) {
+                    document.getElementById('name-error').classList.add('hidden');
+                }
             });
 
             // 日期导航
@@ -485,15 +583,73 @@
         #batch-edit-panel.open,
         #field-management-panel.open {
             transform: translateX(0);
+            translate: 0 !important;
         }
 
+        /* 字段配置弹窗初始状态 */
+        #field-config-modal .modal-box {
+            transform: scale(0.95);
+            opacity: 0;
+        }
+
+        /* 字段配置弹窗显示状态 */
         #field-config-modal.show {
-            opacity: 1;
-            pointer-events: auto;
+            opacity: 1 !important;
+            pointer-events: auto !important;
         }
 
         #field-config-modal.show .modal-box {
-            transform: scale(1);
+            transform: scale(1) !important;
+            opacity: 1 !important;
+        }
+
+        /* 字段类型下拉菜单 .open 状态 */
+        #field-type-dropdown {
+            display: none;
+        }
+
+        #field-type-dropdown.open {
+            display: block !important;
+        }
+
+        /* 图标选择下拉菜单 */
+        #icon-dropdown {
+            display: none;
+        }
+
+        #icon-dropdown.open {
+            display: block !important;
+        }
+
+        #icon-dropdown .icon-option {
+            width: 36px;
+            height: 36px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.25rem;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        #icon-dropdown .icon-option:hover {
+            background-color: oklch(var(--b2));
+            transform: scale(1.1);
+        }
+
+        #icon-dropdown .icon-option.selected {
+            background-color: oklch(var(--p) / 0.15);
+            outline: 2px solid oklch(var(--p));
+        }
+
+        /* 必填字段切换按钮激活状态 */
+        .required-toggle.active {
+            background-color: #4A90E2 !important;
+        }
+
+        .required-toggle.active > div {
+            transform: translateX(16px);
         }
     </style>
 
@@ -511,75 +667,105 @@
     <!-- 批量编辑面板 -->
     <div id="batch-edit-panel"
         class="fixed right-0 top-0 h-full w-80 bg-base-100 shadow-2xl z-50 transform translate-x-full transition-transform duration-300 flex flex-col border-l border-base-200">
-        <div class="flex items-center justify-between p-4 border-b border-base-200 bg-base-100/50 backdrop-blur">
-            <h3 class="font-semibold text-lg" data-i18n="batchEdit.title">批量编辑</h3>
-            <button id="close-batch-edit" class="btn btn-sm btn-circle btn-ghost text-gray-500">
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" class="h-5 w-5" fill="none"
-                    viewBox="0 0 24 24" stroke="currentColor">
+        <!-- 优化后的头部：渐变背景 -->
+        <div class="bg-gradient-to-r from-blue-500 to-cyan-500 p-5 text-white relative">
+            <div class="flex items-center gap-3">
+                <div class="p-2.5 bg-white/20 rounded-xl backdrop-blur-sm">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                    </svg>
+                </div>
+                <div class="flex-1">
+                    <h3 class="font-bold text-lg" data-i18n="batchEdit.title">批量编辑</h3>
+                    <p class="text-white/70 text-xs mt-0.5" data-i18n="batchEdit.subtitle">同时修改多个任务</p>
+                </div>
+            </div>
+            <button id="close-batch-edit" class="btn btn-sm btn-circle btn-ghost absolute right-3 top-3 text-white hover:bg-white/20">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
                 </svg>
             </button>
         </div>
 
-        <div class="flex-1 overflow-y-auto p-4 space-y-4">
-            <div class="alert alert-info bg-blue-50 text-blue-900 border-blue-100 text-sm py-2">
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24"
-                    class="stroke-current shrink-0 w-5 h-5">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                </svg>
-                <span id="batch-selected-count-text" data-i18n="batchEdit.selectedCount"
-                    data-i18n-params='{"count":0}'>ℹ️ 已选中 0 个任务</span>
+        <!-- 内容区域 -->
+        <div class="flex-1 overflow-y-auto p-4 space-y-4 bg-base-200/30">
+            <!-- 选中任务数提示 -->
+            <div class="bg-blue-50 border border-blue-200 rounded-xl p-3 flex items-center gap-3">
+                <div class="p-2 bg-blue-100 rounded-lg">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+                    </svg>
+                </div>
+                <span id="batch-selected-count-text" class="text-sm text-blue-800 font-medium" data-i18n="batchEdit.selectedCount" data-i18n-params='{"count":0}'>已选中 0 个任务</span>
             </div>
 
-            <div class="form-control w-full">
-                <label class="label">
-                    <span class="label-text font-medium" data-i18n="batchEdit.selectField">选择要修改的字段</span>
+            <!-- 字段选择 -->
+            <div class="bg-base-100 rounded-xl p-4 shadow-sm">
+                <label class="label px-0 pt-0">
+                    <span class="label-text font-medium flex items-center gap-2">
+                        <span class="text-primary">≡</span>
+                        <span data-i18n="batchEdit.selectField">选择要修改的字段</span>
+                    </span>
                 </label>
-                <select id="batch-field-select" class="select select-bordered w-full">
+                <select id="batch-field-select" class="select select-bordered w-full focus:select-primary">
                     <option value="" data-i18n="form.selectPlaceholder">请选择字段</option>
                 </select>
             </div>
 
+            <!-- 字段值输入 -->
             <div id="batch-field-input-container" class="hidden">
-                <div class="form-control w-full">
-                    <label class="label">
-                        <span class="label-text font-medium" id="batch-field-label"
-                            data-i18n="batchEdit.fieldValue">字段值</span>
+                <div class="bg-base-100 rounded-xl p-4 shadow-sm">
+                    <label class="label px-0 pt-0">
+                        <span class="label-text font-medium flex items-center gap-2">
+                            <span class="text-primary">✎</span>
+                            <span id="batch-field-label" data-i18n="batchEdit.fieldValue">字段值</span>
+                        </span>
                     </label>
                     <div id="batch-field-input"></div>
                 </div>
             </div>
         </div>
 
-        <div class="p-4 border-t border-base-200 bg-base-100/50 backdrop-blur flex justify-end gap-2">
+        <!-- 底部按钮区域 -->
+        <div class="p-4 border-t border-base-200 bg-base-100 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] flex justify-end gap-2">
             <button id="batch-cancel-btn" class="btn btn-ghost" data-i18n="form.cancel">取消</button>
-            <button id="batch-apply-btn" class="btn btn-primary" data-i18n="batchEdit.apply">应用到所有任务</button>
+            <button id="batch-apply-btn" class="btn btn-primary shadow-md hover:shadow-lg transition-shadow" data-i18n="batchEdit.apply">应用修改</button>
         </div>
     </div>
 
     <!-- 字段管理面板 -->
     <div id="field-management-panel"
         class="fixed right-0 top-0 h-full w-96 bg-base-100 shadow-2xl z-50 transform translate-x-full transition-transform duration-300 flex flex-col border-l border-base-200">
-        <div class="flex items-center justify-between p-4 border-b border-base-200 bg-base-100/50 backdrop-blur">
-            <h4 class="font-semibold text-lg" data-i18n="fieldManagement.title">字段管理</h4>
-            <button id="close-field-management" class="btn btn-sm btn-circle btn-ghost text-gray-500">
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" class="h-5 w-5" fill="none"
-                    viewBox="0 0 24 24" stroke="currentColor">
+        <!-- 优化后的头部：渐变背景 -->
+        <div class="bg-gradient-to-r from-primary to-accent p-5 text-white relative">
+            <div class="flex items-center gap-3">
+                <div class="p-2.5 bg-white/20 rounded-xl backdrop-blur-sm">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+                    </svg>
+                </div>
+                <div class="flex-1">
+                    <h4 class="font-bold text-lg" data-i18n="fieldManagement.title">字段管理</h4>
+                    <p class="text-white/70 text-xs mt-0.5" data-i18n="fieldManagement.subtitle">拖拽排序，点击编辑</p>
+                </div>
+            </div>
+            <button id="close-field-management" class="btn btn-sm btn-circle btn-ghost absolute right-3 top-3 text-white hover:bg-white/20">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
                 </svg>
             </button>
         </div>
 
-        <div class="field-management-body flex-1 overflow-y-auto p-4 space-y-2" id="field-list-container">
+        <!-- 字段列表区域 -->
+        <div class="field-management-body flex-1 overflow-y-auto p-4 space-y-2 bg-base-200/30" id="field-list-container">
             <!-- 字段列表将在这里动态生成 -->
         </div>
 
-        <div class="p-4 border-t border-base-200 bg-base-100/50 backdrop-blur">
-            <button id="add-field-from-panel-btn" class="btn btn-outline btn-primary w-full gap-2"
+        <!-- 底部按钮区域 -->
+        <div class="p-4 border-t border-base-200 bg-base-100 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
+            <button id="add-field-from-panel-btn" class="btn btn-primary w-full gap-2 shadow-md hover:shadow-lg transition-shadow"
                 data-i18n="fieldManagement.addField">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" class="h-4 w-4" viewBox="0 0 20 20"
-                    fill="currentColor">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
                     <path fill-rule="evenodd"
                         d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z"
                         clip-rule="evenodd" />
@@ -591,9 +777,9 @@
 
     <!-- 字段配置弹窗 -->
     <div id="field-config-modal"
-        class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm opacity-0 pointer-events-none transition-opacity duration-200">
+        class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm opacity-0 pointer-events-none transition-all duration-200">
         <div
-            class="modal-box w-11/12 max-w-lg bg-base-100 shadow-2xl rounded-2xl p-0 overflow-hidden transform scale-95 transition-transform duration-200">
+            class="modal-box w-11/12 max-w-lg bg-base-100 shadow-2xl rounded-2xl p-0 overflow-hidden transition-all duration-200">
             <!-- 头部 -->
             <div class="bg-gradient-to-r from-primary to-accent p-6 text-white relative">
                 <div class="flex items-start gap-4">
@@ -611,15 +797,43 @@
 
             <!-- 内容区域 -->
             <div class="p-6 space-y-4">
-                <!-- 字段名称 -->
-                <div class="form-control w-full">
-                    <label class="label">
-                        <span class="label-text font-medium flex items-center gap-2"><span class="text-primary">T</span>
-                            <span data-i18n="fieldManagement.fieldName">字段名称</span></span>
-                    </label>
-                    <input type="text" id="field-name" data-testid="field-name-input"
-                        class="input input-bordered w-full focus:input-primary" placeholder="请输入字段名称"
-                        data-i18n-placeholder="fieldManagement.placeholderName">
+                <!-- 字段名称和图标 - 横向布局 -->
+                <div class="flex gap-4">
+                    <!-- 图标选择 -->
+                    <div class="form-control w-24 shrink-0">
+                        <label class="label">
+                            <span class="label-text font-medium flex items-center gap-1">
+                                <span class="text-error text-xs">*</span>
+                                <span data-i18n="fieldManagement.fieldIcon">图标</span>
+                            </span>
+                        </label>
+                        <div class="relative">
+                            <button type="button" id="field-icon-selector"
+                                class="w-full h-12 flex items-center justify-center text-2xl bg-base-200 hover:bg-base-300 border border-base-300 rounded-lg cursor-pointer transition-colors">
+                                <span id="selected-icon">📝</span>
+                            </button>
+                            <input type="hidden" id="field-icon" value="📝">
+                            <!-- 图标下拉选择器 -->
+                            <div id="icon-dropdown" class="absolute top-full left-0 mt-1 w-64 bg-base-100 border border-base-200 shadow-xl rounded-xl z-30 p-2 hidden">
+                                <div class="grid grid-cols-6 gap-1" id="icon-grid">
+                                    <!-- 图标将由JS动态生成 -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 字段名称 -->
+                    <div class="form-control flex-1">
+                        <label class="label">
+                            <span class="label-text font-medium flex items-center gap-2">
+                                <span class="text-primary">T</span>
+                                <span data-i18n="fieldManagement.fieldName">字段名称</span>
+                            </span>
+                        </label>
+                        <input type="text" id="field-name" data-testid="field-name-input"
+                            class="input input-bordered w-full focus:input-primary h-12" placeholder="请输入字段名称"
+                            data-i18n-placeholder="fieldManagement.placeholderName">
+                    </div>
                 </div>
 
                 <!-- 字段类型 (Complex custom selector replacement) -->
@@ -631,9 +845,11 @@
                     </label>
                     <div class="field-type-selector p-3 border border-base-300 rounded-lg cursor-pointer hover:border-primary transition-colors flex items-center gap-3 bg-base-100"
                         id="field-type-selector">
-                        <span class="badge badge-primary badge-outline font-mono">#</span>
-                        <span class="field-type-text flex-1" data-i18n="fieldManagement.typeNumber">数字</span>
-                        <span class="text-gray-400">▼</span>
+                        <span class="w-8 h-8 flex items-center justify-center bg-primary/10 rounded-lg text-lg" id="field-type-icon">📝</span>
+                        <span class="field-type-text flex-1 font-medium" data-i18n="fieldManagement.typeText">文本</span>
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                        </svg>
                     </div>
                     <select id="field-type" class="hidden">
                         <option value="text">文本</option>
@@ -643,36 +859,48 @@
                         <option value="multiselect">多选</option>
                     </select>
                     <!-- Custom Dropdown implementation mimicking existing structure -->
-                    <div class="field-type-dropdown absolute top-full left-0 right-0 mt-1 bg-base-100 border border-base-200 shadow-xl rounded-xl z-20 hidden group-hover:block transition-all"
+                    <div class="field-type-dropdown absolute top-full left-0 right-0 mt-1 bg-base-100 border border-base-200 shadow-xl rounded-xl z-20 transition-all"
                         id="field-type-dropdown">
-                        <!-- Options will be handled by JS, but here are the static ones for structure -->
-                        <div class="p-1 space-y-1">
-                            <div class="field-type-option flex items-center gap-3 p-2 hover:bg-base-200 rounded-lg cursor-pointer"
+                        <div class="p-2 space-y-1">
+                            <div class="field-type-option flex items-center gap-3 p-2.5 hover:bg-base-200 rounded-lg cursor-pointer transition-colors"
                                 data-value="text">
-                                <span class="badge badge-ghost font-mono">Ā</span>
-                                <span data-i18n="fieldManagement.typeText">文本</span>
+                                <span class="w-8 h-8 flex items-center justify-center bg-blue-50 rounded-lg text-lg">📝</span>
+                                <div class="flex-1">
+                                    <div class="font-medium text-sm" data-i18n="fieldManagement.typeText">文本</div>
+                                    <div class="text-xs text-gray-400" data-i18n="fieldManagement.typeTextDesc">单行或多行文本内容</div>
+                                </div>
                             </div>
-                            <div class="field-type-option flex items-center gap-3 p-2 bg-primary/10 text-primary rounded-lg cursor-pointer selected"
+                            <div class="field-type-option flex items-center gap-3 p-2.5 hover:bg-base-200 rounded-lg cursor-pointer transition-colors"
                                 data-value="number">
-                                <span class="badge badge-primary badge-outline font-mono">#</span>
-                                <span data-i18n="fieldManagement.typeNumber">数字</span>
-                                <span class="check-icon ml-auto">✓</span>
+                                <span class="w-8 h-8 flex items-center justify-center bg-green-50 rounded-lg text-lg">🔢</span>
+                                <div class="flex-1">
+                                    <div class="font-medium text-sm" data-i18n="fieldManagement.typeNumber">数字</div>
+                                    <div class="text-xs text-gray-400" data-i18n="fieldManagement.typeNumberDesc">数值类型数据</div>
+                                </div>
                             </div>
-                            <!-- ... other options ... -->
-                            <div class="field-type-option flex items-center gap-3 p-2 hover:bg-base-200 rounded-lg cursor-pointer"
+                            <div class="field-type-option flex items-center gap-3 p-2.5 hover:bg-base-200 rounded-lg cursor-pointer transition-colors"
                                 data-value="date">
-                                <span class="badge badge-ghost font-mono">☐</span>
-                                <span data-i18n="fieldManagement.typeDate">日期</span>
+                                <span class="w-8 h-8 flex items-center justify-center bg-orange-50 rounded-lg text-lg">📅</span>
+                                <div class="flex-1">
+                                    <div class="font-medium text-sm" data-i18n="fieldManagement.typeDate">日期</div>
+                                    <div class="text-xs text-gray-400" data-i18n="fieldManagement.typeDateDesc">日期时间选择</div>
+                                </div>
                             </div>
-                            <div class="field-type-option flex items-center gap-3 p-2 hover:bg-base-200 rounded-lg cursor-pointer"
+                            <div class="field-type-option flex items-center gap-3 p-2.5 hover:bg-base-200 rounded-lg cursor-pointer transition-colors"
                                 data-value="select">
-                                <span class="badge badge-ghost font-mono">˅</span>
-                                <span data-i18n="fieldManagement.typeSelect">下拉选择</span>
+                                <span class="w-8 h-8 flex items-center justify-center bg-purple-50 rounded-lg text-lg">📋</span>
+                                <div class="flex-1">
+                                    <div class="font-medium text-sm" data-i18n="fieldManagement.typeSelect">下拉选择</div>
+                                    <div class="text-xs text-gray-400" data-i18n="fieldManagement.typeSelectDesc">单选下拉列表</div>
+                                </div>
                             </div>
-                            <div class="field-type-option flex items-center gap-3 p-2 hover:bg-base-200 rounded-lg cursor-pointer"
+                            <div class="field-type-option flex items-center gap-3 p-2.5 hover:bg-base-200 rounded-lg cursor-pointer transition-colors"
                                 data-value="multiselect">
-                                <span class="badge badge-ghost font-mono">≡</span>
-                                <span data-i18n="fieldManagement.typeMultiselect">多选</span>
+                                <span class="w-8 h-8 flex items-center justify-center bg-pink-50 rounded-lg text-lg">☑️</span>
+                                <div class="flex-1">
+                                    <div class="font-medium text-sm" data-i18n="fieldManagement.typeMultiselect">多选</div>
+                                    <div class="text-xs text-gray-400" data-i18n="fieldManagement.typeMultiselectDesc">多选下拉列表</div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -694,20 +922,22 @@
                     <span class="text-gray-400">›</span>
                 </div>
 
-                <!-- 默认值信息卡片 (DaisyUI Alert/Card) -->
-                <div class="alert bg-base-200 border-none rounded-xl block text-left p-4">
-                    <div class="flex items-start gap-3 mb-2">
-                        <div class="text-primary mt-0.5">ⓘ</div>
-                        <div>
+                <!-- 默认值配置区域 -->
+                <div id="default-value-config" class="bg-base-200/50 border-none rounded-xl block text-left p-4">
+                    <div class="flex items-start gap-3 mb-3">
+                        <div class="w-8 h-8 flex items-center justify-center bg-primary/10 rounded-lg text-lg shrink-0">💡</div>
+                        <div class="flex-1">
                             <h4 class="font-medium text-sm" data-i18n="fieldManagement.defaultOneTime">默认值 (可选)</h4>
                             <p class="text-xs text-gray-500" data-i18n="fieldManagement.defaultDesc">现有任务将自动填充此值</p>
                         </div>
                     </div>
-                    <input type="text" id="field-default-value"
-                        class="input input-sm input-bordered w-full bg-white mb-2" placeholder="输入默认值..."
-                        data-i18n-placeholder="fieldManagement.defaultPlaceholder">
-                    <div class="text-xs text-gray-400" data-i18n="fieldManagement.defaultNote">新增字段时，所有现有任务将被设置为此默认值。
+                    <!-- 动态输入区域 - 根据字段类型切换 -->
+                    <div id="default-value-input-container">
+                        <input type="text" id="field-default-value"
+                            class="input input-sm input-bordered w-full bg-white" placeholder="输入默认值..."
+                            data-i18n-placeholder="fieldManagement.defaultPlaceholder">
                     </div>
+                    <div class="text-xs text-gray-400 mt-2" data-i18n="fieldManagement.defaultNote">新增字段时，所有现有任务将被设置为此默认值。</div>
                 </div>
 
                 <!-- 选项配置 -->
@@ -733,8 +963,90 @@
         </div>
     </div>
 
+    <!-- 删除确认弹窗 -->
+    <dialog id="delete-confirm-modal" class="modal modal-bottom sm:modal-middle">
+        <div class="modal-box">
+            <div class="flex items-start gap-4">
+                <div class="p-3 bg-error/10 rounded-full">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-error" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                </div>
+                <div class="flex-1">
+                    <h3 class="font-bold text-lg" data-i18n="fieldManagement.deleteTitle">确认删除</h3>
+                    <p class="py-2 text-base-content/70" id="delete-confirm-message" data-i18n="fieldManagement.deleteMessage">确定要删除此字段吗？此操作无法撤销。</p>
+                </div>
+            </div>
+            <div class="modal-action">
+                <button class="btn btn-ghost" id="delete-cancel-btn" data-i18n="form.cancel">取消</button>
+                <button class="btn btn-error" id="delete-confirm-btn" data-i18n="form.delete">删除</button>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop">
+            <button>close</button>
+        </form>
+    </dialog>
+
     <!-- 文件输入(用于导入配置) -->
     <input type="file" id="config-file-input" class="hidden" accept=".json">
+
+    <!-- 新建任务模态框 -->
+    <dialog id="new-task-modal" class="modal">
+        <div class="modal-box">
+            <h3 class="font-bold text-lg mb-4" data-i18n="newTask.title">新建任务</h3>
+            <form id="new-task-form" class="space-y-4">
+                <!-- 任务名称（必填） -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text" data-i18n="newTask.nameLabel">任务名称</span>
+                        <span class="text-error">*</span>
+                    </label>
+                    <input type="text"
+                           id="new-task-name"
+                           class="input input-bordered w-full"
+                           data-i18n-placeholder="newTask.namePlaceholder"
+                           placeholder="请输入任务名称"
+                           required
+                           maxlength="100">
+                    <label class="label hidden" id="name-error">
+                        <span class="label-text-alt text-error" data-i18n="newTask.nameRequired">
+                            任务名称不能为空
+                        </span>
+                    </label>
+                </div>
+
+                <!-- 负责人（可选） -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text" data-i18n="newTask.assigneeLabel">负责人</span>
+                    </label>
+                    <input type="text"
+                           id="new-task-assignee"
+                           class="input input-bordered w-full"
+                           data-i18n-placeholder="newTask.assigneePlaceholder"
+                           placeholder="请选择负责人">
+                </div>
+
+                <!-- 操作按钮 -->
+                <div class="modal-action">
+                    <button type="button"
+                            class="btn btn-ghost"
+                            data-i18n="newTask.cancel"
+                            onclick="document.getElementById('new-task-modal').close()">
+                        取消
+                    </button>
+                    <button type="submit"
+                            class="btn btn-primary"
+                            data-i18n="newTask.create">
+                        创建
+                    </button>
+                </div>
+            </form>
+        </div>
+        <form method="dialog" class="modal-backdrop">
+            <button>close</button>
+        </form>
+    </dialog>
 
     <!-- 入口 JS -->
     <script type="module" src="/src/main.js"></script>

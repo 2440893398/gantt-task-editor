@@ -9,22 +9,26 @@ This project builds a comprehensive and interactive project management system ba
 ## 核心特性 | Key Features
 
 ### 1. 任务管理与可视化 | Task Management & Visualization
+
 - **层级结构**: 支持无限层级的父子任务管理
 - **交互编辑**: 拖拽调整时间、拖拽建立依赖关系、内联编辑任务详情
 - **关键路径**: 自动计算并高亮项目关键路径
 - **状态跟踪**: 逾期任务高亮、进度条可视化显示
 
 ### 2. 国际化支持 (I18n) | Internationalization
+
 - **多语言切换**: 内置支持 **English (en-US)**, **中文 (zh-CN)**, **日本語 (ja-JP)**, **한국어 (ko-KR)**
 - **动态更新**: 切换语言后实时更新界面文本、日期格式和提示信息
 - **日期本地化**: 适配不同地区的日期显示习惯 (如: YYYY-MM-DD vs MM/DD/YYYY)
 
 ### 3. 数据导入导出 | Excel Import/Export
+
 - **Excel 导入**: 支持从Excel文件批量导入任务数据，自动解析层级关系和自定义字段
 - **Excel 导出**: 导出当前视图的任务数据到Excel，保留格式和结构
 - **智能映射**: 自动处理本地化枚举值（如：高/中/低 ↔ High/Medium/Low）
 
 ### 4. 增强的交互体验 | Enhanced UX
+
 - **自定义字段**: 动态表单配置，支持文本、数值、单/多选下拉等多种类型
 - **批量编辑**: 支持多选任务进行批量属性修改
 - **现代工具栏**: 包含缩放控制、列显示切换、全屏模式等实用功能
@@ -35,7 +39,7 @@ This project builds a comprehensive and interactive project management system ba
 - **Core**: HTML5, Tailwind CSS + DaisyUI, JavaScript (ES6+)
 - **Build Tool**: [Vite](https://vitejs.dev/) - 极速的开发服务器和构建工具
 - **Gantt Library**: [DHTMLX Gantt](https://dhtmlx.com/docs/products/dhtmlxGantt/) (Pro features partially implemented)
-- **Utilities**: 
+- **Utilities**:
   - `SheetJS (xlsx)` - Excel处理
   - `SortableJS` - 拖拽排序
 - **Testing**:
@@ -45,23 +49,28 @@ This project builds a comprehensive and interactive project management system ba
 ## 快速开始 | Getting Started
 
 ### 环境要求 | Prerequisites
+
 - Node.js (v16+)
 - npm (v8+)
 
 ### 安装与运行 | Installation & Running
 
 1. **安装依赖 | Install Dependencies**
+
    ```bash
    npm install
    ```
 
 2. **启动开发服务器 | Start Development Server**
+
    ```bash
    npm run dev
    ```
+
    访问 `http://localhost:5173` 即可查看项目。
 
 3. **构建生产版本 | Build for Production**
+
    ```bash
    npm run build
    ```
@@ -94,11 +103,13 @@ tests/
 本项目包含完整的自动化测试套件。
 
 ### 运行单元测试 | Run Unit Tests
+
 ```bash
 npm test
 ```
 
 ### 运行 E2E 测试 | Run E2E Tests
+
 ```bash
 # 运行所有 E2E 测试
 npm run test:e2e
@@ -108,6 +119,7 @@ npx playwright test tests/e2e/localization-detail.spec.js
 ```
 
 ### 查看测试报告 | View Test Reports
+
 ```bash
 npx playwright show-report
 ```
@@ -115,6 +127,7 @@ npx playwright show-report
 ## 文档 | Documentation
 
 详细的文档位于 `doc/` 目录下：
+
 - `doc/prd/`: 产品需求文档
 - `doc/design/`: 设计规范与原型
 - `doc/impl/`: 实现细节与技术报告
@@ -124,4 +137,4 @@ npx playwright show-report
 
 MIT License
 
-> Last Updated: 2026-01-18
+> Last Updated: 2026-01-26

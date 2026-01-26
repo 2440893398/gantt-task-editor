@@ -2,7 +2,8 @@
  * Lightbox 自定义
  */
 
-import { state, isFieldEnabled } from '../../core/store.js';
+import { state, isFieldEnabled, getFieldType, getSystemFieldOptions } from '../../core/store.js';
+
 import { showToast } from '../../utils/toast.js';
 import { validateField } from '../../utils/dom.js';
 import { FIELD_ICONS } from '../../config/constants.js';
@@ -70,14 +71,21 @@ export function registerCustomFieldsBlock() {
                 const inputStyle = 'width: 100%; padding: 10px 12px; border: 1px solid #D1D5DB; border-radius: 8px; font-size: 13px; box-sizing: border-box; transition: border-color 0.2s;';
                 const focusEvents = 'onfocus="this.style.borderColor=\'#4A90E2\'; this.style.borderWidth=\'2px\'" onblur="this.style.borderColor=\'#D1D5DB\'; this.style.borderWidth=\'1px\'"';
 
-                if (field.type === 'text') {
+                // Get effective type (considering system field type overrides)
+                const effectiveType = getFieldType(field.name);
+
+                // Get options: first try system field override, then fall back to field.options
+                const systemOptions = getSystemFieldOptions(field.name);
+                const effectiveOptions = systemOptions || field.options || [];
+
+                if (effectiveType === 'text') {
                     html += `<input type="text" name="${field.name}" value="${fieldValue}" ${field.required ? 'required' : ''} style="${inputStyle}" ${focusEvents}>`;
-                } else if (field.type === 'number') {
+                } else if (effectiveType === 'number') {
                     html += `<input type="number" name="${field.name}" value="${fieldValue}" ${field.required ? 'required' : ''} style="${inputStyle}" ${focusEvents}>`;
-                } else if (field.type === 'select') {
+                } else if (effectiveType === 'select') {
                     html += `<select name="${field.name}" ${field.required ? 'required' : ''} style="${inputStyle}" ${focusEvents}>`;
                     html += `<option value="">${i18n.t('lightbox.pleaseSelect')}</option>`;
-                    field.options.forEach(option => {
+                    effectiveOptions.forEach(option => {
                         const selected = fieldValue === option ? 'selected' : '';
                         // 如果字段有 i18nKey，则翻译选项值
                         let displayValue = option;
@@ -90,10 +98,10 @@ export function registerCustomFieldsBlock() {
                         html += `<option value="${option}" ${selected}>${displayValue}</option>`;
                     });
                     html += `</select>`;
-                } else if (field.type === 'multiselect') {
+                } else if (effectiveType === 'multiselect') {
                     const selectedValues = Array.isArray(fieldValue) ? fieldValue : (fieldValue ? fieldValue.split(',') : []);
                     html += `<select name="${field.name}" multiple ${field.required ? 'required' : ''} style="${inputStyle} min-height: 80px;" ${focusEvents}>`;
-                    field.options.forEach(option => {
+                    effectiveOptions.forEach(option => {
                         const selected = selectedValues.includes(option) ? 'selected' : '';
                         // 如果字段有 i18nKey，则翻译选项值
                         let displayValue = option;
@@ -106,7 +114,10 @@ export function registerCustomFieldsBlock() {
                         html += `<option value="${option}" ${selected}>${displayValue}</option>`;
                     });
                     html += `</select>`;
+                } else if (effectiveType === 'date') {
+                    html += `<input type="date" name="${field.name}" value="${fieldValue}" ${field.required ? 'required' : ''} style="${inputStyle}" ${focusEvents}>`;
                 }
+
 
                 html += `<div class="field-error" data-field="${field.name}" style="color: #EF4444; font-size: 12px; margin-top: 4px; display: none;"></div>`;
                 html += `</div>`;

@@ -1,0 +1,164 @@
+/**
+ * AI 模块主题样式
+ * 基于 DESIGN_SPEC_AI_Agent_Master.md 设计规范
+ */
+
+/* ============================================
+   AI 品牌色 - 采用紫色系体现智能感
+   ============================================ */
+:root {
+    /* 主色调 */
+    --ai-primary: #8B5CF6;
+    /* Violet-500 */
+    --ai-primary-hover: #7C3AED;
+    /* Violet-600 */
+    --ai-primary-light: #A78BFA;
+    /* Violet-400 */
+    --ai-bg-gradient: linear-gradient(135deg, #F3E8FF 0%, #FFFFFF 100%);
+
+    /* 消息气泡 */
+    --msg-user-bg: #8B5CF6;
+    --msg-user-text: #FFFFFF;
+    --msg-ai-bg: #F3F4F6;
+    /* Gray-100 */
+    --msg-ai-text: #1F2937;
+    /* Gray-800 */
+
+    /* 状态色 */
+    --ai-success: #10B981;
+    --ai-warning: #F59E0B;
+    --ai-error: #EF4444;
+}
+
+/* Dark Mode 适配 */
+[data-theme='dark'] {
+    --msg-ai-bg: #374151;
+    /* Gray-700 */
+    --msg-ai-text: #F9FAFB;
+    /* Gray-50 */
+    --ai-bg-gradient: linear-gradient(135deg, #1F1B2E 0%, #111827 100%);
+}
+
+/* ============================================
+   AI 悬浮按钮样式
+   F-204: 调整位置避免遮挡视图切换控件
+   ============================================ */
+.ai-floating-btn {
+    position: fixed;
+    bottom: 6rem;
+    /* 避开视图切换控件 */
+    right: 2rem;
+    z-index: 6100;
+    /* 高于任务详情面板(z-6000) */
+}
+
+#ai_floating_btn {
+    background: var(--ai-primary);
+    border: none;
+    transition: all 0.2s ease;
+}
+
+#ai_floating_btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px -5px rgba(139, 92, 246, 0.5);
+    background: var(--ai-primary-hover);
+}
+
+#ai_floating_btn:active {
+    transform: scale(0.95);
+}
+
+/* ============================================
+   AI 侧边栏/抽屉样式
+   F-105: 现代化侧边栏
+   ============================================ */
+.ai-drawer {
+    background: var(--ai-bg-gradient);
+}
+
+/* 消息气泡样式 */
+.ai-message-user {
+    background: var(--msg-user-bg);
+    color: var(--msg-user-text);
+    border-radius: 1rem 1rem 0.25rem 1rem;
+}
+
+.ai-message-assistant {
+    background: var(--msg-ai-bg);
+    color: var(--msg-ai-text);
+    border-radius: 1rem 1rem 1rem 0.25rem;
+}
+
+/* ============================================
+   AI 结果卡片样式
+   F-107: 结构化输出渲染
+   ============================================ */
+.ai-result-card {
+    border-left: 3px solid var(--ai-primary);
+    transition: all 0.2s ease;
+}
+
+.ai-result-card:hover {
+    box-shadow: 0 4px 12px rgba(139, 92, 246, 0.15);
+}
+
+/* 应用按钮 */
+.ai-result-apply {
+    background: var(--ai-primary);
+    color: white;
+}
+
+.ai-result-apply:hover {
+    background: var(--ai-primary-hover);
+}
+
+/* ============================================
+   AI 配置弹窗样式
+   F-001: 配置管理
+   ============================================ */
+.ai-config-modal .modal-box {
+    backdrop-filter: blur(4px);
+}
+
+/* API Key 输入框 */
+.ai-api-key-input {
+    font-family: monospace;
+    letter-spacing: 0.05em;
+}
+
+/* ============================================
+   动画效果
+   ============================================ */
+@keyframes ai-pulse {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.7;
+    }
+}
+
+.ai-streaming {
+    animation: ai-pulse 1.5s ease-in-out infinite;
+}
+
+/* 打字机光标效果 */
+.ai-typing-cursor::after {
+    content: '▋';
+    animation: blink 1s step-end infinite;
+}
+
+@keyframes blink {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0;
+    }
+}

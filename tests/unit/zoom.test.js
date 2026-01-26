@@ -3,6 +3,27 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+
+// 取消 setup.js 中的全局 mock，使用真实的 zoom.js 模块
+vi.unmock('../../src/features/gantt/zoom.js');
+
+// Mock i18n 模块，提供中文翻译
+vi.mock('../../src/utils/i18n.js', () => ({
+  i18n: {
+    t: (key) => {
+      const translations = {
+        'view.day': '日视图',
+        'view.week': '周视图',
+        'view.month': '月视图',
+        'view.quarter': '季度视图',
+        'view.year': '年视图'
+      };
+      return translations[key] || key;
+    },
+    getLanguage: () => 'zh-CN'
+  }
+}));
+
 import {
   initZoom,
   setZoomLevel,

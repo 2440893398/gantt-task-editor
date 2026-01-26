@@ -15,7 +15,9 @@ export default {
         exportJSON: 'JSON 내보내기',
         importJSON: 'JSON 가져오기',
         language: '언어',
-        searchPlaceholder: '작업 검색...'
+        searchPlaceholder: '작업 검색...',
+        criticalPath: '크리티컬 패스',
+        lag: '지연(일)'
     },
 
     // 보기
@@ -38,7 +40,8 @@ export default {
         progress: '진행률(%)',
         priority: '우선순위',
         assignee: '담당자',
-        status: '상태'
+        status: '상태',
+        summary: '요약'
     },
 
     // 열거값 (내부값 → 로컬라이즈된 표시값)
@@ -246,6 +249,74 @@ export default {
         }
     },
 
+    // 작업 세부정보 패널
+    taskDetails: {
+        newTask: '새 작업',
+        newSubtask: '새 하위 작업',
+        titlePlaceholder: '작업 제목',
+        description: '설명',
+        descPlaceholder: '상세 설명을 입력하세요. Markdown 지원...',
+        subtasks: '하위 작업',
+        addSubtask: '하위 작업 추가',
+        noSubtasks: '하위 작업 없음',
+        properties: '속성',
+        settings: '설정',
+        assignee: '담당자',
+        priority: '우선순위',
+        progress: '진행률',
+        schedule: '일정',
+        planStart: '시작 예정',
+        planEnd: '종료 예정',
+        actualStart: '실제 시작',
+        actualEnd: '실제 종료',
+        notStarted: '시작하지 않음',
+        notCompleted: '완료되지 않음',
+        workload: '공수',
+        estimatedHours: '예상 공수',
+        actualHours: '실제 공수',
+        dayUnit: '인일',
+        noData: '0인일',
+        customFields: '사용자 정의 필드',
+        addField: '필드 추가',
+        copyLink: '링크 복사',
+        fullscreen: '전체 화면',
+        more: '더보기',
+        confirmDelete: '이 작업을 삭제하시겠습니까?',
+        deleteTaskTitle: '작업 삭제',
+        deleteTaskConfirm: '작업 "{{name}}"을(를) 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.',
+        dragToResize: '하단 가장자리를 드래그하여 크기 조절',
+        featureNotReady: '기능 개발 중',
+        required: '필수',
+        systemField: '시스템',
+        quickDate: '오늘',
+        dateRangeError: '실제 시작일은 실제 종료일보다 늦을 수 없습니다',
+        fieldDisabled: '이 필드는 비활성화되었습니다',
+        // 하위 작업 삭제 기능
+        deleteSubtask: '하위 작업 삭제',
+        deleteSubtaskTitle: '하위 작업 삭제',
+        deleteSubtaskConfirm: '이 하위 작업을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.',
+        subtaskDeleted: '하위 작업이 삭제되었습니다',
+        openSubtask: '세부정보 열기'
+    },
+
+    // 새 작업 모달
+    newTask: {
+        title: '새 작업',
+        nameLabel: '작업 이름',
+        namePlaceholder: '작업 이름 입력',
+        assigneeLabel: '담당자',
+        assigneePlaceholder: '담당자 선택',
+        cancel: '취소',
+        create: '생성',
+        nameRequired: '작업 이름은 필수입니다'
+    },
+
+    // 요약 필드
+    summary: {
+        viewFull: '전체 요약 보기',
+        empty: '요약 없음'
+    },
+
     // AI 어시스턴트
     ai: {
         // 플로팅 버튼
@@ -262,9 +333,22 @@ export default {
             baseUrl: 'Base URL',
             localHint: '로컬 모델의 경우 Ollama가 실행 중인지 확인하세요',
             model: '모델',
+            modelHint: '모델 이름을 직접 입력할 수 있습니다',
             test: '연결 테스트',
             testing: '테스트 중...',
-            saved: '설정이 저장되었습니다'
+            saved: '설정이 저장되었습니다',
+            // 콤보박스
+            availableModels: '사용 가능한 모델',
+            recommended: '추천',
+            noMatch: '일치하는 결과 없음',
+            willUseInput: '입력값을 사용합니다',
+            modelsAvailable: '사용 가능',
+            // 새로고침
+            refresh: '새로고침',
+            refreshing: '새로고침 중...',
+            refreshed: '업데이트됨',
+            refreshFailed: '새로고침 실패',
+            modelsUpdated: '모델 목록이 업데이트되었습니다'
         },
         // 드로어
         drawer: {

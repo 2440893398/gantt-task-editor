@@ -227,7 +227,9 @@ function bindTaskChangeEvents() {
     gantt.attachEvent("onAfterTaskDrag", function (id, mode, e) {
         console.log('📅 任务拖拽完成，触发调度:', id);
         updateParentDates(id);
-        gantt.autoSchedule(id);
+        if (gantt.autoSchedule) {
+            gantt.autoSchedule(id);
+        }
         return true;
     });
 
@@ -259,7 +261,9 @@ function bindLinkEvents() {
     // 依赖创建后触发自动调度
     gantt.attachEvent("onAfterLinkAdd", function (id, link) {
         console.log('🔗 依赖创建，触发调度:', link.source, '->', link.target);
-        gantt.autoSchedule(link.target);
+        if (gantt.autoSchedule) {
+            gantt.autoSchedule(link.target);
+        }
         return true;
     });
 }
@@ -287,6 +291,8 @@ function bindWBSEvents() {
  * @param {number} taskId - 起始任务 ID
  */
 export function cascadeUpdate(taskId) {
-    gantt.autoSchedule(taskId);
+    if (gantt.autoSchedule) {
+        gantt.autoSchedule(taskId);
+    }
     updateParentDates(taskId);
 }

@@ -42,11 +42,12 @@ export const SYSTEM_FIELD_CONFIG = {
     },
     assignee: {
         i18nKey: 'columns.assignee',
-        type: 'select',
+        type: 'text',  // Default is text, can be changed to select/multiselect
         canDisable: false,
         allowedTypes: ['text', 'select', 'multiselect'],
         linkedGroup: null
     },
+
     start_date: {
         i18nKey: 'columns.start_date',
         type: 'date',

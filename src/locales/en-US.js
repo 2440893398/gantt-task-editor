@@ -40,8 +40,10 @@ export default {
         progress: 'Progress (%)',
         priority: 'Priority',
         assignee: 'Assignee',
-        status: 'Status'
+        status: 'Status',
+        summary: 'Summary'
     },
+
 
     // Enum values (internal value → localized display value)
     enums: {
@@ -231,6 +233,7 @@ export default {
         settings: 'Settings',
         assignee: 'Assignee',
         priority: 'Priority',
+        progress: 'Progress',
         schedule: 'Schedule',
         planStart: 'Start',
         planEnd: 'Due',
@@ -248,11 +251,47 @@ export default {
         copyLink: 'Copy Link',
         fullscreen: 'Fullscreen',
         more: 'More',
+        predecessors: 'Predecessors',
+        addPredecessor: 'Add Dependency',
+        noPredecessors: 'No predecessors',
+        confirmDeleteLink: 'Are you sure you want to delete this link?',
+        linkType: 'Type',
+        selectTask: 'Select Task',
         confirmDelete: 'Are you sure you want to delete this task?',
         deleteTaskTitle: 'Delete Task',
         deleteTaskConfirm: 'Are you sure you want to delete task "{{name}}"? This action cannot be undone.',
         dragToResize: 'Drag bottom edge to resize',
-        featureNotReady: 'Feature in development'
+        featureNotReady: 'Feature in development',
+        // Task Entry Optimization
+        required: 'Required',
+        systemField: 'System',
+        quickDate: 'Today',
+        dateRangeError: 'Actual start date cannot be later than actual end date',
+        fieldDisabled: 'This field is disabled',
+        // Subtask deletion
+        deleteSubtask: 'Delete Subtask',
+        deleteSubtaskTitle: 'Delete Subtask',
+        deleteSubtaskConfirm: 'Are you sure you want to delete this subtask? This action cannot be undone.',
+        subtaskDeleted: 'Subtask deleted',
+        openSubtask: 'Open Details'
+    },
+
+    // New Task Modal
+    newTask: {
+        title: 'New Task',
+        nameLabel: 'Task Name',
+        namePlaceholder: 'Enter task name',
+        assigneeLabel: 'Assignee',
+        assigneePlaceholder: 'Select assignee',
+        cancel: 'Cancel',
+        create: 'Create',
+        nameRequired: 'Task name is required'
+    },
+
+    // Summary Field
+    summary: {
+        viewFull: 'View full summary',
+        empty: 'No summary'
     },
 
     // Excel
@@ -302,10 +341,24 @@ export default {
             baseUrl: 'Base URL',
             localHint: 'Ensure Ollama is running for local models',
             model: 'Model',
+            modelHint: 'You can enter any model name directly',
             test: 'Test Connection',
             testing: 'Testing...',
-            saved: 'Settings saved'
+            saved: 'Settings saved',
+            // Combobox
+            availableModels: 'Available Models',
+            recommended: 'Recommended',
+            noMatch: 'No matches',
+            willUseInput: 'Will use input value',
+            modelsAvailable: 'available',
+            // Refresh
+            refresh: 'Refresh',
+            refreshing: 'Refreshing...',
+            refreshed: 'Updated',
+            refreshFailed: 'Refresh failed',
+            modelsUpdated: 'Model list updated'
         },
+
         // Drawer
         drawer: {
             title: 'AI Assistant',
@@ -319,6 +372,7 @@ export default {
         // Agents
         agents: {
             taskRefine: 'Task Refine',
+            chat: 'AI Chat',
             bugReport: 'Bug Report',
             taskBreakdown: 'Task Breakdown',
             timeEstimate: 'Time Estimate'

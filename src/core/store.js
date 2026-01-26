@@ -355,8 +355,15 @@ export function isFieldEnabled(fieldName) {
  * @returns {string}
  */
 export function getFieldType(fieldName) {
-    if (state.systemFieldSettings.typeOverrides[fieldName]) {
-        return state.systemFieldSettings.typeOverrides[fieldName];
+    const override = state.systemFieldSettings.typeOverrides[fieldName];
+    if (override) {
+        // Handle new format (object) and legacy format (string)
+        if (typeof override === 'object' && override.type) {
+            return override.type;
+        }
+        if (typeof override === 'string') {
+            return override;
+        }
     }
     if (SYSTEM_FIELD_CONFIG[fieldName]) {
         return SYSTEM_FIELD_CONFIG[fieldName].type;
@@ -365,47 +372,123 @@ export function getFieldType(fieldName) {
     return customField?.type || 'text';
 }
 
+
 /**
- * Toggle system field enabled state (handles linked groups)
+ * Toggle field enabled state (handles both system and custom fields)
+ * For system fields: updates systemFieldSettings.enabled AND fieldOrder
+ * For custom fields: adds/removes from fieldOrder
  * @param {string} fieldName
  * @param {boolean} enabled
  */
 export function toggleSystemFieldEnabled(fieldName, enabled) {
     const config = SYSTEM_FIELD_CONFIG[fieldName];
-    if (!config || !config.canDisable) return;
 
-    // If field has a linked group, toggle all fields in the group
-    if (config.linkedGroup) {
-        Object.keys(SYSTEM_FIELD_CONFIG).forEach(f => {
-            if (SYSTEM_FIELD_CONFIG[f].linkedGroup === config.linkedGroup) {
-                state.systemFieldSettings.enabled[f] = enabled;
+    // Handle system fields
+    if (config) {
+        if (!config.canDisable) return;
+
+        // If field has a linked group, toggle all fields in the group
+        const fieldsToToggle = config.linkedGroup
+            ? Object.keys(SYSTEM_FIELD_CONFIG).filter(f => SYSTEM_FIELD_CONFIG[f].linkedGroup === config.linkedGroup)
+            : [fieldName];
+
+        fieldsToToggle.forEach(f => {
+            state.systemFieldSettings.enabled[f] = enabled;
+
+            // Also update fieldOrder so Gantt columns reflect the change
+            const currentIndex = state.fieldOrder.indexOf(f);
+            if (enabled && currentIndex === -1) {
+                // Add to fieldOrder at the end
+                state.fieldOrder.push(f);
+            } else if (!enabled && currentIndex !== -1) {
+                // Remove from fieldOrder
+                state.fieldOrder.splice(currentIndex, 1);
             }
         });
+
+        persistSystemFieldSettings();
+        persistCustomFields(); // Also persist fieldOrder changes
     } else {
-        state.systemFieldSettings.enabled[fieldName] = enabled;
+        // Handle custom fields: add/remove from fieldOrder
+        const currentIndex = state.fieldOrder.indexOf(fieldName);
+
+        if (enabled && currentIndex === -1) {
+            // Add to fieldOrder (at the end)
+            state.fieldOrder.push(fieldName);
+        } else if (!enabled && currentIndex !== -1) {
+            // Remove from fieldOrder
+            state.fieldOrder.splice(currentIndex, 1);
+        }
+
+        // Persist changes
+        persistCustomFields();
+    }
+}
+
+
+
+/**
+ * Set system field type override with optional options and default value
+ * @param {string} fieldName
+ * @param {string} newType
+ * @param {string[]} [options] - Options for select/multiselect types
+ * @param {string} [defaultValue] - Default value for the field
+ */
+export function setSystemFieldType(fieldName, newType, options = null, defaultValue = null) {
+    const config = SYSTEM_FIELD_CONFIG[fieldName];
+    if (!config || !config.allowedTypes.includes(newType)) return;
+
+    if (newType === config.type && !options && !defaultValue) {
+        // Remove override if setting back to default with no extra config
+        delete state.systemFieldSettings.typeOverrides[fieldName];
+    } else {
+        // Store type override with options if select/multiselect
+        const override = { type: newType };
+
+        if ((newType === 'select' || newType === 'multiselect') && options && options.length > 0) {
+            override.options = options;
+        }
+
+        if (defaultValue !== null && defaultValue !== '') {
+            override.defaultValue = defaultValue;
+        }
+
+        state.systemFieldSettings.typeOverrides[fieldName] = override;
     }
 
     persistSystemFieldSettings();
 }
 
 /**
- * Set system field type override
+ * Get system field options (for select/multiselect types with overrides)
  * @param {string} fieldName
- * @param {string} newType
+ * @returns {string[]|null}
  */
-export function setSystemFieldType(fieldName, newType) {
-    const config = SYSTEM_FIELD_CONFIG[fieldName];
-    if (!config || !config.allowedTypes.includes(newType)) return;
-
-    if (newType === config.type) {
-        // Remove override if setting back to default
-        delete state.systemFieldSettings.typeOverrides[fieldName];
-    } else {
-        state.systemFieldSettings.typeOverrides[fieldName] = newType;
+export function getSystemFieldOptions(fieldName) {
+    const override = state.systemFieldSettings.typeOverrides[fieldName];
+    if (override && typeof override === 'object' && override.options) {
+        return override.options;
     }
-
-    persistSystemFieldSettings();
+    // Also check for legacy string format (backwards compatibility)
+    if (override && typeof override === 'string') {
+        return null;
+    }
+    return null;
 }
+
+/**
+ * Get system field default value
+ * @param {string} fieldName
+ * @returns {string|null}
+ */
+export function getSystemFieldDefaultValue(fieldName) {
+    const override = state.systemFieldSettings.typeOverrides[fieldName];
+    if (override && typeof override === 'object' && override.defaultValue) {
+        return override.defaultValue;
+    }
+    return null;
+}
+
 
 /**
  * Get visible fields (excluding disabled and internal fields)

@@ -1,9 +1,11 @@
 /**
  * 配置导入导出功能
+ * BUG-002: 使用 ExcelJS 替换 xlsx 以支持数据验证（下拉选项）
  */
 
-import * as XLSX from 'xlsx';
-import { state } from '../../core/store.js';
+import ExcelJS from 'exceljs';
+import { state, isFieldEnabled, getSystemFieldOptions, getFieldType, getCustomFieldByName } from '../../core/store.js';
+import { INTERNAL_FIELDS, SYSTEM_FIELD_CONFIG } from '../../data/fields.js';
 import { showToast } from '../../utils/toast.js';
 import { updateGanttColumns } from '../gantt/columns.js';
 import { refreshLightbox } from '../lightbox/customization.js';
@@ -103,10 +105,21 @@ function generateHierarchy(task, taskMap, hierarchyCache) {
  * @returns {string} 本地化的列名
  */
 function getExcelColumnName(fieldName) {
-    // 尝试从i18n获取翻译
+    // 1. Check if it's a system field with a specific i18n key override
+    if (SYSTEM_FIELD_CONFIG[fieldName] && SYSTEM_FIELD_CONFIG[fieldName].i18nKey) {
+        if (window.i18n && typeof window.i18n.t === 'function') {
+            const key = SYSTEM_FIELD_CONFIG[fieldName].i18nKey;
+            const translated = window.i18n.t(key);
+            if (translated && translated !== key) {
+                return translated;
+            }
+        }
+    }
+
+    // 2. Try default columns.${fieldName} (legacy/fallback)
     if (window.i18n && typeof window.i18n.t === 'function') {
         const translated = window.i18n.t(`columns.${fieldName}`);
-        if (translated !== `columns.${fieldName}`) {
+        if (translated && translated !== `columns.${fieldName}`) {
             return translated;
         }
     }
@@ -213,17 +226,33 @@ const ENUM_REVERSE_MAP = {
  */
 function getInternalEnumValue(fieldName, displayValue) {
     if (!displayValue) return displayValue;
-    if (fieldName !== 'priority' && fieldName !== 'status') return displayValue;
 
     const valueStr = String(displayValue).trim();
 
-    // 1. 优先使用反向映射表查找
+    // 1. Check if it matches any configured internal value (system or custom override)
+    const fieldOptions = getSystemFieldOptions(fieldName);
+    if (fieldOptions && fieldOptions.includes(valueStr)) {
+        return valueStr;
+    }
+
+    if (fieldName !== 'priority' && fieldName !== 'status') {
+        // For custom select fields, try matching against configured options
+        const customField = getCustomFieldByName(fieldName);
+        if (customField && customField.options) {
+            if (customField.options.includes(valueStr)) {
+                return valueStr;
+            }
+        }
+        return displayValue;
+    }
+
+    // 2. For legacy priority/status, try static reverse map
     const reverseMap = ENUM_REVERSE_MAP[fieldName];
     if (reverseMap && reverseMap[valueStr]) {
         return reverseMap[valueStr];
     }
 
-    // 2. 尝试小写匹配（兼容大小写不一致的情况）
+    // 3. Try case-insensitive match
     const lowerValue = valueStr.toLowerCase();
     const internalValues = fieldName === 'priority'
         ? INTERNAL_PRIORITY_VALUES
@@ -233,14 +262,14 @@ function getInternalEnumValue(fieldName, displayValue) {
         return lowerValue;
     }
 
-    // 3. 遍历反向映射表进行大小写不敏感匹配
+    // 4. Case-insensitive reverse map match
     for (const [key, internal] of Object.entries(reverseMap)) {
         if (key.toLowerCase() === lowerValue) {
             return internal;
         }
     }
 
-    // 4. 尝试匹配 fields.js 中的默认 options (针对存量数据)
+    // 5. Fallback: try matching default options
     const field = state.customFields.find(f => f.name === fieldName);
     if (field && field.options) {
         const index = field.options.indexOf(valueStr);
@@ -249,38 +278,104 @@ function getInternalEnumValue(fieldName, displayValue) {
         }
     }
 
-    return displayValue; // 未找到匹配，原样返回
+    return displayValue; // No match found
 }
 
 /**
- * 构建下拉选项参考数据
- * @returns {Object} { fieldName: { options: [], colLetter: '' } }
+ * 获取所有可导出字段（基于字段配置，而非列表显示）
+ * @returns {string[]} 字段名数组
+ */
+function getAllExportableFields() {
+    const exportFields = [];
+
+    // 1. Get all available unique field names
+    const allSystemFields = Object.keys(SYSTEM_FIELD_CONFIG).filter(f => !INTERNAL_FIELDS.includes(f));
+    const allCustomFields = state.customFields.map(f => f.name);
+    // Use Set to ensure uniqueness
+    const allFields = [...new Set([...allSystemFields, ...allCustomFields])];
+
+    // 2. Add fields from current visual order (Enabled fields), respecting user's sort order
+    state.fieldOrder.forEach(f => {
+        if (allFields.includes(f)) {
+            exportFields.push(f);
+        }
+    });
+
+    // 3. Add remaining fields (Disabled/Hidden fields)
+    allFields.forEach(f => {
+        if (!state.fieldOrder.includes(f)) {
+            exportFields.push(f);
+        }
+    });
+
+    return exportFields;
+}
+
+/**
+ * 构建下拉选项参考数据 - 使用字段配置的选项
+ * @returns {Object} { fieldName: { options: [], internalValues: [] } }
  */
 function buildDropdownOptionsData() {
     const dropdownFields = {};
 
-    // 优先级
-    dropdownFields['priority'] = {
-        options: INTERNAL_PRIORITY_VALUES.map(k => getLocalizedEnumValue('priority', k)),
-        internalValues: INTERNAL_PRIORITY_VALUES
-    };
+    // Priority - check for configured options first
+    const priorityOptions = getSystemFieldOptions('priority');
+    if (priorityOptions && priorityOptions.length > 0) {
+        dropdownFields['priority'] = {
+            options: priorityOptions.map(k => getLocalizedEnumValue('priority', k) || k),
+            internalValues: priorityOptions
+        };
+    } else {
+        dropdownFields['priority'] = {
+            options: INTERNAL_PRIORITY_VALUES.map(k => getLocalizedEnumValue('priority', k)),
+            internalValues: INTERNAL_PRIORITY_VALUES
+        };
+    }
 
-    // 状态
-    dropdownFields['status'] = {
-        options: INTERNAL_STATUS_VALUES.map(k => getLocalizedEnumValue('status', k)),
-        internalValues: INTERNAL_STATUS_VALUES
-    };
+    // Status - check for configured options first
+    const statusOptions = getSystemFieldOptions('status');
+    if (statusOptions && statusOptions.length > 0) {
+        dropdownFields['status'] = {
+            options: statusOptions.map(k => getLocalizedEnumValue('status', k) || k),
+            internalValues: statusOptions
+        };
+    } else {
+        dropdownFields['status'] = {
+            options: INTERNAL_STATUS_VALUES.map(k => getLocalizedEnumValue('status', k)),
+            internalValues: INTERNAL_STATUS_VALUES
+        };
+    }
 
-    // 其他自定义选择字段
-    state.customFields.forEach(field => {
-        if ((field.type === 'select' || field.type === 'multiselect') &&
-            field.name !== 'priority' && field.name !== 'status' &&
-            field.options && field.options.length > 0) {
-            dropdownFields[field.name] = {
-                options: field.options,
-                internalValues: field.options
+    // Other select fields - check both custom fields and system field overrides
+    const processedFields = ['priority', 'status'];
+
+    // Process system fields with type overrides
+    Object.keys(SYSTEM_FIELD_CONFIG).forEach(fieldName => {
+        if (processedFields.includes(fieldName)) return;
+
+        const fieldType = getFieldType(fieldName);
+        if (fieldType !== 'select' && fieldType !== 'multiselect') return;
+
+        const options = getSystemFieldOptions(fieldName);
+        if (options && options.length > 0) {
+            dropdownFields[fieldName] = {
+                options: options,
+                internalValues: options
             };
+            processedFields.push(fieldName);
         }
+    });
+
+    // Process custom fields
+    state.customFields.forEach(field => {
+        if (processedFields.includes(field.name)) return;
+        if (field.type !== 'select' && field.type !== 'multiselect') return;
+        if (!field.options || field.options.length === 0) return;
+
+        dropdownFields[field.name] = {
+            options: field.options,
+            internalValues: field.options
+        };
     });
 
     return dropdownFields;
@@ -288,9 +383,9 @@ function buildDropdownOptionsData() {
 
 /**
  * 导出Excel (按表格视图字段顺序, 使用层级字段)
- * BUG-002: 添加下拉选项数据验证
+ * BUG-002: 使用 ExcelJS 实现数据验证（下拉选项、数值限制）
  */
-export function exportToExcel() {
+export async function exportToExcel() {
     try {
         // 获取所有任务数据
         const tasks = gantt.serialize().data;
@@ -304,22 +399,46 @@ export function exportToExcel() {
         const headers = [getExcelColumnName('hierarchy')];
         const fieldMapping = ['hierarchy']; // 记录每列对应的字段名
 
-        // 动态遍历fieldOrder构建表头和字段映射
-        state.fieldOrder.forEach(fieldName => {
+        // 获取所有可导出字段（基于字段配置）
+        const exportableFields = getAllExportableFields();
+
+        // 首先添加 fieldOrder 中的字段（保持用户的列顺序偏好）
+        // 然后添加不在 fieldOrder 中但可导出的字段（即所有其他字段）
+        // 因为 exportableFields 已经按照这个顺序排序了，我们直接遍历它即可
+        exportableFields.forEach(fieldName => {
+            if (INTERNAL_FIELDS.includes(fieldName)) return;
+            if (fieldMapping.includes(fieldName)) return; // 避免重复（如 hierarchy）
+
             headers.push(getExcelColumnName(fieldName));
             fieldMapping.push(fieldName);
         });
 
-        // 准备数据行
-        const rows = [headers];
+        // 创建 ExcelJS 工作簿
+        const workbook = new ExcelJS.Workbook();
+        workbook.creator = 'Gantt Task Editor';
+        workbook.created = new Date();
 
+        // 创建主工作表
+        const sheetName = i18n.t('excel.sheetName') || '任务列表';
+        const worksheet = workbook.addWorksheet(sheetName);
+
+        // 添加表头行
+        const headerRow = worksheet.addRow(headers);
+        headerRow.font = { bold: true };
+        headerRow.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FFE0E0E0' }
+        };
+
+        // 添加数据行
         tasks.forEach(task => {
             const row = [];
 
             // 第一列：层级编号
             row.push(generateHierarchy(task, taskMap, hierarchyCache));
 
-            // 按照字段映射顺序动态添加数据 (跳过第一个hierarchy，因为它已经添加了)
+            // 按照字段映射顺序动态添加数据
             for (let i = 1; i < fieldMapping.length; i++) {
                 const fieldName = fieldMapping[i];
                 const value = task[fieldName];
@@ -348,164 +467,111 @@ export function exportToExcel() {
                 }
             }
 
-            rows.push(row);
+            worksheet.addRow(row);
         });
-
-        // 创建工作簿
-        const wb = XLSX.utils.book_new();
-
-        // ========================================
-        // BUG-002: 创建选项参考表（隐藏工作表）
-        // ========================================
-        const dropdownFields = buildDropdownOptionsData();
-        const optionsSheetData = [];
-        const optionsSheetHeaders = [];
-        const optionRanges = {}; // 记录每个字段的选项范围，用于数据验证
-
-        // 构建选项表头和数据
-        Object.keys(dropdownFields).forEach((fieldName, colIndex) => {
-            const fieldData = dropdownFields[fieldName];
-            optionsSheetHeaders.push(fieldName);
-
-            // 记录此字段在选项表中的范围
-            const colLetter = XLSX.utils.encode_col(colIndex);
-            optionRanges[fieldName] = {
-                colLetter,
-                startRow: 2,
-                endRow: fieldData.options.length + 1
-            };
-        });
-
-        if (optionsSheetHeaders.length > 0) {
-            optionsSheetData.push(optionsSheetHeaders);
-
-            // 找出最长的选项列表
-            const maxOptions = Math.max(...Object.values(dropdownFields).map(f => f.options.length));
-
-            // 填充选项数据
-            for (let rowIndex = 0; rowIndex < maxOptions; rowIndex++) {
-                const row = [];
-                Object.keys(dropdownFields).forEach(fieldName => {
-                    const options = dropdownFields[fieldName].options;
-                    row.push(options[rowIndex] || '');
-                });
-                optionsSheetData.push(row);
-            }
-
-            // 创建选项工作表
-            const wsOptions = XLSX.utils.aoa_to_sheet(optionsSheetData);
-            XLSX.utils.book_append_sheet(wb, wsOptions, '_Options');
-        }
-
-        // ========================================
-        // 创建主任务工作表
-        // ========================================
-        const ws = XLSX.utils.aoa_to_sheet(rows);
 
         // 设置列宽
-        const colWidths = headers.map((h, idx) => {
-            if (idx === 0) return { wch: 10 }; // 层级列
+        worksheet.columns = headers.map((h, idx) => {
+            if (idx === 0) return { width: 10 }; // 层级列
             const fieldName = fieldMapping[idx];
-            if (fieldName === 'text') return { wch: 25 };
-            if (fieldName === 'start_date') return { wch: 12 };
-            if (fieldName === 'duration') return { wch: 10 };
-            if (fieldName === 'progress') return { wch: 10 };
-            return { wch: 15 };
+            if (fieldName === 'text') return { width: 30 };
+            if (fieldName === 'start_date') return { width: 14 };
+            if (fieldName === 'duration') return { width: 10 };
+            if (fieldName === 'progress') return { width: 10 };
+            return { width: 15 };
         });
-        ws['!cols'] = colWidths;
 
         // ========================================
-        // BUG-002: 添加数据验证
+        // BUG-002: 添加数据验证（下拉选项）
         // ========================================
-        // 注意：xlsx 免费版对数据验证的支持有限
-        // 我们使用 !dataValidation 属性（部分 Excel 版本支持）
-
-        // 计算数据行数（用于数据验证范围）
+        const dropdownFields = buildDropdownOptionsData();
         const dataRowCount = Math.max(tasks.length + 1, 100); // 至少支持100行
 
-        const dataValidations = [];
-
         // 遍历字段，添加数据验证
-        for (let i = 1; i < fieldMapping.length; i++) {
-            const fieldName = fieldMapping[i];
-            const colLetter = XLSX.utils.encode_col(i);
+        for (let colIdx = 1; colIdx < fieldMapping.length; colIdx++) {
+            const fieldName = fieldMapping[colIdx];
+            const colNumber = colIdx + 1; // ExcelJS 列号从1开始
 
             // 下拉选择字段
             if (dropdownFields[fieldName]) {
                 const options = dropdownFields[fieldName].options;
-                // xlsx 库支持直接在 formula1 中使用逗号分隔的选项列表
-                const optionsStr = options.join(',');
+                // ExcelJS 使用 formulae 格式: ['"选项1,选项2,选项3"']
+                const formulae = [`"${options.join(',')}"`];
 
-                dataValidations.push({
-                    sqref: `${colLetter}2:${colLetter}${dataRowCount}`,
-                    type: 'list',
-                    formula1: `"${optionsStr}"`,
-                    showDropDown: true,
-                    allowBlank: true,
-                    showErrorMessage: true,
-                    errorStyle: 'warning',
-                    errorTitle: i18n.t('validation.invalidInput') || 'Invalid Input',
-                    error: i18n.t('validation.selectFromList') || 'Please select from the list'
-                });
+                for (let rowNum = 2; rowNum <= dataRowCount; rowNum++) {
+                    const cell = worksheet.getCell(rowNum, colNumber);
+                    cell.dataValidation = {
+                        type: 'list',
+                        allowBlank: true,
+                        formulae: formulae,
+                        showErrorMessage: true,
+                        errorStyle: 'warning',
+                        errorTitle: i18n.t('validation.invalidInput') || 'Invalid Input',
+                        error: i18n.t('validation.selectFromList') || 'Please select from the list'
+                    };
+                }
             }
 
-            // 数值字段添加数字验证
+            // 工期字段添加整数验证 (>=0)
             if (fieldName === 'duration') {
-                dataValidations.push({
-                    sqref: `${colLetter}2:${colLetter}${dataRowCount}`,
-                    type: 'whole',
-                    operator: 'greaterThanOrEqual',
-                    formula1: '0',
-                    allowBlank: true,
-                    showErrorMessage: true,
-                    errorStyle: 'stop',
-                    errorTitle: i18n.t('validation.invalidInput') || 'Invalid Input',
-                    error: i18n.t('validation.numberRequired') || 'Please enter a valid number'
-                });
+                for (let rowNum = 2; rowNum <= dataRowCount; rowNum++) {
+                    const cell = worksheet.getCell(rowNum, colNumber);
+                    cell.dataValidation = {
+                        type: 'whole',
+                        operator: 'greaterThanOrEqual',
+                        allowBlank: true,
+                        formulae: [0],
+                        showErrorMessage: true,
+                        errorStyle: 'stop',
+                        errorTitle: i18n.t('validation.invalidInput') || 'Invalid Input',
+                        error: i18n.t('validation.numberRequired') || 'Please enter a valid number (>=0)'
+                    };
+                }
             }
 
             // 进度字段添加百分比验证 (0-100)
             if (fieldName === 'progress') {
-                dataValidations.push({
-                    sqref: `${colLetter}2:${colLetter}${dataRowCount}`,
-                    type: 'whole',
-                    operator: 'between',
-                    formula1: '0',
-                    formula2: '100',
-                    allowBlank: true,
-                    showErrorMessage: true,
-                    errorStyle: 'stop',
-                    errorTitle: i18n.t('validation.invalidInput') || 'Invalid Input',
-                    error: i18n.t('validation.progressRange') || 'Progress must be between 0 and 100'
-                });
+                for (let rowNum = 2; rowNum <= dataRowCount; rowNum++) {
+                    const cell = worksheet.getCell(rowNum, colNumber);
+                    cell.dataValidation = {
+                        type: 'whole',
+                        operator: 'between',
+                        allowBlank: true,
+                        formulae: [0, 100],
+                        showErrorMessage: true,
+                        errorStyle: 'stop',
+                        errorTitle: i18n.t('validation.invalidInput') || 'Invalid Input',
+                        error: i18n.t('validation.progressRange') || 'Progress must be between 0 and 100'
+                    };
+                }
             }
 
             // 自定义数字字段
             const customField = state.customFields.find(f => f.name === fieldName);
             if (customField && customField.type === 'number' && !dropdownFields[fieldName]) {
-                dataValidations.push({
-                    sqref: `${colLetter}2:${colLetter}${dataRowCount}`,
-                    type: 'decimal',
-                    allowBlank: !customField.required,
-                    showErrorMessage: true,
-                    errorStyle: customField.required ? 'stop' : 'warning',
-                    errorTitle: i18n.t('validation.invalidInput') || 'Invalid Input',
-                    error: i18n.t('validation.numberRequired') || 'Please enter a valid number'
-                });
+                for (let rowNum = 2; rowNum <= dataRowCount; rowNum++) {
+                    const cell = worksheet.getCell(rowNum, colNumber);
+                    cell.dataValidation = {
+                        type: 'decimal',
+                        allowBlank: !customField.required,
+                        showErrorMessage: true,
+                        errorStyle: customField.required ? 'stop' : 'warning',
+                        errorTitle: i18n.t('validation.invalidInput') || 'Invalid Input',
+                        error: i18n.t('validation.numberRequired') || 'Please enter a valid number'
+                    };
+                }
             }
         }
 
-        // 应用数据验证
-        if (dataValidations.length > 0) {
-            ws['!dataValidation'] = dataValidations;
-        }
-
-        // 添加主工作表
-        XLSX.utils.book_append_sheet(wb, ws, i18n.t('excel.sheetName') || '任务列表');
-
-        // 导出文件
-        const filename = `gantt-tasks-${new Date().toISOString().split('T')[0]}.xlsx`;
-        XLSX.writeFile(wb, filename);
+        // 导出文件（浏览器环境）
+        const buffer = await workbook.xlsx.writeBuffer();
+        const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `gantt-tasks-${new Date().toISOString().split('T')[0]}.xlsx`;
+        a.dispatchEvent(new MouseEvent('click'));
+        URL.revokeObjectURL(url);
 
         showToast(i18n.t('message.exportSuccess') || 'Excel导出成功', 'success');
     } catch (error) {
@@ -516,165 +582,198 @@ export function exportToExcel() {
 
 /**
  * 导入Excel (支持层级字段和多语言列名)
+ * 使用 ExcelJS 替代 xlsx
  */
-export function importFromExcel(file) {
+export async function importFromExcel(file) {
     if (!file) return;
 
-    // 预先加载所有语言包以支持多语言匹配
-    i18n.loadAllLocales().then(() => {
-        const reader = new FileReader();
-        reader.onload = function (e) {
-            try {
-                const data = new Uint8Array(e.target.result);
-                const wb = XLSX.read(data, { type: 'array' });
+    try {
+        // 预先加载所有语言包以支持多语言匹配
+        await i18n.loadAllLocales();
 
-                // 读取第一个工作表
-                const ws = wb.Sheets[wb.SheetNames[0]];
-                const rows = XLSX.utils.sheet_to_json(ws, { header: 1 });
+        // 读取文件为 ArrayBuffer
+        const buffer = await file.arrayBuffer();
 
-                if (rows.length < 2) {
-                    showToast('Excel文件格式错误：没有数据行', 'error');
-                    return;
-                }
+        // 使用 ExcelJS 解析
+        const workbook = new ExcelJS.Workbook();
+        await workbook.xlsx.load(buffer);
 
-                const headers = rows[0];
-                const dataRows = rows.slice(1);
-                const columnMapping = getAllColumnNameMappings();
+        // 读取第一个工作表
+        const worksheet = workbook.worksheets[0];
+        if (!worksheet || worksheet.rowCount < 2) {
+            showToast('Excel文件格式错误：没有数据行', 'error');
+            return;
+        }
 
-                // 识别列索引
-                const fieldIndexMap = {}; // fieldName -> columnIndex
-                headers.forEach((header, index) => {
-                    const fieldName = columnMapping[header] || columnMapping[header.trim()];
-                    if (fieldName) {
-                        fieldIndexMap[fieldName] = index;
-                    }
-                });
+        // 获取表头（第一行）
+        const headerRow = worksheet.getRow(1);
+        const headers = [];
+        headerRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+            headers[colNumber - 1] = cell.value ? String(cell.value).trim() : '';
+        });
 
-                // 检查必要字段
-                const hasHierarchy = fieldIndexMap['hierarchy'] !== undefined;
-                const hasTaskId = fieldIndexMap['id'] !== undefined;
+        const columnMapping = getAllColumnNameMappings();
 
-                // 兼容旧版硬编码列名（如果getAllColumnNameMappings覆盖不全）
-                if (!hasHierarchy && !hasTaskId) {
-                    // 尝试直接查找 '任务ID' 或 'Task ID'
-                    const idIndex = headers.findIndex(h => h === '任务ID' || h === 'Task ID');
-                    if (idIndex !== -1) fieldIndexMap['id'] = idIndex;
-                }
-
-                if (fieldIndexMap['text'] === undefined) {
-                    // 尝试兜底
-                    const textIndex = headers.findIndex(h => h === '任务名称' || h === 'Task Name');
-                    if (textIndex !== -1) fieldIndexMap['text'] = textIndex;
-                    else {
-                        showToast('无法识别“任务名称”列，请检查Excel表头', 'error');
-                        return;
-                    }
-                }
-
-                // 解析数据
-                const tasks = [];
-                const hierarchyToId = {}; // 层级编号到任务ID的映射
-                let nextId = 1;
-
-                dataRows.forEach((row, index) => {
-                    if (!row || row.length === 0) return;
-
-                    try {
-                        // 解析日期
-                        let startDate = new Date();
-                        if (fieldIndexMap['start_date'] !== undefined) {
-                            const dateValue = row[fieldIndexMap['start_date']];
-                            if (dateValue) {
-                                if (typeof dateValue === 'string') {
-                                    startDate = gantt.date.str_to_date('%Y-%m-%d')(dateValue);
-                                } else if (typeof dateValue === 'number') {
-                                    startDate = new Date((dateValue - 25569) * 86400 * 1000);
-                                }
-                            }
-                        }
-
-                        const task = {
-                            text: row[fieldIndexMap['text']] || '新任务',
-                            start_date: startDate,
-                            duration: fieldIndexMap['duration'] !== undefined ? (parseInt(row[fieldIndexMap['duration']]) || 1) : 1,
-                            progress: fieldIndexMap['progress'] !== undefined ? ((parseInt(row[fieldIndexMap['progress']]) || 0) / 100) : 0
-                        };
-
-                        if (hasHierarchy) {
-                            // 新格式：使用层级编号
-                            const hierarchy = String(row[fieldIndexMap['hierarchy']] || '');
-                            task.id = nextId++;
-
-                            // 解析父任务
-                            const parts = hierarchy.split('.');
-                            if (parts.length > 1) {
-                                const parentHierarchy = parts.slice(0, -1).join('.');
-                                if (hierarchyToId[parentHierarchy]) {
-                                    task.parent = hierarchyToId[parentHierarchy];
-                                }
-                            }
-
-                            hierarchyToId[hierarchy] = task.id;
-                        } else if (hasTaskId) {
-                            // 旧格式：使用任务ID
-                            task.id = row[fieldIndexMap['id']];
-                            if (fieldIndexMap['parent'] !== undefined) {
-                                task.parent = row[fieldIndexMap['parent']];
-                            }
-                        } else {
-                            // 无层级也无ID，生成新ID
-                            task.id = nextId++;
-                        }
-
-                        // 解析其他自定义字段（排除 priority 和 status，这两个字段需要特殊处理枚举值转换）
-                        state.customFields.forEach(field => {
-                            if (fieldIndexMap[field.name] !== undefined && field.name !== 'priority' && field.name !== 'status') {
-                                task[field.name] = row[fieldIndexMap[field.name]];
-                            }
-                        });
-
-                        // 特殊处理 priority, assignee, status（priority 和 status 需要转换枚举值）
-                        ['priority', 'assignee', 'status'].forEach(field => {
-                            if (fieldIndexMap[field] !== undefined) {
-                                let value = row[fieldIndexMap[field]];
-                                // 如果是 priority 或 status，必须转换为内部值
-                                if (field === 'priority' || field === 'status') {
-                                    value = getInternalEnumValue(field, value);
-                                }
-                                if (value !== undefined) {
-                                    task[field] = value;
-                                }
-                            }
-                        });
-
-                        tasks.push(task);
-                    } catch (error) {
-                        console.warn(`解析第 ${index + 2} 行失败:`, error);
-                    }
-                });
-
-                if (tasks.length === 0) {
-                    showToast('没有有效的任务数据', 'error');
-                    return;
-                }
-
-                // 批量更新
-                gantt.batchUpdate(() => {
-                    gantt.clearAll();
-                    gantt.parse({ data: tasks });
-                });
-
-                showToast(`成功导入 ${tasks.length} 个任务`, 'success');
-            } catch (error) {
-                console.error('Excel导入失败:', error);
-                showToast('Excel导入失败: ' + error.message, 'error');
+        // 识别列索引
+        const fieldIndexMap = {}; // fieldName -> columnIndex
+        headers.forEach((header, index) => {
+            if (!header) return;
+            const fieldName = columnMapping[header] || columnMapping[header.trim()];
+            if (fieldName) {
+                fieldIndexMap[fieldName] = index;
             }
-        };
-        reader.readAsArrayBuffer(file);
-    }).catch(e => {
-        console.error('Loading locales failed', e);
-        showToast('加载语言包失败，无法导入', 'error');
-    });
+        });
+
+        // 检查必要字段
+        const hasHierarchy = fieldIndexMap['hierarchy'] !== undefined;
+        const hasTaskId = fieldIndexMap['id'] !== undefined;
+
+        // 兼容旧版硬编码列名
+        if (!hasHierarchy && !hasTaskId) {
+            const idIndex = headers.findIndex(h => h === '任务ID' || h === 'Task ID');
+            if (idIndex !== -1) fieldIndexMap['id'] = idIndex;
+        }
+
+        if (fieldIndexMap['text'] === undefined) {
+            const textIndex = headers.findIndex(h => h === '任务名称' || h === 'Task Name');
+            if (textIndex !== -1) fieldIndexMap['text'] = textIndex;
+            else {
+                showToast('无法识别"任务名称"列，请检查Excel表头', 'error');
+                return;
+            }
+        }
+
+        // 解析数据行
+        const tasks = [];
+        const hierarchyToId = {};
+        let nextId = 1;
+
+        worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+            if (rowNumber === 1) return; // 跳过表头
+
+            try {
+                // 获取行数据为数组
+                const rowData = [];
+                row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+                    // 处理不同类型的单元格值
+                    let value = cell.value;
+                    // ExcelJS 的富文本处理
+                    if (value && typeof value === 'object') {
+                        if (value.richText) {
+                            value = value.richText.map(rt => rt.text).join('');
+                        } else if (value.text) {
+                            value = value.text;
+                        } else if (value instanceof Date) {
+                            // 保持 Date 对象
+                        } else if (value.result !== undefined) {
+                            value = value.result; // 公式结果
+                        }
+                    }
+                    rowData[colNumber - 1] = value;
+                });
+
+                if (rowData.every(v => v === null || v === undefined || v === '')) return;
+
+                // 解析日期
+                let startDate = new Date();
+                if (fieldIndexMap['start_date'] !== undefined) {
+                    const dateValue = rowData[fieldIndexMap['start_date']];
+                    if (dateValue) {
+                        if (dateValue instanceof Date) {
+                            startDate = dateValue;
+                        } else if (typeof dateValue === 'string') {
+                            startDate = gantt.date.str_to_date('%Y-%m-%d')(dateValue);
+                        } else if (typeof dateValue === 'number') {
+                            // Excel 日期序列号
+                            startDate = new Date((dateValue - 25569) * 86400 * 1000);
+                        }
+                    }
+                }
+
+                const task = {
+                    text: rowData[fieldIndexMap['text']] || '新任务',
+                    start_date: startDate,
+                    duration: fieldIndexMap['duration'] !== undefined ? (parseInt(rowData[fieldIndexMap['duration']]) || 1) : 1,
+                    progress: fieldIndexMap['progress'] !== undefined ? ((parseInt(rowData[fieldIndexMap['progress']]) || 0) / 100) : 0
+                };
+
+                if (hasHierarchy) {
+                    const hierarchy = String(rowData[fieldIndexMap['hierarchy']] || '');
+                    task.id = nextId++;
+
+                    const parts = hierarchy.split('.');
+                    if (parts.length > 1) {
+                        const parentHierarchy = parts.slice(0, -1).join('.');
+                        if (hierarchyToId[parentHierarchy]) {
+                            task.parent = hierarchyToId[parentHierarchy];
+                        }
+                    }
+
+                    hierarchyToId[hierarchy] = task.id;
+                } else if (hasTaskId) {
+                    task.id = rowData[fieldIndexMap['id']];
+                    if (fieldIndexMap['parent'] !== undefined) {
+                        task.parent = rowData[fieldIndexMap['parent']];
+                    }
+                } else {
+                    task.id = nextId++;
+                }
+
+                // 解析所有字段（包括自定义字段和系统字段）
+                state.customFields.forEach(field => {
+                    if (fieldIndexMap[field.name] !== undefined) {
+                        let value = rowData[fieldIndexMap[field.name]];
+
+                        // 特殊处理 priority 和 status 的枚举值转换
+                        if (field.name === 'priority' || field.name === 'status') {
+                            value = getInternalEnumValue(field.name, value);
+                        }
+
+                        // Validate select/multiselect fields
+                        if ((field.type === 'select' || field.type === 'multiselect') && value) {
+                            // 获取选项：优先检查系统字段配置覆盖，如果没有则使用字段定义中的 options
+                            let options = getSystemFieldOptions(field.name);
+                            if (!options || options.length === 0) {
+                                options = field.options || [];
+                            }
+
+                            // For multiselect, value might be comma-separated
+                            const valuesToCheck = field.type === 'multiselect' ? String(value).split(',') : [value];
+                            // 检查值是否有效 (Internal values)
+                            const invalidValues = valuesToCheck.filter(v => options.length > 0 && !options.includes(v.trim()));
+
+                            if (invalidValues.length > 0) {
+                                console.warn(`Invalid value(s) "${invalidValues.join(',')}" for field "${field.name}", valid options: ${options.join(', ')}`);
+                            }
+                        }
+
+                        // Assign value
+                        task[field.name] = value;
+                    }
+                });
+
+                tasks.push(task);
+            } catch (error) {
+                console.warn(`解析第 ${rowNumber} 行失败:`, error);
+            }
+        });
+
+        if (tasks.length === 0) {
+            showToast('没有有效的任务数据', 'error');
+            return;
+        }
+
+        // 批量更新
+        gantt.batchUpdate(() => {
+            gantt.clearAll();
+            gantt.parse({ data: tasks });
+        });
+
+        showToast(`成功导入 ${tasks.length} 个任务`, 'success');
+    } catch (error) {
+        console.error('Excel导入失败:', error);
+        showToast('Excel导入失败: ' + error.message, 'error');
+    }
 }
 
 /**

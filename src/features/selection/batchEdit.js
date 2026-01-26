@@ -19,7 +19,10 @@ export function openBatchEditPanel() {
     const panel = document.getElementById('batch-edit-panel');
     panel.classList.add('open');
 
-    document.getElementById('batch-selected-count').textContent = state.selectedTasks.size;
+    const batchCountEl = document.getElementById('batch-selected-count-text');
+    if (batchCountEl) {
+        batchCountEl.textContent = `ℹ️ 已选中 ${state.selectedTasks.size} 个任务`;
+    }
 
     // 填充字段选择下拉框
     const select = document.getElementById('batch-field-select');

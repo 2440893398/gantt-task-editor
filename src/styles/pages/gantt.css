@@ -902,7 +902,7 @@
 .gantt_row {
     border-bottom: 1px solid var(--border-color) !important;
     transition: all 0.2s ease;
-    overflow: visible !important;
+    overflow: hidden !important;
 }
 
 .gantt_row:hover {
@@ -925,10 +925,20 @@
     vertical-align: middle !important;
     border-right: 1px solid #F3F4F6 !important;
     color: var(--text-primary);
-    overflow: visible !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
     line-height: 1.2 !important;
     display: flex !important;
     align-items: center !important;
+}
+
+/* 单元格内容截断 */
+.gantt_cell > * {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
 }
 
 .gantt_cell:last-child {
@@ -940,8 +950,10 @@
     font-weight: 500 !important;
     color: #111827 !important;
     line-height: 1.2 !important;
-    overflow: visible !important;
-    width: 100% !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+    max-width: 100% !important;
 }
 
 /* 进度条容器宽度修复 */

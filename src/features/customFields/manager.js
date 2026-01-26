@@ -10,8 +10,11 @@ import {
     isSystemField,
     isFieldEnabled,
     toggleSystemFieldEnabled,
-    setSystemFieldType
+    setSystemFieldType,
+    getSystemFieldOptions,
+    getSystemFieldDefaultValue
 } from '../../core/store.js';
+
 import { SYSTEM_FIELD_CONFIG, INTERNAL_FIELDS } from '../../data/fields.js';
 import { showToast } from '../../utils/toast.js';
 import { updateGanttColumns } from '../gantt/columns.js';
@@ -19,6 +22,7 @@ import { refreshLightbox } from '../lightbox/customization.js';
 import { FIELD_TYPE_CONFIG, ICON_OPTIONS } from '../../config/constants.js';
 import { addOptionInput, setOnOptionsChangeCallback } from '../../utils/dom.js';
 import { i18n } from '../../utils/i18n.js';
+import { refreshTaskDetailsPanel } from '../task-details/index.js';
 
 let sortableInstance = null;
 const DEFAULT_FIELD_ICON = '📝';
@@ -53,6 +57,11 @@ function getLocalizedFieldTypeLabel(type) {
  */
 export function openFieldManagementPanel() {
     const panel = document.getElementById('field-management-panel');
+    // 如果任务详情面板打开，提升字段管理面板的 z-index
+    const taskDetailsOverlay = document.getElementById('task-details-overlay');
+    if (taskDetailsOverlay) {
+        panel.style.zIndex = '6100';
+    }
     panel.classList.add('open');
     renderFieldList();
 }
@@ -63,6 +72,7 @@ export function openFieldManagementPanel() {
 export function closeFieldManagementPanel() {
     const panel = document.getElementById('field-management-panel');
     panel.classList.remove('open');
+    panel.style.zIndex = '';
 }
 
 /**
@@ -70,6 +80,11 @@ export function closeFieldManagementPanel() {
  */
 export function openAddFieldModal() {
     const modal = document.getElementById('field-config-modal');
+    // 如果字段管理面板 z-index 已提升，同步提升弹窗 z-index
+    const panel = document.getElementById('field-management-panel');
+    if (panel && parseInt(panel.style.zIndex) > 50) {
+        modal.style.zIndex = '6200';
+    }
     modal.style.display = 'flex';
     setTimeout(() => modal.classList.add('show'), 10);
 
@@ -147,43 +162,60 @@ export function renderFieldList() {
     const container = document.getElementById('field-list-container');
     let html = '';
 
-    // Get all manageable fields from fieldOrder
-    const manageableFields = state.fieldOrder.filter(fieldName => {
-        // Exclude internal fields
-        if (INTERNAL_FIELDS.includes(fieldName)) return false;
-        // Include system fields that are in SYSTEM_FIELD_CONFIG
-        if (SYSTEM_FIELD_CONFIG[fieldName]) return true;
-        // Include custom fields
-        return state.customFields.some(f => f.name === fieldName);
+    // 1. Get all available fields
+    const allSystemFields = Object.keys(SYSTEM_FIELD_CONFIG).filter(f => !INTERNAL_FIELDS.includes(f));
+    const allCustomFields = state.customFields.map(f => f.name);
+    const allFields = [...new Set([...allSystemFields, ...allCustomFields])];
+
+    // 2. Sort fields: Custom order first (enabled fields), then disabled fields
+    const sortedFields = [];
+
+    // First: fields currently in enabled order
+    state.fieldOrder.forEach(f => {
+        if (allFields.includes(f)) {
+            sortedFields.push(f);
+        }
     });
 
-    manageableFields.forEach((fieldName) => {
+    // Second: fields not in enabled order (disabled)
+    allFields.forEach(f => {
+        if (!state.fieldOrder.includes(f)) {
+            sortedFields.push(f);
+        }
+    });
+
+    sortedFields.forEach((fieldName) => {
         const isSystem = !!SYSTEM_FIELD_CONFIG[fieldName];
         let fieldConfig;
         let fieldLabel;
         let fieldIcon;
         let fieldType;
+        let canDisable = true; // Default true
 
         if (isSystem) {
             fieldConfig = SYSTEM_FIELD_CONFIG[fieldName];
             fieldLabel = i18n.t(fieldConfig.i18nKey) || fieldName;
             fieldIcon = getSystemFieldIcon(fieldName);
             fieldType = fieldConfig.type;
+            canDisable = fieldConfig.canDisable;
         } else {
             fieldConfig = state.customFields.find(f => f.name === fieldName);
             if (!fieldConfig) return;
             fieldLabel = fieldConfig.label;
             fieldIcon = fieldConfig.icon || DEFAULT_FIELD_ICON;
             fieldType = fieldConfig.type;
+            canDisable = true; // Custom fields are always togglable
         }
 
-        const enabled = isSystem ? isFieldEnabled(fieldName) : true;
-        const canDisable = isSystem && fieldConfig.canDisable;
+        const enabled = isSystem
+            ? isFieldEnabled(fieldName)  // System fields use systemFieldSettings.enabled
+            : state.fieldOrder.includes(fieldName);  // Custom fields use fieldOrder
+
 
         html += `
-            <div class="flex items-center gap-3 p-3 bg-base-100 border border-base-200 rounded-lg shadow-sm hover:shadow-md transition-all group ${!enabled ? 'opacity-50' : ''}" data-field-name="${fieldName}">
+            <div class="flex items-center gap-3 p-3 bg-base-100 border border-base-200 rounded-lg shadow-sm hover:shadow-md transition-all group ${!enabled ? 'opacity-60 bg-base-200/50' : ''}" data-field-name="${fieldName}">
                 <div class="field-drag-handle cursor-move text-base-content/30 hover:text-primary flex flex-col justify-center leading-none text-xs">⋮⋮</div>
-                <div class="w-10 h-10 flex items-center justify-center bg-primary/10 rounded-lg text-xl shrink-0">${fieldIcon}</div>
+                <div class="w-10 h-10 flex items-center justify-center bg-primary/10 rounded-lg text-xl shrink-0 grayscale-${!enabled ? '100' : '0'}">${fieldIcon}</div>
                 <div class="flex-1 min-w-0">
                     <div class="font-medium text-sm truncate flex items-center gap-2">
                         ${fieldLabel}
@@ -195,10 +227,10 @@ export function renderFieldList() {
                 </div>
                 <div class="flex gap-1 items-center opacity-100 sm:opacity-0 group-hover:opacity-100 transition-opacity">
                     ${canDisable ? `
-                        <label class="swap swap-flip">
+                        <label class="swap swap-flip" title="${enabled ? i18n.t('fieldManagement.disableField') : i18n.t('fieldManagement.enableField')}">
                             <input type="checkbox" class="toggle-field-enabled" data-field="${fieldName}" ${enabled ? 'checked' : ''}>
-                            <div class="swap-on btn btn-xs btn-success">${i18n.t('fieldManagement.enableField')}</div>
-                            <div class="swap-off btn btn-xs btn-ghost">${i18n.t('fieldManagement.disableField')}</div>
+                            <div class="swap-on btn btn-xs btn-success text-white">ON</div>
+                            <div class="swap-off btn btn-xs btn-ghost border-base-300">OFF</div>
                         </label>
                     ` : ''}
                     <button class="field-action-btn btn btn-ghost btn-xs btn-square" data-action="edit" data-field="${fieldName}" title="${i18n.t('form.save')}">
@@ -237,10 +269,11 @@ export function renderFieldList() {
             const fieldName = this.dataset.field;
             const enabled = this.checked;
             toggleSystemFieldEnabled(fieldName, enabled);
-            // Refresh UI to reflect linked field changes
+            // Refresh UI to reflect changes
             renderFieldList();
             updateGanttColumns();
             refreshLightbox();
+            refreshTaskDetailsPanel();
         });
     });
 
@@ -253,14 +286,60 @@ export function renderFieldList() {
         sortableInstance = new Sortable(container, {
             animation: 150,
             handle: '.field-drag-handle',
+            draggable: '[data-field-name]', // dragging only items
             onEnd: function (evt) {
                 // Update fieldOrder based on new positions
                 const items = container.querySelectorAll('[data-field-name]');
-                const newOrder = Array.from(items).map(item => item.dataset.fieldName);
+                const newOrderFromDOM = Array.from(items).map(item => item.dataset.fieldName);
 
-                // Merge with internal fields to preserve complete fieldOrder
-                state.fieldOrder = state.fieldOrder.filter(f => INTERNAL_FIELDS.includes(f));
-                state.fieldOrder = [...newOrder, ...state.fieldOrder.filter(f => !newOrder.includes(f))];
+                // Reconstruct state.fieldOrder:
+                // It should contain:
+                // 1. Internal fields (hidden ones that we want to keep enabled if they are) -> INTERNAL_FIELDS
+                // 2. Visible enabled fields from DOM (toggles checked)
+                // Wait, sortable works on the list which includes disabled items now!
+                // We should NOT add ALL items to `state.fieldOrder`. Only ENABLED items should be in `state.fieldOrder`.
+                // Sorting disabled items doesn't really matter for Gantt, but it might matter for user preference if they re-enable it.
+                // However, `state.fieldOrder` defines columns. If we put disabled fields in it, they will show up.
+
+                // So: we iterate the DOM order. If the item is marked as enabled (checkbox is checked), we add it to the new order.
+                // For internal fields (which are not in DOM), we keep them as is?
+                // INTERNAL_FIELDS are usually things like 'id', 'open', 'type' which are always needed by Gantt but maybe hidden or implicitly handled?
+                // Let's check how `fieldOrder` is initialized.
+                // `defaultFieldOrder` contains 'text', 'priority', ...
+
+                // Strategy: 
+                // We regenerate `state.fieldOrder` by taking the new DOM order, filtering only ENABLED ones.
+                // AND we must preserve any hidden INTERNAL/System fields that were already in the order but not in the manager list?
+                // Accessing `toggle-field-enabled` checkbox for checked state is reliable.
+
+                const enabledFields = [];
+                items.forEach(item => {
+                    const checkbox = item.querySelector('.toggle-field-enabled');
+                    // If checkbox exists and checked, OR if no checkbox (system required fields), include it.
+                    // System required fields (canDisable=false) don't have checkbox in my new HTML above? 
+                    // Wait, logic says `if canDisable` render checkbox. If CANNOT disable, it is enabled by default?
+                    // Yes, `const enabled = state.fieldOrder.includes(fieldName);`.
+                    // If canDisable is false, we should assume it stays enabled.
+
+                    if (checkbox) {
+                        if (checkbox.checked) {
+                            enabledFields.push(item.dataset.fieldName);
+                        }
+                    } else {
+                        // Not togglable, means mandatory enabled
+                        enabledFields.push(item.dataset.fieldName);
+                    }
+                });
+
+                // Preserve internal fields that are not in the valid "manageable" list
+                const internalFieldsPreserved = state.fieldOrder.filter(f => INTERNAL_FIELDS.includes(f));
+
+                // Combine
+                const uniqueNewOrder = [...new Set([...enabledFields, ...internalFieldsPreserved])];
+
+                // NOTE: The order of enabledFields comes from DOM order, which the user just dragged. This handles reordering correctly.
+
+                state.fieldOrder = uniqueNewOrder;
 
                 updateGanttColumns();
                 refreshLightbox();
@@ -484,6 +563,11 @@ function openCustomFieldEditModal(fieldName) {
     }
 
     const modal = document.getElementById('field-config-modal');
+    // 如果字段管理面板 z-index 已提升，同步提升弹窗 z-index
+    const panel = document.getElementById('field-management-panel');
+    if (panel && parseInt(panel.style.zIndex) > 50) {
+        modal.style.zIndex = '6200';
+    }
     modal.style.display = 'flex';
     setTimeout(() => modal.classList.add('show'), 10);
 
@@ -498,10 +582,26 @@ function openSystemFieldEditModal(fieldName) {
     const config = SYSTEM_FIELD_CONFIG[fieldName];
     if (!config) return;
 
-    const currentType = state.systemFieldSettings.typeOverrides[fieldName] || config.type;
-    const fieldLabel = i18n.t(config.i18nKey) || fieldName;
+    // Get current type (handle both old string format and new object format)
+    const override = state.systemFieldSettings.typeOverrides[fieldName];
+    let currentType = config.type;
+    let currentOptions = [];
+    let currentDefaultValue = '';
 
-    // Create modal HTML
+    if (override) {
+        if (typeof override === 'object') {
+            currentType = override.type || config.type;
+            currentOptions = override.options || [];
+            currentDefaultValue = override.defaultValue || '';
+        } else if (typeof override === 'string') {
+            currentType = override;
+        }
+    }
+
+    const fieldLabel = i18n.t(config.i18nKey) || fieldName;
+    const isSelectType = currentType === 'select' || currentType === 'multiselect';
+
+    // Create modal HTML with options configuration section
     const modalHtml = `
         <div id="system-field-modal" class="modal modal-open">
             <div class="modal-box max-w-md">
@@ -537,6 +637,37 @@ function openSystemFieldEditModal(fieldName) {
                     `}
                 </div>
 
+                <!-- Options configuration section (for select/multiselect) -->
+                <div id="system-field-options-section" class="form-control mb-4 ${isSelectType ? '' : 'hidden'}">
+                    <label class="label">
+                        <span class="label-text">${i18n.t('fieldManagement.options')}</span>
+                    </label>
+                    <div id="system-field-options-list" class="space-y-2 mb-2">
+                        ${currentOptions.map(opt => `
+                            <div class="flex gap-2 items-center">
+                                <input type="text" class="input input-sm input-bordered flex-1 system-field-option-input" value="${opt}">
+                                <button type="button" class="btn btn-ghost btn-xs btn-circle text-error system-field-remove-option">✕</button>
+                            </div>
+                        `).join('')}
+                    </div>
+                    <button type="button" id="system-field-add-option-btn" class="btn btn-sm btn-ghost btn-outline border-dashed w-full gap-2">
+                        + ${i18n.t('fieldManagement.addOption')}
+                    </button>
+                </div>
+
+                <!-- Default value section (for select/multiselect) -->
+                <div id="system-field-default-section" class="form-control mb-4 ${isSelectType ? '' : 'hidden'}">
+                    <label class="label">
+                        <span class="label-text">${i18n.t('fieldManagement.defaultOneTime')}</span>
+                    </label>
+                    <select id="system-field-default-value" class="select select-sm select-bordered w-full">
+                        <option value="">${i18n.t('form.selectPlaceholder')}</option>
+                        ${currentOptions.map(opt => `
+                            <option value="${opt}" ${opt === currentDefaultValue ? 'selected' : ''}>${opt}</option>
+                        `).join('')}
+                    </select>
+                </div>
+
                 <div class="modal-action">
                     <button id="system-field-cancel-btn" class="btn">${i18n.t('form.cancel')}</button>
                     <button id="system-field-save-btn" class="btn btn-primary">${i18n.t('form.save')}</button>
@@ -553,32 +684,125 @@ function openSystemFieldEditModal(fieldName) {
     // Add modal to body
     document.body.insertAdjacentHTML('beforeend', modalHtml);
 
+    // 如果字段管理面板 z-index 已提升，同步提升系统字段弹窗
+    const fieldPanel = document.getElementById('field-management-panel');
+    if (fieldPanel && parseInt(fieldPanel.style.zIndex) > 50) {
+        document.getElementById('system-field-modal').style.zIndex = '6200';
+    }
+
     // Bind events
     const modal = document.getElementById('system-field-modal');
     const cancelBtn = document.getElementById('system-field-cancel-btn');
     const saveBtn = document.getElementById('system-field-save-btn');
     const backdrop = document.getElementById('system-field-backdrop');
     const typeSelect = document.getElementById('system-field-type-select');
+    const optionsSection = document.getElementById('system-field-options-section');
+    const defaultSection = document.getElementById('system-field-default-section');
+    const optionsList = document.getElementById('system-field-options-list');
+    const addOptionBtn = document.getElementById('system-field-add-option-btn');
+    const defaultValueSelect = document.getElementById('system-field-default-value');
 
     const closeModal = () => modal.remove();
 
     cancelBtn.addEventListener('click', closeModal);
     backdrop.addEventListener('click', closeModal);
 
-    saveBtn.addEventListener('click', () => {
-        if (typeSelect) {
-            const newType = typeSelect.value;
-            if (newType !== currentType) {
-                setSystemFieldType(fieldName, newType);
-                updateGanttColumns();
-                refreshLightbox();
-                renderFieldList();
-                showToast(i18n.t('message.saveSuccess'), 'success');
+    // Function to add a new option input
+    const addNewOption = (value = '') => {
+        const optionHtml = `
+            <div class="flex gap-2 items-center">
+                <input type="text" class="input input-sm input-bordered flex-1 system-field-option-input" value="${value}">
+                <button type="button" class="btn btn-ghost btn-xs btn-circle text-error system-field-remove-option">✕</button>
+            </div>
+        `;
+        optionsList.insertAdjacentHTML('beforeend', optionHtml);
+        updateDefaultValueOptions();
+    };
+
+    // Function to update default value dropdown options
+    const updateDefaultValueOptions = () => {
+        const options = [];
+        optionsList.querySelectorAll('.system-field-option-input').forEach(input => {
+            if (input.value.trim()) {
+                options.push(input.value.trim());
             }
+        });
+
+        const currentDefaultVal = defaultValueSelect.value;
+        defaultValueSelect.innerHTML = `<option value="">${i18n.t('form.selectPlaceholder')}</option>`;
+        options.forEach(opt => {
+            const selected = opt === currentDefaultVal ? 'selected' : '';
+            defaultValueSelect.innerHTML += `<option value="${opt}" ${selected}>${opt}</option>`;
+        });
+    };
+
+    // Add option button handler
+    if (addOptionBtn) {
+        addOptionBtn.addEventListener('click', () => addNewOption(''));
+    }
+
+    // Remove option button handler (delegated)
+    if (optionsList) {
+        optionsList.addEventListener('click', (e) => {
+            if (e.target.classList.contains('system-field-remove-option')) {
+                e.target.closest('.flex').remove();
+                updateDefaultValueOptions();
+            }
+        });
+
+        // Update default value options when option inputs change
+        optionsList.addEventListener('input', () => {
+            updateDefaultValueOptions();
+        });
+    }
+
+    // Type change handler - show/hide options section
+    if (typeSelect) {
+        typeSelect.addEventListener('change', () => {
+            const newType = typeSelect.value;
+            const showOptions = newType === 'select' || newType === 'multiselect';
+            optionsSection.classList.toggle('hidden', !showOptions);
+            defaultSection.classList.toggle('hidden', !showOptions);
+        });
+    }
+
+    // Save handler
+    saveBtn.addEventListener('click', () => {
+        const newType = typeSelect ? typeSelect.value : currentType;
+        const isNewSelectType = newType === 'select' || newType === 'multiselect';
+
+        // Collect options if select/multiselect type
+        let options = null;
+        let defaultValue = null;
+
+        if (isNewSelectType) {
+            options = [];
+            optionsList.querySelectorAll('.system-field-option-input').forEach(input => {
+                if (input.value.trim()) {
+                    options.push(input.value.trim());
+                }
+            });
+
+            // Validate: must have at least one option for select types
+            if (options.length === 0) {
+                showToast(i18n.t('message.validationError'), 'error');
+                return;
+            }
+
+            defaultValue = defaultValueSelect.value || null;
         }
+
+        // Save changes
+        setSystemFieldType(fieldName, newType, options, defaultValue);
+        updateGanttColumns();
+        refreshLightbox();
+        renderFieldList();
+        refreshTaskDetailsPanel();
+        showToast(i18n.t('message.saveSuccess'), 'success');
         closeModal();
     });
 }
+
 
 // 待删除的字段名称
 let pendingDeleteFieldName = null;
@@ -611,6 +835,7 @@ export function confirmDeleteField() {
     updateGanttColumns();
     refreshLightbox();
     renderFieldList();
+    refreshTaskDetailsPanel();
 
     // 持久化字段配置到缓存
     persistCustomFields();
@@ -700,6 +925,7 @@ export function initCustomFieldsUI() {
         modal.classList.remove('show');
         setTimeout(() => {
             modal.style.display = 'none';
+            modal.style.zIndex = '';
         }, 300);
     });
 
@@ -822,6 +1048,7 @@ export function initCustomFieldsUI() {
         updateGanttColumns();
         refreshLightbox();
         renderFieldList();
+        refreshTaskDetailsPanel();
 
         // 持久化字段配置到缓存
         persistCustomFields();
@@ -829,6 +1056,7 @@ export function initCustomFieldsUI() {
         modal.classList.remove('show');
         setTimeout(() => {
             modal.style.display = 'none';
+            modal.style.zIndex = '';
         }, 300);
     });
 
@@ -838,6 +1066,7 @@ export function initCustomFieldsUI() {
         modal.classList.remove('show');
         setTimeout(() => {
             modal.style.display = 'none';
+            modal.style.zIndex = '';
         }, 300);
     });
 

@@ -275,6 +275,8 @@ describe('字段类型选择器更新', () => {
 
     const dropdown = document.getElementById('field-type-dropdown');
     const selectedOption = dropdown.querySelector('[data-value="number"]');
-    expect(selectedOption.classList.contains('selected')).toBe(true);
+    // 注意：实现使用 Tailwind 类 bg-primary/10 和 text-primary 表示选中状态
+    expect(selectedOption.classList.contains('bg-primary/10')).toBe(true);
+    expect(selectedOption.classList.contains('text-primary')).toBe(true);
   });
 });

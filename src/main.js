@@ -15,6 +15,8 @@ import { initBatchEdit } from './features/selection/batchEdit.js';
 import { initConfigIO, exportConfig } from './features/config/configIO.js';
 import { i18n } from './utils/i18n.js';
 import { showToast } from './utils/toast.js';
+// AI 模块
+import { initAiModule, setupLightboxAiIntegration } from './features/ai/manager.js';
 import {
     restoreStateFromCache,
     restoreGanttDataFromCache,
@@ -26,9 +28,14 @@ import {
     getSavedLocale
 } from './core/store.js';
 import { checkStorageAvailability } from './core/storage.js';
+// 任务详情面板
+import { openTaskDetailsPanel } from './features/task-details/index.js';
 
 // 挂载 exportConfig 到 window 以便 HTML 中调用
 window.exportConfig = exportConfig;
+
+// 挂载任务详情面板函数到 window（供新建任务按钮使用）
+window.openTaskDetailsPanel = openTaskDetailsPanel;
 
 // 挂载缓存管理函数到 window（供清除缓存按钮使用）
 window.clearGanttCache = async () => {
@@ -89,6 +96,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // 初始化配置导入导出
     initConfigIO();
+
+    // 初始化 AI 模块
+    initAiModule();
+    setupLightboxAiIntegration();
+    console.log('🤖 AI 模块初始化完成');
 
     // 设置数据变化时自动保存
     setupAutoSave();

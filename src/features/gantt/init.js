@@ -7,7 +7,7 @@ import { showToast } from '../../utils/toast.js';
 import { defaultTasks } from '../../data/tasks.js';
 import { updateGanttColumns } from './columns.js';
 import { initResizer } from './resizer.js';
-import { registerCustomFieldsBlock, configureLightbox } from '../lightbox/customization.js';
+import { registerCustomFieldsBlock, configureLightbox, registerNameInput } from '../lightbox/customization.js';
 import { updateSelectedTasksUI, applySelectionStyles } from '../selection/selectionManager.js';
 import { initNavigation } from './navigation.js';
 import { initMarkers } from './markers.js';
@@ -17,6 +17,9 @@ import { initResponsive } from './responsive.js';
 import { initInlineEdit, addInlineEditStyles } from './inline-edit.js';
 import { initCriticalPath } from './critical-path.js';
 import { i18n } from '../../utils/i18n.js';
+import undoManager from '../ai/services/undoManager.js';
+import { openTaskDetailsPanel } from '../task-details/panel.js';
+import { showSummaryPopover, hideSummaryPopover } from '../../utils/dom.js';
 
 /**
  * 初始化甘特图
@@ -29,7 +32,8 @@ export function initGantt() {
         tooltip: true,   // 启用悬浮详情 (通过事件控制仅在时间轴显示)
         marker: true,
         drag_timeline: true,
-        auto_scheduling: true  // 启用自动调度引擎
+        auto_scheduling: true,  // 启用自动调度引擎
+        undo: true       // F-201: 启用撤回功能
     });
 
     // ========================================
@@ -67,12 +71,12 @@ export function initGantt() {
     // 修正: 仅在甘特图(时间轴)区域显示 Tooltip，屏蔽表格区域
     // 保存鼠标位置信息
     let lastMouseEvent = null;
-    document.addEventListener('mousemove', function(e) {
+    document.addEventListener('mousemove', function (e) {
         lastMouseEvent = e;
     }, true);
 
     // 使用tooltip模板控制显示（支持国际化，样式通过CSS类管理）
-    gantt.templates.tooltip_text = function(start, end, task) {
+    gantt.templates.tooltip_text = function (start, end, task) {
         // 检查鼠标是否在表格区域
         if (lastMouseEvent) {
             const target = lastMouseEvent.target;
@@ -139,6 +143,12 @@ export function initGantt() {
         if (task.status) {
             const statusEmoji = task.status === 'completed' ? '✅' : task.status === 'in_progress' ? '🔄' : task.status === 'suspended' ? '❌' : '⏸️';
             lines.push(`<div class="gantt-tooltip-row">${statusEmoji} <span class="gantt-tooltip-label">${i18n.t('tooltip.status')}:</span> ${getStatusText(task.status)}</div>`);
+        }
+
+        // F-112: 任务概述
+        if (task.summary) {
+            const summaryText = task.summary.length > 50 ? task.summary.substring(0, 50) + '...' : task.summary;
+            lines.push(`<div class="gantt-tooltip-row">📝 <span class="gantt-tooltip-label">${i18n.t('columns.summary') || '概述'}:</span> ${summaryText}</div>`);
         }
 
         return `<div class="gantt-tooltip-container">${lines.join('')}</div>`;
@@ -273,7 +283,15 @@ export function initGantt() {
         return true;
     });
 
-    // Lightbox 打开后动态调整布局
+    // F-112: 拦截所有 Lightbox 打开请求，改用任务详情面板
+    gantt.attachEvent("onBeforeLightbox", function (task_id) {
+        // 打开任务详情面板
+        openTaskDetailsPanel(task_id);
+        // 返回 false 阻止默认 lightbox 打开
+        return false;
+    });
+
+    // Lightbox 打开后动态调整布局（保留作为备用，但正常情况下不会触发）
     gantt.attachEvent("onLightbox", function (task_id) {
         setTimeout(function () {
             // 隐藏 custom_fields 区段标签
@@ -360,6 +378,7 @@ export function initGantt() {
     // 注册自定义字段表单块
     registerCustomFieldsBlock();
     configureLightbox();
+    registerNameInput();  // 任务名 100 字符限制
     updateGanttColumns();
 
     // 动态调整图例位置
@@ -379,6 +398,30 @@ export function initGantt() {
     // 初始化甘特图
     gantt.init("gantt_here");
     gantt.parse(defaultTasks);
+
+    // 摘要字段弹窗事件监听
+    gantt.attachEvent("onGanttReady", function() {
+        const gridData = gantt.$grid_data;
+
+        // 鼠标进入事件（使用事件委托）
+        gridData.addEventListener('mouseenter', function(e) {
+            const cell = e.target.closest('.gantt-summary-cell');
+            if (!cell) return;
+
+            const fullHtml = cell.getAttribute('data-full-html');
+            if (!fullHtml) return;
+
+            showSummaryPopover(cell, fullHtml);
+        }, true); // 使用捕获阶段确保事件正确触发
+
+        // 鼠标离开事件
+        gridData.addEventListener('mouseleave', function(e) {
+            const cell = e.target.closest('.gantt-summary-cell');
+            if (cell) {
+                hideSummaryPopover();
+            }
+        }, true);
+    });
 
     // 初始化导航模块（拖拽平移、回到今天）
     initNavigation();
@@ -418,6 +461,53 @@ export function setupGlobalEvents() {
     document.addEventListener('keydown', function (e) {
         if (e.ctrlKey || e.metaKey) {
             state.isCtrlPressed = true;
+        }
+
+        // F-201: Ctrl+Z 撤回功能
+        // 优先使用 undoManager（用于 AI 应用的修改），如果没有可撤回的则回退到 gantt.undo
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) {
+            // 检查焦点不在输入框中
+            const activeEl = document.activeElement;
+            const isInputFocused = activeEl && (
+                activeEl.tagName === 'INPUT' ||
+                activeEl.tagName === 'TEXTAREA' ||
+                activeEl.isContentEditable
+            );
+
+            if (!isInputFocused) {
+                e.preventDefault();
+                // 优先使用 undoManager
+                if (undoManager.canUndo()) {
+                    undoManager.undo();
+                    console.log('[Gantt] UndoManager undo executed');
+                } else if (gantt.undo) {
+                    gantt.undo();
+                    console.log('[Gantt] Gantt undo executed');
+                }
+            }
+        }
+
+        // F-201: Ctrl+Y / Ctrl+Shift+Z 重做功能
+        // 优先使用 undoManager，如果没有可重做的则回退到 gantt.redo
+        if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) {
+            const activeEl = document.activeElement;
+            const isInputFocused = activeEl && (
+                activeEl.tagName === 'INPUT' ||
+                activeEl.tagName === 'TEXTAREA' ||
+                activeEl.isContentEditable
+            );
+
+            if (!isInputFocused) {
+                e.preventDefault();
+                // 优先使用 undoManager
+                if (undoManager.canRedo()) {
+                    undoManager.redo();
+                    console.log('[Gantt] UndoManager redo executed');
+                } else if (gantt.redo) {
+                    gantt.redo();
+                    console.log('[Gantt] Gantt redo executed');
+                }
+            }
         }
     });
 

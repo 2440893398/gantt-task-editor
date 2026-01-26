@@ -15,8 +15,11 @@ export default {
         exportJSON: 'JSON出力',
         importJSON: 'JSONインポート',
         language: '言語',
-        searchPlaceholder: 'タスクを検索...'
+        searchPlaceholder: 'タスクを検索...',
+        criticalPath: 'クリティカルパス',
+        lag: '遅延(日)'
     },
+
 
     // ビュー
     view: {
@@ -38,8 +41,10 @@ export default {
         progress: '進捗(%)',
         priority: '優先度',
         assignee: '担当者',
-        status: 'ステータス'
+        status: 'ステータス',
+        summary: '概要'
     },
+
 
     // 列挙値 (内部値 → ローカライズ表示値)
     enums: {
@@ -246,6 +251,75 @@ export default {
         }
     },
 
+    // タスク詳細パネル
+    taskDetails: {
+        newTask: '新規タスク',
+        newSubtask: '新規サブタスク',
+        titlePlaceholder: 'タスクタイトル',
+        description: '説明',
+        descPlaceholder: '詳細な説明を入力してください。Markdownに対応...',
+        subtasks: 'サブタスク',
+        addSubtask: 'サブタスクを追加',
+        noSubtasks: 'サブタスクなし',
+        properties: 'プロパティ',
+        settings: '設定',
+        assignee: '担当者',
+        priority: '優先度',
+        progress: '進捗',
+        schedule: 'スケジュール',
+        planStart: '開始予定',
+        planEnd: '終了予定',
+        actualStart: '実際の開始',
+        actualEnd: '実際の終了',
+        notStarted: '未開始',
+        notCompleted: '未完了',
+        workload: '工数',
+        estimatedHours: '予定工数',
+        actualHours: '実際の工数',
+        dayUnit: '人日',
+        noData: '0人日',
+        customFields: 'カスタムフィールド',
+        addField: 'フィールド追加',
+        copyLink: 'リンクをコピー',
+        fullscreen: 'フルスクリーン',
+        more: 'もっと見る',
+        confirmDelete: 'このタスクを削除しますか？',
+        deleteTaskTitle: 'タスク削除',
+        deleteTaskConfirm: 'タスク「{{name}}」を削除しますか？この操作は取り消せません。',
+        dragToResize: '下端をドラッグしてサイズ変更',
+        featureNotReady: '機能開発中',
+        required: '必須',
+        systemField: 'システム',
+        quickDate: '今日',
+        dateRangeError: '実際の開始日は実際の終了日より後にできません',
+        fieldDisabled: 'このフィールドは無効です',
+        // サブタスク削除機能
+        deleteSubtask: 'サブタスク削除',
+        deleteSubtaskTitle: 'サブタスク削除',
+        deleteSubtaskConfirm: 'このサブタスクを削除しますか？この操作は取り消せません。',
+        subtaskDeleted: 'サブタスクを削除しました',
+        openSubtask: '詳細を開く'
+    },
+
+
+    // 新規タスクモーダル
+    newTask: {
+        title: '新しいタスク',
+        nameLabel: 'タスク名',
+        namePlaceholder: 'タスク名を入力',
+        assigneeLabel: '担当者',
+        assigneePlaceholder: '担当者を選択',
+        cancel: 'キャンセル',
+        create: '作成',
+        nameRequired: 'タスク名は必須です'
+    },
+
+    // 概要フィールド
+    summary: {
+        viewFull: '完全な概要を表示',
+        empty: '概要なし'
+    },
+
     // AIアシスタント
     ai: {
         // フローティングボタン
@@ -262,10 +336,24 @@ export default {
             baseUrl: 'ベースURL',
             localHint: 'ローカルモデルの場合はOllamaが起動していることを確認してください',
             model: 'モデル',
+            modelHint: '任意のモデル名を直接入力できます',
             test: '接続テスト',
             testing: 'テスト中...',
-            saved: '設定を保存しました'
+            saved: '設定を保存しました',
+            // コンボボックス
+            availableModels: '利用可能なモデル',
+            recommended: '推奨',
+            noMatch: '一致なし',
+            willUseInput: '入力値を使用します',
+            modelsAvailable: '利用可能',
+            // 更新
+            refresh: '更新',
+            refreshing: '更新中...',
+            refreshed: '更新しました',
+            refreshFailed: '更新に失敗しました',
+            modelsUpdated: 'モデルリストを更新しました'
         },
+
         // ドロワー
         drawer: {
             title: 'AIアシスタント',

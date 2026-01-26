@@ -3,15 +3,23 @@
  */
 
 import { state, isFieldEnabled } from '../../core/store.js';
-import { INTERNAL_FIELDS } from '../../data/fields.js';
+import { INTERNAL_FIELDS, SYSTEM_FIELD_CONFIG } from '../../data/fields.js';
+
 import { renderPriorityBadge, renderStatusBadge, renderAssignee, renderProgressBar } from './templates.js';
+import { extractPlainText, escapeAttr } from '../../utils/dom.js';
 
 /**
  * 获取本地化的列名称
  * @param {string} key - 列名键
+ * @param {string} [customFieldLabel] - 自定义字段的标签（可选）
  * @returns {string} 本地化的列名称
  */
-function getColumnLabel(key) {
+function getColumnLabel(key, customFieldLabel = null) {
+    // 如果提供了自定义字段标签，优先使用
+    if (customFieldLabel) {
+        return customFieldLabel;
+    }
+
     // 如果 i18n 可用，使用本地化文本
     if (window.i18n && typeof window.i18n.t === 'function') {
         const translated = window.i18n.t(`columns.${key}`);
@@ -34,6 +42,7 @@ function getColumnLabel(key) {
     return defaults[key] || key;
 }
 
+
 /**
  * HTML 转义
  */
@@ -41,13 +50,6 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
-}
-
-/**
- * 属性值转义
- */
-function escapeAttr(text) {
-    return String(text || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/\n/g, ' ');
 }
 
 /**
@@ -76,11 +78,44 @@ export function updateGanttColumns() {
 
     visibleFields.forEach(fieldName => {
         if (fieldName === "text") {
-            columns.push({ name: "text", label: getColumnLabel("text"), tree: true, width: 200, resize: true });
+            columns.push({
+                name: "text",
+                label: getColumnLabel("text"),
+                tree: true,
+                width: 200,
+                resize: true,
+                template: function (task) {
+                    const text = task.text || '';
+                    // Add title attribute for tooltip on hover
+                    return `<span title="${escapeHtml(text)}">${escapeHtml(text)}</span>`;
+                }
+            });
         } else if (fieldName === "start_date") {
-            columns.push({ name: "start_date", label: getColumnLabel("start_date"), align: "center", width: 90, resize: true });
+            columns.push({
+                name: "start_date",
+                label: getColumnLabel("start_date"),
+                align: "center",
+                width: 90,
+                resize: true,
+                template: function (task) {
+                    const date = task.start_date;
+                    if (!date) return '<span class="text-base-content/40">—</span>';
+                    const formatted = gantt.templates.date_grid ? gantt.templates.date_grid(date) : date.toLocaleDateString();
+                    return `<span title="${formatted}">${formatted}</span>`;
+                }
+            });
         } else if (fieldName === "duration") {
-            columns.push({ name: "duration", label: getColumnLabel("duration"), align: "center", width: 80, resize: true });
+            columns.push({
+                name: "duration",
+                label: getColumnLabel("duration"),
+                align: "center",
+                width: 80,
+                resize: true,
+                template: function (task) {
+                    const duration = task.duration || 0;
+                    return `<span title="${duration}">${duration}</span>`;
+                }
+            });
         } else if (fieldName === "progress") {
             columns.push({
                 name: "progress", label: getColumnLabel("progress"), align: "center", width: 120, resize: true,
@@ -96,21 +131,36 @@ export function updateGanttColumns() {
                 width: 200,
                 resize: true,
                 template: function (task) {
-                    const text = task.summary || '';
-                    if (!text) {
+                    const html = task.summary || '';
+
+                    // 空值处理
+                    if (!html) {
                         return '<span class="text-base-content/40 text-xs italic">—</span>';
                     }
-                    // 截断显示（最多显示50个字符）
-                    const truncated = text.length > 50 ? text.substring(0, 50) + '...' : text;
-                    // 使用 DaisyUI tooltip
-                    return `<div class="gantt-summary-cell tooltip tooltip-bottom cursor-pointer" data-tip="${escapeAttr(text)}">
-                        <span class="line-clamp-1 text-sm">${escapeHtml(truncated)}</span>
-                    </div>`;
+
+                    // 提取纯文本
+                    const plainText = extractPlainText(html);
+
+                    // 截断显示（最多50字符）
+                    const truncated = plainText.length > 50
+                        ? plainText.substring(0, 50) + '...'
+                        : plainText;
+
+                    return `<div class="gantt-summary-cell cursor-pointer"
+                                 data-full-html="${escapeAttr(html)}"
+                                 data-plain-text="${escapeAttr(plainText)}">
+                                <span class="line-clamp-1 text-sm">${escapeHtml(truncated)}</span>
+                            </div>`;
                 }
             });
         } else {
+            // Check if it's a custom field first
             const customField = state.customFields.find(f => f.name === fieldName);
+            // Check if it's a system field
+            const systemFieldConfig = SYSTEM_FIELD_CONFIG[fieldName];
+
             if (customField) {
+                // Handle custom field (priority, status, assignee, user-defined fields)
                 let templateFn;
                 if (fieldName === 'priority') {
                     templateFn = function (task) {
@@ -126,12 +176,16 @@ export function updateGanttColumns() {
                     };
                 } else {
                     templateFn = function (task) {
-                        return task[fieldName] || '';
+                        const value = task[fieldName] || '';
+                        if (!value) return '';
+                        // Add title attribute for tooltip on hover
+                        return `<span title="${escapeHtml(String(value))}">${escapeHtml(String(value))}</span>`;
                     };
                 }
 
                 // 使用本地化列名，优先使用翻译，其次使用customField.label
-                const label = getColumnLabel(fieldName);
+                const label = getColumnLabel(fieldName, customField.label);
+
 
                 columns.push({
                     name: fieldName,
@@ -141,8 +195,56 @@ export function updateGanttColumns() {
                     resize: true,
                     template: templateFn
                 });
+            } else if (systemFieldConfig) {
+                // Handle system field (actual_start, actual_end, actual_hours, etc.)
+                // Use the i18nKey from SYSTEM_FIELD_CONFIG for proper localization
+                let label = fieldName;
+                if (window.i18n && systemFieldConfig.i18nKey) {
+                    const translated = window.i18n.t(systemFieldConfig.i18nKey);
+                    if (translated !== systemFieldConfig.i18nKey) {
+                        label = translated;
+                    }
+                }
+
+                let templateFn;
+
+                if (systemFieldConfig.type === 'date') {
+                    // Date fields
+                    templateFn = function (task) {
+                        const value = task[fieldName];
+                        if (!value) return '<span class="text-base-content/40">—</span>';
+                        const date = new Date(value);
+                        if (isNaN(date.getTime())) return '<span class="text-base-content/40">—</span>';
+                        const formatted = date.toLocaleDateString();
+                        return `<span title="${formatted}">${formatted}</span>`;
+                    };
+                } else if (systemFieldConfig.type === 'number') {
+                    // Number fields
+                    templateFn = function (task) {
+                        const value = task[fieldName];
+                        if (value === undefined || value === null) return '<span class="text-base-content/40">—</span>';
+                        return `<span title="${value}">${value}</span>`;
+                    };
+                } else {
+                    // Default: just display the value with tooltip
+                    templateFn = function (task) {
+                        const value = task[fieldName] || '';
+                        if (!value) return '';
+                        return `<span title="${escapeHtml(String(value))}">${escapeHtml(String(value))}</span>`;
+                    };
+                }
+
+                columns.push({
+                    name: fieldName,
+                    label: label,
+                    align: "center",
+                    width: 100,
+                    resize: true,
+                    template: templateFn
+                });
             }
         }
+
     });
 
     columns.push({ name: "add", label: "", width: 44 });
