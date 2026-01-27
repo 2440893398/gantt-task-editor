@@ -4,6 +4,7 @@
  */
 
 import { i18n } from '../../utils/i18n.js';
+import { formatDuration, parseDurationInput } from '../../utils/time-formatter.js';
 import { state, isFieldEnabled, getFieldType, getSystemFieldOptions } from '../../core/store.js';
 
 import { showToast } from '../../utils/toast.js';
@@ -93,7 +94,7 @@ export function renderRightSection(task) {
                 ${i18n.t('taskDetails.workload') || '工时'}
             </h4>
             <div class="space-y-1">
-                ${showDuration ? renderWorkloadRow('duration', i18n.t('taskDetails.estimatedHours') || '预计', task.duration || task.estimated_hours, i18n.t('taskDetails.dayUnit') || '天') : ''}
+                ${showDuration ? renderDurationRow(task) : ''}
                 ${showActualHours ? renderWorkloadRow('actual-hours', i18n.t('taskDetails.actualHours') || '实际', task.actual_hours, i18n.t('taskDetails.dayUnit') || '天', true) : ''}
             </div>
         </div>
@@ -208,14 +209,34 @@ export function bindRightSectionEvents(panel, task) {
         progressSlider.addEventListener('change', (e) => updateProgress(e.target.value));
     }
 
-    // 工时字段
+    // 工时字段 (v1.5 增强：人性化提示 + 文本输入解析)
     const durationInput = panel.querySelector('#task-duration-input');
+    const durationHint = panel.querySelector('#duration-hint');
     if (durationInput) {
+        // 实时更新人性化提示
+        durationInput.addEventListener('input', () => {
+            const value = parseFloat(durationInput.value) || 0;
+            if (durationHint) {
+                durationHint.textContent = formatDuration(value);
+            }
+        });
+
+        // 失焦时保存，支持文本输入解析（如 "4小时"、"1d 2h"）
         durationInput.addEventListener('blur', () => {
-            const value = parseFloat(durationInput.value);
+            let value = parseFloat(durationInput.value);
+
+            // 如果不是纯数字，尝试解析文本输入
+            if (isNaN(value)) {
+                value = parseDurationInput(durationInput.value);
+            }
+
             if (!isNaN(value) && value > 0) {
                 task.duration = value;
                 task.estimated_hours = value;
+                durationInput.value = value; // 标准化显示
+                if (durationHint) {
+                    durationHint.textContent = formatDuration(value);
+                }
                 gantt.updateTask(task.id);
             }
         });
@@ -436,6 +457,39 @@ function renderDateRow(id, label, value, iconType, isOptional = false) {
             `<input type="date" id="task-${id}" class="input input-ghost input-xs p-0 w-28 text-right" value="${value}" />` :
             `<span class="cursor-pointer hover:text-primary" data-date-field="${id}">${displayText}</span>`
         }
+            </div>
+        </div>
+    `;
+}
+
+/**
+ * 渲染工期行 (v1.5) - 带人性化提示
+ */
+function renderDurationRow(task) {
+    const value = task.duration || task.estimated_hours || '';
+    const displayValue = value !== undefined && value !== null ? value : '';
+    const humanReadable = formatDuration(parseFloat(displayValue) || 0);
+    const label = i18n.t('taskDetails.estimatedHours') || '预计';
+    const unit = i18n.t('taskDetails.dayUnit') || '天';
+
+    return `
+        <div class="flex items-center justify-between py-2">
+            <div class="flex items-center gap-2 text-sm text-base-content/70">
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+                </svg>
+                <span>${label}</span>
+            </div>
+            <div class="text-sm text-base-content flex flex-col items-end gap-0.5">
+                <div class="flex items-center gap-1">
+                    <input type="text"
+                           id="task-duration-input"
+                           class="input input-ghost input-xs w-20 text-right p-0"
+                           value="${displayValue}"
+                           placeholder="0" />
+                    <span class="text-base-content/60">${unit}</span>
+                </div>
+                <span id="duration-hint" class="text-xs text-base-content/50">${humanReadable}</span>
             </div>
         </div>
     `;
