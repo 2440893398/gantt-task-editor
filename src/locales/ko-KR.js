@@ -218,6 +218,15 @@ export default {
         progressRange: '진행률은 0에서 100 사이여야 합니다'
     },
 
+    // Duration format (v1.5)
+    duration: {
+        format: {
+            full: '{days}일 {hours}시간',
+            daysOnly: '{days}일',
+            hoursOnly: '{hours}시간'
+        }
+    },
+
     // Excel
     excel: {
         sheetName: '작업 목록'

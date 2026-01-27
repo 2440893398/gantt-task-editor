@@ -304,6 +304,15 @@ export default {
     },
 
 
+    // Duration format (v1.5)
+    duration: {
+        format: {
+            full: '{days} 天 {hours} 小时',
+            daysOnly: '{days} 天',
+            hoursOnly: '{hours} 小时'
+        }
+    },
+
     // Excel
     excel: {
         sheetName: '任务列表'

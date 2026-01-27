@@ -294,6 +294,15 @@ export default {
         empty: 'No summary'
     },
 
+    // Duration format (v1.5)
+    duration: {
+        format: {
+            full: '{days}d {hours}h',
+            daysOnly: '{days}d',
+            hoursOnly: '{hours}h'
+        }
+    },
+
     // Excel
     excel: {
         sheetName: 'Tasks'

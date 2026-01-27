@@ -220,6 +220,15 @@ export default {
         progressRange: '進捗は0から100の間でなければなりません'
     },
 
+    // Duration format (v1.5)
+    duration: {
+        format: {
+            full: '{days}日 {hours}時間',
+            daysOnly: '{days}日',
+            hoursOnly: '{hours}時間'
+        }
+    },
+
     // Excel
     excel: {
         sheetName: 'タスク一覧'
