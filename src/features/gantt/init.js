@@ -16,6 +16,7 @@ import { initScheduler } from './scheduler.js';
 import { initResponsive } from './responsive.js';
 import { initInlineEdit, addInlineEditStyles } from './inline-edit.js';
 import { initCriticalPath } from './critical-path.js';
+import { initSummaryPopover } from './summary-popover.js';
 import { i18n } from '../../utils/i18n.js';
 
 /**
@@ -213,7 +214,7 @@ export function initGantt() {
     };
 
     // 从 localStorage 恢复左侧宽度
-    let savedGridWidth = 600;
+    let savedGridWidth = 400;
     try {
         const saved = localStorage.getItem('gantt_grid_width');
         if (saved) {
@@ -459,4 +460,7 @@ export function setupGlobalEvents() {
 
     // 初始化 Resizer
     initResizer();
+
+    // 初始化摘要弹窗
+    initSummaryPopover();
 }

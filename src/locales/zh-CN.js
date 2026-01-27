@@ -218,6 +218,24 @@ export default {
         progressRange: '进度必须在0到100之间'
     },
 
+    // 新建任务
+    newTask: {
+        title: '新建任务',
+        nameLabel: '任务名称',
+        namePlaceholder: '请输入任务名称',
+        assigneeLabel: '负责人',
+        assigneePlaceholder: '请选择负责人',
+        cancel: '取消',
+        create: '创建',
+        nameRequired: '任务名称不能为空'
+    },
+
+    // 摘要
+    summary: {
+        viewFull: '查看完整摘要',
+        empty: '无摘要'
+    },
+
     // F-112: 任务详情面板
     taskDetails: {
         newTask: '新任务',
@@ -230,6 +248,11 @@ export default {
         noSubtasks: '暂无子任务',
         properties: '属性',
         settings: '设置',
+        required: '必填',
+        systemField: '系统',
+        quickDate: '今天',
+        dateRangeError: '实际开始时间不能晚于实际结束时间',
+        fieldDisabled: '此字段已禁用',
         assignee: '负责人',
         priority: '优先级',
         schedule: '排期',

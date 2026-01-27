@@ -5,6 +5,7 @@
 import { state, isFieldEnabled } from '../../core/store.js';
 import { INTERNAL_FIELDS } from '../../data/fields.js';
 import { renderPriorityBadge, renderStatusBadge, renderAssignee, renderProgressBar } from './templates.js';
+import { extractPlainText, escapeAttr } from '../../utils/dom.js';
 
 /**
  * 获取本地化的列名称
@@ -44,10 +45,24 @@ function escapeHtml(text) {
 }
 
 /**
- * 属性值转义
+ * 构建摘要单元格 HTML
+ * @param {string} summaryHtml
+ * @param {object} options
+ * @param {string} options.emptyText
+ * @returns {string}
  */
-function escapeAttr(text) {
-    return String(text || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/\n/g, ' ');
+export function buildSummaryCell(summaryHtml, { emptyText = '-' } = {}) {
+    const plainText = extractPlainText(summaryHtml || '');
+    if (!plainText) {
+        return `<span class="text-base-content/40 text-xs italic">${escapeHtml(emptyText)}</span>`;
+    }
+
+    const truncated = plainText.length > 50 ? `${plainText.substring(0, 50)}...` : plainText;
+    return `
+        <div class="gantt-summary-cell cursor-pointer" data-summary-html="${escapeAttr(summaryHtml || '')}">
+            <span class="line-clamp-1 text-sm">${escapeHtml(truncated)}</span>
+        </div>
+    `;
 }
 
 /**
@@ -89,23 +104,15 @@ export function updateGanttColumns() {
                 }
             });
         } else if (fieldName === "summary") {
-            // F-112: 任务概述字段 - 省略显示 + 悬停展开
+            // F-112: 任务概述字段 - 纯文本显示 + 悬停弹窗
             columns.push({
                 name: "summary",
                 label: getColumnLabel("summary"),
                 width: 200,
                 resize: true,
                 template: function (task) {
-                    const text = task.summary || '';
-                    if (!text) {
-                        return '<span class="text-base-content/40 text-xs italic">—</span>';
-                    }
-                    // 截断显示（最多显示50个字符）
-                    const truncated = text.length > 50 ? text.substring(0, 50) + '...' : text;
-                    // 使用 DaisyUI tooltip
-                    return `<div class="gantt-summary-cell tooltip tooltip-bottom cursor-pointer" data-tip="${escapeAttr(text)}">
-                        <span class="line-clamp-1 text-sm">${escapeHtml(truncated)}</span>
-                    </div>`;
+                    const emptyText = window.i18n?.t('summary.empty') || '无摘要';
+                    return buildSummaryCell(task.summary || '', { emptyText });
                 }
             });
         } else {

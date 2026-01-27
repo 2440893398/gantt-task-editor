@@ -215,6 +215,33 @@ export default {
         progressRange: '進捗は0から100の間でなければなりません'
     },
 
+    // 新規タスク
+    newTask: {
+        title: '新規タスク',
+        nameLabel: 'タスク名',
+        namePlaceholder: 'タスク名を入力',
+        assigneeLabel: '担当者',
+        assigneePlaceholder: '担当者を選択',
+        cancel: 'キャンセル',
+        create: '作成',
+        nameRequired: 'タスク名は必須です'
+    },
+
+    // 概要
+    summary: {
+        viewFull: '完全な概要を表示',
+        empty: '概要なし'
+    },
+
+    // タスク詳細
+    taskDetails: {
+        required: '必須',
+        systemField: 'システム',
+        quickDate: '今日',
+        dateRangeError: '実際開始日は実際終了日より後にできません',
+        fieldDisabled: 'このフィールドは無効です'
+    },
+
     // Excel
     excel: {
         sheetName: 'タスク一覧'

@@ -422,15 +422,6 @@
                 });
             });
 
-            // 新建任务按钮
-            document.getElementById('new-task-btn')?.addEventListener('click', () => {
-                gantt.createTask({
-                    text: '',
-                    start_date: new Date(),
-                    duration: 1
-                });
-            });
-
             // 日期导航
             document.getElementById('nav-prev-btn')?.addEventListener('click', () => {
                 const state = gantt.getState();
@@ -732,6 +723,64 @@
             </div>
         </div>
     </div>
+
+    <!-- 新建任务模态框 -->
+    <dialog id="new-task-modal" class="modal">
+        <div class="modal-box">
+            <h3 class="font-bold text-lg mb-4" data-i18n="newTask.title">新建任务</h3>
+            <form id="new-task-form" class="space-y-4">
+                <!-- 任务名称（必填） -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text" data-i18n="newTask.nameLabel">任务名称</span>
+                        <span class="text-error">*</span>
+                    </label>
+                    <input type="text"
+                        id="new-task-name"
+                        class="input input-bordered w-full"
+                        data-i18n-placeholder="newTask.namePlaceholder"
+                        placeholder="请输入任务名称"
+                        required
+                        maxlength="100">
+                    <label class="label hidden" id="name-error">
+                        <span class="label-text-alt text-error" data-i18n="newTask.nameRequired">
+                            任务名称不能为空
+                        </span>
+                    </label>
+                </div>
+
+                <!-- 负责人（可选） -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text" data-i18n="newTask.assigneeLabel">负责人</span>
+                    </label>
+                    <input type="text"
+                        id="new-task-assignee"
+                        class="input input-bordered w-full"
+                        data-i18n-placeholder="newTask.assigneePlaceholder"
+                        placeholder="请选择负责人">
+                </div>
+
+                <!-- 操作按钮 -->
+                <div class="modal-action">
+                    <button type="button"
+                        class="btn btn-ghost"
+                        data-i18n="newTask.cancel"
+                        onclick="document.getElementById('new-task-modal').close()">
+                        取消
+                    </button>
+                    <button type="submit"
+                        class="btn btn-primary"
+                        data-i18n="newTask.create">
+                        创建
+                    </button>
+                </div>
+            </form>
+        </div>
+        <form method="dialog" class="modal-backdrop">
+            <button>close</button>
+        </form>
+    </dialog>
 
     <!-- 文件输入(用于导入配置) -->
     <input type="file" id="config-file-input" class="hidden" accept=".json">

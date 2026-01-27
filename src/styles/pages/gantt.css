@@ -198,6 +198,27 @@
     stroke-dasharray: none !important;
 }
 
+/* ========================================
+   摘要富文本弹窗
+   ======================================== */
+
+.summary-popover {
+    max-width: 400px;
+    max-height: 300px;
+    overflow-y: auto;
+    background: hsl(var(--b1));
+    border: 1px solid hsl(var(--bc) / 0.2);
+    border-radius: var(--rounded-box);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+    padding: 16px;
+}
+
+.summary-popover .ql-editor {
+    padding: 0;
+    font-size: 14px;
+    line-height: 1.6;
+}
+
 .gantt_task_link.critical-link .gantt_link_arrow {
     fill: #DC2626 !important;
 }

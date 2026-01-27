@@ -217,6 +217,24 @@ export default {
         progressRange: 'Progress must be between 0 and 100'
     },
 
+    // New task
+    newTask: {
+        title: 'New Task',
+        nameLabel: 'Task Name',
+        namePlaceholder: 'Enter task name',
+        assigneeLabel: 'Assignee',
+        assigneePlaceholder: 'Select assignee',
+        cancel: 'Cancel',
+        create: 'Create',
+        nameRequired: 'Task name is required'
+    },
+
+    // Summary
+    summary: {
+        viewFull: 'View full summary',
+        empty: 'No summary'
+    },
+
     // Task Details Panel
     taskDetails: {
         newTask: 'New Task',
@@ -229,6 +247,11 @@ export default {
         noSubtasks: 'No subtasks',
         properties: 'Properties',
         settings: 'Settings',
+        required: 'Required',
+        systemField: 'System',
+        quickDate: 'Today',
+        dateRangeError: 'Actual start date cannot be later than actual end date',
+        fieldDisabled: 'This field is disabled',
         assignee: 'Assignee',
         priority: 'Priority',
         schedule: 'Schedule',

@@ -7,6 +7,11 @@ export default defineConfig({
     pool: 'forks',
     singleFork: true,
     setupFiles: ['./tests/setup.js'],
+    exclude: [
+      '**/node_modules/**',
+      '**/tests/e2e/**',
+      '**/vitest.config.test.js'
+    ],
     // 测试报告输出配置
     reporters: ['default', 'html', 'json'],
     outputFile: {

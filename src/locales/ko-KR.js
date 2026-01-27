@@ -215,6 +215,33 @@ export default {
         progressRange: '진행률은 0에서 100 사이여야 합니다'
     },
 
+    // 새 작업
+    newTask: {
+        title: '새 작업',
+        nameLabel: '작업 이름',
+        namePlaceholder: '작업 이름 입력',
+        assigneeLabel: '담당자',
+        assigneePlaceholder: '담당자 선택',
+        cancel: '취소',
+        create: '생성',
+        nameRequired: '작업 이름은 필수입니다'
+    },
+
+    // 요약
+    summary: {
+        viewFull: '전체 요약 보기',
+        empty: '요약 없음'
+    },
+
+    // 작업 상세
+    taskDetails: {
+        required: '필수',
+        systemField: '시스템',
+        quickDate: '오늘',
+        dateRangeError: '실제 시작 날짜는 실제 종료 날짜보다 늦을 수 없습니다',
+        fieldDisabled: '이 필드는 비활성화되었습니다'
+    },
+
     // Excel
     excel: {
         sheetName: '작업 목록'

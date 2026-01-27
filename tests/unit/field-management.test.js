@@ -9,6 +9,8 @@ import {
   renderFieldList,
   editField,
   deleteField,
+  confirmDeleteField,
+  cancelDeleteField,
   getFieldTypeLabel,
   updateFieldTypeSelector
 } from '../../src/features/customFields/manager.js';
@@ -30,7 +32,7 @@ vi.mock('../../src/utils/i18n.js', () => ({
         'fieldManagement.typeDate': '日期',
         'fieldManagement.typeSelect': '下拉选择',
         'fieldManagement.typeMultiselect': '多选',
-        'message.deleteConfirm': `Are you sure you want to delete field "${params?.name}"?`
+        'fieldManagement.deleteMessage': `Are you sure you want to delete field "${params?.name}"?`
       };
       return map[key] || key;
     })
@@ -52,6 +54,9 @@ describe('字段管理面板', () => {
         <option value="select">下拉选择</option>
         <option value="multiselect">多选</option>
       </select>
+      <input id="field-icon" />
+      <span id="selected-icon"></span>
+      <div id="icon-grid"></div>
       <input type="checkbox" id="field-required" />
       <input id="field-default-value" />
       <div id="options-config"></div>
@@ -84,9 +89,10 @@ describe('字段管理面板', () => {
 
   it('应该渲染字段列表', () => {
     state.customFields = [
-      { name: 'priority', label: '优先级', type: 'select', options: ['高', '中', '低'] },
-      { name: 'status', label: '状态', type: 'text' }
+      { name: 'custom_priority', label: '优先级', type: 'select', options: ['高', '中', '低'] },
+      { name: 'custom_status', label: '状态', type: 'text' }
     ];
+    state.fieldOrder = ['custom_priority', 'custom_status'];
 
     renderFieldList();
 
@@ -99,6 +105,7 @@ describe('字段管理面板', () => {
     state.customFields = [
       { name: 'required_field', label: '必填字段', type: 'text', required: true }
     ];
+    state.fieldOrder = ['required_field'];
 
     renderFieldList();
 
@@ -134,6 +141,9 @@ describe('字段编辑', () => {
         <option value="select">下拉选择</option>
         <option value="multiselect">多选</option>
       </select>
+      <input id="field-icon" />
+      <span id="selected-icon"></span>
+      <div id="icon-grid"></div>
       <input type="checkbox" id="field-required" />
       <input id="field-default-value" />
       <div id="options-config"></div>
@@ -148,7 +158,7 @@ describe('字段编辑', () => {
 
     state.customFields = [
       {
-        name: 'priority',
+        name: 'custom_priority',
         label: '优先级',
         type: 'select',
         required: true,
@@ -158,7 +168,7 @@ describe('字段编辑', () => {
   });
 
   it('应该加载字段进行编辑', () => {
-    editField('priority');
+    editField('custom_priority');
 
     expect(document.getElementById('field-name').value).toBe('优先级');
     expect(document.getElementById('field-type').value).toBe('select');
@@ -166,15 +176,15 @@ describe('字段编辑', () => {
   });
 
   it('应该设置编辑模式标记', () => {
-    editField('priority');
+    editField('custom_priority');
 
     const modal = document.getElementById('field-config-modal');
     expect(modal.dataset.editMode).toBe('true');
-    expect(modal.dataset.editFieldName).toBe('priority');
+    expect(modal.dataset.editFieldName).toBe('custom_priority');
   });
 
   it('应该显示选项配置面板（下拉选择类型）', () => {
-    editField('priority');
+    editField('custom_priority');
 
     const optionsConfig = document.getElementById('options-config');
     expect(optionsConfig.style.display).toBe('block');
@@ -187,39 +197,47 @@ describe('字段删除', () => {
     document.body.innerHTML = `
       <div id="field-list-container"></div>
       <div id="field-management-panel"></div>
+      <dialog id="delete-confirm-modal"></dialog>
+      <div id="delete-confirm-message"></div>
     `;
 
-    global.confirm = vi.fn(() => true);
+    const confirmModal = document.getElementById('delete-confirm-modal');
+    confirmModal.showModal = vi.fn();
+    confirmModal.close = vi.fn();
+
     global.gantt = {
       ...global.gantt,
       config: { columns: [] }
     };
 
     state.customFields = [
-      { name: 'priority', label: '优先级', type: 'text' },
-      { name: 'status', label: '状态', type: 'text' }
+      { name: 'custom_priority', label: '优先级', type: 'text' },
+      { name: 'custom_status', label: '状态', type: 'text' }
     ];
-    state.fieldOrder = ['priority', 'status'];
+    state.fieldOrder = ['custom_priority', 'custom_status'];
   });
 
   it('应该删除指定字段', () => {
-    deleteField('priority');
+    deleteField('custom_priority');
+    confirmDeleteField();
 
     expect(state.customFields).toHaveLength(1);
-    expect(state.customFields[0].name).toBe('status');
-    expect(state.fieldOrder).not.toContain('priority');
+    expect(state.customFields[0].name).toBe('custom_status');
+    expect(state.fieldOrder).not.toContain('custom_priority');
   });
 
   it('应该在删除前请求确认', () => {
-    deleteField('priority');
+    deleteField('custom_priority');
 
-    expect(global.confirm).toHaveBeenCalledWith('Are you sure you want to delete field "优先级"?');
+    const confirmModal = document.getElementById('delete-confirm-modal');
+    const message = document.getElementById('delete-confirm-message');
+    expect(confirmModal.showModal).toHaveBeenCalled();
+    expect(message.textContent).toBe('Are you sure you want to delete field "优先级"?');
   });
 
   it('应该在用户取消时不删除字段', () => {
-    global.confirm = vi.fn(() => false);
-
-    deleteField('priority');
+    deleteField('custom_priority');
+    cancelDeleteField();
 
     expect(state.customFields).toHaveLength(2);
   });
@@ -254,7 +272,10 @@ describe('字段重排序', () => {
 describe('字段类型选择器更新', () => {
   beforeEach(() => {
     document.body.innerHTML = `
-      <div id="field-type-selector"></div>
+      <div id="field-type-selector">
+        <span id="field-type-icon"></span>
+        <span class="field-type-text"></span>
+      </div>
       <div id="field-type-dropdown">
         <div class="field-type-option" data-value="text"></div>
         <div class="field-type-option" data-value="number"></div>
@@ -267,7 +288,8 @@ describe('字段类型选择器更新', () => {
     updateFieldTypeSelector('number');
 
     const selector = document.getElementById('field-type-selector');
-    expect(selector.innerHTML).toContain('数字');
+    const label = selector.querySelector('.field-type-text');
+    expect(label.textContent).toContain('数字');
   });
 
   it('应该更新下拉菜单选中状态', () => {
@@ -275,6 +297,7 @@ describe('字段类型选择器更新', () => {
 
     const dropdown = document.getElementById('field-type-dropdown');
     const selectedOption = dropdown.querySelector('[data-value="number"]');
-    expect(selectedOption.classList.contains('selected')).toBe(true);
+    expect(selectedOption.classList.contains('text-primary')).toBe(true);
+    expect(selectedOption.querySelector('.check-icon')).not.toBeNull();
   });
 });

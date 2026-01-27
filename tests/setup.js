@@ -60,6 +60,8 @@ global.gantt = {
     setLocale: vi.fn()
   },
   templates: {},
+  plugins: vi.fn(),
+  setWorkTime: vi.fn(),
   init: vi.fn(),
   parse: vi.fn(),
   attachEvent: vi.fn((event, handler) => {
@@ -87,3 +89,12 @@ global.localStorage = {
 global.Sortable = vi.fn(() => ({
   destroy: vi.fn()
 }));
+
+if (!window.matchMedia) {
+  window.matchMedia = (query) => ({
+    matches: false,
+    media: query,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn()
+  });
+}

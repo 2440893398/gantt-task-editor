@@ -180,13 +180,15 @@ export function renderFieldList() {
         const enabled = isSystem ? isFieldEnabled(fieldName) : true;
         const canDisable = isSystem && fieldConfig.canDisable;
 
+        const requiredMark = !isSystem && fieldConfig?.required ? '<span class="text-error">*</span>' : '';
+
         html += `
             <div class="flex items-center gap-3 p-3 bg-base-100 border border-base-200 rounded-lg shadow-sm hover:shadow-md transition-all group ${!enabled ? 'opacity-50' : ''}" data-field-name="${fieldName}">
                 <div class="field-drag-handle cursor-move text-base-content/30 hover:text-primary flex flex-col justify-center leading-none text-xs">⋮⋮</div>
                 <div class="w-10 h-10 flex items-center justify-center bg-primary/10 rounded-lg text-xl shrink-0">${fieldIcon}</div>
                 <div class="flex-1 min-w-0">
                     <div class="font-medium text-sm truncate flex items-center gap-2">
-                        ${fieldLabel}
+                        ${fieldLabel}${requiredMark}
                         <span class="badge badge-xs ${isSystem ? 'badge-info' : 'badge-success'}">${isSystem ? i18n.t('fieldManagement.systemTag') : i18n.t('fieldManagement.customTag')}</span>
                     </div>
                     <div class="mt-1">

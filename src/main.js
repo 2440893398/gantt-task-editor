@@ -13,6 +13,7 @@ import { initGantt, setupGlobalEvents } from './features/gantt/init.js';
 import { initCustomFieldsUI } from './features/customFields/manager.js';
 import { initBatchEdit } from './features/selection/batchEdit.js';
 import { initConfigIO, exportConfig } from './features/config/configIO.js';
+import { initNewTaskModal } from './features/tasks/new-task-modal.js';
 import { i18n } from './utils/i18n.js';
 import { showToast } from './utils/toast.js';
 import {
@@ -89,6 +90,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // 初始化配置导入导出
     initConfigIO();
+
+    // 初始化新建任务模态框
+    initNewTaskModal();
 
     // 设置数据变化时自动保存
     setupAutoSave();

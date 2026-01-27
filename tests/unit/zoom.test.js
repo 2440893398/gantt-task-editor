@@ -14,6 +14,22 @@ import {
   resetZoomLevel
 } from '../../src/features/gantt/zoom.js';
 
+vi.mock('../../src/utils/i18n.js', () => ({
+  i18n: {
+    t: (key) => {
+      const map = {
+        'view.day': '日视图',
+        'view.week': '周视图',
+        'view.month': '月视图',
+        'view.quarter': '季度视图',
+        'view.year': '年视图'
+      };
+      return map[key] || key;
+    },
+    getLanguage: () => 'zh-CN'
+  }
+}));
+
 describe('缩放功能初始化', () => {
   beforeEach(() => {
     // 重置缩放级别到默认值

@@ -4,8 +4,9 @@
  */
 
 import { i18n } from '../../utils/i18n.js';
-import { state, isFieldEnabled } from '../../core/store.js';
+import { state, isFieldEnabled, getFieldType } from '../../core/store.js';
 import { showToast } from '../../utils/toast.js';
+import { escapeAttr } from '../../utils/dom.js';
 
 // 系统默认字段 - 这些字段在面板中有固定展示位置，不应在自定义字段区域重复显示
 const SYSTEM_FIELDS = [
@@ -53,8 +54,8 @@ export function renderRightSection(task) {
         ` : ''}
 
         <!-- 基本属性 -->
-        <div class="space-y-1">
-            ${renderPropertyRow('assignee', i18n.t('taskDetails.assignee') || '负责人', task.assignee, 'user')}
+        <div class="space-y-4">
+            ${renderAssigneeField(task)}
             ${renderPriorityRow(task.priority)}
         </div>
 
@@ -63,7 +64,7 @@ export function renderRightSection(task) {
             <h4 class="text-xs font-medium text-base-content/50 mb-2 uppercase tracking-wider">
                 ${i18n.t('taskDetails.schedule') || '排期'}
             </h4>
-            <div class="space-y-1">
+            <div class="space-y-4">
                 ${renderDateRow('start-date', i18n.t('taskDetails.planStart') || '开始', formatDateValue(task.start_date), 'calendar')}
                 ${renderDateRow('end-date', i18n.t('taskDetails.planEnd') || '截止', formatDateValue(getEndDate(task)), 'calendar-check')}
             </div>
@@ -75,7 +76,7 @@ export function renderRightSection(task) {
             <h4 class="text-xs font-medium text-base-content/50 mb-2 uppercase tracking-wider">
                 ${i18n.t('taskDetails.workload') || '工时'}
             </h4>
-            <div class="space-y-1">
+            <div class="space-y-4">
                 ${showDuration ? renderWorkloadRow('duration', i18n.t('taskDetails.estimatedHours') || '预计', task.duration || task.estimated_hours, i18n.t('taskDetails.dayUnit') || '天') : ''}
                 ${showActualHours ? renderWorkloadRow('actual-hours', i18n.t('taskDetails.actualHours') || '实际', task.actual_hours, i18n.t('taskDetails.dayUnit') || '天', true) : ''}
             </div>
@@ -114,14 +115,23 @@ export function bindRightSectionEvents(panel, task) {
     });
 
     // 负责人
-    const assigneeInput = panel.querySelector('#task-assignee-input');
+    const assigneeFieldType = getFieldType('assignee');
+    const assigneeInput = panel.querySelector('[data-field="assignee"]');
     if (assigneeInput) {
-        assigneeInput.addEventListener('blur', () => {
-            if (task.assignee !== assigneeInput.value) {
-                task.assignee = assigneeInput.value;
+        const handler = () => {
+            let newValue = '';
+            if (assigneeFieldType === 'multiselect') {
+                newValue = Array.from(assigneeInput.selectedOptions || []).map(opt => opt.value).join(',');
+            } else {
+                newValue = assigneeInput.value;
+            }
+            if (task.assignee !== newValue) {
+                task.assignee = newValue;
                 gantt.updateTask(task.id);
             }
-        });
+        };
+        const eventName = assigneeFieldType === 'text' ? 'blur' : 'change';
+        assigneeInput.addEventListener(eventName, handler);
     }
 
     // 优先级 (自定义下拉)
@@ -244,21 +254,107 @@ function renderStatusSelect(currentStatus) {
 /**
  * 渲染属性行
  */
-function renderPropertyRow(id, label, value, iconType) {
+function renderPropertyRow(id, label, value, iconType, { required = false, system = false, disabled = false } = {}) {
     const iconSvg = getPropertyIcon(iconType);
     const displayValue = value || '';
+    const requiredMark = required ? '<span class="text-error text-xs">*</span>' : '';
+    const systemBadge = system ? `<span class="badge badge-sm badge-ghost" data-i18n="taskDetails.systemField">${i18n.t('taskDetails.systemField') || '系统'}</span>` : '';
+    const disabledText = disabled ? `<div class="text-xs text-base-content/60 mt-1" data-i18n="taskDetails.fieldDisabled">${i18n.t('taskDetails.fieldDisabled') || '此字段已禁用'}</div>` : '';
+    const inputClass = disabled ? 'input input-bordered input-sm w-28 text-right input-disabled' : 'input input-bordered input-sm w-28 text-right';
+    const disabledAttr = disabled ? 'disabled' : '';
 
     return `
-        <div class="flex items-center justify-between py-2">
+        <div class="flex items-start justify-between mb-4">
             <div class="flex items-center gap-2 text-sm text-base-content/70">
                 ${iconSvg}
                 <span>${label}</span>
+                ${requiredMark}
+                ${systemBadge}
             </div>
-            <input type="text" 
-                   id="task-${id}-input" 
-                   class="input input-ghost input-xs w-24 text-right p-0" 
-                   value="${escapeHtml(displayValue)}" 
-                   placeholder="-" />
+            <div class="flex flex-col items-end">
+                <input type="text" 
+                       id="task-${id}-input" 
+                       class="${inputClass}" 
+                       value="${escapeHtml(displayValue)}" 
+                       placeholder="-" 
+                       ${disabledAttr} />
+                ${disabledText}
+            </div>
+        </div>
+    `;
+}
+
+/**
+ * 渲染负责人字段（根据字段类型动态输出）
+ */
+export function renderAssigneeField(task) {
+    const fieldType = getFieldType('assignee');
+    const fieldLabel = i18n.t('taskDetails.assignee') || '负责人';
+    const isDisabled = !isFieldEnabled('assignee');
+    const isSystemField = true;
+    const isRequired = true;
+    const value = task.assignee || '';
+
+    const fieldDef = state.customFields.find(f => f.name === 'assignee');
+    const options = fieldDef?.options || [];
+
+    const requiredMark = isRequired ? '<span class="text-error text-xs">*</span>' : '';
+    const systemBadge = isSystemField ? `<span class="badge badge-sm badge-ghost" data-i18n="taskDetails.systemField">${i18n.t('taskDetails.systemField') || '系统'}</span>` : '';
+    const disabledText = isDisabled ? `<div class="text-xs text-base-content/60 mt-1" data-i18n="taskDetails.fieldDisabled">${i18n.t('taskDetails.fieldDisabled') || '此字段已禁用'}</div>` : '';
+    const disabledAttr = isDisabled ? 'disabled' : '';
+
+    let inputHtml = '';
+
+    if (fieldType === 'select') {
+        inputHtml = `
+            <select class="select select-bordered w-full"
+                    data-field="assignee"
+                    ${disabledAttr}>
+                <option value="">-</option>
+                ${options.map(opt => {
+                    const optValue = escapeAttr(opt);
+                    const optLabel = escapeHtml(opt);
+                    const selected = value === opt ? 'selected' : '';
+                    return `<option value="${optValue}" ${selected}>${optLabel}</option>`;
+                }).join('')}
+            </select>
+        `;
+    } else if (fieldType === 'multiselect') {
+        const selectedValues = value ? value.split(',').map(v => v.trim()) : [];
+        inputHtml = `
+            <select class="select select-bordered w-full"
+                    data-field="assignee"
+                    multiple
+                    ${disabledAttr}>
+                ${options.map(opt => {
+                    const optValue = escapeAttr(opt);
+                    const optLabel = escapeHtml(opt);
+                    const selected = selectedValues.includes(opt) ? 'selected' : '';
+                    return `<option value="${optValue}" ${selected}>${optLabel}</option>`;
+                }).join('')}
+            </select>
+        `;
+    } else {
+        inputHtml = `
+            <input type="text"
+                   class="input input-bordered w-full"
+                   value="${escapeHtml(value)}"
+                   data-field="assignee"
+                   ${disabledAttr}>
+        `;
+    }
+
+    return `
+        <div class="form-control mb-4">
+            <label class="label">
+                <span class="label-text">${fieldLabel}</span>
+                <span class="flex gap-2 items-center">
+                    ${requiredMark}
+                    ${systemBadge}
+                </span>
+            </label>
+            ${inputHtml}
+            ${disabledText}
         </div>
     `;
 }
@@ -268,6 +364,8 @@ function renderPropertyRow(id, label, value, iconType) {
  */
 function renderPriorityRow(currentPriority) {
     const label = i18n.t('taskDetails.priority') || '优先级';
+    const requiredMark = '<span class="text-error text-xs">*</span>';
+    const systemBadge = `<span class="badge badge-sm badge-ghost" data-i18n="taskDetails.systemField">${i18n.t('taskDetails.systemField') || '系统'}</span>`;
 
     const options = Object.entries(PRIORITY_CONFIG).map(([value, cfg]) => ({
         value,
@@ -282,12 +380,14 @@ function renderPriorityRow(currentPriority) {
     `;
 
     return `
-        <div class="flex items-center justify-between py-2">
+        <div class="flex items-center justify-between mb-4">
             <div class="flex items-center gap-2 text-sm text-base-content/70">
                 <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                     <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>
                 </svg>
                 <span>${label}</span>
+                ${requiredMark}
+                ${systemBadge}
             </div>
             <div class="w-28">
                 ${renderDropdownHTML('task-priority', options, currentPriority, renderLabel, '-', true)}
@@ -312,18 +412,26 @@ function renderDateRow(id, label, value, iconType, isOptional = false) {
     const displayText = value || (isOptional ? (i18n.t('taskDetails.notStarted') || '未开始') : '-');
     const valueClass = value ? 'text-base-content' : 'text-base-content/40';
     const iconSvg = getDateIcon(iconType);
+    const inputId = `task-${id}`;
+    const quickLabel = i18n.t('taskDetails.quickDate') || '今天';
 
     return `
-        <div class="flex items-center justify-between py-2">
+        <div class="flex items-center justify-between mb-4">
             <div class="flex items-center gap-2 text-sm text-base-content/70">
                 ${iconSvg}
                 <span>${label}</span>
             </div>
-            <div class="text-sm ${valueClass}">
-                ${value ?
-            `<input type="date" id="task-${id}" class="input input-ghost input-xs p-0 w-28 text-right" value="${value}" />` :
-            `<span class="cursor-pointer hover:text-primary" data-date-field="${id}">${displayText}</span>`
-        }
+            <div class="text-sm ${valueClass} flex items-center gap-1">
+                <input type="date"
+                       id="${inputId}"
+                       class="input input-bordered input-sm w-32 text-right"
+                       value="${value || ''}"
+                       placeholder="${displayText}" />
+                <button type="button"
+                        class="btn btn-xs btn-ghost"
+                        data-quick-date="${inputId}">
+                    ${quickLabel}
+                </button>
             </div>
         </div>
     `;
@@ -338,7 +446,7 @@ function renderWorkloadRow(id, label, value, unit, isOptional = false) {
     const valueClass = value ? 'text-base-content' : 'text-base-content/40';
 
     return `
-        <div class="flex items-center justify-between py-2">
+        <div class="flex items-center justify-between mb-4">
             <div class="flex items-center gap-2 text-sm text-base-content/70">
                 <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                     <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
@@ -348,7 +456,7 @@ function renderWorkloadRow(id, label, value, unit, isOptional = false) {
             <div class="text-sm ${valueClass} flex items-center gap-1">
                 <input type="number" 
                        id="task-${id}-input" 
-                       class="input input-ghost input-xs w-14 text-right p-0" 
+                       class="input input-bordered input-sm w-20 text-right" 
                        value="${displayValue}" 
                        step="0.5" 
                        min="0" 
@@ -389,7 +497,7 @@ function renderCustomFieldsSection(task) {
         const fieldId = `custom-field-${field.name}`;
 
         html += `
-            <div class="flex items-center justify-between py-2">
+            <div class="flex items-center justify-between mb-4">
                 <div class="flex items-center gap-2 text-sm text-base-content/70">
                     <span>${icon}</span>
                     <span>${field.label}</span>
@@ -494,6 +602,16 @@ function bindDateInput(panel, selector, task, fieldName, isEndDate = false) {
     const input = panel.querySelector(selector);
     if (!input) return;
 
+    const quickBtn = panel.querySelector(`[data-quick-date="${input.id}"]`);
+    if (quickBtn) {
+        quickBtn.addEventListener('click', () => {
+            const today = new Date();
+            const iso = today.toISOString().split('T')[0];
+            input.value = iso;
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+    }
+
     input.addEventListener('change', () => {
         const dateValue = new Date(input.value);
         if (isNaN(dateValue.getTime())) return;
@@ -511,8 +629,29 @@ function bindDateInput(panel, selector, task, fieldName, isEndDate = false) {
             task[fieldName] = dateValue;
         }
 
+        if ((fieldName === 'actual_start' || fieldName === 'actual_end') && !validateDateRange(task)) {
+            return;
+        }
+
         gantt.updateTask(task.id);
     });
+}
+
+/**
+ * 验证实际日期范围
+ * @param {Object} task
+ * @returns {boolean}
+ */
+export function validateDateRange(task) {
+    if (task.actual_start && task.actual_end) {
+        const startDate = new Date(task.actual_start);
+        const endDate = new Date(task.actual_end);
+        if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime()) && startDate > endDate) {
+            showToast(i18n.t('taskDetails.dateRangeError') || '实际开始时间不能晚于实际结束时间', 'warning');
+            return false;
+        }
+    }
+    return true;
 }
 
 /**

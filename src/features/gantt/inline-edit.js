@@ -7,7 +7,7 @@
  * - Enter 保存 / Escape 取消
  */
 
-import { state } from '../../core/store.js';
+import { state, getFieldType } from '../../core/store.js';
 import { i18n } from '../../utils/i18n.js';
 
 // 当前活跃的编辑器
@@ -33,25 +33,27 @@ export function initInlineEdit() {
  * @param {string} columnName - 列名
  * @returns {string} 编辑器类型: 'text' | 'number' | 'date' | 'select' | 'progress' | 'none'
  */
-function getEditorType(columnName) {
-    // 内置字段
-    if (columnName === 'text') return 'text';
-    if (columnName === 'start_date') return 'date';
-    if (columnName === 'duration') return 'number';
+export function getEditorType(columnName) {
     if (columnName === 'progress') return 'progress';
+    if (columnName === 'summary') return 'none';
 
-    // 自定义字段
-    const customField = state.customFields.find(f => f.name === columnName);
-    if (customField) {
-        if (customField.type === 'text') return 'text';
-        if (customField.type === 'number') return 'number';
-        if (customField.type === 'select') return 'select';
-        if (customField.type === 'multiselect') return 'multiselect';
-        if (customField.type === 'date') return 'date';
+    const fieldType = getFieldType(columnName);
+    switch (fieldType) {
+        case 'text':
+            return 'text';
+        case 'number':
+            return 'number';
+        case 'date':
+            return 'date';
+        case 'datetime':
+            return 'datetime';
+        case 'select':
+            return 'select';
+        case 'multiselect':
+            return 'multiselect';
+        default:
+            return 'none';
     }
-
-    // 不可编辑
-    return 'none';
 }
 
 /**
@@ -140,6 +142,9 @@ function startInlineEdit(taskId, columnName, cell, editorType) {
         case 'date':
             editorElement = createDateEditor(originalValue);
             break;
+        case 'datetime':
+            editorElement = createDateTimeEditor(originalValue);
+            break;
         case 'progress':
             editorElement = createProgressEditor(originalValue);
             break;
@@ -216,6 +221,23 @@ function createDateEditor(value) {
             input.value = value.toISOString().split('T')[0];
         } else if (typeof value === 'string') {
             input.value = value.split('T')[0];
+        }
+    }
+    input.className = 'gantt-inline-editor';
+    return input;
+}
+
+/**
+ * 创建日期时间编辑器
+ */
+function createDateTimeEditor(value) {
+    const input = document.createElement('input');
+    input.type = 'datetime-local';
+    if (value) {
+        const dateValue = value instanceof Date ? value : new Date(value);
+        if (!isNaN(dateValue.getTime())) {
+            const iso = dateValue.toISOString();
+            input.value = iso.slice(0, 16);
         }
     }
     input.className = 'gantt-inline-editor';
@@ -351,6 +373,9 @@ function saveAndCloseEditor() {
             break;
         case 'date':
             newValue = editorElement.value ? gantt.date.str_to_date('%Y-%m-%d')(editorElement.value) : null;
+            break;
+        case 'datetime':
+            newValue = editorElement.value ? new Date(editorElement.value) : null;
             break;
         case 'progress':
             newValue = (parseInt(editorElement.value) || 0) / 100;
