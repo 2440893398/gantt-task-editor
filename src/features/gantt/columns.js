@@ -7,6 +7,7 @@ import { INTERNAL_FIELDS, SYSTEM_FIELD_CONFIG } from '../../data/fields.js';
 
 import { renderPriorityBadge, renderStatusBadge, renderAssignee, renderProgressBar } from './templates.js';
 import { extractPlainText, escapeAttr } from '../../utils/dom.js';
+import { formatDuration } from '../../utils/time-formatter.js';
 
 /**
  * 获取本地化的列名称
@@ -113,7 +114,8 @@ export function updateGanttColumns() {
                 resize: true,
                 template: function (task) {
                     const duration = task.duration || 0;
-                    return `<span title="${duration}">${duration}</span>`;
+                    const formatted = formatDuration(duration);
+                    return `<span title="${formatted}">${formatted}</span>`;
                 }
             });
         } else if (fieldName === "progress") {
