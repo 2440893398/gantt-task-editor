@@ -17,6 +17,7 @@ import { initResponsive } from './responsive.js';
 import { initInlineEdit, addInlineEditStyles } from './inline-edit.js';
 import { initCriticalPath } from './critical-path.js';
 import { i18n } from '../../utils/i18n.js';
+import { formatDuration } from '../../utils/time-formatter.js';
 import undoManager from '../ai/services/undoManager.js';
 import { openTaskDetailsPanel } from '../task-details/panel.js';
 import { showSummaryPopover, hideSummaryPopover } from '../../utils/dom.js';
@@ -132,6 +133,10 @@ export function initGantt() {
         // 进度
         const progressPercent = Math.round((task.progress || 0) * 100);
         lines.push(`<div class="gantt-tooltip-row">📊 <span class="gantt-tooltip-label">${i18n.t('tooltip.progress')}:</span> ${progressPercent}%</div>`);
+
+        // 工期 (v1.5)
+        const durationText = formatDuration(task.duration || 0);
+        lines.push(`<div class="gantt-tooltip-row">⏱️ <span class="gantt-tooltip-label">${i18n.t('tooltip.duration')}:</span> ${durationText}</div>`);
 
         // 优先级
         if (task.priority) {
