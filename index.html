@@ -1052,33 +1052,6 @@
         </div>
     </div>
 
-    <!-- 删除确认弹窗 -->
-    <dialog id="delete-confirm-modal" class="modal modal-bottom sm:modal-middle">
-        <div class="modal-box">
-            <div class="flex items-start gap-4">
-                <div class="p-3 bg-error/10 rounded-full">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-error" fill="none" viewBox="0 0 24 24"
-                        stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                            d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                    </svg>
-                </div>
-                <div class="flex-1">
-                    <h3 class="font-bold text-lg" data-i18n="fieldManagement.deleteTitle">确认删除</h3>
-                    <p class="py-2 text-base-content/70" id="delete-confirm-message"
-                        data-i18n="fieldManagement.deleteMessage">确定要删除此字段吗？此操作无法撤销。</p>
-                </div>
-            </div>
-            <div class="modal-action">
-                <button class="btn btn-ghost" id="delete-cancel-btn" data-i18n="form.cancel">取消</button>
-                <button class="btn btn-error" id="delete-confirm-btn" data-i18n="form.delete">删除</button>
-            </div>
-        </div>
-        <form method="dialog" class="modal-backdrop">
-            <button>close</button>
-        </form>
-    </dialog>
-
     <!-- 文件输入(用于导入配置) -->
     <input type="file" id="config-file-input" class="hidden" accept=".json">
 

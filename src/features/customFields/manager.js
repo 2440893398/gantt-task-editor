@@ -23,6 +23,7 @@ import { FIELD_TYPE_CONFIG, ICON_OPTIONS } from '../../config/constants.js';
 import { addOptionInput, setOnOptionsChangeCallback } from '../../utils/dom.js';
 import { i18n } from '../../utils/i18n.js';
 import { refreshTaskDetailsPanel } from '../task-details/index.js';
+import { showConfirmDialog } from '../../components/common/confirm-dialog.js';
 
 let sortableInstance = null;
 const DEFAULT_FIELD_ICON = '📝';
@@ -804,9 +805,6 @@ function openSystemFieldEditModal(fieldName) {
 }
 
 
-// 待删除的字段名称
-let pendingDeleteFieldName = null;
-
 /**
  * 显示删除确认弹窗
  */
@@ -814,47 +812,26 @@ export function showDeleteConfirmModal(fieldName) {
     const field = getCustomFieldByName(fieldName);
     if (!field) return;
 
-    pendingDeleteFieldName = fieldName;
+    showConfirmDialog({
+        icon: 'trash-2',
+        variant: 'danger',
+        title: i18n.t('fieldManagement.deleteTitle') || '确认删除',
+        message: i18n.t('fieldManagement.deleteMessage', { name: field.label }) || '确定要删除此字段吗？此操作无法撤销。',
+        confirmText: i18n.t('form.delete') || '删除',
+        cancelText: i18n.t('form.cancel') || '取消',
+        onConfirm: () => {
+            removeCustomField(fieldName);
+            updateGanttColumns();
+            refreshLightbox();
+            renderFieldList();
+            refreshTaskDetailsPanel();
 
-    const modal = document.getElementById('delete-confirm-modal');
-    const message = document.getElementById('delete-confirm-message');
+            // 持久化字段配置到缓存
+            persistCustomFields();
 
-    // 更新确认消息
-    message.textContent = i18n.t('fieldManagement.deleteMessage', { name: field.label });
-
-    modal.showModal();
-}
-
-/**
- * 确认删除字段
- */
-export function confirmDeleteField() {
-    if (!pendingDeleteFieldName) return;
-
-    removeCustomField(pendingDeleteFieldName);
-    updateGanttColumns();
-    refreshLightbox();
-    renderFieldList();
-    refreshTaskDetailsPanel();
-
-    // 持久化字段配置到缓存
-    persistCustomFields();
-
-    showToast(i18n.t('message.deleteSuccess'), 'success');
-
-    // 关闭弹窗并清理状态
-    const modal = document.getElementById('delete-confirm-modal');
-    modal.close();
-    pendingDeleteFieldName = null;
-}
-
-/**
- * 取消删除
- */
-export function cancelDeleteField() {
-    const modal = document.getElementById('delete-confirm-modal');
-    modal.close();
-    pendingDeleteFieldName = null;
+            showToast(i18n.t('message.deleteSuccess'), 'success');
+        }
+    });
 }
 
 /**
@@ -1069,12 +1046,6 @@ export function initCustomFieldsUI() {
             modal.style.zIndex = '';
         }, 300);
     });
-
-    // 删除确认弹窗 - 确认按钮
-    document.getElementById('delete-confirm-btn').addEventListener('click', confirmDeleteField);
-
-    // 删除确认弹窗 - 取消按钮
-    document.getElementById('delete-cancel-btn').addEventListener('click', cancelDeleteField);
 
     // 暴露给全局 (Fix: 添加字段按钮点击报错)
     window.openFieldManagementPanel = openFieldManagementPanel;

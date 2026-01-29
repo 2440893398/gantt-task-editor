@@ -8,6 +8,7 @@ import { showToast } from '../../utils/toast.js';
 import { renderLeftSection, bindLeftSectionEvents } from './left-section.js';
 import { renderRightSection, bindRightSectionEvents } from './right-section.js';
 import { destroyRichTextEditor } from '../../components/rich-text-editor.js';
+import { showConfirmDialog } from '../../components/common/confirm-dialog.js';
 
 let currentPanel = null;
 let currentTaskId = null;
@@ -302,72 +303,18 @@ function handleEscKey(e) {
  * 显示删除确认弹窗
  */
 function showDeleteConfirmModal(task) {
-    // 创建确认弹窗
-    const modal = document.createElement('div');
-    modal.id = 'delete-confirm-modal';
-    modal.className = 'fixed inset-0 z-[7000] flex items-center justify-center';
-    modal.innerHTML = `
-        <div class="fixed inset-0 bg-black/60 transition-opacity" id="delete-modal-backdrop"></div>
-        <div class="relative bg-base-100 rounded-2xl shadow-2xl w-[400px] max-w-[90vw] p-6 transform transition-all scale-95 opacity-0" id="delete-modal-content">
-            <div class="flex flex-col items-center text-center">
-                <div class="w-16 h-16 rounded-full bg-error/10 flex items-center justify-center mb-4">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="w-8 h-8 text-error" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                        <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
-                        <line x1="10" y1="11" x2="10" y2="17"/>
-                        <line x1="14" y1="11" x2="14" y2="17"/>
-                    </svg>
-                </div>
-                <h3 class="text-lg font-semibold text-base-content mb-2">
-                    ${i18n.t('message.confirmDeleteTitle') || '删除任务'}
-                </h3>
-                <p class="text-sm text-base-content/70 mb-6">
-                    ${i18n.t('message.confirmDelete') || '确定要删除此任务吗？此操作无法撤销。'}
-                </p>
-                <div class="flex gap-3 w-full">
-                    <button id="delete-cancel-btn" class="btn btn-ghost flex-1">
-                        ${i18n.t('form.cancel') || '取消'}
-                    </button>
-                    <button id="delete-confirm-btn" class="btn btn-error flex-1">
-                        ${i18n.t('form.delete') || '删除'}
-                    </button>
-                </div>
-            </div>
-        </div>
-    `;
-
-    document.body.appendChild(modal);
-
-    // 动画显示
-    requestAnimationFrame(() => {
-        const content = modal.querySelector('#delete-modal-content');
-        if (content) {
-            content.classList.remove('scale-95', 'opacity-0');
-            content.classList.add('scale-100', 'opacity-100');
+    showConfirmDialog({
+        icon: 'trash-2',
+        variant: 'danger',
+        title: i18n.t('message.confirmDeleteTitle') || '删除任务',
+        message: i18n.t('message.confirmDelete') || '确定要删除此任务吗？此操作无法撤销。',
+        confirmText: i18n.t('form.delete') || '删除',
+        cancelText: i18n.t('form.cancel') || '取消',
+        onConfirm: () => {
+            gantt.deleteTask(task.id);
+            closeTaskDetailsPanel();
+            showToast(i18n.t('message.deleteSuccess') || '删除成功', 'success');
         }
-    });
-
-    // 关闭弹窗函数
-    const closeModal = () => {
-        const content = modal.querySelector('#delete-modal-content');
-        if (content) {
-            content.classList.remove('scale-100', 'opacity-100');
-            content.classList.add('scale-95', 'opacity-0');
-        }
-        setTimeout(() => modal.remove(), 200);
-    };
-
-    // 取消按钮
-    modal.querySelector('#delete-cancel-btn')?.addEventListener('click', closeModal);
-
-    // 点击背景关闭
-    modal.querySelector('#delete-modal-backdrop')?.addEventListener('click', closeModal);
-
-    // 确认删除
-    modal.querySelector('#delete-confirm-btn')?.addEventListener('click', () => {
-        gantt.deleteTask(task.id);
-        closeModal();
-        closeTaskDetailsPanel();
-        showToast(i18n.t('message.deleteSuccess') || '删除成功', 'success');
     });
 }
 

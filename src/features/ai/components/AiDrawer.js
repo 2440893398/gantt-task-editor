@@ -10,6 +10,7 @@ console.log('AiDrawer imported i18n:', i18n);
 console.log('AiDrawer imported i18n:', i18n);
 import { getAgentName } from '../prompts/agentRegistry.js';
 import { openAiConfigModal } from './AiConfigModal.js';
+import { showConfirmDialog } from '../../../components/common/confirm-dialog.js';
 
 let drawerEl = null;
 let messagesEl = null;
@@ -155,21 +156,6 @@ function createDrawerHTML() {
     <!-- 遮罩层 -->
     <div id="ai_drawer_backdrop" class="fixed inset-0 bg-black/30 z-[6050] hidden transition-opacity duration-300 opacity-0"></div>
 
-    <!-- 清空对话确认弹窗 -->
-    <dialog id="ai_clear_confirm_modal" class="modal modal-bottom sm:modal-middle">
-        <div class="modal-box">
-            <h3 class="font-bold text-lg">${i18n.t('ai.drawer.clearTitle') || '清空对话'}</h3>
-            <p class="py-4 text-sm text-base-content/70">
-                ${i18n.t('ai.drawer.clearConfirm') || '确定要清空所有对话记录吗？此操作无法撤销。'}
-            </p>
-            <div class="modal-action">
-                <button class="btn btn-ghost" id="ai_clear_cancel">${i18n.t('form.cancel') || '取消'}</button>
-                <button class="btn btn-error" id="ai_clear_confirm">${i18n.t('ai.drawer.clear') || '清空'}</button>
-            </div>
-        </div>
-        <form method="dialog" class="modal-backdrop"><button>close</button></form>
-    </dialog>
-
     <style>
         /* 打字机光标闪烁 */
         .ai-cursor {
@@ -249,14 +235,15 @@ function bindEvents() {
 
     // 清空对话
     document.getElementById('ai_drawer_clear')?.addEventListener('click', () => {
-        document.getElementById('ai_clear_confirm_modal')?.showModal();
-    });
-    document.getElementById('ai_clear_cancel')?.addEventListener('click', () => {
-        document.getElementById('ai_clear_confirm_modal')?.close();
-    });
-    document.getElementById('ai_clear_confirm')?.addEventListener('click', () => {
-        clearConversation();
-        document.getElementById('ai_clear_confirm_modal')?.close();
+        showConfirmDialog({
+            icon: 'trash-2',
+            variant: 'danger',
+            title: i18n.t('ai.drawer.clearTitle') || '清空对话',
+            message: i18n.t('ai.drawer.clearConfirm') || '确定要清空所有对话记录吗？此操作无法撤销。',
+            confirmText: i18n.t('ai.drawer.clear') || '清空',
+            cancelText: i18n.t('form.cancel') || '取消',
+            onConfirm: () => clearConversation()
+        });
     });
 
     // F-106: 发送消息按钮
