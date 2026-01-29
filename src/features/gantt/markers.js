@@ -109,13 +109,6 @@ function addTodayLineElement() {
         left: ${pos}px;
         width: 2px;
         height: 100%;
-        background: repeating-linear-gradient(
-            to bottom,
-            #EF4444 0px,
-            #EF4444 6px,
-            transparent 6px,
-            transparent 10px
-        );
         z-index: 100;
         pointer-events: none;
     `;

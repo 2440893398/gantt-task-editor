@@ -19,8 +19,30 @@ import { initCriticalPath } from './critical-path.js';
 import { i18n } from '../../utils/i18n.js';
 import { formatDuration } from '../../utils/time-formatter.js';
 import undoManager from '../ai/services/undoManager.js';
-import { openTaskDetailsPanel } from '../task-details/panel.js';
+
 import { showSummaryPopover, hideSummaryPopover } from '../../utils/dom.js';
+import { initBaseline, handleSaveBaseline, handleToggleBaseline } from './baseline.js';
+import { detectResourceConflicts } from './resource-conflict.js';
+import { exportToExcel } from './export.js';
+import { exportCurrentView, exportFullGantt } from './export-image.js';
+import { initSnapping } from './snapping.js';
+
+console.log('INIT JS LOADED CLEARED');
+
+// Conflict state
+let conflictTaskIds = new Set();
+let conflictDetails = {};
+let detectTimer = null;
+
+function scheduleConflictDetection() {
+    clearTimeout(detectTimer);
+    detectTimer = setTimeout(() => {
+        const result = detectResourceConflicts();
+        conflictTaskIds = result.conflictTaskIds;
+        conflictDetails = result.conflictDetails;
+        gantt.render();
+    }, 500);
+}
 
 /**
  * 初始化甘特图
@@ -138,6 +160,21 @@ export function initGantt() {
         const durationText = formatDuration(task.duration || 0);
         lines.push(`<div class="gantt-tooltip-row">⏱️ <span class="gantt-tooltip-label">${i18n.t('tooltip.duration')}:</span> ${durationText}</div>`);
 
+        // Baseline deviation
+        if (task.baseline_end && localStorage.getItem('show_baseline') === 'true') {
+            const actualEnd = new Date(task.end_date);
+            const baselineEnd = new Date(task.baseline_end);
+            const diffDays = (actualEnd - baselineEnd) / (1000 * 60 * 60 * 24);
+
+            if (Math.abs(diffDays) > 0.01) {
+                if (diffDays > 0) {
+                    lines.push(`<div class="gantt-tooltip-row" style="color: #f59e0b;">⚠️ <span class="gantt-tooltip-label">${i18n.t('baseline.delayed')}:</span> ${formatDuration(diffDays)}</div>`);
+                } else {
+                    lines.push(`<div class="gantt-tooltip-row" style="color: #10b981;">✅ <span class="gantt-tooltip-label">${i18n.t('baseline.ahead')}:</span> ${formatDuration(Math.abs(diffDays))}</div>`);
+                }
+            }
+        }
+
         // 优先级
         if (task.priority) {
             const priorityEmoji = task.priority === 'high' ? '🔴' : task.priority === 'medium' ? '🟡' : '🟢';
@@ -148,6 +185,22 @@ export function initGantt() {
         if (task.status) {
             const statusEmoji = task.status === 'completed' ? '✅' : task.status === 'in_progress' ? '🔄' : task.status === 'suspended' ? '❌' : '⏸️';
             lines.push(`<div class="gantt-tooltip-row">${statusEmoji} <span class="gantt-tooltip-label">${i18n.t('tooltip.status')}:</span> ${getStatusText(task.status)}</div>`);
+        }
+
+        // Resource Conflict Warning
+        if (conflictTaskIds.has(task.id)) {
+            const conflicts = conflictDetails[task.id];
+            if (conflicts && conflicts.length > 0) {
+                // Find worst overload
+                const worst = conflicts.reduce((max, c) => c.overload > max.overload ? c : max, conflicts[0]);
+
+                lines.push(`<div style="color: #f59e0b; margin-top: 8px; border-top: 1px solid #fcd34d; padding-top: 8px;">`);
+                lines.push(`⚠️ ${i18n.t('resource.overload')}<br/>`);
+                lines.push(`${worst.assignee} ${i18n.t('resource.on')} ${worst.date}<br/>`);
+                lines.push(`${i18n.t('resource.workload')}: ${worst.totalHours.toFixed(1)} ${i18n.t('resource.hours')}<br/>`);
+                lines.push(`${i18n.t('resource.overloadAmount')}: ${worst.overload.toFixed(1)} ${i18n.t('resource.hours')}`);
+                lines.push(`</div>`);
+            }
         }
 
         // F-112: 任务概述
@@ -203,6 +256,22 @@ export function initGantt() {
     // 任务样式模板
     gantt.templates.task_class = function (start, end, task) {
         let classes = [];
+
+        // Milestone
+        if (task.type === 'milestone') {
+            classes.push('task_milestone');
+        }
+
+        // Short task (< 4 hours = 0.5 days)
+        if (task.duration < 0.5) {
+            classes.push('short-task');
+        }
+
+        // Resource conflict
+        if (conflictTaskIds.has(task.id)) {
+            classes.push('resource-conflict');
+        }
+
         if (task.progress < 1 && new Date() > end) {
             classes.push("task_overdue");
         }
@@ -291,7 +360,9 @@ export function initGantt() {
     // F-112: 拦截所有 Lightbox 打开请求，改用任务详情面板
     gantt.attachEvent("onBeforeLightbox", function (task_id) {
         // 打开任务详情面板
-        openTaskDetailsPanel(task_id);
+        if (window.openTaskDetailsPanel) {
+            window.openTaskDetailsPanel(task_id);
+        }
         // 返回 false 阻止默认 lightbox 打开
         return false;
     });
@@ -405,11 +476,11 @@ export function initGantt() {
     gantt.parse(defaultTasks);
 
     // 摘要字段弹窗事件监听
-    gantt.attachEvent("onGanttReady", function() {
+    gantt.attachEvent("onGanttReady", function () {
         const gridData = gantt.$grid_data;
 
         // 鼠标进入事件（使用事件委托）
-        gridData.addEventListener('mouseenter', function(e) {
+        gridData.addEventListener('mouseenter', function (e) {
             const cell = e.target.closest('.gantt-summary-cell');
             if (!cell) return;
 
@@ -420,7 +491,7 @@ export function initGantt() {
         }, true); // 使用捕获阶段确保事件正确触发
 
         // 鼠标离开事件
-        gridData.addEventListener('mouseleave', function(e) {
+        gridData.addEventListener('mouseleave', function (e) {
             const cell = e.target.closest('.gantt-summary-cell');
             if (cell) {
                 hideSummaryPopover();
@@ -447,8 +518,21 @@ export function initGantt() {
     initInlineEdit();
     addInlineEditStyles();
 
+    // Attach conflict detection events
+    gantt.attachEvent('onAfterTaskUpdate', scheduleConflictDetection);
+    gantt.attachEvent('onAfterTaskAdd', scheduleConflictDetection);
+    gantt.attachEvent('onAfterTaskDelete', scheduleConflictDetection);
+    // Initial check (delayed)
+    setTimeout(scheduleConflictDetection, 1000);
+
     // 初始化关键路径模块
     initCriticalPath();
+
+    // 初始化基线功能
+    initBaseline();
+
+    // Init Smart Snapping (Phase 5)
+    initSnapping();
 
     // 甘特图渲染后重新应用选中样式
     gantt.attachEvent("onGanttRender", function () {
@@ -456,6 +540,11 @@ export function initGantt() {
             setTimeout(updateSelectedTasksUI, 50);
         }
     });
+
+    // Export Events
+    document.getElementById('export-excel-btn')?.addEventListener('click', exportToExcel);
+    document.getElementById('export-current-view-btn')?.addEventListener('click', exportCurrentView);
+    document.getElementById('export-full-gantt-btn')?.addEventListener('click', exportFullGantt);
 }
 
 /**
@@ -554,4 +643,19 @@ export function setupGlobalEvents() {
 
     // 初始化 Resizer
     initResizer();
+
+    // Baseline UI Events
+    document.getElementById('save-baseline-btn')?.addEventListener('click', handleSaveBaseline);
+    document.getElementById('show-baseline-toggle')?.addEventListener('change', (e) => {
+        handleToggleBaseline(e.target.checked);
+    });
+
+    // Restore baseline toggle state
+    try {
+        const showBaseline = localStorage.getItem('show_baseline') === 'true';
+        const toggle = document.getElementById('show-baseline-toggle');
+        if (toggle) toggle.checked = showBaseline;
+    } catch (e) {
+        console.warn('Failed to restore baseline toggle state:', e);
+    }
 }

@@ -3,6 +3,8 @@
  * 支持 分屏(split) / 表格(table) / 甘特(gantt) 三种视图
  */
 import { getViewMode, setViewMode } from '../../core/store.js';
+import { updateGanttColumns } from './columns.js';
+import { i18n } from '../../utils/i18n.js';
 
 /**
  * 初始化视图切换
@@ -46,14 +48,18 @@ function applyViewMode(mode) {
     if (mode === 'split') {
         gantt.config.show_grid = true;
         gantt.config.show_chart = true;
+        updateGanttColumns();
     } else if (mode === 'table') {
         gantt.config.show_grid = true;
         gantt.config.show_chart = false;
+        updateGanttColumns();
     } else if (mode === 'gantt') {
         gantt.config.show_grid = true;
         gantt.config.show_chart = true;
-        // Note: In gantt-only mode, we keep grid visible but with minimal columns
-        // This will be refined in Task 3B (Gantt visual enhancement)
+        // Gantt Only: grid minimal columns
+        gantt.config.columns = [
+            { name: 'text', label: i18n.t('columns.text') || '任务', tree: true, width: '*', min_width: 240 }
+        ];
     }
 
     gantt.render();
