@@ -23,6 +23,9 @@ let isStreaming = false; // 流式输出状态
 // 对话历史 (F-106)
 let conversationHistory = [];
 
+// 工具调用状态 DOM 缓存（toolCallId -> element）
+const toolStatusElById = new Map();
+
 // Token 统计 (F-111)
 let tokenStats = {
     promptTokens: 0,
@@ -475,6 +478,86 @@ function bindMessageFooterEvents(message) {
 }
 
 /**
+ * 展示工具调用状态（可折叠）
+ * @param {{id: string, name: string, args: any}} toolCall
+ * @returns {HTMLElement|null}
+ */
+export function showToolCall(toolCall) {
+    if (!messagesEl || !toolCall) return null;
+
+    const statusEl = document.createElement('div');
+    statusEl.className = 'ai-tool-call';
+    statusEl.dataset.toolCallId = toolCall.id;
+
+    const argsText = escapeHtml(JSON.stringify(toolCall.args ?? {}, null, 2));
+
+    statusEl.innerHTML = `
+        <details open>
+            <summary>
+                <span class="tool-icon">🔧</span>
+                <span class="tool-name">调用 ${escapeHtml(getToolDisplayName(toolCall.name))}</span>
+                <span class="tool-spinner" aria-hidden="true"></span>
+            </summary>
+            <pre class="tool-args">${argsText}</pre>
+        </details>
+    `;
+
+    messagesEl.appendChild(statusEl);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+
+    if (toolCall.id) toolStatusElById.set(toolCall.id, statusEl);
+    return statusEl;
+}
+
+/**
+ * 更新工具执行结果
+ * @param {{id: string, name: string, result: any}} toolResult
+ * @param {HTMLElement|null} statusEl
+ */
+export function showToolResult(toolResult, statusEl = null) {
+    if (!messagesEl || !toolResult) return;
+
+    const el = statusEl || toolStatusElById.get(toolResult.id);
+    if (!el) {
+        // fallback：没有对应 status element 时，直接新建一条显示
+        showToolCall({ id: toolResult.id, name: toolResult.name, args: {} });
+        return showToolResult(toolResult, toolStatusElById.get(toolResult.id));
+    }
+
+    const spinner = el.querySelector('.tool-spinner');
+    if (spinner) spinner.remove();
+
+    const summary = el.querySelector('summary');
+    if (summary && !summary.querySelector('.tool-done')) {
+        const done = document.createElement('span');
+        done.className = 'tool-done';
+        done.textContent = '✓';
+        summary.appendChild(done);
+    }
+
+    const details = el.querySelector('details');
+    if (details) {
+        const resultEl = document.createElement('pre');
+        resultEl.className = 'tool-result';
+        resultEl.textContent = JSON.stringify(toolResult.result ?? {}, null, 2);
+        details.appendChild(resultEl);
+    }
+
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function getToolDisplayName(name) {
+    const nameMap = {
+        get_today_tasks: '查询今日任务',
+        get_overdue_tasks: '查询逾期任务',
+        get_tasks_by_status: '按状态筛选',
+        get_tasks_by_priority: '按优先级筛选',
+        get_progress_summary: '获取进度概览'
+    };
+    return nameMap[name] || name;
+}
+
+/**
  * 开始流式输出
  */
 export function startStreaming() {
@@ -679,6 +762,7 @@ function showLoading(show) {
 export function clearConversation() {
     conversationHistory = [];
     tokenStats = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+    toolStatusElById.clear();
 
     if (messagesEl) {
         messagesEl.innerHTML = `
@@ -924,6 +1008,8 @@ export default {
     startStreaming,
     appendText,
     finishStreaming,
+    showToolCall,
+    showToolResult,
     showError,
     getCurrentText,
     getConversationHistory,

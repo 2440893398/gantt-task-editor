@@ -6,6 +6,8 @@
 import { createOpenAI } from '@ai-sdk/openai';
 import { streamText } from 'ai';
 import { getAiConfigState, setAiStatus } from '../../../core/store.js';
+import { quickRoute, routeToSkill } from '../agent/router.js';
+import { executeSkill, executeGeneralChat } from '../agent/executor.js';
 
 /**
  * 执行智能体流式调用
@@ -72,6 +74,83 @@ export async function runAgentStream(agentConfig, userContext, onChunk, onFinish
         console.error('[AI Client] Stream error:', error);
         setAiStatus('error');
         onError && onError(error);
+    }
+}
+
+/**
+ * 智能对话入口（支持 Skill 路由 + 工具调用）
+ *
+ * 路由优先级：关键词快速匹配 → AI 路由 → 通用对话
+ *
+ * @param {string} userMessage
+ * @param {Array<{role: string, content: string}>} history
+ * @param {Object} callbacks
+ */
+export async function runSmartChat(userMessage, history, callbacks = {}) {
+    const { onChunk, onFinish, onError, onToolCall, onToolResult, onSkillStart } = callbacks;
+    const { apiKey, baseUrl, model } = getAiConfigState();
+    const resolvedModel = model || 'gpt-3.5-turbo';
+
+    if (!apiKey) {
+        onError?.(new Error('AI_NOT_CONFIGURED'));
+        return;
+    }
+
+    setAiStatus('loading');
+
+    try {
+        const openai = createOpenAI({
+            apiKey: apiKey,
+            baseURL: baseUrl,
+            compatibility: 'strict'
+        });
+
+        const messages = [
+            ...(Array.isArray(history) ? history.map(m => ({ role: m.role, content: m.content })) : []),
+            { role: 'user', content: userMessage }
+        ];
+
+        // Phase 1: route
+        let skillId = null;
+        const quickResult = quickRoute(userMessage);
+        if (quickResult) {
+            skillId = quickResult.skill;
+        }
+
+        if (!skillId) {
+            try {
+                const route = await routeToSkill(userMessage, openai, resolvedModel);
+                if (route.skill && route.confidence > 0.7) {
+                    skillId = route.skill;
+                }
+            } catch (routeError) {
+                console.warn('[SmartChat] Route failed, fallback to general:', routeError);
+            }
+        }
+
+        // Phase 2: execute
+        let result;
+        if (skillId) {
+            result = await executeSkill(skillId, messages, openai, resolvedModel, {
+                onToolCall,
+                onToolResult,
+                onSkillStart
+            });
+        } else {
+            result = await executeGeneralChat(messages, openai, resolvedModel);
+        }
+
+        for await (const textPart of result.textStream) {
+            onChunk?.(textPart);
+        }
+
+        const usage = await result.usage;
+        setAiStatus('idle');
+        onFinish?.(usage);
+    } catch (error) {
+        console.error('[AI Client] Smart chat error:', error);
+        setAiStatus('error');
+        onError?.(error);
     }
 }
 

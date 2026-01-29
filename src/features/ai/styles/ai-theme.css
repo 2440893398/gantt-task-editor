@@ -162,3 +162,62 @@
         opacity: 0;
     }
 }
+
+/* ============================================
+   Tool Call UI (Task 4A)
+   ============================================ */
+
+.ai-tool-call {
+    margin: 8px 0;
+    padding: 8px 12px;
+    background: var(--color-secondary, #F1F5F9);
+    border: 1px solid var(--color-border, #E2E8F0);
+    border-radius: 8px;
+    font-size: 13px;
+    color: var(--color-foreground, #0F172A);
+}
+
+.ai-tool-call summary {
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    list-style: none;
+}
+
+.ai-tool-call summary::-webkit-details-marker {
+    display: none;
+}
+
+.ai-tool-call .tool-spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(100, 116, 139, 0.35);
+    border-top-color: var(--color-primary, #0EA5E9);
+    border-radius: 50%;
+    animation: ai-tool-spin 0.6s linear infinite;
+}
+
+.ai-tool-call .tool-done {
+    margin-left: 6px;
+    color: #10B981;
+    font-weight: 700;
+}
+
+.ai-tool-call pre {
+    margin: 8px 0 0;
+    padding: 8px;
+    background: rgba(15, 23, 42, 0.04);
+    border-radius: 6px;
+    font-size: 12px;
+    max-height: 180px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+@keyframes ai-tool-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}

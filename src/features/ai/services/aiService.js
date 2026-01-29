@@ -6,7 +6,7 @@
 import { i18n } from '../../../utils/i18n.js';
 import { showToast } from '../../../utils/toast.js';
 import { checkAiConfigured } from '../../../core/store.js';
-import { runAgentStream } from '../api/client.js';
+import { runAgentStream, runSmartChat } from '../api/client.js';
 import { getAgent, getAgentName } from '../prompts/agentRegistry.js';
 import { openAiConfigModal } from '../components/AiConfigModal.js';
 import AiDrawer from '../components/AiDrawer.js';
@@ -151,6 +151,41 @@ export async function invokeAgent(agentId, context = {}) {
 
     // 如果有文本，开始流式输出；否则等待用户输入
     if (context.text) {
+        // chat agent 使用 runSmartChat（带工具 + 路由）
+        if (agentId === 'chat') {
+            let hasStartedAssistant = false;
+            const toolStatusById = new Map();
+
+            await runSmartChat(context.text, [], {
+                onToolCall: (toolCalls = []) => {
+                    toolCalls.forEach(tc => {
+                        const el = AiDrawer.showToolCall(tc);
+                        toolStatusById.set(tc.id, el);
+                    });
+                },
+                onToolResult: (toolResults = []) => {
+                    toolResults.forEach(tr => {
+                        const el = toolStatusById.get(tr.id);
+                        AiDrawer.showToolResult(tr, el);
+                    });
+                },
+                onChunk: (text) => {
+                    if (!hasStartedAssistant) {
+                        AiDrawer.startStreaming();
+                        hasStartedAssistant = true;
+                    }
+                    AiDrawer.appendText(text);
+                },
+                onFinish: (usage) => {
+                    AiDrawer.finishStreaming(usage);
+                },
+                onError: (error) => {
+                    handleError(error);
+                }
+            });
+            return;
+        }
+
         AiDrawer.startStreaming();
 
         // F-109: 获取附加指令
@@ -274,6 +309,52 @@ export async function continueConversation(userMessage, messageId = null) {
         messages: messages,
         additionalInfo: additionalInstruction
     };
+
+    // chat agent：走 runSmartChat（带工具 + 路由）
+    if (currentContext.agentId === 'chat') {
+        let hasStartedAssistant = false;
+        const toolStatusById = new Map();
+
+        // Retry: 没有新输入时，复用最后一条 user 消息（避免追加空 user 消息）
+        let effectiveMessage = userMessage;
+        let effectiveHistory = history;
+        if (!effectiveMessage) {
+            const lastUserIndex = [...history].map(m => m.role).lastIndexOf('user');
+            if (lastUserIndex >= 0) {
+                effectiveMessage = history[lastUserIndex].content || '';
+                effectiveHistory = history.slice(0, lastUserIndex);
+            } else {
+                effectiveMessage = '';
+                effectiveHistory = history;
+            }
+        }
+
+        await runSmartChat(effectiveMessage, effectiveHistory, {
+            onToolCall: (toolCalls = []) => {
+                toolCalls.forEach(tc => {
+                    const el = AiDrawer.showToolCall(tc);
+                    toolStatusById.set(tc.id, el);
+                });
+            },
+            onToolResult: (toolResults = []) => {
+                toolResults.forEach(tr => {
+                    const el = toolStatusById.get(tr.id);
+                    AiDrawer.showToolResult(tr, el);
+                });
+            },
+            onChunk: (text) => {
+                if (!hasStartedAssistant) {
+                    AiDrawer.startStreaming();
+                    hasStartedAssistant = true;
+                }
+                AiDrawer.appendText(text);
+            },
+            onFinish: (usage) => AiDrawer.finishStreaming(usage),
+            onError: (error) => handleError(error)
+        });
+
+        return;
+    }
 
     // 开始流式输出
     AiDrawer.startStreaming();
