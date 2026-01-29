@@ -6,8 +6,6 @@
 
 import { i18n } from '../../../utils/i18n.js';
 import { showToast } from '../../../utils/toast.js';
-console.log('AiDrawer imported i18n:', i18n);
-console.log('AiDrawer imported i18n:', i18n);
 import { getAgentName } from '../prompts/agentRegistry.js';
 import { openAiConfigModal } from './AiConfigModal.js';
 import { showConfirmDialog } from '../../../components/common/confirm-dialog.js';
@@ -39,10 +37,12 @@ let tokenStats = {
 function createDrawerHTML() {
     return `
     <!-- AI 流式响应抽屉 -->
-    <div id="ai_drawer" class="fixed inset-y-0 right-0 z-[6100] w-[420px] max-w-full bg-base-100 shadow-2xl transform translate-x-full transition-transform duration-300 flex flex-col"
+    <div id="ai_drawer" class="fixed inset-y-0 right-0 z-[6100] w-[420px] max-w-full transform translate-x-full transition-transform duration-300 flex flex-col"
+         style="background: var(--color-card, #FFFFFF); border-left: 1px solid var(--color-border, #E2E8F0); border-radius: var(--radius-m, 12px) 0 0 var(--radius-m, 12px); box-shadow: var(--shadow-modal, 0 12px 40px rgba(15,23,42,0.18));"
          role="dialog" aria-modal="false" aria-labelledby="ai_drawer_title">
         <!-- 头部 -->
-        <div class="flex items-center justify-between p-4 border-b border-base-200 bg-base-100/80 backdrop-blur sticky top-0 z-10">
+        <div class="h-20 px-4 flex items-center justify-between sticky top-0 z-10"
+             style="background: var(--color-surface, #F8FAFC); border-bottom: 1px solid var(--color-border, #E2E8F0);">
             <h3 class="font-bold flex items-center gap-2 text-lg" id="ai_drawer_title">
                 <span class="loading loading-spinner loading-sm text-primary hidden" id="ai_drawer_loading"></span>
                 <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-primary" id="ai_drawer_icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -51,18 +51,21 @@ function createDrawerHTML() {
                 <span id="ai_drawer_title_text" data-i18n="ai.drawer.title">AI 助手</span>
             </h3>
             <div class="flex items-center gap-1">
-                <button class="btn btn-sm btn-ghost btn-square tooltip tooltip-bottom" data-tip="${i18n.t('ai.config.title') || '设置'}" id="ai_drawer_settings">
+                <button class="w-8 h-8 inline-flex items-center justify-center tooltip tooltip-bottom" data-tip="${i18n.t('ai.config.title') || '设置'}" id="ai_drawer_settings"
+                        style="background: var(--color-card, #FFFFFF); border: 1px solid var(--color-border, #E2E8F0); border-radius: 10px; color: var(--color-foreground, #0F172A);">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                     </svg>
                 </button>
-                <button class="btn btn-sm btn-ghost btn-square tooltip tooltip-left" data-tip="${i18n.t('ai.drawer.clear') || '清空对话'}" id="ai_drawer_clear">
+                <button class="w-8 h-8 inline-flex items-center justify-center tooltip tooltip-left" data-tip="${i18n.t('ai.drawer.clear') || '清空对话'}" id="ai_drawer_clear"
+                        style="background: var(--color-card, #FFFFFF); border: 1px solid var(--color-border, #E2E8F0); border-radius: 10px; color: var(--color-foreground, #0F172A);">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                     </svg>
                 </button>
-                <button class="btn btn-sm btn-ghost btn-square" id="ai_drawer_close" aria-label="关闭">
+                <button class="w-8 h-8 inline-flex items-center justify-center" id="ai_drawer_close" aria-label="关闭"
+                        style="background: var(--color-card, #FFFFFF); border: 1px solid var(--color-border, #E2E8F0); border-radius: 10px; color: var(--color-muted-foreground, #64748B);">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
                     </svg>
@@ -71,7 +74,7 @@ function createDrawerHTML() {
         </div>
 
         <!-- 滚动消息区 -->
-        <div class="flex-1 overflow-y-auto p-4 space-y-4" id="ai_drawer_messages">
+        <div class="flex-1 overflow-y-auto p-4 space-y-4" id="ai_drawer_messages" style="background: var(--color-surface, #F8FAFC);">
             <!-- 消息气泡动态生成 -->
         </div>
 
@@ -134,15 +137,15 @@ function createDrawerHTML() {
             </div>
 
             <!-- F-106: 聊天输入框 -->
-            <div class="p-4 pt-0">
+            <div class="p-4" style="background: var(--color-surface, #F8FAFC); border-top: 1px solid var(--color-border, #E2E8F0);">
                 <div class="flex gap-2">
                     <textarea 
-                        class="textarea textarea-bordered flex-1 text-sm resize-none shadow-sm focus:border-primary" 
+                        class="ai-chat-input flex-1 text-sm resize-none outline-none" 
                         rows="2"
                         id="ai_chat_input"
                         placeholder="${i18n.t('ai.drawer.chatPlaceholder') || '输入消息继续对话/提问...'}"
                     ></textarea>
-                    <button class="btn btn-primary self-end shadow-md" id="ai_send_btn">
+                    <button class="ai-send-btn self-end" id="ai_send_btn" type="button">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
                         </svg>
@@ -157,7 +160,8 @@ function createDrawerHTML() {
     </div>
 
     <!-- 遮罩层 -->
-    <div id="ai_drawer_backdrop" class="fixed inset-0 bg-black/30 z-[6050] hidden transition-opacity duration-300 opacity-0"></div>
+    <div id="ai_drawer_backdrop" class="fixed inset-0 z-[6050] hidden transition-opacity duration-300 opacity-0"
+         style="background: var(--backdrop-color, rgba(15, 23, 42, 0.3));"></div>
 
     <style>
         /* 打字机光标闪烁 */
@@ -367,7 +371,7 @@ function renderMessage(message) {
 
     const isUser = message.role === 'user';
     const bubbleClass = isUser ? 'chat-end' : 'chat-start';
-    const bubbleColor = isUser ? 'chat-bubble-primary' : 'bg-base-200 text-base-content';
+    const bubbleColor = isUser ? 'ai-bubble-user' : 'ai-bubble-ai';
     const avatar = isUser ? '👤' : '🤖';
     const label = isUser ? (i18n.t('ai.drawer.you') || '你') : 'AI';
 
@@ -378,7 +382,7 @@ function renderMessage(message) {
                 <time>${message.timestamp}</time>
             </div>
             <div class="chat-bubble ${bubbleColor}">
-                <div class="prose prose-sm max-w-none ${isUser ? 'text-primary-content' : ''}" id="msg_content_${message.id}">
+                <div class="prose max-w-none" id="msg_content_${message.id}">
                     ${isUser ? escapeHtml(message.content) : renderMarkdown(message.content)}
                 </div>
                 ${!isUser && message.tokens ? `
