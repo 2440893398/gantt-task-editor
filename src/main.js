@@ -30,6 +30,8 @@ import {
 import { checkStorageAvailability } from './core/storage.js';
 // 任务详情面板
 import { openTaskDetailsPanel } from './features/task-details/index.js';
+// 视图切换
+import { initViewToggle } from './features/gantt/view-toggle.js';
 
 // 挂载 exportConfig 到 window 以便 HTML 中调用
 window.exportConfig = exportConfig;
@@ -87,6 +89,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // 设置全局事件监听
     setupGlobalEvents();
+
+    // 初始化视图切换
+    initViewToggle();
 
     // 初始化自定义字段 UI
     initCustomFieldsUI();

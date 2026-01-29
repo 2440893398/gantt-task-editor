@@ -15,10 +15,11 @@ import Dexie from 'dexie';
 const db = new Dexie('GanttDB');
 
 // 数据库版本及结构定义
-db.version(1).stores({
+db.version(2).stores({
     tasks: '++id, priority, status, start_date, parent',
     links: '++id, source, target, type',
-    history: '++id, timestamp, action'  // 可选：操作历史
+    history: '++id, timestamp, action',  // 可选：操作历史
+    baselines: 'id'
 });
 
 // ========================================
@@ -35,7 +36,9 @@ const STORAGE_KEYS = {
     // AI 配置相关
     AI_CONFIG: 'gantt_ai_config',
     // System field settings
-    SYSTEM_FIELD_SETTINGS: 'gantt_system_field_settings'
+    SYSTEM_FIELD_SETTINGS: 'gantt_system_field_settings',
+    // View mode
+    VIEW_MODE: 'gantt_view_mode'
 };
 
 // ========================================
@@ -169,6 +172,22 @@ export function saveSystemFieldSettings(settings) {
  */
 export function getSystemFieldSettings() {
     return getLocalStorage(STORAGE_KEYS.SYSTEM_FIELD_SETTINGS);
+}
+
+/**
+ * 保存视图模式
+ * @param {string} mode - 'split' | 'table' | 'gantt'
+ */
+export function saveViewMode(mode) {
+    setLocalStorage(STORAGE_KEYS.VIEW_MODE, mode);
+}
+
+/**
+ * 获取视图模式
+ * @returns {string} - 默认 'split'
+ */
+export function getViewMode() {
+    return getLocalStorage(STORAGE_KEYS.VIEW_MODE, 'split');
 }
 
 /**

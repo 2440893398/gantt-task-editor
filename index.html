@@ -153,6 +153,12 @@
 
             <!-- 右侧区域：今日按钮 + 图标按钮组 + More + New Task -->
             <div class="flex-none flex items-center gap-2">
+                <!-- View Mode Toggle -->
+                <div id="view-segmented" class="flex items-center gap-1 rounded-full p-1 mr-2" style="background: var(--color-secondary, #F1F5F9);">
+                    <button data-view="split" class="view-seg-btn active" data-i18n="toolbar.viewSplit">分屏</button>
+                    <button data-view="table" class="view-seg-btn" data-i18n="toolbar.viewTable">表格</button>
+                    <button data-view="gantt" class="view-seg-btn" data-i18n="toolbar.viewGantt">甘特</button>
+                </div>
                 <!-- Baseline Controls -->
                 <div class="flex items-center gap-1 border-r border-base-300 pr-2 mr-1">
                     <button id="save-baseline-btn" class="btn btn-sm btn-ghost btn-square" data-tip="保存基线"

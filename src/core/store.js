@@ -20,7 +20,9 @@ import {
     getAiConfig,
     isAiConfigured,
     saveSystemFieldSettings,
-    getSystemFieldSettings
+    getSystemFieldSettings,
+    saveViewMode,
+    getViewMode as getStoredViewMode
 } from './storage.js';
 
 // 全局状态
@@ -38,6 +40,7 @@ export const state = {
         model: 'gpt-3.5-turbo'
     },
     aiStatus: 'idle', // idle | loading | streaming | error
+    viewMode: 'split', // 'split' | 'table' | 'gantt'
     // System field settings
     systemFieldSettings: {
         enabled: {
@@ -95,6 +98,13 @@ export async function restoreStateFromCache() {
                 ...cachedSystemFieldSettings
             };
             console.log('[Store] Restored system field settings from cache');
+        }
+
+        // Restore view mode
+        const cachedViewMode = getStoredViewMode();
+        if (cachedViewMode) {
+            state.viewMode = cachedViewMode;
+            console.log('[Store] Restored view mode from cache:', cachedViewMode);
         }
 
         state.isDataLoaded = true;
@@ -318,6 +328,28 @@ export function getAiStatus() {
 }
 
 // ========================================
+// View Mode Management
+// ========================================
+
+/**
+ * 获取当前视图模式
+ * @returns {'split' | 'table' | 'gantt'}
+ */
+export function getViewMode() {
+    return state.viewMode;
+}
+
+/**
+ * 设置视图模式
+ * @param {'split' | 'table' | 'gantt'} mode
+ */
+export function setViewMode(mode) {
+    if (!['split', 'table', 'gantt'].includes(mode)) return;
+    state.viewMode = mode;
+    saveViewMode(mode);
+}
+
+// ========================================
 // System Field Management
 // ========================================
 
@@ -499,4 +531,43 @@ export function getVisibleFields() {
         if (INTERNAL_FIELDS.includes(fieldName)) return false;
         return isFieldEnabled(fieldName);
     });
+}
+
+/**
+ * Save baseline snapshot to IndexedDB
+ * @param {Object} snapshot - { data: [...], links: [...] }
+ * @returns {Promise<void>}
+ */
+export async function saveBaseline(snapshot) {
+    const { db } = await import('./storage.js');
+
+    const baseline = {
+        id: 'baseline_' + new Date().toISOString().slice(0, 10),
+        savedAt: new Date().toISOString(),
+        snapshot
+    };
+
+    // Clear old baseline and save new one (single baseline only)
+    await db.baselines.clear();
+    await db.baselines.add(baseline);
+}
+
+/**
+ * Load baseline snapshot from IndexedDB
+ * @returns {Promise<Object|null>} Baseline object or null if not found
+ */
+export async function loadBaseline() {
+    const { db } = await import('./storage.js');
+    const baselines = await db.baselines.toArray();
+    return baselines.length > 0 ? baselines[0] : null;
+}
+
+/**
+ * Check if baseline exists
+ * @returns {Promise<boolean>}
+ */
+export async function hasBaseline() {
+    const { db } = await import('./storage.js');
+    const count = await db.baselines.count();
+    return count > 0;
 }

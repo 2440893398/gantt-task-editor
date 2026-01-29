@@ -113,6 +113,29 @@
     }
 }
 
+/* View mode segmented control */
+.view-seg-btn {
+    padding: 6px 12px;
+    border-radius: var(--radius-pill, 999px);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--color-muted-foreground, #64748B);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+}
+.view-seg-btn:hover {
+    color: var(--color-foreground, #0F172A);
+}
+.view-seg-btn.active {
+    background: var(--color-card, #FFFFFF);
+    color: var(--color-foreground, #0F172A);
+    font-weight: 600;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
 @media (prefers-reduced-motion: reduce) {
 
     *,
