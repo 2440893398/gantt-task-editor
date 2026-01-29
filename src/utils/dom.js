@@ -129,6 +129,13 @@ export function showSummaryPopover(cell, html) {
     popover.id = 'summary-popover';
     popover.innerHTML = `<div class="ql-editor">${html}</div>`;
 
+    // Design token based styling (fallback-safe)
+    popover.style.background = 'var(--color-card, #FFFFFF)';
+    popover.style.border = '1px solid var(--color-border, #E2E8F0)';
+    popover.style.borderRadius = 'var(--radius-m, 12px)';
+    popover.style.boxShadow = 'var(--shadow-modal, 0 12px 40px rgba(15, 23, 42, 0.18))';
+    popover.style.color = 'var(--color-foreground, #0F172A)';
+
     const rect = cell.getBoundingClientRect();
     popover.style.position = 'absolute';
     popover.style.left = `${rect.left}px`;

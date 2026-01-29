@@ -93,11 +93,12 @@
             max-width: 400px;
             max-height: 300px;
             overflow-y: auto;
-            background: hsl(var(--b1));
-            border: 1px solid hsl(var(--bc) / 0.2);
-            border-radius: var(--rounded-box);
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            background: var(--color-card, #FFFFFF);
+            border: 1px solid var(--color-border, #E2E8F0);
+            border-radius: var(--radius-m, 12px);
+            box-shadow: var(--shadow-modal, 0 12px 40px rgba(15, 23, 42, 0.18));
             padding: 16px;
+            color: var(--color-foreground, #0F172A);
         }
 
         .summary-popover .ql-editor {
@@ -122,6 +123,15 @@
 
         .summary-popover .ql-editor em {
             font-style: italic;
+        }
+
+        /* Shortcuts panel (design tokens) */
+        #shortcuts-panel {
+            border-radius: var(--radius-m, 12px);
+        }
+
+        #shortcuts-panel .shortcuts-toggle {
+            color: var(--color-muted-foreground, #64748B);
         }
     </style>
 
@@ -370,19 +380,19 @@
 
     <!-- 快捷键和图例面板 - 默认折叠 -->
     <div id="shortcuts-panel"
-        class="card card-compact fixed bottom-4 left-4 z-40 w-64 shadow-2xl transition-transform duration-300 overflow-hidden"
-        style="transform: translateY(0); border-radius: 12px;">
+        class="card card-compact fixed bottom-4 left-4 z-40 w-64 transition-transform duration-300 overflow-hidden bg-[--color-card] border border-[--color-border] shadow-[var(--shadow-modal)]"
+        style="transform: translateY(0); border-radius: var(--radius-m, 12px);">
         <div class="card-body p-0">
-            <div class="flex items-center justify-between p-3 cursor-pointer transition-colors" id="shortcuts-header"
-                style="background: linear-gradient(135deg, #0EA5E9 0%, #6366F1 50%, #9333EA 100%);">
-                <div class="flex items-center gap-2 font-semibold text-white">
+            <div class="flex items-center justify-between p-3 cursor-pointer transition-colors bg-[--color-surface] border-b border-[--color-border]" id="shortcuts-header"
+                >
+                <div class="flex items-center gap-2 font-semibold text-[--color-foreground]">
                     <span>⌨️</span>
                     <span data-i18n="shortcuts.title">快捷键 & 图例</span>
                 </div>
                 <span class="shortcuts-toggle transform transition-transform duration-300 text-white">▲</span>
             </div>
 
-            <div class="shortcuts-content p-4 space-y-4 max-h-[60vh] overflow-y-auto bg-white">
+            <div class="shortcuts-content p-4 space-y-4 max-h-[60vh] overflow-y-auto bg-[--color-card]">
                 <!-- 导航快捷键 -->
                 <div>
                     <div class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2"
