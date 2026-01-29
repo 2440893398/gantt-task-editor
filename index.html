@@ -850,26 +850,40 @@
 
     <!-- 字段配置弹窗 -->
     <div id="field-config-modal"
-        class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm opacity-0 pointer-events-none transition-all duration-200">
+        class="fixed inset-0 z-[6200] flex items-center justify-center opacity-0 pointer-events-none transition-opacity duration-200"
+        style="background: var(--backdrop-color, rgba(15, 23, 42, 0.3));">
         <div
-            class="modal-box w-11/12 max-w-lg bg-base-100 shadow-2xl rounded-2xl p-0 overflow-hidden transition-all duration-200">
+            class="modal-box w-[520px] max-w-[92vw] p-0 overflow-hidden transition-all duration-200"
+            style="background: var(--color-card, #FFFFFF); border: 1px solid var(--color-border, #E2E8F0); border-radius: var(--radius-m, 12px); box-shadow: var(--shadow-modal, 0 12px 40px rgba(15,23,42,0.18));">
             <!-- 头部 -->
-            <div class="bg-gradient-to-r from-primary to-accent p-6 text-white relative">
-                <div class="flex items-start gap-4">
-                    <div class="p-3 bg-white/20 rounded-xl backdrop-blur-sm">
-                        <span class="text-2xl">✦</span>
+            <div class="h-16 px-5 flex items-center justify-between"
+                style="background: var(--color-surface, #F8FAFC); border-bottom: 1px solid var(--color-border, #E2E8F0);">
+                <div class="flex items-center gap-3 min-w-0">
+                    <div class="w-9 h-9 rounded-xl flex items-center justify-center"
+                        style="background: var(--color-secondary, #F1F5F9); color: var(--color-primary, #0EA5E9);">
+                        <span class="text-lg leading-none">✦</span>
                     </div>
-                    <div class="flex-1">
-                        <h3 class="text-xl font-bold" data-i18n="fieldManagement.title">字段配置</h3>
-                        <p class="text-white/80 text-sm mt-1" data-i18n="fieldManagement.createSubtitle">创建和自定义您的字段</p>
+                    <div class="min-w-0">
+                        <div class="text-sm font-semibold truncate" style="color: var(--color-foreground, #0F172A);"
+                            data-i18n="fieldManagement.title">字段配置</div>
+                        <div class="text-xs truncate" style="color: var(--color-muted-foreground, #64748B);"
+                            data-i18n="fieldManagement.createSubtitle">创建和自定义您的字段</div>
                     </div>
                 </div>
-                <button class="btn btn-sm btn-circle btn-ghost absolute right-4 top-4 text-white hover:bg-white/20"
-                    id="modal-close-x">✕</button>
+                <button id="modal-close-x" type="button"
+                    class="w-8 h-8 inline-flex items-center justify-center rounded-lg"
+                    style="color: var(--color-muted-foreground, #64748B);"
+                    aria-label="Close">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24"
+                        stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
             </div>
 
             <!-- 内容区域 -->
-            <div class="p-6 space-y-4">
+            <div class="p-4 space-y-4 max-h-[70vh] overflow-y-auto">
                 <!-- 字段名称和图标 - 横向布局 -->
                 <div class="flex gap-4">
                     <!-- 图标选择 -->
@@ -1044,10 +1058,19 @@
             </div>
 
             <!-- 底部按钮 -->
-            <div class="p-4 bg-base-100 border-t border-base-200 flex justify-end gap-3 rounded-b-2xl">
-                <button id="cancel-field-btn" class="btn btn-ghost" data-i18n="form.cancel">取消</button>
-                <button id="save-field-btn" data-testid="save-field-btn" class="btn btn-primary px-6"
-                    data-i18n="form.save">保存</button>
+            <div class="px-5 py-4 flex items-center justify-between"
+                style="background: var(--color-surface, #F8FAFC); border-top: 1px solid var(--color-border, #E2E8F0);">
+                <div class="text-xs" style="color: var(--color-muted-foreground, #64748B);">Esc 关闭</div>
+                <div class="flex items-center gap-2">
+                    <button id="cancel-field-btn" type="button"
+                        class="px-4 py-2 text-sm font-semibold rounded-[var(--radius-pill,999px)] hover:bg-black/5"
+                        style="color: var(--color-foreground, #0F172A);"
+                        data-i18n="form.cancel">取消</button>
+                    <button id="save-field-btn" data-testid="save-field-btn" type="button"
+                        class="px-5 py-2 text-sm font-semibold rounded-[var(--radius-pill,999px)]"
+                        style="background: var(--color-primary, #0EA5E9); color: #FFFFFF;"
+                        data-i18n="form.save">保存</button>
+                </div>
             </div>
         </div>
     </div>

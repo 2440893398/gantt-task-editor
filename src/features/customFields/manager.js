@@ -27,6 +27,37 @@ import { showConfirmDialog } from '../../components/common/confirm-dialog.js';
 
 let sortableInstance = null;
 const DEFAULT_FIELD_ICON = '📝';
+let fieldConfigEscHandler = null;
+
+function closeFieldConfigModal() {
+    const modal = document.getElementById('field-config-modal');
+    if (!modal) return;
+
+    modal.classList.remove('show');
+
+    if (fieldConfigEscHandler) {
+        document.removeEventListener('keydown', fieldConfigEscHandler);
+        fieldConfigEscHandler = null;
+    }
+
+    setTimeout(() => {
+        modal.style.display = 'none';
+        modal.style.zIndex = '';
+    }, 300);
+}
+
+function attachFieldConfigEscClose() {
+    if (fieldConfigEscHandler) return;
+
+    fieldConfigEscHandler = (e) => {
+        if (e.key !== 'Escape') return;
+        const modal = document.getElementById('field-config-modal');
+        if (!modal) return;
+        if (!modal.classList.contains('show')) return;
+        closeFieldConfigModal();
+    };
+    document.addEventListener('keydown', fieldConfigEscHandler);
+}
 
 /**
  * 获取字段类型标签
@@ -88,6 +119,7 @@ export function openAddFieldModal() {
     }
     modal.style.display = 'flex';
     setTimeout(() => modal.classList.add('show'), 10);
+    attachFieldConfigEscClose();
 
     document.getElementById('field-name').value = '';
     document.getElementById('field-type').value = 'text';
@@ -571,6 +603,7 @@ function openCustomFieldEditModal(fieldName) {
     }
     modal.style.display = 'flex';
     setTimeout(() => modal.classList.add('show'), 10);
+    attachFieldConfigEscClose();
 
     modal.dataset.editMode = 'true';
     modal.dataset.editFieldName = fieldName;
@@ -897,17 +930,17 @@ export function initCustomFieldsUI() {
     });
 
     // 弹窗关闭按钮
-    document.getElementById('modal-close-x').addEventListener('click', function () {
-        const modal = document.getElementById('field-config-modal');
-        modal.classList.remove('show');
-        setTimeout(() => {
-            modal.style.display = 'none';
-            modal.style.zIndex = '';
-        }, 300);
-    });
+    document.getElementById('modal-close-x').addEventListener('click', closeFieldConfigModal);
 
     document.getElementById('add-field-from-panel-btn').addEventListener('click', function () {
         openAddFieldModal();
+    });
+
+    // 点击遮罩关闭
+    document.getElementById('field-config-modal')?.addEventListener('click', (e) => {
+        if (e.target?.id === 'field-config-modal') {
+            closeFieldConfigModal();
+        }
     });
 
     // 字段管理面板
@@ -1039,12 +1072,7 @@ export function initCustomFieldsUI() {
 
     // 取消字段配置
     document.getElementById('cancel-field-btn').addEventListener('click', function () {
-        const modal = document.getElementById('field-config-modal');
-        modal.classList.remove('show');
-        setTimeout(() => {
-            modal.style.display = 'none';
-            modal.style.zIndex = '';
-        }, 300);
+        closeFieldConfigModal();
     });
 
     // 暴露给全局 (Fix: 添加字段按钮点击报错)

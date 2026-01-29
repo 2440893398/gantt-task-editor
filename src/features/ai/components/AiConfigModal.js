@@ -57,29 +57,41 @@ let modelDropdownOpen = false;
 function createModalHTML() {
     return `
     <dialog id="ai_config_modal" class="modal modal-bottom sm:modal-middle">
-        <div class="modal-box max-w-md p-0">
-            <!-- 头部 - 渐变背景 -->
-            <div class="bg-gradient-to-r from-blue-500 to-purple-600 p-6 relative rounded-t-xl">
-                <div class="flex items-start gap-4">
-                    <div class="p-3 bg-white/20 rounded-xl backdrop-blur-sm">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+        <div class="modal-box w-[520px] max-w-[92vw] p-0 overflow-hidden"
+            style="background: var(--color-card, #FFFFFF); border: 1px solid var(--color-border, #E2E8F0); border-radius: var(--radius-m, 12px); box-shadow: var(--shadow-modal, 0 12px 40px rgba(15,23,42,0.18));">
+            <!-- 头部 - Modal Card -->
+            <div class="h-16 px-5 flex items-center justify-between"
+                style="background: var(--color-surface, #F8FAFC); border-bottom: 1px solid var(--color-border, #E2E8F0);">
+                <div class="flex items-center gap-3 min-w-0">
+                    <div class="w-9 h-9 rounded-xl flex items-center justify-center"
+                        style="background: var(--color-secondary, #F1F5F9); color: var(--color-primary, #0EA5E9);">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24"
+                            stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M13 10V3L4 14h7v7l9-11h-7z" />
                         </svg>
                     </div>
-                    <div class="flex-1">
-                        <h3 class="font-bold text-lg text-white" data-i18n="ai.config.title">AI 设置</h3>
-                        <p class="text-white/80 text-sm mt-1" data-i18n="ai.config.subtitle">配置您的模型密钥以启用智能助手</p>
+                    <div class="min-w-0">
+                        <div class="text-sm font-semibold truncate" style="color: var(--color-foreground, #0F172A);"
+                            data-i18n="ai.config.title">AI 设置</div>
+                        <div class="text-xs truncate" style="color: var(--color-muted-foreground, #64748B);"
+                            data-i18n="ai.config.subtitle">配置您的模型密钥以启用智能助手</div>
                     </div>
                 </div>
-                <button class="btn btn-sm btn-circle btn-ghost absolute right-4 top-4 text-white hover:bg-white/20" id="ai_config_close_x">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                <button id="ai_config_close_x" type="button"
+                    class="w-8 h-8 inline-flex items-center justify-center rounded-lg"
+                    style="color: var(--color-muted-foreground, #64748B);"
+                    aria-label="Close">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24"
+                        stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M6 18L18 6M6 6l12 12" />
                     </svg>
                 </button>
             </div>
 
             <!-- 表单内容 -->
-            <div class="p-6 space-y-5">
+            <div class="p-4 space-y-5 max-h-[70vh] overflow-y-auto">
                 <!-- API Key -->
                 <div class="form-control w-full">
                     <label class="label">
@@ -187,20 +199,28 @@ function createModalHTML() {
             </div>
 
             <!-- 底部操作 -->
-            <div class="modal-action px-6 pb-6 pt-0 flex justify-between">
-                <button class="btn btn-ghost gap-2" id="ai_config_test">
+            <div class="px-5 py-4 flex items-center justify-between"
+                style="background: var(--color-surface, #F8FAFC); border-top: 1px solid var(--color-border, #E2E8F0);">
+                <div class="flex items-center gap-3">
+                    <div class="text-xs" style="color: var(--color-muted-foreground, #64748B);">Esc 关闭</div>
+                    <button class="btn btn-ghost btn-sm gap-2 rounded-full" id="ai_config_test">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
                     <span data-i18n="ai.config.test">测试连接</span>
-                </button>
+                    </button>
+                </div>
                 <div class="flex gap-2">
-                    <button class="btn btn-ghost" id="ai_config_cancel" data-i18n="form.cancel">取消</button>
-                    <button class="btn btn-primary" id="ai_config_save" data-i18n="form.save">保存配置</button>
+                    <button class="px-4 py-2 text-sm font-semibold rounded-[var(--radius-pill,999px)] hover:bg-black/5"
+                        style="color: var(--color-foreground, #0F172A);"
+                        id="ai_config_cancel" data-i18n="form.cancel">取消</button>
+                    <button class="px-5 py-2 text-sm font-semibold rounded-[var(--radius-pill,999px)]"
+                        style="background: var(--color-primary, #0EA5E9); color: #FFFFFF;"
+                        id="ai_config_save" data-i18n="form.save">保存配置</button>
                 </div>
             </div>
         </div>
-        <form method="dialog" class="modal-backdrop"><button>close</button></form>
+        <form method="dialog" class="modal-backdrop" style="background: var(--backdrop-color, rgba(15, 23, 42, 0.3));"><button>close</button></form>
     </dialog>
     `;
 }
