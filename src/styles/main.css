@@ -6,49 +6,70 @@
     themes: light --default;
 }
 
-/* 自定义主题扩展 */
+/* Design System Tokens — 蓝青主色 */
 @theme {
-    --color-primary: #4A90E2;
-    --color-primary-hover: #3a7bc8;
-    --color-secondary: #6B7280;
+    --color-primary: #0EA5E9;
+    --color-primary-hover: #0284C7;
+    --color-primary-soft: #E0F2FE;
+    --color-primary-strong: #0369A1;
+    --color-secondary: #F1F5F9;
     --color-accent: #50E3C2;
+
+    --color-background: #F7F8FA;
+    --color-surface: #F8FAFC;
+    --color-surface-2: #EEF2F6;
+    --color-card: #FFFFFF;
+    --color-foreground: #0F172A;
+    --color-muted-foreground: #64748B;
+    --color-border: #E2E8F0;
+
+    --color-danger: #DC2626;
+    --color-danger-soft: #FEE2E2;
+    --color-danger-foreground: #FFFFFF;
+
+    --color-success: #22C55E;
+    --color-warning: #F59E0B;
+    --color-error: #EF4444;
+
+    --radius-m: 12px;
+    --radius-pill: 999px;
+    --shadow-modal: 0 12px 40px rgba(15, 23, 42, 0.18);
+    --backdrop-color: #0F172A4D;
 }
 
 /* 基础样式层 */
 @layer base {
     :root {
-        /* 色彩系统 - 保持兼容性，但建议逐步迁移到 Tailwind 类 */
-        --primary-color: #4A90E2;
+        /* 色彩系统 - 保持兼容性，逐步迁移到 @theme tokens / Tailwind 类 */
+        --primary-color: #0EA5E9;
         --accent-color: #50E3C2;
-        --text-primary: #1F2937;
-        --text-secondary: #6B7280;
-        --border-color: #E5E7EB;
-        --background-gray: #F9FAFB;
-        --background-hover-gray: #F3F4F6;
+        --text-primary: #0F172A;
+        --text-secondary: #64748B;
+        --border-color: #E2E8F0;
+        --background-gray: #F8FAFC;
+        --background-hover-gray: #F1F5F9;
         --background-white: #FFFFFF;
         --color-success: #22C55E;
         --color-warning: #F59E0B;
         --color-error: #EF4444;
-        --task-bar-bg: #A5C8F1;
+        --task-bar-bg: #BAE6FD;
 
         /* 字体规范 */
-        --font-family-base: 'Inter', 'Source Han Sans CN', sans-serif;
+        --font-family-base: 'Inter', 'Source Sans 3', 'Source Han Sans CN', sans-serif;
         --font-size-body: 14px;
         --font-size-small: 12px;
 
         /* 圆角 */
         --border-radius-small: 4px;
-        /* existing var */
         --radius: 0.5rem;
-        /* shadcn convention often used */
 
         /* 兼容旧变量名 */
-        --primary-hover: #3a7bc8;
-        --success-color: #52c41a;
-        --warning-color: #faad14;
-        --danger-color: #ff4d4f;
-        --text-color: #333;
-        --background-color: #f5f5f5;
+        --primary-hover: #0284C7;
+        --success-color: #22C55E;
+        --warning-color: #F59E0B;
+        --danger-color: #DC2626;
+        --text-color: #0F172A;
+        --background-color: #F7F8FA;
         --white: #fff;
     }
 
@@ -56,8 +77,8 @@
     body {
         height: 100%;
         overflow: hidden;
-        background-color: #F9FAFB;
-        color: #1F2937;
+        background-color: #F7F8FA;
+        color: #0F172A;
         font-family: var(--font-family-base);
     }
 
@@ -106,3 +127,34 @@
         transition-delay: 0s !important;
     }
 }
+
+/* Short tasks minimum width */
+.gantt_task_line.short-task .gantt_task_content {
+    min-width: 20px !important;
+    border: 2px solid currentColor;
+    font-size: 0;
+    /* Hide text for very short tasks */
+}
+
+/* Ensure all task contents have a minimum width to be visible */
+.gantt_task_line .gantt_task_content {
+    min-width: 20px;
+}
+
+/* Baseline Bar Style */
+.baseline-bar {
+    background: #9ca3af;
+    opacity: 0.6;
+    position: absolute;
+    z-index: 1;
+    border-radius: 3px;
+    margin-top: -2px;
+    /* slight adjustment */
+}
+
+/* Resource Conflict Style */
+.gantt_task_line.resource-conflict .gantt_task_content {
+    border: 2px solid #f59e0b;
+    box-shadow: 0 0 8px rgba(245, 158, 11, 0.4);
+}
+

@@ -15,6 +15,8 @@
     <!-- DHTMLX Gantt -->
     <link href="https://cdn.dhtmlx.com/gantt/edge/dhtmlxgantt.css" rel="stylesheet">
     <script src="https://cdn.dhtmlx.com/gantt/edge/dhtmlxgantt.js"></script>
+    <!-- DHTMLX Export API (for PNG/PDF export) -->
+    <script src="https://export.dhtmlx.com/gantt/api.js"></script>
     <script>
         // Shim for potential capitalization issues or missing reference in locale files
         window.Gantt = window.Gantt || window.gantt || {};
@@ -58,7 +60,7 @@
             width: 48px;
             height: 48px;
             border: 4px solid #e2e8f0;
-            border-top-color: #4A90E2;
+            border-top-color: #0EA5E9;
             border-radius: 50%;
             animation: spin 1s linear infinite;
         "></div>
@@ -151,6 +153,56 @@
 
             <!-- 右侧区域：今日按钮 + 图标按钮组 + More + New Task -->
             <div class="flex-none flex items-center gap-2">
+                <!-- Baseline Controls -->
+                <div class="flex items-center gap-1 border-r border-base-300 pr-2 mr-1">
+                    <button id="save-baseline-btn" class="btn btn-sm btn-ghost btn-square" data-tip="保存基线"
+                        data-i18n-title="baseline.save">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4">
+                            </path>
+                        </svg>
+                    </button>
+                    <label class="swap swap-rotate btn btn-sm btn-ghost btn-circle" data-tip="显示/隐藏基线"
+                        data-i18n-title="baseline.show">
+                        <input type="checkbox" id="show-baseline-toggle" />
+                        <!-- ON icon (eye open) -->
+                        <svg class="swap-on w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                        </svg>
+                        <!-- OFF icon (eye slash) -->
+                        <svg class="swap-off w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.542-7a10.059 10.059 0 013.999-5.125m3.741-1.638a2.913 2.913 0 014.183 4.183m.996 4.965A10.054 10.054 0 0021.542 12a10.05 10.05 0 01-2.91 5.378M9.9 9.9L14.09 14.1M3 3l18 18" />
+                        </svg>
+                    </label>
+                    </label>
+                </div>
+                <!-- Export Dropdown -->
+                <div class="dropdown dropdown-end mr-1">
+                    <button tabindex="0" class="btn btn-sm btn-ghost gap-1" data-i18n-title="export.title"
+                        data-tip="Export">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+                        </svg>
+                        <span data-i18n="export.title">瀵煎嚭</span>
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M19 9l-7 7-7-7"></path>
+                        </svg>
+                    </button>
+                    <ul tabindex="0"
+                        class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-64 mt-2 border border-base-200">
+                        <li><a id="export-excel-btn"><span data-i18n="export.excel">瀵煎嚭 Excel</span></a></li>
+                        <li class="menu-title"><span data-i18n="export.imageTitle">鍥剧墖瀵煎嚭</span></li>
+                        <li><a id="export-current-view-btn"><span data-i18n="export.currentView">瀵煎嚭褰撳墠瑙嗗浘</span></a></li>
+                        <li><a id="export-full-gantt-btn"><span data-i18n="export.fullGantt">瀵煎嚭瀹屾暣鐢樼壒鍥撅紙闀垮浘锛?</span></a></li>
+                    </ul>
+                </div>
                 <!-- 今日按钮 -->
                 <button id="scroll-to-today-btn"
                     class="btn btn-sm btn-primary gap-2 font-medium text-white shadow-md hover:shadow-lg transition-all"
@@ -295,7 +347,7 @@
                 <!-- 新建任务按钮 -->
                 <button class="btn btn-sm gap-2 shadow-md hover:shadow-lg transition-all text-white font-medium"
                     id="new-task-btn"
-                    style="background: linear-gradient(135deg, #4A90E2 0%, #6366F1 100%); border: none;">
+                    style="background: linear-gradient(135deg, #0EA5E9 0%, #6366F1 100%); border: none;">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                         stroke-width="2.5">
                         <line x1="12" y1="5" x2="12" y2="19"></line>
@@ -316,7 +368,7 @@
         style="transform: translateY(0); border-radius: 12px;">
         <div class="card-body p-0">
             <div class="flex items-center justify-between p-3 cursor-pointer transition-colors" id="shortcuts-header"
-                style="background: linear-gradient(135deg, #4A90E2 0%, #6366F1 50%, #9333EA 100%);">
+                style="background: linear-gradient(135deg, #0EA5E9 0%, #6366F1 50%, #9333EA 100%);">
                 <div class="flex items-center gap-2 font-semibold text-white">
                     <span>⌨️</span>
                     <span data-i18n="shortcuts.title">快捷键 & 图例</span>
@@ -486,7 +538,7 @@
             });
 
             // 新建任务表单提交事件
-            document.getElementById('new-task-form')?.addEventListener('submit', function(e) {
+            document.getElementById('new-task-form')?.addEventListener('submit', function (e) {
                 e.preventDefault();
 
                 const taskName = document.getElementById('new-task-name').value.trim();
@@ -523,7 +575,7 @@
             });
 
             // 任务名称输入时隐藏错误提示
-            document.getElementById('new-task-name')?.addEventListener('input', function() {
+            document.getElementById('new-task-name')?.addEventListener('input', function () {
                 if (this.value.trim()) {
                     document.getElementById('name-error').classList.add('hidden');
                 }
@@ -645,10 +697,10 @@
 
         /* 必填字段切换按钮激活状态 */
         .required-toggle.active {
-            background-color: #4A90E2 !important;
+            background-color: #0EA5E9 !important;
         }
 
-        .required-toggle.active > div {
+        .required-toggle.active>div {
             transform: translateX(16px);
         }
     </style>
@@ -671,8 +723,10 @@
         <div class="bg-gradient-to-r from-blue-500 to-cyan-500 p-5 text-white relative">
             <div class="flex items-center gap-3">
                 <div class="p-2.5 bg-white/20 rounded-xl backdrop-blur-sm">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24"
+                        stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                     </svg>
                 </div>
                 <div class="flex-1">
@@ -680,8 +734,10 @@
                     <p class="text-white/70 text-xs mt-0.5" data-i18n="batchEdit.subtitle">同时修改多个任务</p>
                 </div>
             </div>
-            <button id="close-batch-edit" class="btn btn-sm btn-circle btn-ghost absolute right-3 top-3 text-white hover:bg-white/20">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <button id="close-batch-edit"
+                class="btn btn-sm btn-circle btn-ghost absolute right-3 top-3 text-white hover:bg-white/20">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24"
+                    stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
                 </svg>
             </button>
@@ -692,11 +748,14 @@
             <!-- 选中任务数提示 -->
             <div class="bg-blue-50 border border-blue-200 rounded-xl p-3 flex items-center gap-3">
                 <div class="p-2 bg-blue-100 rounded-lg">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-blue-600" fill="none"
+                        viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
                     </svg>
                 </div>
-                <span id="batch-selected-count-text" class="text-sm text-blue-800 font-medium" data-i18n="batchEdit.selectedCount" data-i18n-params='{"count":0}'>已选中 0 个任务</span>
+                <span id="batch-selected-count-text" class="text-sm text-blue-800 font-medium"
+                    data-i18n="batchEdit.selectedCount" data-i18n-params='{"count":0}'>已选中 0 个任务</span>
             </div>
 
             <!-- 字段选择 -->
@@ -727,9 +786,11 @@
         </div>
 
         <!-- 底部按钮区域 -->
-        <div class="p-4 border-t border-base-200 bg-base-100 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] flex justify-end gap-2">
+        <div
+            class="p-4 border-t border-base-200 bg-base-100 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] flex justify-end gap-2">
             <button id="batch-cancel-btn" class="btn btn-ghost" data-i18n="form.cancel">取消</button>
-            <button id="batch-apply-btn" class="btn btn-primary shadow-md hover:shadow-lg transition-shadow" data-i18n="batchEdit.apply">应用修改</button>
+            <button id="batch-apply-btn" class="btn btn-primary shadow-md hover:shadow-lg transition-shadow"
+                data-i18n="batchEdit.apply">应用修改</button>
         </div>
     </div>
 
@@ -740,8 +801,10 @@
         <div class="bg-gradient-to-r from-primary to-accent p-5 text-white relative">
             <div class="flex items-center gap-3">
                 <div class="p-2.5 bg-white/20 rounded-xl backdrop-blur-sm">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24"
+                        stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M4 6h16M4 10h16M4 14h16M4 18h16" />
                     </svg>
                 </div>
                 <div class="flex-1">
@@ -749,21 +812,25 @@
                     <p class="text-white/70 text-xs mt-0.5" data-i18n="fieldManagement.subtitle">拖拽排序，点击编辑</p>
                 </div>
             </div>
-            <button id="close-field-management" class="btn btn-sm btn-circle btn-ghost absolute right-3 top-3 text-white hover:bg-white/20">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <button id="close-field-management"
+                class="btn btn-sm btn-circle btn-ghost absolute right-3 top-3 text-white hover:bg-white/20">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24"
+                    stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
                 </svg>
             </button>
         </div>
 
         <!-- 字段列表区域 -->
-        <div class="field-management-body flex-1 overflow-y-auto p-4 space-y-2 bg-base-200/30" id="field-list-container">
+        <div class="field-management-body flex-1 overflow-y-auto p-4 space-y-2 bg-base-200/30"
+            id="field-list-container">
             <!-- 字段列表将在这里动态生成 -->
         </div>
 
         <!-- 底部按钮区域 -->
         <div class="p-4 border-t border-base-200 bg-base-100 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
-            <button id="add-field-from-panel-btn" class="btn btn-primary w-full gap-2 shadow-md hover:shadow-lg transition-shadow"
+            <button id="add-field-from-panel-btn"
+                class="btn btn-primary w-full gap-2 shadow-md hover:shadow-lg transition-shadow"
                 data-i18n="fieldManagement.addField">
                 <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
                     <path fill-rule="evenodd"
@@ -814,7 +881,8 @@
                             </button>
                             <input type="hidden" id="field-icon" value="📝">
                             <!-- 图标下拉选择器 -->
-                            <div id="icon-dropdown" class="absolute top-full left-0 mt-1 w-64 bg-base-100 border border-base-200 shadow-xl rounded-xl z-30 p-2 hidden">
+                            <div id="icon-dropdown"
+                                class="absolute top-full left-0 mt-1 w-64 bg-base-100 border border-base-200 shadow-xl rounded-xl z-30 p-2 hidden">
                                 <div class="grid grid-cols-6 gap-1" id="icon-grid">
                                     <!-- 图标将由JS动态生成 -->
                                 </div>
@@ -845,9 +913,11 @@
                     </label>
                     <div class="field-type-selector p-3 border border-base-300 rounded-lg cursor-pointer hover:border-primary transition-colors flex items-center gap-3 bg-base-100"
                         id="field-type-selector">
-                        <span class="w-8 h-8 flex items-center justify-center bg-primary/10 rounded-lg text-lg" id="field-type-icon">📝</span>
+                        <span class="w-8 h-8 flex items-center justify-center bg-primary/10 rounded-lg text-lg"
+                            id="field-type-icon">📝</span>
                         <span class="field-type-text flex-1 font-medium" data-i18n="fieldManagement.typeText">文本</span>
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-gray-400" fill="none"
+                            viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
                         </svg>
                     </div>
@@ -864,42 +934,53 @@
                         <div class="p-2 space-y-1">
                             <div class="field-type-option flex items-center gap-3 p-2.5 hover:bg-base-200 rounded-lg cursor-pointer transition-colors"
                                 data-value="text">
-                                <span class="w-8 h-8 flex items-center justify-center bg-blue-50 rounded-lg text-lg">📝</span>
+                                <span
+                                    class="w-8 h-8 flex items-center justify-center bg-blue-50 rounded-lg text-lg">📝</span>
                                 <div class="flex-1">
                                     <div class="font-medium text-sm" data-i18n="fieldManagement.typeText">文本</div>
-                                    <div class="text-xs text-gray-400" data-i18n="fieldManagement.typeTextDesc">单行或多行文本内容</div>
+                                    <div class="text-xs text-gray-400" data-i18n="fieldManagement.typeTextDesc">
+                                        单行或多行文本内容</div>
                                 </div>
                             </div>
                             <div class="field-type-option flex items-center gap-3 p-2.5 hover:bg-base-200 rounded-lg cursor-pointer transition-colors"
                                 data-value="number">
-                                <span class="w-8 h-8 flex items-center justify-center bg-green-50 rounded-lg text-lg">🔢</span>
+                                <span
+                                    class="w-8 h-8 flex items-center justify-center bg-green-50 rounded-lg text-lg">🔢</span>
                                 <div class="flex-1">
                                     <div class="font-medium text-sm" data-i18n="fieldManagement.typeNumber">数字</div>
-                                    <div class="text-xs text-gray-400" data-i18n="fieldManagement.typeNumberDesc">数值类型数据</div>
+                                    <div class="text-xs text-gray-400" data-i18n="fieldManagement.typeNumberDesc">数值类型数据
+                                    </div>
                                 </div>
                             </div>
                             <div class="field-type-option flex items-center gap-3 p-2.5 hover:bg-base-200 rounded-lg cursor-pointer transition-colors"
                                 data-value="date">
-                                <span class="w-8 h-8 flex items-center justify-center bg-orange-50 rounded-lg text-lg">📅</span>
+                                <span
+                                    class="w-8 h-8 flex items-center justify-center bg-orange-50 rounded-lg text-lg">📅</span>
                                 <div class="flex-1">
                                     <div class="font-medium text-sm" data-i18n="fieldManagement.typeDate">日期</div>
-                                    <div class="text-xs text-gray-400" data-i18n="fieldManagement.typeDateDesc">日期时间选择</div>
+                                    <div class="text-xs text-gray-400" data-i18n="fieldManagement.typeDateDesc">日期时间选择
+                                    </div>
                                 </div>
                             </div>
                             <div class="field-type-option flex items-center gap-3 p-2.5 hover:bg-base-200 rounded-lg cursor-pointer transition-colors"
                                 data-value="select">
-                                <span class="w-8 h-8 flex items-center justify-center bg-purple-50 rounded-lg text-lg">📋</span>
+                                <span
+                                    class="w-8 h-8 flex items-center justify-center bg-purple-50 rounded-lg text-lg">📋</span>
                                 <div class="flex-1">
                                     <div class="font-medium text-sm" data-i18n="fieldManagement.typeSelect">下拉选择</div>
-                                    <div class="text-xs text-gray-400" data-i18n="fieldManagement.typeSelectDesc">单选下拉列表</div>
+                                    <div class="text-xs text-gray-400" data-i18n="fieldManagement.typeSelectDesc">单选下拉列表
+                                    </div>
                                 </div>
                             </div>
                             <div class="field-type-option flex items-center gap-3 p-2.5 hover:bg-base-200 rounded-lg cursor-pointer transition-colors"
                                 data-value="multiselect">
-                                <span class="w-8 h-8 flex items-center justify-center bg-pink-50 rounded-lg text-lg">☑️</span>
+                                <span
+                                    class="w-8 h-8 flex items-center justify-center bg-pink-50 rounded-lg text-lg">☑️</span>
                                 <div class="flex-1">
-                                    <div class="font-medium text-sm" data-i18n="fieldManagement.typeMultiselect">多选</div>
-                                    <div class="text-xs text-gray-400" data-i18n="fieldManagement.typeMultiselectDesc">多选下拉列表</div>
+                                    <div class="font-medium text-sm" data-i18n="fieldManagement.typeMultiselect">多选
+                                    </div>
+                                    <div class="text-xs text-gray-400" data-i18n="fieldManagement.typeMultiselectDesc">
+                                        多选下拉列表</div>
                                 </div>
                             </div>
                         </div>
@@ -925,7 +1006,8 @@
                 <!-- 默认值配置区域 -->
                 <div id="default-value-config" class="bg-base-200/50 border-none rounded-xl block text-left p-4">
                     <div class="flex items-start gap-3 mb-3">
-                        <div class="w-8 h-8 flex items-center justify-center bg-primary/10 rounded-lg text-lg shrink-0">💡</div>
+                        <div class="w-8 h-8 flex items-center justify-center bg-primary/10 rounded-lg text-lg shrink-0">
+                            💡</div>
                         <div class="flex-1">
                             <h4 class="font-medium text-sm" data-i18n="fieldManagement.defaultOneTime">默认值 (可选)</h4>
                             <p class="text-xs text-gray-500" data-i18n="fieldManagement.defaultDesc">现有任务将自动填充此值</p>
@@ -937,7 +1019,8 @@
                             class="input input-sm input-bordered w-full bg-white" placeholder="输入默认值..."
                             data-i18n-placeholder="fieldManagement.defaultPlaceholder">
                     </div>
-                    <div class="text-xs text-gray-400 mt-2" data-i18n="fieldManagement.defaultNote">新增字段时，所有现有任务将被设置为此默认值。</div>
+                    <div class="text-xs text-gray-400 mt-2" data-i18n="fieldManagement.defaultNote">
+                        新增字段时，所有现有任务将被设置为此默认值。</div>
                 </div>
 
                 <!-- 选项配置 -->
@@ -968,13 +1051,16 @@
         <div class="modal-box">
             <div class="flex items-start gap-4">
                 <div class="p-3 bg-error/10 rounded-full">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-error" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-error" fill="none" viewBox="0 0 24 24"
+                        stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                     </svg>
                 </div>
                 <div class="flex-1">
                     <h3 class="font-bold text-lg" data-i18n="fieldManagement.deleteTitle">确认删除</h3>
-                    <p class="py-2 text-base-content/70" id="delete-confirm-message" data-i18n="fieldManagement.deleteMessage">确定要删除此字段吗？此操作无法撤销。</p>
+                    <p class="py-2 text-base-content/70" id="delete-confirm-message"
+                        data-i18n="fieldManagement.deleteMessage">确定要删除此字段吗？此操作无法撤销。</p>
                 </div>
             </div>
             <div class="modal-action">
@@ -1001,13 +1087,8 @@
                         <span class="label-text" data-i18n="newTask.nameLabel">任务名称</span>
                         <span class="text-error">*</span>
                     </label>
-                    <input type="text"
-                           id="new-task-name"
-                           class="input input-bordered w-full"
-                           data-i18n-placeholder="newTask.namePlaceholder"
-                           placeholder="请输入任务名称"
-                           required
-                           maxlength="100">
+                    <input type="text" id="new-task-name" class="input input-bordered w-full"
+                        data-i18n-placeholder="newTask.namePlaceholder" placeholder="请输入任务名称" required maxlength="100">
                     <label class="label hidden" id="name-error">
                         <span class="label-text-alt text-error" data-i18n="newTask.nameRequired">
                             任务名称不能为空
@@ -1020,24 +1101,17 @@
                     <label class="label">
                         <span class="label-text" data-i18n="newTask.assigneeLabel">负责人</span>
                     </label>
-                    <input type="text"
-                           id="new-task-assignee"
-                           class="input input-bordered w-full"
-                           data-i18n-placeholder="newTask.assigneePlaceholder"
-                           placeholder="请选择负责人">
+                    <input type="text" id="new-task-assignee" class="input input-bordered w-full"
+                        data-i18n-placeholder="newTask.assigneePlaceholder" placeholder="请选择负责人">
                 </div>
 
                 <!-- 操作按钮 -->
                 <div class="modal-action">
-                    <button type="button"
-                            class="btn btn-ghost"
-                            data-i18n="newTask.cancel"
-                            onclick="document.getElementById('new-task-modal').close()">
+                    <button type="button" class="btn btn-ghost" data-i18n="newTask.cancel"
+                        onclick="document.getElementById('new-task-modal').close()">
                         取消
                     </button>
-                    <button type="submit"
-                            class="btn btn-primary"
-                            data-i18n="newTask.create">
+                    <button type="submit" class="btn btn-primary" data-i18n="newTask.create">
                         创建
                     </button>
                 </div>
