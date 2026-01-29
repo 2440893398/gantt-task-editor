@@ -800,51 +800,76 @@
         </div>
     </div>
 
+    <!-- 字段管理遮罩 -->
+    <div id="field-management-backdrop"
+        class="fixed inset-0 z-[6050] hidden opacity-0 transition-opacity duration-200"
+        style="background: var(--backdrop-color, rgba(15, 23, 42, 0.3));"></div>
+
     <!-- 字段管理面板 -->
     <div id="field-management-panel"
-        class="fixed right-0 top-0 h-full w-96 bg-base-100 shadow-2xl z-50 transform translate-x-full transition-transform duration-300 flex flex-col border-l border-base-200">
-        <!-- 优化后的头部：渐变背景 -->
-        <div class="bg-gradient-to-r from-primary to-accent p-5 text-white relative">
-            <div class="flex items-center gap-3">
-                <div class="p-2.5 bg-white/20 rounded-xl backdrop-blur-sm">
+        class="fixed inset-y-0 right-0 w-[440px] max-w-full z-[6100] transform translate-x-full transition-transform duration-300 flex flex-col"
+        style="background: var(--color-card, #FFFFFF); border-left: 1px solid var(--color-border, #E2E8F0); border-radius: var(--radius-m, 12px) 0 0 var(--radius-m, 12px); box-shadow: var(--shadow-modal, 0 12px 40px rgba(15,23,42,0.18));">
+        <!-- Header -->
+        <div class="h-20 px-4 flex items-center justify-between"
+            style="background: var(--color-surface, #F8FAFC); border-bottom: 1px solid var(--color-border, #E2E8F0);">
+            <div class="flex items-center gap-3 min-w-0">
+                <div class="w-10 h-10 rounded-xl flex items-center justify-center"
+                    style="background: var(--color-secondary, #F1F5F9); color: var(--color-primary, #0EA5E9);">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24"
                         stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                             d="M4 6h16M4 10h16M4 14h16M4 18h16" />
                     </svg>
                 </div>
-                <div class="flex-1">
-                    <h4 class="font-bold text-lg" data-i18n="fieldManagement.title">字段管理</h4>
-                    <p class="text-white/70 text-xs mt-0.5" data-i18n="fieldManagement.subtitle">拖拽排序，点击编辑</p>
+                <div class="min-w-0">
+                    <div class="text-sm font-semibold truncate" style="color: var(--color-foreground, #0F172A);"
+                        data-i18n="fieldManagement.title">字段管理</div>
+                    <div class="text-xs truncate" style="color: var(--color-muted-foreground, #64748B);"
+                        data-i18n="fieldManagement.subtitle">拖拽排序，点击编辑</div>
                 </div>
             </div>
-            <button id="close-field-management"
-                class="btn btn-sm btn-circle btn-ghost absolute right-3 top-3 text-white hover:bg-white/20">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24"
-                    stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-            </button>
+            <div class="flex items-center gap-2">
+                <button id="add-field-from-panel-icon-btn" type="button"
+                    class="w-8 h-8 inline-flex items-center justify-center"
+                    style="background: var(--color-card, #FFFFFF); border: 1px solid var(--color-border, #E2E8F0); border-radius: 10px; color: var(--color-foreground, #0F172A);"
+                    aria-label="Add field">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd"
+                            d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z"
+                            clip-rule="evenodd" />
+                    </svg>
+                </button>
+                <button id="close-field-management" type="button"
+                    class="w-8 h-8 inline-flex items-center justify-center"
+                    style="background: var(--color-card, #FFFFFF); border: 1px solid var(--color-border, #E2E8F0); border-radius: 10px; color: var(--color-muted-foreground, #64748B);"
+                    aria-label="Close">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24"
+                        stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
+            </div>
         </div>
 
-        <!-- 字段列表区域 -->
-        <div class="field-management-body flex-1 overflow-y-auto p-4 space-y-2 bg-base-200/30"
-            id="field-list-container">
-            <!-- 字段列表将在这里动态生成 -->
+        <!-- Body -->
+        <div class="flex-1 overflow-y-auto p-4 space-y-4" style="background: var(--color-surface, #F8FAFC);">
+            <input id="field-management-search-input" type="text"
+                class="w-full px-4 py-2 text-sm rounded-[var(--radius-pill,999px)] outline-none"
+                style="background: var(--color-card, #FFFFFF); border: 1px solid var(--color-border, #E2E8F0); color: var(--color-foreground, #0F172A);"
+                placeholder="搜索字段..." />
+
+            <div class="space-y-2" id="field-list-container">
+                <!-- 字段列表将在这里动态生成 -->
+            </div>
         </div>
 
-        <!-- 底部按钮区域 -->
-        <div class="p-4 border-t border-base-200 bg-base-100 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
-            <button id="add-field-from-panel-btn"
-                class="btn btn-primary w-full gap-2 shadow-md hover:shadow-lg transition-shadow"
-                data-i18n="fieldManagement.addField">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                    <path fill-rule="evenodd"
-                        d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z"
-                        clip-rule="evenodd" />
-                </svg>
-                新增字段
-            </button>
+        <!-- Footer -->
+        <div class="p-4" style="background: var(--color-surface, #F8FAFC); border-top: 1px solid var(--color-border, #E2E8F0);">
+            <button id="add-field-from-panel-btn" type="button"
+                class="w-full px-5 py-2 text-sm font-semibold rounded-[var(--radius-pill,999px)]"
+                style="background: var(--color-primary, #0EA5E9); color: #FFFFFF;"
+                data-i18n="fieldManagement.addField">新增字段</button>
         </div>
     </div>
 

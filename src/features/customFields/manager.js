@@ -20,7 +20,7 @@ import { showToast } from '../../utils/toast.js';
 import { updateGanttColumns } from '../gantt/columns.js';
 import { refreshLightbox } from '../lightbox/customization.js';
 import { FIELD_TYPE_CONFIG, ICON_OPTIONS } from '../../config/constants.js';
-import { addOptionInput, setOnOptionsChangeCallback } from '../../utils/dom.js';
+import { addOptionInput, setOnOptionsChangeCallback, escapeAttr } from '../../utils/dom.js';
 import { i18n } from '../../utils/i18n.js';
 import { refreshTaskDetailsPanel } from '../task-details/index.js';
 import { showConfirmDialog } from '../../components/common/confirm-dialog.js';
@@ -28,6 +28,7 @@ import { showConfirmDialog } from '../../components/common/confirm-dialog.js';
 let sortableInstance = null;
 const DEFAULT_FIELD_ICON = '📝';
 let fieldConfigEscHandler = null;
+let fieldDrawerEscHandler = null;
 
 function closeFieldConfigModal() {
     const modal = document.getElementById('field-config-modal');
@@ -57,6 +58,33 @@ function attachFieldConfigEscClose() {
         closeFieldConfigModal();
     };
     document.addEventListener('keydown', fieldConfigEscHandler);
+}
+
+function openFieldManagementBackdrop() {
+    const backdrop = document.getElementById('field-management-backdrop');
+    if (!backdrop) return;
+    backdrop.classList.remove('hidden');
+    requestAnimationFrame(() => backdrop.classList.remove('opacity-0'));
+}
+
+function closeFieldManagementBackdrop() {
+    const backdrop = document.getElementById('field-management-backdrop');
+    if (!backdrop) return;
+    backdrop.classList.add('opacity-0');
+    setTimeout(() => backdrop.classList.add('hidden'), 200);
+}
+
+function attachFieldDrawerEscClose() {
+    if (fieldDrawerEscHandler) return;
+
+    fieldDrawerEscHandler = (e) => {
+        if (e.key !== 'Escape') return;
+        const panel = document.getElementById('field-management-panel');
+        if (!panel) return;
+        if (!panel.classList.contains('open')) return;
+        closeFieldManagementPanel();
+    };
+    document.addEventListener('keydown', fieldDrawerEscHandler);
 }
 
 /**
@@ -89,12 +117,9 @@ function getLocalizedFieldTypeLabel(type) {
  */
 export function openFieldManagementPanel() {
     const panel = document.getElementById('field-management-panel');
-    // 如果任务详情面板打开，提升字段管理面板的 z-index
-    const taskDetailsOverlay = document.getElementById('task-details-overlay');
-    if (taskDetailsOverlay) {
-        panel.style.zIndex = '6100';
-    }
     panel.classList.add('open');
+    openFieldManagementBackdrop();
+    attachFieldDrawerEscClose();
     renderFieldList();
 }
 
@@ -104,7 +129,12 @@ export function openFieldManagementPanel() {
 export function closeFieldManagementPanel() {
     const panel = document.getElementById('field-management-panel');
     panel.classList.remove('open');
-    panel.style.zIndex = '';
+    closeFieldManagementBackdrop();
+
+    if (fieldDrawerEscHandler) {
+        document.removeEventListener('keydown', fieldDrawerEscHandler);
+        fieldDrawerEscHandler = null;
+    }
 }
 
 /**
@@ -246,32 +276,55 @@ export function renderFieldList() {
 
 
         html += `
-            <div class="flex items-center gap-3 p-3 bg-base-100 border border-base-200 rounded-lg shadow-sm hover:shadow-md transition-all group ${!enabled ? 'opacity-60 bg-base-200/50' : ''}" data-field-name="${fieldName}">
-                <div class="field-drag-handle cursor-move text-base-content/30 hover:text-primary flex flex-col justify-center leading-none text-xs">⋮⋮</div>
-                <div class="w-10 h-10 flex items-center justify-center bg-primary/10 rounded-lg text-xl shrink-0 grayscale-${!enabled ? '100' : '0'}">${fieldIcon}</div>
+            <div class="field-item flex items-center gap-3 px-3 py-3 transition-all group ${!enabled ? 'opacity-60' : ''}"
+                 style="height: 64px; background: var(--color-card, #FFFFFF); border: 1px solid var(--color-border, #E2E8F0); border-radius: 12px;"
+                 data-field-name="${fieldName}"
+                 data-field-label="${escapeAttr(fieldLabel)}"
+                 role="button" tabindex="0">
+                <div class="field-drag-handle cursor-move flex flex-col justify-center leading-none text-xs select-none"
+                     style="color: var(--color-muted-foreground, #64748B);">⋮⋮</div>
+
+                <div class="w-10 h-10 flex items-center justify-center rounded-lg text-xl shrink-0"
+                     style="background: var(--color-primary-soft, #E0F2FE); color: var(--color-primary, #0EA5E9); filter: ${!enabled ? 'grayscale(1)' : 'none'};">
+                    ${fieldIcon}
+                </div>
+
                 <div class="flex-1 min-w-0">
-                    <div class="font-medium text-sm truncate flex items-center gap-2">
+                    <div class="text-sm font-semibold truncate" style="color: var(--color-foreground, #0F172A);">
                         ${fieldLabel}
-                        <span class="badge badge-xs ${isSystem ? 'badge-info' : 'badge-success'}">${isSystem ? i18n.t('fieldManagement.systemTag') : i18n.t('fieldManagement.customTag')}</span>
                     </div>
-                    <div class="mt-1">
-                        <span class="badge badge-sm badge-ghost text-xs text-base-content/70">${getLocalizedFieldTypeLabel(fieldType)}</span>
+                    <div class="mt-1 flex items-center gap-2">
+                        <span class="px-2 py-0.5 text-[11px] font-semibold rounded-full"
+                            style="background: var(--color-secondary, #F1F5F9); color: var(--color-muted-foreground, #64748B);">
+                            ${isSystem ? i18n.t('fieldManagement.systemTag') : i18n.t('fieldManagement.customTag')}
+                        </span>
+                        <span class="px-2 py-0.5 text-[11px] font-semibold rounded-full"
+                            style="background: var(--color-secondary, #F1F5F9); color: var(--color-muted-foreground, #64748B);">
+                            ${getLocalizedFieldTypeLabel(fieldType)}
+                        </span>
                     </div>
                 </div>
-                <div class="flex gap-1 items-center opacity-100 sm:opacity-0 group-hover:opacity-100 transition-opacity">
+
+                <div class="flex gap-2 items-center opacity-100 sm:opacity-0 group-hover:opacity-100 transition-opacity">
                     ${canDisable ? `
-                        <label class="swap swap-flip" title="${enabled ? i18n.t('fieldManagement.disableField') : i18n.t('fieldManagement.enableField')}">
-                            <input type="checkbox" class="toggle-field-enabled" data-field="${fieldName}" ${enabled ? 'checked' : ''}>
-                            <div class="swap-on btn btn-xs btn-success text-white">ON</div>
-                            <div class="swap-off btn btn-xs btn-ghost border-base-300">OFF</div>
+                        <label title="${enabled ? i18n.t('fieldManagement.disableField') : i18n.t('fieldManagement.enableField')}" class="inline-flex items-center">
+                            <input type="checkbox" class="toggle-field-enabled sr-only" data-field="${fieldName}" ${enabled ? 'checked' : ''}>
+                            <span class="w-10 h-6 rounded-full relative transition-colors"
+                                style="background: ${enabled ? 'var(--color-primary, #0EA5E9)' : 'var(--color-border, #E2E8F0)'};">
+                                <span class="absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow transition-transform"
+                                    style="transform: ${enabled ? 'translateX(16px)' : 'translateX(0)'};"></span>
+                            </span>
                         </label>
                     ` : ''}
-                    <button class="field-action-btn btn btn-ghost btn-xs btn-square" data-action="edit" data-field="${fieldName}" title="${i18n.t('form.save')}">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
-                    </button>
+
                     ${!isSystem ? `
-                        <button class="field-action-btn btn btn-ghost btn-xs btn-square text-error" data-action="delete" data-field="${fieldName}" title="${i18n.t('form.delete')}">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                        <button class="field-action-btn w-8 h-8 inline-flex items-center justify-center rounded-lg"
+                            style="border: 1px solid var(--color-border, #E2E8F0); color: var(--color-danger, #DC2626); background: var(--color-card, #FFFFFF);"
+                            data-action="delete" data-field="${fieldName}" title="${i18n.t('form.delete')}">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
                         </button>
                     ` : ''}
                 </div>
@@ -281,17 +334,26 @@ export function renderFieldList() {
 
     container.innerHTML = html;
 
-    // Bind edit and delete events
+    // Click item to edit (system/custom)
+    container.querySelectorAll('[data-field-name]').forEach(item => {
+        item.addEventListener('click', (e) => {
+            const actionBtn = e.target.closest('.field-action-btn');
+            const toggle = e.target.closest('.toggle-field-enabled');
+            if (actionBtn || toggle) return;
+            editField(item.dataset.fieldName);
+        });
+        item.addEventListener('keydown', (e) => {
+            if (e.key !== 'Enter') return;
+            editField(item.dataset.fieldName);
+        });
+    });
+
+    // Bind delete events
     container.querySelectorAll('.field-action-btn').forEach(btn => {
         btn.addEventListener('click', function (e) {
             e.stopPropagation();
-            const action = this.dataset.action;
             const fieldName = this.dataset.field;
-            if (action === 'edit') {
-                editField(fieldName);
-            } else if (action === 'delete') {
-                deleteField(fieldName);
-            }
+            deleteField(fieldName);
         });
     });
 
@@ -936,6 +998,10 @@ export function initCustomFieldsUI() {
         openAddFieldModal();
     });
 
+    document.getElementById('add-field-from-panel-icon-btn')?.addEventListener('click', function () {
+        openAddFieldModal();
+    });
+
     // 点击遮罩关闭
     document.getElementById('field-config-modal')?.addEventListener('click', (e) => {
         if (e.target?.id === 'field-config-modal') {
@@ -945,6 +1011,18 @@ export function initCustomFieldsUI() {
 
     // 字段管理面板
     document.getElementById('close-field-management').addEventListener('click', closeFieldManagementPanel);
+    document.getElementById('field-management-backdrop')?.addEventListener('click', closeFieldManagementPanel);
+
+    // Drawer 搜索过滤（不重渲染，直接隐藏不匹配项）
+    document.getElementById('field-management-search-input')?.addEventListener('input', (e) => {
+        const query = (e.target.value || '').toLowerCase().trim();
+        document.querySelectorAll('#field-list-container [data-field-name]').forEach((el) => {
+            const label = (el.dataset.fieldLabel || '').toLowerCase();
+            const fieldName = (el.dataset.fieldName || '').toLowerCase();
+            const match = !query || label.includes(query) || fieldName.includes(query);
+            el.style.display = match ? '' : 'none';
+        });
+    });
 
     // 字段类型变化
     document.getElementById('field-type').addEventListener('change', function () {
