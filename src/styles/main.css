@@ -6,41 +6,46 @@
     themes: light --default;
 }
 
-/* Design System Tokens — 蓝青主色 */
-@theme {
-    --color-primary: #0EA5E9;
-    --color-primary-hover: #0284C7;
-    --color-primary-soft: #E0F2FE;
-    --color-primary-strong: #0369A1;
-    --color-secondary: #F1F5F9;
-    --color-accent: #50E3C2;
-
-    --color-background: #F7F8FA;
-    --color-surface: #F8FAFC;
-    --color-surface-2: #EEF2F6;
-    --color-card: #FFFFFF;
-    --color-foreground: #0F172A;
-    --color-muted-foreground: #64748B;
-    --color-border: #E2E8F0;
-
-    --color-danger: #DC2626;
-    --color-danger-soft: #FEE2E2;
-    --color-danger-foreground: #FFFFFF;
-
-    --color-success: #22C55E;
-    --color-warning: #F59E0B;
-    --color-error: #EF4444;
-
-    --radius-m: 12px;
-    --radius-pill: 999px;
-    --shadow-modal: 0 12px 40px rgba(15, 23, 42, 0.18);
-    --backdrop-color: #0F172A4D;
-}
-
 /* 基础样式层 */
 @layer base {
+    /*
+     * 设计系统 tokens - 单一真实来源
+     * 所有颜色值来自 tailwind.config.js 中的 DaisyUI 主题配置
+     */
     :root {
-        /* 色彩系统 - 保持兼容性，逐步迁移到 @theme tokens / Tailwind 类 */
+        /* 主色系 - 蓝色主题 */
+        --color-primary: #0EA5E9;
+        --color-primary-hover: #0284C7;
+        --color-primary-soft: #E0F2FE;
+        --color-primary-strong: #0369A1;
+
+        /* 中性色系 */
+        --color-secondary: #F1F5F9;
+        --color-accent: #50E3C2;
+        --color-background: #F8FAFC;
+        --color-surface: #F8FAFC;
+        --color-card: #FFFFFF;
+        --color-foreground: #0F172A;
+        --color-muted-foreground: #64748B;
+        --color-border: #E2E8F0;
+
+        /* 语义色 */
+        --color-danger: #DC2626;
+        --color-danger-soft: #FEE2E2;
+        --color-success: #22C55E;
+        --color-warning: #F59E0B;
+        --color-error: #EF4444;
+
+        /* 设计规范 */
+        --radius-m: 12px;
+        --radius-pill: 999px;
+        --shadow-modal: 0 12px 40px rgba(15, 23, 42, 0.18);
+        --backdrop-color: #0F172A4D;
+
+        /* 字体规范 */
+        --font-family-base: 'Source Sans 3', 'Source Han Sans CN', sans-serif;
+
+        /* 兼容旧代码的别名变量 - 逐步迁移后可删除 */
         --primary-color: #0EA5E9;
         --accent-color: #50E3C2;
         --text-primary: #0F172A;
@@ -49,98 +54,155 @@
         --background-gray: #F8FAFC;
         --background-hover-gray: #F1F5F9;
         --background-white: #FFFFFF;
-        --color-success: #22C55E;
-        --color-warning: #F59E0B;
-        --color-error: #EF4444;
-        --task-bar-bg: #BAE6FD;
-
-        /* 字体规范 */
-        --font-family-base: 'Inter', 'Source Sans 3', 'Source Han Sans CN', sans-serif;
-        --font-size-body: 14px;
-        --font-size-small: 12px;
-
-        /* 圆角 */
-        --border-radius-small: 4px;
-        --radius: 0.5rem;
-
-        /* 兼容旧变量名 */
         --primary-hover: #0284C7;
         --success-color: #22C55E;
         --warning-color: #F59E0B;
         --danger-color: #DC2626;
         --text-color: #0F172A;
-        --background-color: #F7F8FA;
+        --background-color: #F8FAFC;
         --white: #fff;
+        --task-bar-bg: #BAE6FD;
+        --font-size-body: 14px;
+        --font-size-small: 12px;
+        --border-radius-small: 4px;
+        --radius: 0.5rem;
     }
 
     html,
     body {
         height: 100%;
         overflow: hidden;
-        background-color: #F7F8FA;
-        color: #0F172A;
+        background-color: var(--color-background);
+        color: var(--color-foreground);
         font-family: var(--font-family-base);
     }
 
-    /* Gantt container needs explicit height */
     #gantt_here {
         width: 100%;
         height: 100%;
         min-height: 400px;
-        /* 确保在 flex 布局中正确显示 */
         flex: 1 1 auto;
     }
 
-    /* 修复工具栏 SVG 图标尺寸异常问题 */
-    #field-toolbar svg {
+    #task-toolbar svg,
+    #task-header svg {
         width: 1rem !important;
         height: 1rem !important;
         max-width: 1rem !important;
         max-height: 1rem !important;
         flex-shrink: 0;
     }
+}
 
-    /* 搜索框内的图标 */
-    #field-toolbar .form-control svg {
-        width: 1rem !important;
-        height: 1rem !important;
-    }
-
-    /* 按钮内的图标 */
-    #field-toolbar button svg {
-        width: 1rem !important;
-        height: 1rem !important;
-    }
+/* Utility classes */
+.grayscale {
+    filter: grayscale(1);
 }
 
 /* View mode segmented control */
 .view-seg-btn {
     padding: 6px 12px;
-    border-radius: var(--radius-pill, 999px);
+    border-radius: var(--radius-pill);
     font-size: 13px;
     font-weight: 500;
-    color: var(--color-muted-foreground, #64748B);
+    color: var(--color-muted-foreground);
     background: transparent;
     border: none;
     cursor: pointer;
     transition: all 0.2s ease;
     white-space: nowrap;
 }
+
 .view-seg-btn:hover {
-    color: var(--color-foreground, #0F172A);
+    color: var(--color-foreground);
 }
+
 .view-seg-btn.active {
-    background: var(--color-card, #FFFFFF);
-    color: var(--color-foreground, #0F172A);
+    background: var(--color-card);
+    color: var(--color-foreground);
     font-weight: 600;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
-@media (prefers-reduced-motion: reduce) {
+/* Toolbar system */
+#task-toolbar .task-search {
+    height: 40px;
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--color-border);
+    background: var(--color-card);
+    color: var(--color-foreground);
+    font-size: 13px;
+    padding-right: 12px;
+    outline: none;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
 
-    *,
-    ::before,
-    ::after {
+#task-toolbar .task-search:focus {
+    border-color: rgba(14, 165, 233, 0.5);
+    box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.18);
+}
+
+.toolbar-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 36px;
+    padding: 0 12px;
+    border-radius: var(--radius-pill);
+    font-size: 13px;
+    font-weight: 600;
+    border: 1px solid var(--color-border);
+    background: var(--color-card);
+    color: var(--color-foreground);
+    cursor: pointer;
+    transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+    white-space: nowrap;
+}
+
+.toolbar-pill.toolbar-muted {
+    background: var(--color-secondary);
+    border-color: transparent;
+}
+
+.toolbar-pill.toolbar-primary {
+    background: var(--color-primary);
+    border-color: var(--color-primary);
+    color: #FFFFFF;
+}
+
+.toolbar-pill.toolbar-primary:hover {
+    background: var(--color-primary-hover);
+    border-color: var(--color-primary-hover);
+}
+
+.toolbar-icon-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    background: var(--color-card);
+    border: 1px solid var(--color-border);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--color-muted-foreground);
+    cursor: pointer;
+    transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+
+.toolbar-icon-btn:hover {
+    color: var(--color-foreground);
+    background: var(--color-surface);
+}
+
+.toolbar-sep {
+    width: 1px;
+    height: 20px;
+    background: var(--color-border);
+    margin: 0 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *, ::before, ::after {
         animation-delay: -1ms !important;
         animation-duration: 1ms !important;
         animation-iteration-count: 1 !important;
@@ -151,20 +213,17 @@
     }
 }
 
-/* Short tasks minimum width */
+/* Gantt specific styles */
 .gantt_task_line.short-task .gantt_task_content {
     min-width: 20px !important;
     border: 2px solid currentColor;
     font-size: 0;
-    /* Hide text for very short tasks */
 }
 
-/* Ensure all task contents have a minimum width to be visible */
 .gantt_task_line .gantt_task_content {
     min-width: 20px;
 }
 
-/* Baseline Bar Style */
 .baseline-bar {
     background: #9ca3af;
     opacity: 0.6;
@@ -172,12 +231,9 @@
     z-index: 1;
     border-radius: 3px;
     margin-top: -2px;
-    /* slight adjustment */
 }
 
-/* Resource Conflict Style */
 .gantt_task_line.resource-conflict .gantt_task_content {
     border: 2px solid #f59e0b;
     box-shadow: 0 0 8px rgba(245, 158, 11, 0.4);
 }
-
