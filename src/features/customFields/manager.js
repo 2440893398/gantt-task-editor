@@ -276,30 +276,31 @@ export function renderFieldList() {
 
 
         html += `
-            <div class="field-item flex items-center gap-3 px-3 py-3 transition-all group ${!enabled ? 'opacity-60' : ''}"
-                 style="height: 64px; background: var(--color-card, #FFFFFF); border: 1px solid var(--color-border, #E2E8F0); border-radius: 12px;"
+            <div class="field-item flex items-center gap-[10px] p-3 transition-all group ${!enabled ? 'opacity-60' : ''} h-16 bg-base-100 border border-base-300 rounded-xl"
                  data-field-name="${fieldName}"
                  data-field-label="${escapeAttr(fieldLabel)}"
                  role="button" tabindex="0">
-                <div class="field-drag-handle cursor-move flex flex-col justify-center leading-none text-xs select-none"
-                     style="color: var(--color-muted-foreground, #64748B);">⋮⋮</div>
+                <div class="field-drag-handle cursor-move flex items-center justify-center w-4 shrink-0 text-base-300">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24"
+                        stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round"
+                            d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
+                    </svg>
+                </div>
 
-                <div class="w-10 h-10 flex items-center justify-center rounded-lg text-xl shrink-0"
-                     style="background: var(--color-primary-soft, #E0F2FE); color: var(--color-primary, #0EA5E9); filter: ${!enabled ? 'grayscale(1)' : 'none'};">
+                <div class="w-8 h-8 flex items-center justify-center rounded-[8px] text-lg shrink-0 bg-sky-100 text-primary ${!enabled ? 'grayscale' : ''}">
                     ${fieldIcon}
                 </div>
 
-                <div class="flex-1 min-w-0">
-                    <div class="text-sm font-semibold truncate" style="color: var(--color-foreground, #0F172A);">
+                <div class="flex-1 min-w-0 flex flex-col gap-1">
+                    <div class="text-sm font-semibold truncate leading-none text-base-content">
                         ${fieldLabel}
                     </div>
-                    <div class="mt-1 flex items-center gap-2">
-                        <span class="px-2 py-0.5 text-[11px] font-semibold rounded-full"
-                            style="background: var(--color-secondary, #F1F5F9); color: var(--color-muted-foreground, #64748B);">
+                    <div class="flex items-center gap-1">
+                        <span class="badge badge-ghost text-base-content/60 text-[10px]">
                             ${isSystem ? i18n.t('fieldManagement.systemTag') : i18n.t('fieldManagement.customTag')}
                         </span>
-                        <span class="px-2 py-0.5 text-[11px] font-semibold rounded-full"
-                            style="background: var(--color-secondary, #F1F5F9); color: var(--color-muted-foreground, #64748B);">
+                        <span class="badge badge-ghost text-base-content/60 text-[10px]">
                             ${getLocalizedFieldTypeLabel(fieldType)}
                         </span>
                     </div>
@@ -308,21 +309,23 @@ export function renderFieldList() {
                 <div class="flex gap-2 items-center opacity-100 sm:opacity-0 group-hover:opacity-100 transition-opacity">
                     ${canDisable ? `
                         <label title="${enabled ? i18n.t('fieldManagement.disableField') : i18n.t('fieldManagement.enableField')}" class="inline-flex items-center">
-                            <input type="checkbox" class="toggle-field-enabled sr-only" data-field="${fieldName}" ${enabled ? 'checked' : ''}>
-                            <span class="w-10 h-6 rounded-full relative transition-colors"
-                                style="background: ${enabled ? 'var(--color-primary, #0EA5E9)' : 'var(--color-border, #E2E8F0)'};">
-                                <span class="absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow transition-transform"
-                                    style="transform: ${enabled ? 'translateX(16px)' : 'translateX(0)'};"></span>
-                            </span>
+                            <input type="checkbox" class="toggle toggle-primary toggle-field-enabled" data-field="${fieldName}" ${enabled ? 'checked' : ''}>
                         </label>
-                    ` : ''}
+                    ` : `
+                        <div class="flex items-center text-[14px] text-base-content/60" title="${i18n.t('fieldManagement.required')}">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-[14px] w-[14px]" fill="none" viewBox="0 0 24 24"
+                                stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round"
+                                    d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                            </svg>
+                        </div>
+                    `}
 
                     ${!isSystem ? `
-                        <button class="field-action-btn w-8 h-8 inline-flex items-center justify-center rounded-lg"
-                            style="border: 1px solid var(--color-border, #E2E8F0); color: var(--color-danger, #DC2626); background: var(--color-card, #FFFFFF);"
+                        <button class="field-action-btn w-8 h-8 inline-flex items-center justify-center rounded-[8px] bg-base-100 border border-base-300 text-error"
                             data-action="delete" data-field="${fieldName}" title="${i18n.t('form.delete')}">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round"
                                     d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                             </svg>
                         </button>
@@ -998,8 +1001,14 @@ export function initCustomFieldsUI() {
         openAddFieldModal();
     });
 
-    document.getElementById('add-field-from-panel-icon-btn')?.addEventListener('click', function () {
-        openAddFieldModal();
+    // 设置按钮（预留功能）
+    document.getElementById('field-settings-btn')?.addEventListener('click', function () {
+        showToast(i18n.t('message.comingSoon') || '功能开发中', 'info');
+    });
+
+    // 筛选按钮（预留功能）
+    document.getElementById('field-filter-btn')?.addEventListener('click', function () {
+        showToast(i18n.t('message.comingSoon') || '功能开发中', 'info');
     });
 
     // 点击遮罩关闭
