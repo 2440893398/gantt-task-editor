@@ -18,22 +18,19 @@ const ICONS = {
 
 const COLOR_MAP = {
     danger: {
-        iconBg: 'var(--color-danger-soft, #FEE2E2)',
-        iconColor: 'var(--color-danger, #DC2626)',
-        btnBg: 'var(--color-danger, #DC2626)',
-        btnText: 'var(--color-danger-foreground, #FFFFFF)'
+        iconBgClass: 'bg-error/10',
+        iconColorClass: 'text-error',
+        btnClass: 'btn btn-error'
     },
     primary: {
-        iconBg: 'var(--color-primary-soft, #E0F2FE)',
-        iconColor: 'var(--color-primary, #0EA5E9)',
-        btnBg: 'var(--color-primary, #0EA5E9)',
-        btnText: '#FFFFFF'
+        iconBgClass: 'bg-primary/10',
+        iconColorClass: 'text-primary',
+        btnClass: 'btn btn-primary'
     },
     warning: {
-        iconBg: '#FEF3C7',
-        iconColor: '#D97706',
-        btnBg: '#D97706',
-        btnText: '#FFFFFF'
+        iconBgClass: 'bg-warning/10',
+        iconColorClass: 'text-warning',
+        btnClass: 'btn btn-warning'
     }
 };
 
@@ -69,51 +66,25 @@ export function showConfirmDialog({
     `;
 
     backdrop.innerHTML = `
-        <div id="confirm-dialog-card" style="
-            background: var(--color-card, #FFFFFF);
-            border-radius: var(--radius-m, 12px);
-            width: 420px; max-width: 90vw;
-            box-shadow: var(--shadow-modal, 0 12px 40px rgba(15,23,42,0.18));
-            overflow: hidden;
-            transform: scale(0.95); opacity: 0;
-            transition: transform 0.2s ease, opacity 0.2s ease;
-        ">
-            <div style="padding: 16px; display: flex; flex-direction: column; gap: 10px;">
-                <div style="
-                    width: 44px; height: 44px; border-radius: 22px;
-                    background: ${colors.iconBg};
-                    display: flex; align-items: center; justify-content: center;
-                ">
+        <div id="confirm-dialog-card" class="bg-base-100 rounded-xl w-[420px] max-w-[90vw] shadow-xl overflow-hidden" style="transform: scale(0.95); opacity: 0; transition: transform 0.2s ease, opacity 0.2s ease;">
+            <div class="p-4 flex flex-col gap-2.5">
+                <div class="w-11 h-11 rounded-full flex items-center justify-center ${colors.iconBgClass}">
                     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"
-                         fill="none" stroke="${colors.iconColor}" stroke-width="2"
-                         stroke-linecap="round" stroke-linejoin="round">
+                         fill="none" stroke="currentColor" stroke-width="2"
+                         stroke-linecap="round" stroke-linejoin="round" class="${colors.iconColorClass}">
                         ${iconPath}
                     </svg>
                 </div>
-                <div style="font-size: 16px; font-weight: 600; color: var(--color-foreground, #0F172A);">
+                <div class="text-base font-semibold text-base-content">
                     ${safeTitle}
                 </div>
-                <div style="font-size: 13px; color: var(--color-muted-foreground, #64748B);">
+                <div class="text-[13px] text-base-content/60">
                     ${safeMessage}
                 </div>
             </div>
-            <div style="
-                display: flex; align-items: center; justify-content: flex-end; gap: 10px;
-                padding: 12px 16px;
-                background: var(--color-surface, #F8FAFC);
-            ">
-                <button id="confirm-dialog-cancel" type="button" style="
-                    padding: 8px 12px; border-radius: var(--radius-pill, 999px);
-                    font-size: 13px; font-weight: 600; border: none;
-                    color: var(--color-foreground, #0F172A);
-                    background: transparent; cursor: pointer;
-                ">${safeCancelText}</button>
-                <button id="confirm-dialog-ok" type="button" style="
-                    padding: 8px 14px; border-radius: var(--radius-pill, 999px);
-                    font-size: 13px; font-weight: 600; border: none;
-                    color: ${colors.btnText}; background: ${colors.btnBg};
-                    cursor: pointer;
-                ">${safeConfirmText}</button>
+            <div class="flex items-center justify-end gap-2.5 px-4 py-3 bg-base-200">
+                <button id="confirm-dialog-cancel" type="button" class="btn btn-ghost btn-sm rounded-full">${safeCancelText}</button>
+                <button id="confirm-dialog-ok" type="button" class="${colors.btnClass} btn-sm rounded-full">${safeConfirmText}</button>
             </div>
         </div>
     `;

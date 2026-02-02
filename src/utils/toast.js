@@ -26,26 +26,26 @@ export function showToast(message, type = 'success', duration = null) {
     const palette =
         type === 'success'
             ? {
-                  iconBg: 'rgba(34, 197, 94, 0.15)',
-                  iconColor: 'var(--color-success, #22C55E)',
-                  iconPath: '<path d="M20 6L9 17l-5-5" />'
-              }
+                iconBgClass: 'bg-success/15',
+                iconColorClass: 'text-success',
+                iconPath: '<path d="M20 6L9 17l-5-5" />'
+            }
             : {
-                  iconBg: 'var(--color-danger-soft, #FEE2E2)',
-                  iconColor: 'var(--color-danger, #DC2626)',
-                  iconPath: '<path d="M18 6L6 18" /><path d="M6 6l12 12" />'
-              };
+                iconBgClass: 'bg-error/10',
+                iconColorClass: 'text-error',
+                iconPath: '<path d="M18 6L6 18" /><path d="M6 6l12 12" />'
+            };
 
     toast.innerHTML = `
-        <div class="flex flex-row items-center gap-3 cursor-pointer px-4 py-3 bg-[--color-card] border border-[--color-border] rounded-[--radius-m] shadow-[var(--shadow-modal)]">
-            <div class="w-9 h-9 rounded-full flex items-center justify-center shrink-0" style="background: ${palette.iconBg};">
+        <div class="flex flex-row items-center gap-3 cursor-pointer px-4 py-3 bg-base-100 border border-base-300 rounded-xl shadow-xl">
+            <div class="w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${palette.iconBgClass}">
                 <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none"
-                    stroke="${palette.iconColor}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="${palette.iconColorClass}">
                     ${palette.iconPath}
                 </svg>
             </div>
-            <span class="text-sm font-medium text-[--color-foreground]">${message}</span>
-            <button type="button" class="ml-2 w-8 h-8 rounded-full hover:bg-[--color-secondary] text-[--color-muted-foreground] flex items-center justify-center" aria-label="Close">×</button>
+            <span class="text-sm font-medium text-base-content">${message}</span>
+            <button type="button" class="ml-2 w-8 h-8 rounded-full hover:bg-base-200 text-base-content/60 flex items-center justify-center" aria-label="Close">×</button>
         </div>
     `;
 
