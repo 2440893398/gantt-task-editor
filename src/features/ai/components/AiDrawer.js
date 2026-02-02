@@ -1,4 +1,4 @@
-/**
+﻿/**
  * AI 流式响应抽屉组件 (F-105, F-106, F-107, F-108)
  * 用于展示 AI 对话历史和生成内容
  * 支持消息气泡、Markdown 渲染、多轮对话
@@ -17,7 +17,6 @@ let currentText = '';
 let onApplyCallback = null;
 let currentAgentId = null;
 let isStreaming = false; // 流式输出状态
-
 // 对话历史 (F-106)
 let conversationHistory = [];
 
@@ -38,12 +37,12 @@ function createDrawerHTML() {
     return `
     <!-- AI 流式响应抽屉 -->
     <div id="ai_drawer" class="fixed inset-y-0 right-0 z-[6100] w-[420px] max-w-full transform translate-x-full transition-transform duration-300 flex flex-col"
-         style="background: var(--color-card, #FFFFFF); border-left: 1px solid var(--color-border, #E2E8F0); border-radius: var(--radius-m, 12px) 0 0 var(--radius-m, 12px); box-shadow: var(--shadow-modal, 0 12px 40px rgba(15,23,42,0.18));"
+         class="bg-base-100 border-l border-base-300 rounded-l-xl shadow-xl"
          role="dialog" aria-modal="false" aria-labelledby="ai_drawer_title">
         <!-- 头部 -->
-        <div class="h-20 px-4 flex items-center justify-between sticky top-0 z-10"
-             style="background: var(--color-surface, #F8FAFC); border-bottom: 1px solid var(--color-border, #E2E8F0);">
-            <h3 class="font-bold flex items-center gap-2 text-lg" id="ai_drawer_title">
+        <div class="h-14 px-4 flex items-center justify-between sticky top-0 z-10"
+             class="bg-base-200 border-b border-base-300">
+            <h3 class="font-semibold flex items-center gap-2 text-base" id="ai_drawer_title">
                 <span class="loading loading-spinner loading-sm text-primary hidden" id="ai_drawer_loading"></span>
                 <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-primary" id="ai_drawer_icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
@@ -51,21 +50,21 @@ function createDrawerHTML() {
                 <span id="ai_drawer_title_text" data-i18n="ai.drawer.title">AI 助手</span>
             </h3>
             <div class="flex items-center gap-1">
-                <button class="w-8 h-8 inline-flex items-center justify-center tooltip tooltip-bottom" data-tip="${i18n.t('ai.config.title') || '设置'}" id="ai_drawer_settings"
-                        style="background: var(--color-card, #FFFFFF); border: 1px solid var(--color-border, #E2E8F0); border-radius: 10px; color: var(--color-foreground, #0F172A);">
+                <button class="w-8 h-8 inline-flex items-center justify-center tooltip tooltip-bottom" data-tip="${i18n.t('ai.config.title') || 'Settings'}" id="ai_drawer_settings"
+                        class="bg-base-100 border border-base-300 rounded-[10px] text-base-content">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                     </svg>
                 </button>
-                <button class="w-8 h-8 inline-flex items-center justify-center tooltip tooltip-left" data-tip="${i18n.t('ai.drawer.clear') || '清空对话'}" id="ai_drawer_clear"
-                        style="background: var(--color-card, #FFFFFF); border: 1px solid var(--color-border, #E2E8F0); border-radius: 10px; color: var(--color-foreground, #0F172A);">
+                <button class="w-8 h-8 inline-flex items-center justify-center tooltip tooltip-left" data-tip="${i18n.t('ai.drawer.clear') || 'Clear chat'}" id="ai_drawer_clear"
+                        class="bg-base-100 border border-base-300 rounded-[10px] text-base-content">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                     </svg>
                 </button>
                 <button class="w-8 h-8 inline-flex items-center justify-center" id="ai_drawer_close" aria-label="关闭"
-                        style="background: var(--color-card, #FFFFFF); border: 1px solid var(--color-border, #E2E8F0); border-radius: 10px; color: var(--color-muted-foreground, #64748B);">
+                        class="bg-base-100 border border-base-300 rounded-[10px] text-base-content/60">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
                     </svg>
@@ -74,15 +73,15 @@ function createDrawerHTML() {
         </div>
 
         <!-- 滚动消息区 -->
-        <div class="flex-1 overflow-y-auto p-4 space-y-4" id="ai_drawer_messages" style="background: var(--color-surface, #F8FAFC);">
+        <div class="flex-1 overflow-y-auto p-4 space-y-4 bg-base-200" id="ai_drawer_messages">
             <!-- 消息气泡动态生成 -->
         </div>
 
         <!-- Token 统计区 (F-111) -->
-        <div class="flex justify-between items-center px-4 py-2 bg-base-200/50 text-xs text-base-content/50 border-y border-base-300 hidden" id="ai_token_stats">
-            <span>${i18n.t('ai.drawer.session') || '本次会话'}</span>
+        <div class="flex justify-between items-center px-4 py-2 bg-[--color-surface] text-xs text-[--color-muted-foreground] border-y border-[--color-border] hidden" id="ai_token_stats">
+            <span>${i18n.t('ai.drawer.session') || 'Session'}</span>
             <span class="font-mono">
-                ${i18n.t('ai.drawer.tokens') || '累计'}: <span class="text-primary font-semibold" id="ai_total_tokens">0</span> tokens
+                ${i18n.t('ai.drawer.tokens') || 'Total'}: <span class="text-primary font-semibold" id="ai_total_tokens">0</span> tokens
             </span>
         </div>
 
@@ -95,13 +94,13 @@ function createDrawerHTML() {
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                         </svg>
                         <div class="flex-1 min-w-0">
-                            <h4 class="font-semibold" id="ai_error_title">${i18n.t('ai.error.title') || '请求失败'}</h4>
+                            <h4 class="font-semibold" id="ai_error_title">${i18n.t('ai.error.title') || 'Request failed'}</h4>
                             <p class="text-xs opacity-80 mt-1" id="ai_error_message"></p>
                             <details class="collapse mt-2 hidden" id="ai_error_details">
-                                <summary class="collapse-title text-xs font-medium p-2 min-h-0 bg-base-300/50 rounded cursor-pointer">
-                                    ${i18n.t('ai.error.viewDetails') || '查看详情'}
+                                <summary class="collapse-title text-xs font-medium p-2 min-h-0 bg-[--color-surface] rounded cursor-pointer">
+                                    ${i18n.t('ai.error.viewDetails') || 'View details'}
                                 </summary>
-                                <div class="collapse-content bg-base-300/50 rounded-b">
+                                <div class="collapse-content bg-[--color-surface] rounded-b">
                                     <pre class="text-xs overflow-x-auto p-2 whitespace-pre-wrap break-all" id="ai_error_raw"></pre>
                                 </div>
                             </details>
@@ -112,38 +111,38 @@ function createDrawerHTML() {
         </div>
 
         <!-- 底部区域：附加指令 + 聊天输入 -->
-        <div class="bg-base-100 border-t border-base-200 sticky bottom-0 z-10">
-            <!-- F-109: 附加指令输入区 (可折叠) -->
+        <div class="bg-[--color-surface] border-t border-[--color-border] sticky bottom-0 z-10">
+            <!-- F-109: 附加指令输入区(可折叠) -->
             <div class="px-4 pt-2">
-                <div class="collapse collapse-arrow border border-base-300 bg-base-100 rounded-box mb-2">
+                <div class="collapse collapse-arrow border border-[--color-border] bg-[--color-surface] rounded-box mb-2">
                     <input type="checkbox" id="ai_instruction_toggle" /> 
-                    <div class="collapse-title text-xs font-medium min-h-0 py-2 flex items-center gap-2 text-base-content/70">
+                    <div class="collapse-title text-xs font-medium min-h-0 py-2 flex items-center gap-2 text-[--color-muted-foreground]">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
                         </svg>
-                        ${i18n.t('ai.prompt.additionalInstruction') || 'Prompt 调整 (附加指令)'}
+                        ${i18n.t('ai.prompt.additionalInstruction') || 'Prompt adjustment (additional instruction)'}
                     </div>
                     <div class="collapse-content"> 
                         <textarea 
                             class="textarea textarea-bordered w-full text-sm resize-none h-20 mb-1" 
                             id="ai_additional_instruction"
-                            placeholder="${i18n.t('ai.prompt.placeholder') || '在此输入对 AI 的额外要求 (System Prompt 补充)...'}"
+                            placeholder="${i18n.t('ai.prompt.placeholder') || 'Enter extra instructions for AI (System Prompt addendum)...'}"
                         ></textarea>
-                        <div class="text-xs text-base-content/50">
-                            ${i18n.t('ai.prompt.hint') || '这些指令将在每次对话时作为上下文发送'}
+                        <div class="text-xs text-[--color-muted-foreground]">
+                            ${i18n.t('ai.prompt.hint') || 'These instructions will be sent with each conversation as context.'}
                         </div>
                     </div>
                 </div>
             </div>
 
             <!-- F-106: 聊天输入框 -->
-            <div class="p-4" style="background: var(--color-surface, #F8FAFC); border-top: 1px solid var(--color-border, #E2E8F0);">
+            <div class="p-4 bg-base-200 border-t border-base-300">
                 <div class="flex gap-2">
                     <textarea 
                         class="ai-chat-input flex-1 text-sm resize-none outline-none" 
                         rows="2"
                         id="ai_chat_input"
-                        placeholder="${i18n.t('ai.drawer.chatPlaceholder') || '输入消息继续对话/提问...'}"
+                        placeholder="${i18n.t('ai.drawer.chatPlaceholder') || 'Type a message to continue...'}"
                     ></textarea>
                     <button class="ai-send-btn self-end" id="ai_send_btn" type="button">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -151,8 +150,8 @@ function createDrawerHTML() {
                         </svg>
                     </button>
                 </div>
-                <div class="text-xs text-base-content/40 mt-1 flex justify-between px-1">
-                    <span>💡 ${i18n.t('ai.drawer.chatHint') || 'Enter 发送，Shift+Enter 换行'}</span>
+                <div class="text-xs text-[--color-muted-foreground] mt-1 flex justify-between px-1">
+                    <span>${i18n.t('ai.drawer.chatHint') || 'Enter to send, Shift+Enter for new line'}</span>
                     <span id="ai_input_char_count">0/2000</span>
                 </div>
             </div>
@@ -204,7 +203,7 @@ function createDrawerHTML() {
  * 初始化抽屉组件
  */
 export function initAiDrawer() {
-    // 检查是否已存在
+    // 检查是否存在
     if (document.getElementById('ai_drawer')) {
         drawerEl = document.getElementById('ai_drawer');
         messagesEl = document.getElementById('ai_drawer_messages');
@@ -245,10 +244,10 @@ function bindEvents() {
         showConfirmDialog({
             icon: 'trash-2',
             variant: 'danger',
-            title: i18n.t('ai.drawer.clearTitle') || '清空对话',
-            message: i18n.t('ai.drawer.clearConfirm') || '确定要清空所有对话记录吗？此操作无法撤销。',
-            confirmText: i18n.t('ai.drawer.clear') || '清空',
-            cancelText: i18n.t('form.cancel') || '取消',
+            title: i18n.t('ai.drawer.clearTitle') || 'Clear conversation',
+            message: i18n.t('ai.drawer.clearConfirm') || 'Are you sure you want to clear all messages? This cannot be undone.',
+            confirmText: i18n.t('ai.drawer.clear') || 'Clear',
+            cancelText: i18n.t('form.cancel') || 'Cancel',
             onConfirm: () => clearConversation()
         });
     });
@@ -347,7 +346,7 @@ export function addMessage(role, content, meta = {}) {
         ...meta
     };
 
-    // 如果是第一条消息，清空可能存在的"Start new conversation"占位符
+    // 如果是第一条消息，清空可能存在的 "Start new conversation" 占位符
     if (messagesEl && conversationHistory.length === 0) {
         messagesEl.innerHTML = '';
     }
@@ -372,13 +371,29 @@ function renderMessage(message) {
     const isUser = message.role === 'user';
     const bubbleClass = isUser ? 'chat-end' : 'chat-start';
     const bubbleColor = isUser ? 'ai-bubble-user' : 'ai-bubble-ai';
-    const avatar = isUser ? '👤' : '🤖';
-    const label = isUser ? (i18n.t('ai.drawer.you') || '你') : 'AI';
+    const userAvatar = `
+        <span class="ai-msg-avatar ai-msg-avatar-user">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 12a4 4 0 100-8 4 4 0 000 8z" />
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 20a8 8 0 0116 0" />
+            </svg>
+        </span>
+    `;
+    const aiAvatar = `
+        <span class="ai-msg-avatar ai-msg-avatar-ai">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+            </svg>
+        </span>
+    `;
+    const avatar = isUser ? userAvatar : aiAvatar;
+    const label = isUser ? (i18n.t('ai.drawer.you') || 'You') : 'AI';
 
     const html = `
         <div class="chat ${bubbleClass}" data-message-id="${message.id}">
-            <div class="chat-header text-xs opacity-50 mb-1 flex items-center gap-2">
-                <span>${avatar} ${label}</span>
+            <div class="chat-header text-xs text-[--color-muted-foreground] mb-1 flex items-center gap-2">
+                ${avatar}
+                <span class="ai-msg-label">${label}</span>
                 <time>${message.timestamp}</time>
             </div>
             <div class="chat-bubble ${bubbleColor}">
@@ -386,7 +401,7 @@ function renderMessage(message) {
                     ${isUser ? escapeHtml(message.content) : renderMarkdown(message.content)}
                 </div>
                 ${!isUser && message.tokens ? `
-                    <div class="flex items-center justify-between text-xs text-base-content/50 mt-2 pt-2 border-t border-base-300/50">
+                    <div class="flex items-center justify-between text-xs text-[--color-muted-foreground] mt-2 pt-2 border-t border-[--color-border]/50">
                         <span>${i18n.t('ai.drawer.tokens') || 'Tokens'}: ${message.tokens.total || 0}</span>
                     </div>
                 ` : ''}
@@ -397,19 +412,19 @@ function renderMessage(message) {
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
                         </svg>
-                        ${i18n.t('ai.drawer.copy') || '复制'}
+                        ${i18n.t('ai.drawer.copy') || 'Copy'}
                     </button>
                     <button class="btn btn-xs btn-ghost gap-1 ai-msg-retry" data-message-id="${message.id}">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                         </svg>
-                        ${i18n.t('ai.drawer.retry') || '重试'}
+                        ${i18n.t('ai.drawer.retry') || 'Retry'}
                     </button>
                     <button class="btn btn-xs btn-primary gap-1 ai-msg-apply" data-message-id="${message.id}">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
                         </svg>
-                        ${i18n.t('ai.drawer.apply') || '应用'}
+                        ${i18n.t('ai.drawer.apply') || 'Apply'}
                     </button>
                 </div>
             ` : ''}
@@ -422,7 +437,7 @@ function renderMessage(message) {
     const copyBtn = messagesEl.querySelector(`[data-message-id="${message.id}"] .ai-msg-copy`);
     copyBtn?.addEventListener('click', () => {
         navigator.clipboard.writeText(message.content).then(() => {
-            showToast(i18n.t('ai.drawer.copied') || '已复制', 'success', 1500);
+            showToast(i18n.t('ai.drawer.copied') || 'Copied', 'success', 1500);
         });
     });
 
@@ -455,7 +470,7 @@ function bindMessageFooterEvents(message) {
         copyBtn.parentNode.replaceChild(newCopyBtn, copyBtn);
         newCopyBtn.addEventListener('click', () => {
             navigator.clipboard.writeText(message.content).then(() => {
-                showToast(i18n.t('ai.drawer.copied') || '已复制', 'success', 1500);
+                showToast(i18n.t('ai.drawer.copied') || 'Copied', 'success', 1500);
             });
         });
     }
@@ -498,7 +513,7 @@ export function showToolCall(toolCall) {
     statusEl.innerHTML = `
         <details open>
             <summary>
-                <span class="tool-icon">🔧</span>
+                <span class="tool-icon">🛠️</span>
                 <span class="tool-name">调用 ${escapeHtml(getToolDisplayName(toolCall.name))}</span>
                 <span class="tool-spinner" aria-hidden="true"></span>
             </summary>
@@ -523,7 +538,7 @@ export function showToolResult(toolResult, statusEl = null) {
 
     const el = statusEl || toolStatusElById.get(toolResult.id);
     if (!el) {
-        // fallback：没有对应 status element 时，直接新建一条显示
+        // Fallback: create a status entry if none exists.
         showToolCall({ id: toolResult.id, name: toolResult.name, args: {} });
         return showToolResult(toolResult, toolStatusElById.get(toolResult.id));
     }
@@ -535,7 +550,7 @@ export function showToolResult(toolResult, statusEl = null) {
     if (summary && !summary.querySelector('.tool-done')) {
         const done = document.createElement('span');
         done.className = 'tool-done';
-        done.textContent = '✓';
+        done.textContent = 'Done';
         summary.appendChild(done);
     }
 
@@ -552,11 +567,11 @@ export function showToolResult(toolResult, statusEl = null) {
 
 function getToolDisplayName(name) {
     const nameMap = {
-        get_today_tasks: '查询今日任务',
-        get_overdue_tasks: '查询逾期任务',
-        get_tasks_by_status: '按状态筛选',
-        get_tasks_by_priority: '按优先级筛选',
-        get_progress_summary: '获取进度概览'
+        get_today_tasks: 'Today tasks',
+        get_overdue_tasks: 'Overdue tasks',
+        get_tasks_by_status: 'Tasks by status',
+        get_tasks_by_priority: 'Tasks by priority',
+        get_progress_summary: 'Progress summary'
     };
     return nameMap[name] || name;
 }
@@ -574,7 +589,7 @@ export function startStreaming() {
     // 显示光标
     const contentEl = document.getElementById(`msg_content_${messageId}`);
     if (contentEl) {
-        contentEl.innerHTML = '<span class="ai-cursor">▋</span>';
+        contentEl.innerHTML = '<span class="ai-cursor">|</span>';
     }
 
     showLoading(true);
@@ -600,11 +615,11 @@ export function appendText(text) {
         const contentEl = document.getElementById(`msg_content_${lastMsg.id}`);
         if (contentEl) {
             // 如果看起来像 JSON，尝试显示为代码块或者隐藏 raw 模式
-            // 为了用户体验，流式过程中我们暂时显示原始内容，但如果检测到 JSON 结构，可以用代码块包裹
+            // 为了用户体验，流式过程中我们暂时显示原始内容，但如果检测到 JSON 结构，可以用代码块包装
             if (currentText.trim().startsWith('{')) {
-                contentEl.innerHTML = `<pre class="text-xs bg-base-300 p-2 rounded overflow-x-auto"><code>${escapeHtml(currentText)}</code></pre><span class="ai-cursor">▋</span>`;
+                contentEl.innerHTML = `<pre class="text-xs bg-[--color-surface] p-2 rounded overflow-x-auto"><code>${escapeHtml(currentText)}</code></pre><span class="ai-cursor">|</span>`;
             } else {
-                contentEl.innerHTML = renderMarkdown(currentText) + '<span class="ai-cursor">▋</span>';
+                contentEl.innerHTML = renderMarkdown(currentText) + '<span class="ai-cursor">|</span>';
             }
         }
     }
@@ -770,11 +785,11 @@ export function clearConversation() {
 
     if (messagesEl) {
         messagesEl.innerHTML = `
-            <div class="flex flex-col items-center justify-center h-32 text-base-content/50 text-sm">
+            <div class="flex flex-col items-center justify-center h-32 text-[--color-muted-foreground] text-sm">
                 <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8 mb-2 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
                 </svg>
-                <span>${i18n.t('ai.drawer.empty') || '开始新对话'}</span>
+                <span>${i18n.t('ai.drawer.empty') || 'Start a new conversation'}</span>
             </div>
         `;
     }
@@ -783,7 +798,7 @@ export function clearConversation() {
     document.getElementById('ai_token_stats')?.classList.add('hidden');
 
     hideError();
-    showToast(i18n.t('ai.drawer.cleared') || '对话已清空', 'success', 1500);
+    showToast(i18n.t('ai.drawer.cleared') || 'Conversation cleared', 'success', 1500);
 }
 
 /**
@@ -839,7 +854,7 @@ function handleApply(content, messageId) {
 
     if (onApplyCallback && textToApply) {
         onApplyCallback(textToApply);
-        showToast(i18n.t('ai.drawer.applied') || '已应用修改', 'success');
+        showToast(i18n.t('ai.drawer.applied') || 'Applied changes', 'success');
 
         // 更新对应消息的应用按钮状态
         if (messageId) {
@@ -849,7 +864,7 @@ function handleApply(content, messageId) {
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
                     </svg>
-                    ${i18n.t('ai.drawer.applied') || '已应用'}
+                    ${i18n.t('ai.drawer.applied') || 'Applied'}
                 `;
                 applyBtn.classList.remove('btn-primary');
                 applyBtn.classList.add('btn-success');
@@ -906,7 +921,7 @@ function markResultApplied(messageEl, button) {
     button.disabled = true;
     button.classList.remove('btn-primary');
     button.classList.add('btn-success');
-    button.textContent = i18n.t('ai.result.applied') || '已应用';
+    button.textContent = i18n.t('ai.result.applied') || 'Applied';
 }
 
 function tryParseStructuredData(text) {
@@ -1023,4 +1038,3 @@ export default {
     getAdditionalInstruction,
     clearAdditionalInstruction
 };
-
