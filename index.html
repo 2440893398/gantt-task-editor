@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 
 <head>
@@ -10,7 +10,8 @@
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700&display=swap"
+        rel="stylesheet">
 
     <!-- DHTMLX Gantt -->
     <link href="https://cdn.dhtmlx.com/gantt/edge/dhtmlxgantt.css" rel="stylesheet">
@@ -67,7 +68,7 @@
         <p style="
             margin-top: 16px;
             color: #64748b;
-            font-family: Inter, system-ui, sans-serif;
+            font-family: 'Source Sans 3', 'Source Han Sans CN', sans-serif;
             font-size: 14px;
         ">加载中...</p>
     </div>
@@ -137,41 +138,57 @@
 
     <!-- 应用主容器 - 工具栏与甘特图统一 -->
     <div id="app-container" class="relative flex flex-col w-full h-full overflow-hidden">
-        <!-- 工具栏 - navbar component -->
-        <div id="field-toolbar"
-            class="navbar min-h-[3.5rem] h-14 bg-base-100 border-b border-base-200 px-4 gap-2 z-20 shadow-sm">
-            <!-- 左侧区域 (占位) -->
-            <div class="flex-none"></div>
+        <!-- Header -->
+        <header id="task-header"
+            class="h-16 px-4 flex items-center justify-between bg-[--color-surface] border-b border-[--color-border]">
+            <div class="flex items-center gap-3 min-w-0">
+                <div class="w-9 h-9 rounded-xl flex items-center justify-center"
+                    style="background: var(--color-secondary, #F1F5F9); color: var(--color-primary, #0EA5E9);">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24"
+                        stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M4 6h16M4 12h16M4 18h7" />
+                    </svg>
+                </div>
+                <div class="text-sm font-semibold text-[--color-foreground]">任务编辑器</div>
+            </div>
+            <div class="flex items-center gap-2">
+                <div id="view-segmented" class="flex items-center gap-1 rounded-full p-1"
+                    style="background: var(--color-secondary, #F1F5F9);">
+                    <button data-view="split" class="view-seg-btn active" data-i18n="toolbar.viewSplit">分屏</button>
+                    <button data-view="table" class="view-seg-btn" data-i18n="toolbar.viewTable">表格</button>
+                    <button data-view="gantt" class="view-seg-btn" data-i18n="toolbar.viewGantt">甘特</button>
+                </div>
+                <button id="add-field-btn" type="button" class="toolbar-pill" data-i18n="toolbar.editFields">
+                    字段管理
+                </button>
+            </div>
+        </header>
 
-            <!-- 中间区域：搜索框 -->
-            <div class="flex-1 max-w-md mx-auto">
-                <div class="form-control w-full relative h-8">
+        <!-- Toolbar -->
+        <div id="task-toolbar"
+            class="mx-4 mt-3 mb-3 flex items-center justify-between gap-4 px-4 py-2 bg-[--color-surface] border border-[--color-border] rounded-[var(--radius-m,12px)]">
+            <!-- Left: Search -->
+            <div class="flex items-center gap-3 flex-1 min-w-0">
+                <div class="relative w-full max-w-md">
                     <span
-                        class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4 flex items-center justify-center shrink-0">
-                        <!-- 内联 width/height 防止 FOUC (Flash of Unstyled Content) -->
+                        class="absolute left-3 top-1/2 -translate-y-1/2 text-[--color-muted-foreground] w-4 h-4 flex items-center justify-center shrink-0">
                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" class="w-4 h-4 shrink-0"
                             fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                                 d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                         </svg>
                     </span>
-                    <input type="text" id="task-search-input"
-                        class="input input-bordered input-sm w-full pl-9 focus:input-primary rounded-full transition-all"
+                    <input type="text" id="task-search-input" class="task-search w-full pl-9"
                         placeholder="Search tasks..." data-i18n-placeholder="toolbar.searchPlaceholder">
                 </div>
             </div>
 
-            <!-- 右侧区域：今日按钮 + 图标按钮组 + More + New Task -->
-            <div class="flex-none flex items-center gap-2">
-                <!-- View Mode Toggle -->
-                <div id="view-segmented" class="flex items-center gap-1 rounded-full p-1 mr-2" style="background: var(--color-secondary, #F1F5F9);">
-                    <button data-view="split" class="view-seg-btn active" data-i18n="toolbar.viewSplit">分屏</button>
-                    <button data-view="table" class="view-seg-btn" data-i18n="toolbar.viewTable">表格</button>
-                    <button data-view="gantt" class="view-seg-btn" data-i18n="toolbar.viewGantt">甘特</button>
-                </div>
+            <!-- Right: Actions -->
+            <div class="flex items-center gap-2 flex-wrap justify-end">
                 <!-- Baseline Controls -->
-                <div class="flex items-center gap-1 border-r border-base-300 pr-2 mr-1">
-                    <button id="save-baseline-btn" class="btn btn-sm btn-ghost btn-square" data-tip="保存基线"
+                <div class="flex items-center gap-1">
+                    <button id="save-baseline-btn" class="toolbar-icon-btn tooltip tooltip-bottom" data-tip="保存基线"
                         data-i18n-title="baseline.save">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -179,50 +196,49 @@
                             </path>
                         </svg>
                     </button>
-                    <label class="swap swap-rotate btn btn-sm btn-ghost btn-circle" data-tip="显示/隐藏基线"
+                    <label class="swap swap-rotate toolbar-icon-btn tooltip tooltip-bottom" data-tip="显示/隐藏基线"
                         data-i18n-title="baseline.show">
                         <input type="checkbox" id="show-baseline-toggle" />
-                        <!-- ON icon (eye open) -->
                         <svg class="swap-on w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                                 d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                                 d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
                         </svg>
-                        <!-- OFF icon (eye slash) -->
                         <svg class="swap-off w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                                 d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.542-7a10.059 10.059 0 013.999-5.125m3.741-1.638a2.913 2.913 0 014.183 4.183m.996 4.965A10.054 10.054 0 0021.542 12a10.05 10.05 0 01-2.91 5.378M9.9 9.9L14.09 14.1M3 3l18 18" />
                         </svg>
                     </label>
-                    </label>
                 </div>
+
+                <div class="toolbar-sep"></div>
+
                 <!-- Export Dropdown -->
-                <div class="dropdown dropdown-end mr-1">
-                    <button tabindex="0" class="btn btn-sm btn-ghost gap-1" data-i18n-title="export.title"
+                <div class="dropdown dropdown-end">
+                    <button tabindex="0" class="toolbar-pill toolbar-muted gap-1" data-i18n-title="export.title"
                         data-tip="Export">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                                 d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
                         </svg>
-                        <span data-i18n="export.title">瀵煎嚭</span>
+                        <span data-i18n="export.title">导出</span>
                         <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                d="M19 9l-7 7-7-7"></path>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7">
+                            </path>
                         </svg>
                     </button>
                     <ul tabindex="0"
                         class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-64 mt-2 border border-base-200">
-                        <li><a id="export-excel-btn"><span data-i18n="export.excel">瀵煎嚭 Excel</span></a></li>
-                        <li class="menu-title"><span data-i18n="export.imageTitle">鍥剧墖瀵煎嚭</span></li>
-                        <li><a id="export-current-view-btn"><span data-i18n="export.currentView">瀵煎嚭褰撳墠瑙嗗浘</span></a></li>
-                        <li><a id="export-full-gantt-btn"><span data-i18n="export.fullGantt">瀵煎嚭瀹屾暣鐢樼壒鍥撅紙闀垮浘锛?</span></a></li>
+                        <li><a id="export-excel-btn"><span data-i18n="export.excel">导出 Excel</span></a></li>
+                        <li class="menu-title"><span data-i18n="export.imageTitle">图片导出</span></li>
+                        <li><a id="export-current-view-btn"><span data-i18n="export.currentView">导出当前视图</span></a></li>
+                        <li><a id="export-full-gantt-btn"><span data-i18n="export.fullGantt">导出完整甘特图（长图）</span></a></li>
                     </ul>
                 </div>
-                <!-- 今日按钮 -->
-                <button id="scroll-to-today-btn"
-                    class="btn btn-sm btn-primary gap-2 font-medium text-white shadow-md hover:shadow-lg transition-all"
-                    data-i18n="toolbar.today">
+
+                <!-- Today -->
+                <button id="scroll-to-today-btn" class="toolbar-pill toolbar-primary" data-i18n="toolbar.today">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
                         <line x1="16" y1="2" x2="16" y2="6" />
@@ -233,53 +249,33 @@
                     <span data-i18n="toolbar.today">今天</span>
                 </button>
 
-                <!-- 分隔线 -->
-                <div class="divider divider-horizontal mx-1 my-1"></div>
+                <div class="toolbar-sep"></div>
 
-                <!-- 图标按钮组 -->
-                <div class="join">
-                    <button
-                        class="join-item btn btn-sm btn-ghost btn-square text-gray-500 hover:text-primary tooltip tooltip-bottom"
-                        id="add-field-btn" data-tip="编辑字段" data-i18n-title="toolbar.editFields">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                            stroke-width="2">
-                            <path d="M12 3h7a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7" />
-                            <line x1="12" y1="8" x2="12" y2="16" />
-                            <line x1="8" y1="12" x2="16" y2="12" />
-                        </svg>
-                    </button>
-                    <button
-                        class="join-item btn btn-sm btn-ghost btn-square text-gray-500 hover:text-primary tooltip tooltip-bottom"
-                        id="batch-edit-btn" data-testid="batch-edit-btn" data-tip="批量编辑"
-                        data-i18n-title="toolbar.batchEdit">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                            stroke-width="2">
-                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-                        </svg>
-                    </button>
-                    <!-- OPT-004: 使用Excel图标，因为默认导出是Excel -->
-                    <button
-                        class="join-item btn btn-sm btn-ghost btn-square text-green-600 hover:text-green-700 hover:bg-green-50 tooltip tooltip-bottom"
-                        id="config-export-btn" data-testid="config-export-btn" data-tip="导出Excel"
-                        data-i18n-title="toolbar.exportExcel">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                            stroke-width="2">
-                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                            <polyline points="14 2 14 8 20 8" />
-                            <line x1="8" y1="13" x2="16" y2="13" />
-                            <line x1="8" y1="17" x2="16" y2="17" />
-                            <line x1="10" y1="9" x2="10" y2="9" />
-                        </svg>
-                    </button>
-                </div>
+                <!-- Icon Buttons -->
+                <button class="toolbar-icon-btn tooltip tooltip-bottom" id="batch-edit-btn" data-testid="batch-edit-btn"
+                    data-tip="批量编辑" data-i18n-title="toolbar.batchEdit">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                    </svg>
+                </button>
+                <button class="toolbar-icon-btn tooltip tooltip-bottom text-green-600 hover:text-green-700"
+                    id="config-export-btn" data-testid="config-export-btn" data-tip="导出Excel"
+                    data-i18n-title="toolbar.exportExcel">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                        <polyline points="14 2 14 8 20 8" />
+                        <line x1="8" y1="13" x2="16" y2="13" />
+                        <line x1="8" y1="17" x2="16" y2="17" />
+                        <line x1="10" y1="9" x2="10" y2="9" />
+                    </svg>
+                </button>
 
-                <!-- 分隔线 -->
-                <div class="divider divider-horizontal mx-1 my-1"></div>
+                <div class="toolbar-sep"></div>
 
-                <!-- 更多操作下拉菜单 (DaisyUI Dropdown) -->
+                <!-- More Actions -->
                 <div class="dropdown dropdown-end" id="more-actions-dropdown">
-                    <label tabindex="0" class="btn btn-sm btn-ghost gap-1 text-gray-600 font-normal more-btn">
+                    <label tabindex="0" class="toolbar-pill toolbar-muted gap-1">
                         <span data-i18n="toolbar.more">More</span>
                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
                             stroke="currentColor" stroke-width="2" class="dropdown-arrow">
@@ -288,7 +284,6 @@
                     </label>
                     <ul tabindex="0"
                         class="dropdown-content z-[1] menu p-2 shadow-lg bg-base-100 rounded-box w-52 border border-base-200 mt-1">
-                        <!-- OPT-004: 优化导入导出图标 - 使用更直观的图标组合 -->
                         <!-- Excel 操作 -->
                         <li><a id="dropdown-export-excel" class="flex items-center gap-2">
                                 <span
@@ -360,10 +355,8 @@
                     </ul>
                 </div>
 
-                <!-- 新建任务按钮 -->
-                <button class="btn btn-sm gap-2 shadow-md hover:shadow-lg transition-all text-white font-medium"
-                    id="new-task-btn"
-                    style="background: linear-gradient(135deg, #0EA5E9 0%, #6366F1 100%); border: none;">
+                <!-- New Task -->
+                <button class="toolbar-pill toolbar-primary" id="new-task-btn">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                         stroke-width="2.5">
                         <line x1="12" y1="5" x2="12" y2="19"></line>
@@ -383,8 +376,8 @@
         class="card card-compact fixed bottom-4 left-4 z-40 w-64 transition-transform duration-300 overflow-hidden bg-[--color-card] border border-[--color-border] shadow-[var(--shadow-modal)]"
         style="transform: translateY(0); border-radius: var(--radius-m, 12px);">
         <div class="card-body p-0">
-            <div class="flex items-center justify-between p-3 cursor-pointer transition-colors bg-[--color-surface] border-b border-[--color-border]" id="shortcuts-header"
-                >
+            <div class="flex items-center justify-between p-3 cursor-pointer transition-colors bg-[--color-surface] border-b border-[--color-border]"
+                id="shortcuts-header">
                 <div class="flex items-center gap-2 font-semibold text-[--color-foreground]">
                     <span>⌨️</span>
                     <span data-i18n="shortcuts.title">快捷键 & 图例</span>
@@ -811,8 +804,7 @@
     </div>
 
     <!-- 字段管理遮罩 -->
-    <div id="field-management-backdrop"
-        class="fixed inset-0 z-[6050] hidden opacity-0 transition-opacity duration-200"
+    <div id="field-management-backdrop" class="fixed inset-0 z-[6050] hidden opacity-0 transition-opacity duration-200"
         style="background: var(--backdrop-color, rgba(15, 23, 42, 0.3));"></div>
 
     <!-- 字段管理面板 -->
@@ -820,54 +812,61 @@
         class="fixed inset-y-0 right-0 w-[440px] max-w-full z-[6100] transform translate-x-full transition-transform duration-300 flex flex-col"
         style="background: var(--color-card, #FFFFFF); border-left: 1px solid var(--color-border, #E2E8F0); border-radius: var(--radius-m, 12px) 0 0 var(--radius-m, 12px); box-shadow: var(--shadow-modal, 0 12px 40px rgba(15,23,42,0.18));">
         <!-- Header -->
-        <div class="h-20 px-4 flex items-center justify-between"
-            style="background: var(--color-surface, #F8FAFC); border-bottom: 1px solid var(--color-border, #E2E8F0);">
-            <div class="flex items-center gap-3 min-w-0">
-                <div class="w-10 h-10 rounded-xl flex items-center justify-center"
-                    style="background: var(--color-secondary, #F1F5F9); color: var(--color-primary, #0EA5E9);">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24"
-                        stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                            d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+        <div class="h-20 px-4 flex items-center justify-between bg-base-200 border-b border-base-300">
+            <div class="flex items-center gap-2 min-w-0">
+                <div class="w-7 h-7 rounded-[10px] flex items-center justify-center bg-sky-100 text-primary">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24"
+                        stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 10h16M4 14h16M4 18h16" />
                     </svg>
                 </div>
-                <div class="min-w-0">
-                    <div class="text-sm font-semibold truncate" style="color: var(--color-foreground, #0F172A);"
+                <div class="min-w-0 flex flex-col gap-1">
+                    <div class="text-base font-bold truncate leading-none text-base-content"
                         data-i18n="fieldManagement.title">字段管理</div>
-                    <div class="text-xs truncate" style="color: var(--color-muted-foreground, #64748B);"
-                        data-i18n="fieldManagement.subtitle">拖拽排序，点击编辑</div>
+                    <div class="text-[13px] truncate leading-none"
+                        style="color: var(--color-muted-foreground, #64748B);" data-i18n="fieldManagement.subtitle">
+                        拖拽排序，点击编辑</div>
                 </div>
             </div>
             <div class="flex items-center gap-2">
-                <button id="add-field-from-panel-icon-btn" type="button"
-                    class="w-8 h-8 inline-flex items-center justify-center"
-                    style="background: var(--color-card, #FFFFFF); border: 1px solid var(--color-border, #E2E8F0); border-radius: 10px; color: var(--color-foreground, #0F172A);"
-                    aria-label="Add field">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                        <path fill-rule="evenodd"
-                            d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z"
-                            clip-rule="evenodd" />
+                <button id="field-settings-btn" type="button"
+                    class="w-8 h-8 inline-flex items-center justify-center bg-base-100 border border-base-300 rounded-[10px] text-base-content/60"
+                    aria-label="Settings" title="设置">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24"
+                        stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round"
+                            d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                     </svg>
                 </button>
                 <button id="close-field-management" type="button"
-                    class="w-8 h-8 inline-flex items-center justify-center"
-                    style="background: var(--color-card, #FFFFFF); border: 1px solid var(--color-border, #E2E8F0); border-radius: 10px; color: var(--color-muted-foreground, #64748B);"
+                    class="w-8 h-8 inline-flex items-center justify-center bg-base-100 border border-base-300 rounded-[10px] text-base-content/60"
                     aria-label="Close">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24"
-                        stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                            d="M6 18L18 6M6 6l12 12" />
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24"
+                        stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
                     </svg>
                 </button>
             </div>
         </div>
 
         <!-- Body -->
-        <div class="flex-1 overflow-y-auto p-4 space-y-4" style="background: var(--color-surface, #F8FAFC);">
-            <input id="field-management-search-input" type="text"
-                class="w-full px-4 py-2 text-sm rounded-[var(--radius-pill,999px)] outline-none"
-                style="background: var(--color-card, #FFFFFF); border: 1px solid var(--color-border, #E2E8F0); color: var(--color-foreground, #0F172A);"
-                placeholder="搜索字段..." />
+        <div class="flex-1 overflow-y-auto p-4 space-y-4 bg-base-200">
+            <!-- 搜索框 -->
+            <div class="flex items-center gap-2 h-10 px-3 rounded-[10px] bg-base-100 border border-base-300">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 flex-shrink-0 text-base-content/60" fill="none"
+                    viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round"
+                        d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+                <input id="field-management-search-input" type="text"
+                    class="flex-1 text-[13px] outline-none border-none bg-transparent text-base-content"
+                    placeholder="搜索字段…" />
+                <button id="field-filter-btn" type="button"
+                    class="px-3 py-1 text-[11px] font-semibold rounded-full flex-shrink-0 bg-base-300 text-base-content/60">
+                    全部
+                </button>
+            </div>
 
             <div class="space-y-2" id="field-list-container">
                 <!-- 字段列表将在这里动态生成 -->
@@ -875,11 +874,15 @@
         </div>
 
         <!-- Footer -->
-        <div class="p-4" style="background: var(--color-surface, #F8FAFC); border-top: 1px solid var(--color-border, #E2E8F0);">
+        <div class="p-4 bg-base-200 border-t border-base-300">
             <button id="add-field-from-panel-btn" type="button"
-                class="w-full px-5 py-2 text-sm font-semibold rounded-[var(--radius-pill,999px)]"
-                style="background: var(--color-primary, #0EA5E9); color: #FFFFFF;"
-                data-i18n="fieldManagement.addField">新增字段</button>
+                class="btn btn-primary w-full h-10 px-[14px] text-[13px] font-semibold rounded-full flex items-center justify-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24"
+                    stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
+                </svg>
+                <span data-i18n="fieldManagement.addField">新增字段</span>
+            </button>
         </div>
     </div>
 
@@ -887,8 +890,7 @@
     <div id="field-config-modal"
         class="fixed inset-0 z-[6200] flex items-center justify-center opacity-0 pointer-events-none transition-opacity duration-200"
         style="background: var(--backdrop-color, rgba(15, 23, 42, 0.3));">
-        <div
-            class="modal-box w-[520px] max-w-[92vw] p-0 overflow-hidden transition-all duration-200"
+        <div class="modal-box w-[520px] max-w-[92vw] p-0 overflow-hidden transition-all duration-200"
             style="background: var(--color-card, #FFFFFF); border: 1px solid var(--color-border, #E2E8F0); border-radius: var(--radius-m, 12px); box-shadow: var(--shadow-modal, 0 12px 40px rgba(15,23,42,0.18));">
             <!-- 头部 -->
             <div class="h-16 px-5 flex items-center justify-between"
@@ -907,8 +909,7 @@
                 </div>
                 <button id="modal-close-x" type="button"
                     class="w-8 h-8 inline-flex items-center justify-center rounded-lg"
-                    style="color: var(--color-muted-foreground, #64748B);"
-                    aria-label="Close">
+                    style="color: var(--color-muted-foreground, #64748B);" aria-label="Close">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24"
                         stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -1099,8 +1100,7 @@
                 <div class="flex items-center gap-2">
                     <button id="cancel-field-btn" type="button"
                         class="px-4 py-2 text-sm font-semibold rounded-[var(--radius-pill,999px)] hover:bg-black/5"
-                        style="color: var(--color-foreground, #0F172A);"
-                        data-i18n="form.cancel">取消</button>
+                        style="color: var(--color-foreground, #0F172A);" data-i18n="form.cancel">取消</button>
                     <button id="save-field-btn" data-testid="save-field-btn" type="button"
                         class="px-5 py-2 text-sm font-semibold rounded-[var(--radius-pill,999px)]"
                         style="background: var(--color-primary, #0EA5E9); color: #FFFFFF;"
