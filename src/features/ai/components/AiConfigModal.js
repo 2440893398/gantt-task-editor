@@ -1,4 +1,4 @@
-/**
+﻿/**
  * AI 配置弹窗组件 (F-101, F-102, F-103)
  * 用于输入 API Key、Base URL 和模型选择
  * 支持 Combobox 模式：下拉选择 + 手动输入
@@ -58,13 +58,13 @@ function createModalHTML() {
     return `
     <dialog id="ai_config_modal" class="modal modal-bottom sm:modal-middle">
         <div class="modal-box w-[520px] max-w-[92vw] p-0 overflow-hidden"
-            style="background: var(--color-card, #FFFFFF); border: 1px solid var(--color-border, #E2E8F0); border-radius: var(--radius-m, 12px); box-shadow: var(--shadow-modal, 0 12px 40px rgba(15,23,42,0.18));">
+            class="bg-base-100 border border-base-300 rounded-xl shadow-xl">
             <!-- 头部 - Modal Card -->
             <div class="h-16 px-5 flex items-center justify-between"
-                style="background: var(--color-surface, #F8FAFC); border-bottom: 1px solid var(--color-border, #E2E8F0);">
+                class="bg-base-200 border-b border-base-300">
                 <div class="flex items-center gap-3 min-w-0">
                     <div class="w-9 h-9 rounded-xl flex items-center justify-center"
-                        style="background: var(--color-secondary, #F1F5F9); color: var(--color-primary, #0EA5E9);">
+                        class="bg-secondary text-primary">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24"
                             stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -72,15 +72,15 @@ function createModalHTML() {
                         </svg>
                     </div>
                     <div class="min-w-0">
-                        <div class="text-sm font-semibold truncate" style="color: var(--color-foreground, #0F172A);"
+                        <div class="text-sm font-semibold truncate text-base-content"
                             data-i18n="ai.config.title">AI 设置</div>
-                        <div class="text-xs truncate" style="color: var(--color-muted-foreground, #64748B);"
+                        <div class="text-xs truncate text-base-content/60"
                             data-i18n="ai.config.subtitle">配置您的模型密钥以启用智能助手</div>
                     </div>
                 </div>
                 <button id="ai_config_close_x" type="button"
                     class="w-8 h-8 inline-flex items-center justify-center rounded-lg"
-                    style="color: var(--color-muted-foreground, #64748B);"
+                    class="text-base-content/60"
                     aria-label="Close">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24"
                         stroke="currentColor">
@@ -96,13 +96,12 @@ function createModalHTML() {
                 <div class="form-control w-full">
                     <label class="label">
                         <span class="label-text font-medium flex items-center gap-2">
-                            <span class="text-primary">🔑</span>
                             <span data-i18n="ai.config.apiKey">API Key</span>
                         </span>
                     </label>
                     <div class="relative">
                         <input type="password" id="ai_api_key"
-                            class="input input-bordered w-full pr-10 font-mono text-sm"
+                            class="input input-bordered w-full pr-10 font-mono text-sm bg-[--color-card] border-[--color-border] text-[--color-foreground]"
                             placeholder="sk-..."
                             autocomplete="off"
                             required>
@@ -114,7 +113,7 @@ function createModalHTML() {
                         </button>
                     </div>
                     <label class="label">
-                        <span class="label-text-alt text-base-content/60" data-i18n="ai.config.apiKeyHint">🔒 密钥仅保存在本地，不会上传到服务器</span>
+                        <span class="label-text-alt text-[--color-muted-foreground]" data-i18n="ai.config.apiKeyHint">密钥仅保存在本地，不会上传到服务端</span>
                     </label>
                 </div>
 
@@ -122,13 +121,12 @@ function createModalHTML() {
                 <div class="form-control w-full">
                     <label class="label">
                         <span class="label-text font-medium flex items-center gap-2">
-                            <span class="text-primary">🌐</span>
                             <span data-i18n="ai.config.baseUrl">Base URL</span>
                         </span>
                     </label>
                     <div class="join w-full">
                         <input type="text" id="ai_base_url"
-                            class="input input-bordered join-item flex-1 font-mono text-sm"
+                            class="input input-bordered join-item flex-1 font-mono text-sm bg-[--color-card] border-[--color-border] text-[--color-foreground]"
                             placeholder="https://api.openai.com/v1">
                         <div class="dropdown dropdown-end join-item">
                             <label tabindex="0" class="btn btn-outline join-item">
@@ -136,7 +134,7 @@ function createModalHTML() {
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
                                 </svg>
                             </label>
-                            <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow-lg bg-base-100 rounded-box w-52 border border-base-200" id="ai_url_presets">
+                            <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow-[var(--shadow-modal)] bg-[--color-card] rounded-box w-52 border border-[--color-border]" id="ai_url_presets">
                                 ${PRESET_URLS.map(url => `
                                     <li><a data-url="${url.value}">${url.label}</a></li>
                                 `).join('')}
@@ -144,8 +142,8 @@ function createModalHTML() {
                         </div>
                     </div>
                     <label class="label" id="ai_local_hint" style="display: none;">
-                        <span class="label-text-alt text-warning flex items-center gap-1">
-                            ⚠️ <span data-i18n="ai.config.localHint">本地模型需确保 Ollama 已启动</span>
+                        <span class="label-text-alt text-warning">
+                            <span data-i18n="ai.config.localHint">本地模型需确保 Ollama 已启动</span>
                         </span>
                     </label>
                 </div>
@@ -154,7 +152,6 @@ function createModalHTML() {
                 <div class="form-control w-full">
                     <label class="label">
                         <span class="label-text font-medium flex items-center gap-2">
-                            <span class="text-primary">🤖</span>
                             <span data-i18n="ai.config.model">模型</span>
                         </span>
                         <button class="btn btn-xs btn-ghost text-primary gap-1" id="ai_refresh_models_btn">
@@ -170,23 +167,23 @@ function createModalHTML() {
                     <div class="dropdown w-full" id="ai_model_dropdown">
                         <input 
                             type="text" 
-                            class="input input-bordered w-full font-mono text-sm" 
+                            class="input input-bordered w-full font-mono text-sm bg-[--color-card] border-[--color-border] text-[--color-foreground]" 
                             placeholder="选择或输入模型名称..."
                             id="ai_model_input"
                             autocomplete="off"
                         />
                         
                         <!-- 下拉列表 -->
-                        <ul class="dropdown-content menu bg-base-100 rounded-box w-full max-h-60 overflow-y-auto shadow-2xl border border-base-300 z-[1000] mt-1 hidden" id="ai_model_list">
+                        <ul class="dropdown-content menu bg-[--color-card] rounded-box w-full max-h-60 overflow-y-auto shadow-[var(--shadow-modal)] border border-[--color-border] z-[1000] mt-1 hidden" id="ai_model_list">
                             <!-- 动态生成 -->
                         </ul>
                     </div>
                     
                     <label class="label">
-                        <span class="label-text-alt text-base-content/60">
-                            💡 <span data-i18n="ai.config.modelHint">可直接输入任意模型名称</span>
+                        <span class="label-text-alt text-[--color-muted-foreground]">
+                            <span data-i18n="ai.config.modelHint">可直接输入任意模型名称</span>
                         </span>
-                        <span class="label-text-alt text-base-content/40" id="ai_model_count"></span>
+                        <span class="label-text-alt text-[--color-muted-foreground]" id="ai_model_count"></span>
                     </label>
                 </div>
 
@@ -200,9 +197,9 @@ function createModalHTML() {
 
             <!-- 底部操作 -->
             <div class="px-5 py-4 flex items-center justify-between"
-                style="background: var(--color-surface, #F8FAFC); border-top: 1px solid var(--color-border, #E2E8F0);">
+                class="bg-base-200 border-t border-base-300">
                 <div class="flex items-center gap-3">
-                    <div class="text-xs" style="color: var(--color-muted-foreground, #64748B);">Esc 关闭</div>
+                    <div class="text-xs text-base-content/60">Esc 关闭</div>
                     <button class="btn btn-ghost btn-sm gap-2 rounded-full" id="ai_config_test">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -212,10 +209,10 @@ function createModalHTML() {
                 </div>
                 <div class="flex gap-2">
                     <button class="px-4 py-2 text-sm font-semibold rounded-[var(--radius-pill,999px)] hover:bg-black/5"
-                        style="color: var(--color-foreground, #0F172A);"
+                        class="text-base-content"
                         id="ai_config_cancel" data-i18n="form.cancel">取消</button>
                     <button class="px-5 py-2 text-sm font-semibold rounded-[var(--radius-pill,999px)]"
-                        style="background: var(--color-primary, #0EA5E9); color: #FFFFFF;"
+                        class="btn btn-primary"
                         id="ai_config_save" data-i18n="form.save">保存配置</button>
                 </div>
             </div>
@@ -229,7 +226,7 @@ function createModalHTML() {
  * 初始化配置弹窗
  */
 export function initAiConfigModal() {
-    // 检查是否已存在
+    // 检查是否存在
     if (document.getElementById('ai_config_modal')) {
         modalEl = document.getElementById('ai_config_modal');
         return;
@@ -392,7 +389,7 @@ function renderModelList(filter = '') {
         );
 
         if (filteredDynamic.length > 0) {
-            html += `<li class="menu-title text-xs text-base-content/50 px-3 py-2">${i18n.t('ai.config.availableModels') || '可用模型'}</li>`;
+            html += `<li class="menu-title text-xs text-[--color-muted-foreground] px-3 py-2">${i18n.t('ai.config.availableModels') || '可用模型'}</li>`;
             filteredDynamic.forEach(m => {
                 html += `<li><a data-model="${m.id}" class="flex justify-between">
                     <span class="truncate">${m.id}</span>
@@ -411,7 +408,7 @@ function renderModelList(filter = '') {
         );
 
         if (filteredModels.length > 0) {
-            html += `<li class="menu-title text-xs text-base-content/50 px-3 py-2 ${dynamicModels.length > 0 ? 'mt-2' : ''}">${group.name}</li>`;
+            html += `<li class="menu-title text-xs text-[--color-muted-foreground] px-3 py-2 ${dynamicModels.length > 0 ? 'mt-2' : ''}">${group.name}</li>`;
             filteredModels.forEach(m => {
                 html += `<li><a data-model="${m.value}" class="flex justify-between">
                     <span>${m.label}</span>
@@ -424,7 +421,7 @@ function renderModelList(filter = '') {
 
     // 无匹配结果
     if (totalCount === 0 && filter) {
-        html = `<li class="px-4 py-3 text-sm text-base-content/60">
+        html = `<li class="px-4 py-3 text-sm text-[--color-muted-foreground]">
             <div class="flex flex-col items-center gap-1">
                 <span>${i18n.t('ai.config.noMatch') || '无匹配结果'}</span>
                 <span class="text-xs text-primary">${i18n.t('ai.config.willUseInput') || '将使用输入值'}: "${filter}"</span>
@@ -437,7 +434,7 @@ function renderModelList(filter = '') {
     // 更新模型计数
     const countEl = document.getElementById('ai_model_count');
     if (countEl && dynamicModels.length > 0) {
-        countEl.textContent = `${dynamicModels.length} ${i18n.t('ai.config.modelsAvailable') || '个可用'}`;
+        countEl.textContent = `${dynamicModels.length} ${i18n.t('ai.config.modelsAvailable') || '个可用模型'}`;
     }
 }
 
@@ -492,7 +489,7 @@ async function handleRefreshModels(forceRefresh = false) {
             }, 2000);
 
             if (!result.fromCache) {
-                showToast(i18n.t('ai.config.modelsUpdated') || `已获取 ${result.models.length} 个模型`, 'success', 2000);
+                showToast(i18n.t('ai.config.modelsUpdated') || `已获取${result.models.length} 个模型`, 'success', 2000);
             }
         } else {
             throw new Error(result.error || 'Failed to fetch models');
