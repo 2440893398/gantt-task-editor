@@ -87,7 +87,7 @@ function createModalHTML() {
             </div>
 
             <!-- 表单内容 -->
-            <div class="p-4 space-y-5 max-h-[70vh] overflow-y-auto">
+            <div class="p-4 pb-6 space-y-4 max-h-[55vh] overflow-y-auto">
                 <!-- API Key -->
                 <div class="form-control w-full">
                     <label class="label pb-2">
@@ -183,27 +183,27 @@ function createModalHTML() {
 
                 <!-- Skills 开关（按需加载） -->
                 <div class="form-control w-full">
-                    <label class="label pb-2">
+                    <label class="label pb-1">
                         <span class="label-text text-xs font-extrabold text-base-content/60 uppercase tracking-wide">Skills（按需加载）</span>
                     </label>
-                    <p class="text-xs text-base-content/60 mb-3">只加载当前任务需要的能力，减少提示词开销</p>
+                    <p class="text-xs text-base-content/60 mb-2.5">只加载当前任务需要的能力，减少提示词开销</p>
                     
                     <!-- Task Query 开关 -->
-                    <div class="flex items-center justify-between h-14 px-3 rounded-xl border border-base-300 bg-base-100 mb-2">
-                        <div class="flex-1 min-w-0">
+                    <div class="flex items-center justify-between min-h-[52px] px-3 py-2.5 rounded-xl border border-base-300 bg-base-100 mb-2">
+                        <div class="flex-1 min-w-0 pr-3">
                             <div class="text-sm font-semibold text-base-content">Task Query</div>
-                            <div class="text-xs text-base-content/60">查询任务/进度等数据（支持工具调用）</div>
+                            <div class="text-xs text-base-content/60 leading-tight">查询任务/进度等数据（支持工具调用）</div>
                         </div>
-                        <input type="checkbox" class="toggle toggle-primary" id="ai_skill_task_query" checked />
+                        <input type="checkbox" class="toggle toggle-primary flex-shrink-0" id="ai_skill_task_query" checked />
                     </div>
                     
                     <!-- Progress Analysis 开关 -->
-                    <div class="flex items-center justify-between h-14 px-3 rounded-xl border border-base-300 bg-base-100">
-                        <div class="flex-1 min-w-0">
+                    <div class="flex items-center justify-between min-h-[52px] px-3 py-2.5 rounded-xl border border-base-300 bg-base-100">
+                        <div class="flex-1 min-w-0 pr-3">
                             <div class="text-sm font-semibold text-base-content">Progress Analysis</div>
-                            <div class="text-xs text-base-content/60">基于任务数据生成进度报告或瓶颈提示</div>
+                            <div class="text-xs text-base-content/60 leading-tight">基于任务数据生成进度报告或瓶颈提示</div>
                         </div>
-                        <input type="checkbox" class="toggle toggle-primary" id="ai_skill_progress_analysis" checked />
+                        <input type="checkbox" class="toggle toggle-primary flex-shrink-0" id="ai_skill_progress_analysis" checked />
                     </div>
                 </div>
 
@@ -216,7 +216,7 @@ function createModalHTML() {
             </div>
 
             <!-- 底部操作 -->
-            <div class="px-4 py-3 flex items-center justify-between bg-base-100 border-t border-base-300">
+            <div class="px-4 py-4 flex items-center justify-between bg-base-100 border-t border-base-300">
                 <button class="btn btn-ghost btn-sm gap-2 rounded-full" id="ai_config_test">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
