@@ -36,25 +36,24 @@ let tokenStats = {
 function createDrawerHTML() {
     return `
     <!-- AI 流式响应抽屉 -->
-    <div id="ai_drawer" class="fixed inset-y-0 right-0 z-[6100] w-[420px] max-w-full transform translate-x-full transition-transform duration-300 flex flex-col"
-         class="bg-base-100 border-l border-base-300 rounded-l-xl shadow-xl"
+    <div id="ai_drawer" class="fixed inset-y-0 right-0 z-[6100] w-[420px] max-w-full transform translate-x-full transition-transform duration-300 flex flex-col bg-base-100 border-l border-base-300 rounded-l-xl shadow-xl"
          role="dialog" aria-modal="false" aria-labelledby="ai_drawer_title">
         <!-- 头部 - 56px高度 -->
-        <div class="h-14 px-3.5 flex items-center justify-between sticky top-0 z-10 bg-[--color-surface] border-b border-[--color-border]">
+        <div class="h-14 px-3.5 flex items-center justify-between sticky top-0 z-10 bg-base-100 border-b border-base-300">
             <div class="flex items-center gap-2.5">
                 <!-- AI图标容器：28x28px，sparkles图标 -->
-                <div class="w-7 h-7 rounded-[10px] flex items-center justify-center bg-[--color-primary-soft]">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-[--color-primary-strong]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <div class="w-7 h-7 rounded-[10px] flex items-center justify-center bg-primary/10">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
                     </svg>
                 </div>
-                <h3 class="font-bold text-[15px] text-[--color-foreground]" id="ai_drawer_title">
+                <h3 class="font-bold text-[15px] text-base-content" id="ai_drawer_title">
                     <span class="loading loading-spinner loading-sm text-primary hidden" id="ai_drawer_loading"></span>
                     <span id="ai_drawer_title_text" data-i18n="ai.drawer.title">任务分解</span>
                 </h3>
             </div>
             <div class="flex items-center gap-2">
-                <button class="w-8 h-8 inline-flex items-center justify-center tooltip tooltip-bottom rounded-[10px] hover:bg-black/5 transition-colors text-[--color-muted-foreground]" 
+                <button class="btn btn-ghost btn-sm btn-square rounded-[10px]" 
                         data-tip="${i18n.t('ai.config.title') || 'Settings'}" 
                         id="ai_drawer_settings">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -62,14 +61,14 @@ function createDrawerHTML() {
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                     </svg>
                 </button>
-                <button class="w-8 h-8 inline-flex items-center justify-center tooltip tooltip-left rounded-[10px] hover:bg-black/5 transition-colors text-[--color-muted-foreground]" 
+                <button class="btn btn-ghost btn-sm btn-square rounded-[10px]" 
                         data-tip="${i18n.t('ai.drawer.clear') || 'Clear chat'}" 
                         id="ai_drawer_clear">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                     </svg>
                 </button>
-                <button class="w-8 h-8 inline-flex items-center justify-center rounded-[10px] hover:bg-black/5 transition-colors text-[--color-muted-foreground]" 
+                <button class="btn btn-ghost btn-sm btn-square rounded-[10px]" 
                         id="ai_drawer_close" 
                         aria-label="关闭">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -85,7 +84,7 @@ function createDrawerHTML() {
         </div>
 
         <!-- Token 统计区 (F-111) -->
-        <div class="flex justify-between items-center px-4 py-2 bg-[--color-surface] text-xs text-[--color-muted-foreground] border-y border-[--color-border] hidden" id="ai_token_stats">
+        <div class="flex justify-between items-center px-4 py-2 bg-base-200 text-xs text-base-content/60 border-y border-base-300 hidden" id="ai_token_stats">
             <span>${i18n.t('ai.drawer.session') || 'Session'}</span>
             <span class="font-mono">
                 ${i18n.t('ai.drawer.tokens') || 'Total'}: <span class="text-primary font-semibold" id="ai_total_tokens">0</span> tokens
@@ -118,12 +117,12 @@ function createDrawerHTML() {
         </div>
 
         <!-- 底部区域：附加指令 + 聊天输入 -->
-        <div class="bg-[--color-surface] border-t border-[--color-border] sticky bottom-0 z-10">
+        <div class="bg-base-100 border-t border-base-300 sticky bottom-0 z-10">
             <!-- F-109: 附加指令输入区(可折叠) -->
             <div class="px-4 pt-2">
-                <div class="collapse collapse-arrow border border-[--color-border] bg-[--color-surface] rounded-box mb-2">
+                <div class="collapse collapse-arrow border border-base-300 bg-base-100 rounded-box mb-2">
                     <input type="checkbox" id="ai_instruction_toggle" /> 
-                    <div class="collapse-title text-xs font-medium min-h-0 py-2 flex items-center gap-2 text-[--color-muted-foreground]">
+                    <div class="collapse-title text-xs font-medium min-h-0 py-2 flex items-center gap-2 text-base-content/60">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
                         </svg>
@@ -135,7 +134,7 @@ function createDrawerHTML() {
                             id="ai_additional_instruction"
                             placeholder="${i18n.t('ai.prompt.placeholder') || 'Enter extra instructions for AI (System Prompt addendum)...'}"
                         ></textarea>
-                        <div class="text-xs text-[--color-muted-foreground]">
+                        <div class="text-xs text-base-content/60">
                             ${i18n.t('ai.prompt.hint') || 'These instructions will be sent with each conversation as context.'}
                         </div>
                     </div>
@@ -146,18 +145,18 @@ function createDrawerHTML() {
             <div class="p-4 bg-base-200 border-t border-base-300">
                 <div class="flex gap-2">
                     <textarea 
-                        class="ai-chat-input flex-1 text-sm resize-none outline-none" 
+                        class="textarea textarea-bordered flex-1 text-sm resize-none h-[44px] min-h-[44px]" 
                         rows="2"
                         id="ai_chat_input"
                         placeholder="${i18n.t('ai.drawer.chatPlaceholder') || 'Type a message to continue...'}"
                     ></textarea>
-                    <button class="ai-send-btn self-end" id="ai_send_btn" type="button">
+                    <button class="btn btn-primary btn-circle w-11 h-11 min-h-[44px] self-end" id="ai_send_btn" type="button">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
                         </svg>
                     </button>
                 </div>
-                <div class="text-xs text-[--color-muted-foreground] mt-1 flex justify-between px-1">
+                <div class="text-xs text-base-content/60 mt-1 flex justify-between px-1">
                     <span>${i18n.t('ai.drawer.chatHint') || 'Enter to send, Shift+Enter for new line'}</span>
                     <span id="ai_input_char_count">0/2000</span>
                 </div>
@@ -398,17 +397,17 @@ function renderMessage(message) {
 
     const html = `
         <div class="chat ${bubbleClass}" data-message-id="${message.id}">
-            <div class="chat-header text-xs text-[--color-muted-foreground] mb-1 flex items-center gap-2">
+            <div class="chat-header text-xs text-base-content/60 mb-1 flex items-center gap-2">
                 ${avatar}
                 <span class="ai-msg-label">${label}</span>
                 <time>${message.timestamp}</time>
             </div>
             <div class="chat-bubble ${bubbleColor}">
-                <div class="prose max-w-none" id="msg_content_${message.id}">
+                <div class="prose prose-sm max-w-none" id="msg_content_${message.id}">
                     ${isUser ? escapeHtml(message.content) : renderMarkdown(message.content)}
                 </div>
                 ${!isUser && message.tokens ? `
-                    <div class="flex items-center justify-between text-xs text-[--color-muted-foreground] mt-2 pt-2 border-t border-[--color-border]/50">
+                    <div class="flex items-center justify-between text-xs text-base-content/60 mt-2 pt-2 border-t border-base-300/50">
                         <span>${i18n.t('ai.drawer.tokens') || 'Tokens'}: ${message.tokens.total || 0}</span>
                     </div>
                 ` : ''}
@@ -624,7 +623,7 @@ export function appendText(text) {
             // 如果看起来像 JSON，尝试显示为代码块或者隐藏 raw 模式
             // 为了用户体验，流式过程中我们暂时显示原始内容，但如果检测到 JSON 结构，可以用代码块包装
             if (currentText.trim().startsWith('{')) {
-                contentEl.innerHTML = `<pre class="text-xs bg-[--color-surface] p-2 rounded overflow-x-auto"><code>${escapeHtml(currentText)}</code></pre><span class="ai-cursor">|</span>`;
+                contentEl.innerHTML = `<pre class="text-xs bg-base-200 p-2 rounded overflow-x-auto"><code>${escapeHtml(currentText)}</code></pre><span class="ai-cursor">|</span>`;
             } else {
                 contentEl.innerHTML = renderMarkdown(currentText) + '<span class="ai-cursor">|</span>';
             }
@@ -792,7 +791,7 @@ export function clearConversation() {
 
     if (messagesEl) {
         messagesEl.innerHTML = `
-            <div class="flex flex-col items-center justify-center h-32 text-[--color-muted-foreground] text-sm">
+            <div class="flex flex-col items-center justify-center h-32 text-base-content/60 text-sm">
                 <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8 mb-2 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
                 </svg>

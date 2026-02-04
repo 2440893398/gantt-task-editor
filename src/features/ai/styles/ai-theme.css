@@ -85,18 +85,18 @@
     border: 1px solid var(--color-border, #E2E8F0);
 }
 
-/* 消息气泡统一样式 - 覆盖DaisyUI的chat-bubble类 */
+/* 消息气泡统一样式 - 使用DaisyUI主题色 */
 #ai_drawer .ai-bubble-user {
-    background: var(--color-primary-strong, #0369A1) !important;
-    color: #FFFFFF !important;
+    background: hsl(var(--p)) !important;
+    color: hsl(var(--pc)) !important;
     border-radius: 14px !important;
     padding: 10px 12px !important;
 }
 
 #ai_drawer .ai-bubble-ai {
-    background: var(--color-card, #FFFFFF) !important;
-    border: 1px solid var(--color-border, #E2E8F0) !important;
-    color: var(--color-foreground, #0F172A) !important;
+    background: hsl(var(--b1)) !important;
+    border: 1px solid hsl(var(--b3)) !important;
+    color: hsl(var(--bc)) !important;
     border-radius: 12px !important;
     padding: 12px !important;
 }
@@ -116,55 +116,10 @@
 }
 
 /* ============================================
-   Drawer alignment (Task 4B)
+   Drawer alignment - 已迁移到DaisyUI类
    ============================================ */
 
-#ai_drawer .ai-chat-input {
-    background: var(--color-card, #FFFFFF);
-    border: 1px solid var(--color-border, #E2E8F0);
-    border-radius: var(--radius-m, 12px);
-    padding: 10px 12px;
-    min-height: 44px;
-    color: var(--color-foreground, #0F172A);
-}
-
-#ai_drawer .ai-chat-input:focus {
-    outline: 2px solid rgba(14, 165, 233, 0.25);
-    border-color: rgba(14, 165, 233, 0.5);
-}
-
-#ai_drawer .ai-send-btn {
-    width: 44px;
-    height: 44px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border: none;
-    border-radius: var(--radius-pill, 999px);
-    background: var(--color-primary, #0EA5E9);
-    color: #FFFFFF;
-    cursor: pointer;
-    box-shadow: 0 6px 16px rgba(2, 132, 199, 0.25);
-    transition: transform 0.15s ease, box-shadow 0.15s ease;
-}
-
-#ai_drawer .ai-send-btn:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 10px 22px rgba(2, 132, 199, 0.28);
-}
-
-#ai_drawer .ai-bubble-user {
-    background: var(--color-primary-strong, #0369A1);
-    color: #FFFFFF;
-    border-radius: 14px;
-}
-
-#ai_drawer .ai-bubble-ai {
-    background: var(--color-surface, #F8FAFC);
-    border: 1px solid var(--color-border, #E2E8F0);
-    color: var(--color-foreground, #0F172A);
-    border-radius: 12px;
-}
+/* 输入框和按钮的样式现在通过DaisyUI类控制 */
 
 #ai_drawer .ai-msg-avatar {
     width: 28px !important;
@@ -173,18 +128,18 @@
     display: inline-flex !important;
     align-items: center !important;
     justify-content: center !important;
-    background: var(--color-secondary, #F1F5F9) !important;
-    color: var(--color-muted-foreground, #64748B) !important;
+    background: hsl(var(--b2)) !important;
+    color: hsl(var(--bc) / 0.6) !important;
 }
 
 #ai_drawer .ai-msg-avatar-user {
-    background: var(--color-secondary, #F1F5F9) !important;
-    color: var(--color-foreground, #0F172A) !important;
+    background: hsl(var(--b2)) !important;
+    color: hsl(var(--bc)) !important;
 }
 
 #ai_drawer .ai-msg-avatar-ai {
-    background: var(--color-primary-soft, #E0F2FE) !important;
-    color: var(--color-primary-strong, #0369A1) !important;
+    background: hsl(var(--p) / 0.1) !important;
+    color: hsl(var(--p)) !important;
     border-radius: 14px !important;
 }
 
@@ -195,12 +150,13 @@
 }
 
 #ai_drawer .chat-header {
-    color: var(--color-muted-foreground, #64748B);
+    color: hsl(var(--bc) / 0.6);
 }
 
 #ai_drawer .prose {
     font-size: 13px;
     line-height: 1.5;
+    color: hsl(var(--bc));
 }
 
 /* ============================================
@@ -209,13 +165,13 @@
    ============================================ */
 .ai-result-card {
     border-radius: 14px;
-    border: 1px solid var(--color-border, #E2E8F0);
-    background: var(--color-card, #FFFFFF);
+    border: 1px solid hsl(var(--b3));
+    background: hsl(var(--b1));
     transition: all 0.2s ease;
 }
 
 .ai-result-card:hover {
-    box-shadow: 0 4px 12px rgba(14, 165, 233, 0.15);
+    box-shadow: 0 4px 12px hsl(var(--p) / 0.15);
     transform: translateY(-1px);
 }
 
@@ -227,25 +183,25 @@
 .ai-result-card ul li {
     border-radius: 8px;
     padding: 8px 10px;
-    background: var(--color-surface, #F8FAFC);
-    border: 1px solid var(--color-border, #E2E8F0);
+    background: hsl(var(--b2));
+    border: 1px solid hsl(var(--b3));
 }
 
 /* 原因说明区域 */
 .ai-result-card details {
     border-radius: 12px;
-    background: var(--color-primary-soft, #E0F2FE);
-    border: 1px solid var(--color-primary, #0EA5E9);
+    background: hsl(var(--p) / 0.1);
+    border: 1px solid hsl(var(--p));
 }
 
-/* 应用按钮 - pill形状 */
+/* 应用按钮样式通过DaisyUI btn类控制 */
 .ai-result-apply,
 .ai-result-apply-subtasks {
     height: 36px;
     padding: 0 14px;
     border-radius: 999px;
-    background: var(--color-primary, #0EA5E9);
-    color: white;
+    background: hsl(var(--p));
+    color: hsl(var(--pc));
     font-weight: 900;
     font-size: 13px;
     transition: all 0.2s ease;
@@ -254,9 +210,9 @@
 
 .ai-result-apply:hover,
 .ai-result-apply-subtasks:hover {
-    background: var(--color-primary-hover, #0284C7);
+    background: hsl(var(--p) / 0.8);
     transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(14, 165, 233, 0.25);
+    box-shadow: 0 4px 12px hsl(var(--p) / 0.25);
 }
 
 .ai-result-apply:active,
@@ -379,11 +335,11 @@ button:not(:disabled) {
 .ai-tool-call {
     margin: 8px 0;
     padding: 8px 12px;
-    background: var(--color-secondary, #F1F5F9);
-    border: 1px solid var(--color-border, #E2E8F0);
+    background: hsl(var(--b2));
+    border: 1px solid hsl(var(--b3));
     border-radius: 8px;
     font-size: 13px;
-    color: var(--color-foreground, #0F172A);
+    color: hsl(var(--bc));
     transition: all 0.2s ease;
 }
 
@@ -410,15 +366,15 @@ button:not(:disabled) {
 /* 工具名称 */
 .ai-tool-call .tool-name {
     flex: 1;
-    color: var(--color-foreground, #0F172A);
+    color: hsl(var(--bc));
 }
 
 /* Spinner动画 - 运行中状态 */
 .ai-tool-call .tool-spinner {
     width: 14px;
     height: 14px;
-    border: 2px solid rgba(100, 116, 139, 0.2);
-    border-top-color: var(--color-primary, #0EA5E9);
+    border: 2px solid hsl(var(--bc) / 0.2);
+    border-top-color: hsl(var(--p));
     border-radius: 50%;
     animation: ai-tool-spin 0.6s linear infinite;
 }
@@ -474,7 +430,7 @@ button:not(:disabled) {
     content: '';
     width: 14px;
     height: 14px;
-    background: var(--color-muted-foreground);
+    background: hsl(var(--bc) / 0.6);
     mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='currentColor'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E") center/contain no-repeat;
     -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='currentColor'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E") center/contain no-repeat;
     transition: transform 0.2s ease;
