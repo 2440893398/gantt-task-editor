@@ -275,63 +275,23 @@
 }
 
 /* ============================================
-   AI 配置弹窗样式
-   F-001: 配置管理 - 基于设计稿优化
+   AI 配置弹窗样式 - 基于Tailwind + DaisyUI
    ============================================ */
-.ai-config-modal .modal-box {
-    backdrop-filter: none;
-}
 
-/* API Key 输入框 */
-.ai-api-key-input {
-    font-family: monospace;
-    letter-spacing: 0.05em;
-}
-
-/* 强制应用自定义输入框样式 - 覆盖DaisyUI的input类 */
-#ai_config_modal .modal-box input.w-full {
-    height: 40px !important;
-    border-radius: 12px !important;
-    padding: 10px 12px !important;
-    background-color: var(--color-surface) !important;
-    border-color: var(--color-border) !important;
-}
-
-#ai_config_modal .modal-box input.w-full:focus {
-    border-color: rgba(14, 165, 233, 0.5) !important;
-    box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.18) !important;
-    outline: none !important;
-}
-
-/* 配置弹窗输入框统一样式 - 提高优先级覆盖DaisyUI */
+/* 只保留必要的字体样式 */
 #ai_config_modal input[type="text"],
 #ai_config_modal input[type="password"] {
-    font-size: 13px !important;
-    font-family: 'Source Sans 3', monospace !important;
-    font-weight: normal !important;
+    font-family: 'Source Sans 3', monospace;
+    font-size: 13px;
 }
 
-/* 配置弹窗 Toggle 开关样式 - 覆盖DaisyUI默认 */
+/* Toggle开关尺寸调整 */
 #ai_config_modal .toggle {
-    width: 36px !important;
-    height: 20px !important;
-    --tglbg: var(--color-border) !important;
-    border-width: 0 !important;
-    flex-shrink: 0 !important;
+    --tglbg: hsl(var(--b3));
 }
 
 #ai_config_modal .toggle:checked {
-    --tglbg: var(--color-primary) !important;
-    background-color: var(--color-primary) !important;
-}
-
-/* 配置弹窗按钮hover效果 */
-#ai_config_save:hover {
-    transform: translateY(-1px) !important;
-}
-
-#ai_config_save:active {
-    transform: translateY(0) !important;
+    --tglbg: hsl(var(--p));
 }
 
 /* ============================================

@@ -10,7 +10,7 @@ export const taskTools = {
   get_today_tasks: tool({
     description: '获取今日需处理的任务（开始日期 ≤ 今天 且 未完成）',
     parameters: z.object({
-      include_subtasks: z.boolean().optional().describe('是否包含子任务，默认 false')
+      include_subtasks: z.boolean().default(false).describe('是否包含子任务，默认 false')
     }),
     execute: async ({ include_subtasks = false }) => {
       if (typeof gantt === 'undefined') {
