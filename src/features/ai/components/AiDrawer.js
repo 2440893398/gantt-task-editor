@@ -1,4 +1,4 @@
-﻿/**
+/**
  * AI 流式响应抽屉组件 (F-105, F-106, F-107, F-108)
  * 用于展示 AI 对话历史和生成内容
  * 支持消息气泡、Markdown 渲染、多轮对话
@@ -39,33 +39,40 @@ function createDrawerHTML() {
     <div id="ai_drawer" class="fixed inset-y-0 right-0 z-[6100] w-[420px] max-w-full transform translate-x-full transition-transform duration-300 flex flex-col"
          class="bg-base-100 border-l border-base-300 rounded-l-xl shadow-xl"
          role="dialog" aria-modal="false" aria-labelledby="ai_drawer_title">
-        <!-- 头部 -->
-        <div class="h-14 px-4 flex items-center justify-between sticky top-0 z-10"
-             class="bg-base-200 border-b border-base-300">
-            <h3 class="font-semibold flex items-center gap-2 text-base" id="ai_drawer_title">
-                <span class="loading loading-spinner loading-sm text-primary hidden" id="ai_drawer_loading"></span>
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-primary" id="ai_drawer_icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-                </svg>
-                <span id="ai_drawer_title_text" data-i18n="ai.drawer.title">AI 助手</span>
-            </h3>
-            <div class="flex items-center gap-1">
-                <button class="w-8 h-8 inline-flex items-center justify-center tooltip tooltip-bottom" data-tip="${i18n.t('ai.config.title') || 'Settings'}" id="ai_drawer_settings"
-                        class="bg-base-100 border border-base-300 rounded-[10px] text-base-content">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <!-- 头部 - 56px高度 -->
+        <div class="h-14 px-3.5 flex items-center justify-between sticky top-0 z-10 bg-[--color-surface] border-b border-[--color-border]">
+            <div class="flex items-center gap-2.5">
+                <!-- AI图标容器：28x28px，sparkles图标 -->
+                <div class="w-7 h-7 rounded-[10px] flex items-center justify-center bg-[--color-primary-soft]">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-[--color-primary-strong]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
+                    </svg>
+                </div>
+                <h3 class="font-bold text-[15px] text-[--color-foreground]" id="ai_drawer_title">
+                    <span class="loading loading-spinner loading-sm text-primary hidden" id="ai_drawer_loading"></span>
+                    <span id="ai_drawer_title_text" data-i18n="ai.drawer.title">任务分解</span>
+                </h3>
+            </div>
+            <div class="flex items-center gap-2">
+                <button class="w-8 h-8 inline-flex items-center justify-center tooltip tooltip-bottom rounded-[10px] hover:bg-black/5 transition-colors text-[--color-muted-foreground]" 
+                        data-tip="${i18n.t('ai.config.title') || 'Settings'}" 
+                        id="ai_drawer_settings">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                     </svg>
                 </button>
-                <button class="w-8 h-8 inline-flex items-center justify-center tooltip tooltip-left" data-tip="${i18n.t('ai.drawer.clear') || 'Clear chat'}" id="ai_drawer_clear"
-                        class="bg-base-100 border border-base-300 rounded-[10px] text-base-content">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <button class="w-8 h-8 inline-flex items-center justify-center tooltip tooltip-left rounded-[10px] hover:bg-black/5 transition-colors text-[--color-muted-foreground]" 
+                        data-tip="${i18n.t('ai.drawer.clear') || 'Clear chat'}" 
+                        id="ai_drawer_clear">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                     </svg>
                 </button>
-                <button class="w-8 h-8 inline-flex items-center justify-center" id="ai_drawer_close" aria-label="关闭"
-                        class="bg-base-100 border border-base-300 rounded-[10px] text-base-content/60">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <button class="w-8 h-8 inline-flex items-center justify-center rounded-[10px] hover:bg-black/5 transition-colors text-[--color-muted-foreground]" 
+                        id="ai_drawer_close" 
+                        aria-label="关闭">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
                     </svg>
                 </button>
@@ -382,7 +389,7 @@ function renderMessage(message) {
     const aiAvatar = `
         <span class="ai-msg-avatar ai-msg-avatar-ai">
             <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
             </svg>
         </span>
     `;

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * AI 配置弹窗组件 (F-101, F-102, F-103)
  * 用于输入 API Key、Base URL 和模型选择
  * 支持 Combobox 模式：下拉选择 + 手动输入
@@ -60,29 +60,25 @@ function createModalHTML() {
         <div class="modal-box w-[520px] max-w-[92vw] p-0 overflow-hidden"
             class="bg-base-100 border border-base-300 rounded-xl shadow-xl">
             <!-- 头部 - Modal Card -->
-            <div class="h-16 px-5 flex items-center justify-between"
-                class="bg-base-200 border-b border-base-300">
+            <div class="h-[90px] px-4 flex items-center justify-between bg-[--color-surface] border-b border-[--color-border]">
                 <div class="flex items-center gap-3 min-w-0">
-                    <div class="w-9 h-9 rounded-xl flex items-center justify-center"
-                        class="bg-secondary text-primary">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24"
-                            stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    <!-- Logo容器：44x44px，圆角14px，sparkles图标 -->
+                    <div class="w-11 h-11 rounded-[14px] flex items-center justify-center bg-[--color-primary-soft]">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-[--color-primary-strong]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
                         </svg>
                     </div>
                     <div class="min-w-0">
-                        <div class="text-sm font-semibold truncate text-base-content"
+                        <div class="text-sm font-bold text-[--color-foreground]"
                             data-i18n="ai.config.title">AI 设置</div>
-                        <div class="text-xs truncate text-base-content/60"
-                            data-i18n="ai.config.subtitle">配置您的模型密钥以启用智能助手</div>
+                        <div class="text-xs text-[--color-muted-foreground]"
+                            data-i18n="ai.config.subtitle">配置模型密钥与服务地址（仅2步操作）</div>
                     </div>
                 </div>
                 <button id="ai_config_close_x" type="button"
-                    class="w-8 h-8 inline-flex items-center justify-center rounded-lg"
-                    class="text-base-content/60"
+                    class="w-8 h-8 inline-flex items-center justify-center rounded-[10px] hover:bg-black/5 transition-colors duration-200 text-[--color-muted-foreground]"
                     aria-label="Close">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24"
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24"
                         stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                             d="M6 18L18 6M6 6l12 12" />
@@ -94,54 +90,54 @@ function createModalHTML() {
             <div class="p-4 space-y-5 max-h-[70vh] overflow-y-auto">
                 <!-- API Key -->
                 <div class="form-control w-full">
-                    <label class="label">
-                        <span class="label-text font-medium flex items-center gap-2">
-                            <span data-i18n="ai.config.apiKey">API Key</span>
-                        </span>
+                    <label class="label pb-2">
+                        <span class="label-text text-xs font-extrabold text-[--color-muted-foreground] uppercase tracking-wide" data-i18n="ai.config.apiKey">API Key</span>
                     </label>
                     <div class="relative">
                         <input type="password" id="ai_api_key"
-                            class="input input-bordered w-full pr-10 font-mono text-sm bg-[--color-card] border-[--color-border] text-[--color-foreground]"
-                            placeholder="sk-..."
+                            class="w-full h-10 px-3 pr-10 rounded-xl border border-[--color-border] bg-[--color-surface] text-[--color-foreground] font-mono text-[13px] outline-none transition-all duration-200 focus:border-primary/50 focus:shadow-[0_0_0_3px_rgba(14,165,233,0.18)]"
+                            placeholder="sk-••••••••••••••••••••••••"
                             autocomplete="off"
                             required>
-                        <button type="button" class="btn btn-ghost btn-xs btn-square absolute right-2 top-1/2 -translate-y-1/2" id="ai_toggle_key_visibility">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" id="ai_eye_icon">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                        <button type="button" class="absolute right-3 top-1/2 -translate-y-1/2 text-[--color-muted-foreground] hover:text-[--color-foreground] transition-colors" id="ai_toggle_key_visibility">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" id="ai_eye_icon">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
                             </svg>
                         </button>
                     </div>
-                    <label class="label">
-                        <span class="label-text-alt text-[--color-muted-foreground]" data-i18n="ai.config.apiKeyHint">密钥仅保存在本地，不会上传到服务端</span>
+                    <label class="label pt-2">
+                        <span class="label-text-alt flex items-center gap-2 text-[--color-muted-foreground]">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                            </svg>
+                            <span data-i18n="ai.config.apiKeyHint">密钥仅保存在本地，不会上报到服务器</span>
+                        </span>
                     </label>
                 </div>
 
                 <!-- Base URL -->
                 <div class="form-control w-full">
-                    <label class="label">
-                        <span class="label-text font-medium flex items-center gap-2">
-                            <span data-i18n="ai.config.baseUrl">Base URL</span>
-                        </span>
+                    <label class="label pb-2">
+                        <span class="label-text text-xs font-extrabold text-[--color-muted-foreground] uppercase tracking-wide" data-i18n="ai.config.baseUrl">Base URL</span>
                     </label>
-                    <div class="join w-full">
+                    <div class="relative w-full">
                         <input type="text" id="ai_base_url"
-                            class="input input-bordered join-item flex-1 font-mono text-sm bg-[--color-card] border-[--color-border] text-[--color-foreground]"
-                            placeholder="https://api.openai.com/v1">
-                        <div class="dropdown dropdown-end join-item">
-                            <label tabindex="0" class="btn btn-outline join-item">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            class="w-full h-10 px-3 pr-10 rounded-xl border border-[--color-border] bg-[--color-surface] text-[--color-foreground] font-mono text-[13px] outline-none transition-all duration-200 focus:border-primary/50 focus:shadow-[0_0_0_3px_rgba(14,165,233,0.18)]"
+                            placeholder="https://aihubmix.com/v1">
+                        <div class="dropdown dropdown-end absolute right-3 top-1/2 -translate-y-1/2">
+                            <label tabindex="0" class="cursor-pointer text-[--color-muted-foreground] hover:text-[--color-foreground] transition-colors">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
                                 </svg>
                             </label>
-                            <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow-[var(--shadow-modal)] bg-[--color-card] rounded-box w-52 border border-[--color-border]" id="ai_url_presets">
+                            <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow-[var(--shadow-modal)] bg-[--color-card] rounded-xl w-52 border border-[--color-border] mt-2" id="ai_url_presets">
                                 ${PRESET_URLS.map(url => `
-                                    <li><a data-url="${url.value}">${url.label}</a></li>
+                                    <li><a data-url="${url.value}" class="text-sm rounded-lg">${url.label}</a></li>
                                 `).join('')}
                             </ul>
                         </div>
                     </div>
-                    <label class="label" id="ai_local_hint" style="display: none;">
+                    <label class="label pt-2" id="ai_local_hint" style="display: none;">
                         <span class="label-text-alt text-warning">
                             <span data-i18n="ai.config.localHint">本地模型需确保 Ollama 已启动</span>
                         </span>
@@ -150,16 +146,14 @@ function createModalHTML() {
 
                 <!-- 模型选择 (F-102 Combobox) -->
                 <div class="form-control w-full">
-                    <label class="label">
-                        <span class="label-text font-medium flex items-center gap-2">
-                            <span data-i18n="ai.config.model">模型</span>
-                        </span>
-                        <button class="btn btn-xs btn-ghost text-primary gap-1" id="ai_refresh_models_btn">
+                    <label class="label pb-2">
+                        <span class="label-text text-xs font-extrabold text-[--color-muted-foreground] uppercase tracking-wide" data-i18n="ai.config.model">模型</span>
+                        <button class="flex items-center gap-1 px-2 py-1 rounded-full text-xs font-bold text-primary hover:bg-primary/10 transition-colors" id="ai_refresh_models_btn">
                             <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" id="ai_refresh_icon">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                             </svg>
-                            <span id="ai_refresh_text" data-i18n="ai.config.refresh">刷新</span>
-                            <span class="badge badge-xs badge-warning hidden" id="ai_cache_expired_badge">!</span>
+                            <span id="ai_refresh_text" data-i18n="ai.config.refresh">已更新</span>
+                            <span class="hidden px-1.5 rounded-full bg-primary/20 text-primary text-[10px] font-black" id="ai_cache_expired_badge">!</span>
                         </button>
                     </label>
                     
@@ -167,24 +161,50 @@ function createModalHTML() {
                     <div class="dropdown w-full" id="ai_model_dropdown">
                         <input 
                             type="text" 
-                            class="input input-bordered w-full font-mono text-sm bg-[--color-card] border-[--color-border] text-[--color-foreground]" 
-                            placeholder="选择或输入模型名称..."
+                            class="w-full h-10 px-3 rounded-xl border border-[--color-border] bg-[--color-surface] text-[--color-foreground] font-mono text-[13px] outline-none transition-all duration-200 focus:border-primary/50 focus:shadow-[0_0_0_3px_rgba(14,165,233,0.18)]" 
+                            placeholder="gpt-5-mini"
                             id="ai_model_input"
                             autocomplete="off"
                         />
                         
                         <!-- 下拉列表 -->
-                        <ul class="dropdown-content menu bg-[--color-card] rounded-box w-full max-h-60 overflow-y-auto shadow-[var(--shadow-modal)] border border-[--color-border] z-[1000] mt-1 hidden" id="ai_model_list">
+                        <ul class="dropdown-content menu bg-[--color-card] rounded-xl w-full max-h-60 overflow-y-auto shadow-[var(--shadow-modal)] border border-[--color-border] z-[1000] mt-1 hidden" id="ai_model_list">
                             <!-- 动态生成 -->
                         </ul>
                     </div>
                     
-                    <label class="label">
+                    <label class="label pt-2">
                         <span class="label-text-alt text-[--color-muted-foreground]">
                             <span data-i18n="ai.config.modelHint">可直接输入任意模型名称</span>
                         </span>
                         <span class="label-text-alt text-[--color-muted-foreground]" id="ai_model_count"></span>
                     </label>
+                </div>
+
+                <!-- Skills 开关（按需加载） -->
+                <div class="form-control w-full">
+                    <label class="label pb-2">
+                        <span class="label-text text-xs font-extrabold text-[--color-muted-foreground] uppercase tracking-wide">Skills（按需加载）</span>
+                    </label>
+                    <p class="text-xs text-[--color-muted-foreground] mb-3">只加载当前任务需要的能力，减少提示词开销</p>
+                    
+                    <!-- Task Query 开关 -->
+                    <div class="flex items-center justify-between h-14 px-3 rounded-xl border border-[--color-border] bg-[--color-surface] mb-2">
+                        <div class="flex-1 min-w-0">
+                            <div class="text-sm font-semibold text-[--color-foreground]">Task Query</div>
+                            <div class="text-xs text-[--color-muted-foreground]">查询任务/进度等数据（支持工具调用）</div>
+                        </div>
+                        <input type="checkbox" class="toggle toggle-primary" id="ai_skill_task_query" checked />
+                    </div>
+                    
+                    <!-- Progress Analysis 开关 -->
+                    <div class="flex items-center justify-between h-14 px-3 rounded-xl border border-[--color-border] bg-[--color-surface]">
+                        <div class="flex-1 min-w-0">
+                            <div class="text-sm font-semibold text-[--color-foreground]">Progress Analysis</div>
+                            <div class="text-xs text-[--color-muted-foreground]">基于任务数据生成进度报告或瓶颈提示</div>
+                        </div>
+                        <input type="checkbox" class="toggle toggle-primary" id="ai_skill_progress_analysis" checked />
+                    </div>
                 </div>
 
                 <!-- 连接测试结果 -->
@@ -196,23 +216,19 @@ function createModalHTML() {
             </div>
 
             <!-- 底部操作 -->
-            <div class="px-5 py-4 flex items-center justify-between"
-                class="bg-base-200 border-t border-base-300">
-                <div class="flex items-center gap-3">
-                    <div class="text-xs text-base-content/60">Esc 关闭</div>
-                    <button class="btn btn-ghost btn-sm gap-2 rounded-full" id="ai_config_test">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                    <span data-i18n="ai.config.test">测试连接</span>
+            <div class="px-4 py-3 flex items-center justify-between bg-[--color-card] border-t border-[--color-border]">
+                <div class="flex items-center gap-2">
+                    <button class="flex items-center gap-2 px-3 py-2 text-[13px] font-bold text-[--color-muted-foreground] hover:text-[--color-foreground] rounded-full hover:bg-black/5 transition-colors" id="ai_config_test">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <span data-i18n="ai.config.test">测试连接</span>
                     </button>
                 </div>
-                <div class="flex gap-2">
-                    <button class="px-4 py-2 text-sm font-semibold rounded-[var(--radius-pill,999px)] hover:bg-black/5"
-                        class="text-base-content"
+                <div class="flex gap-2.5">
+                    <button class="h-9 px-3 text-[13px] font-extrabold text-[--color-foreground] rounded-full hover:bg-black/5 transition-all duration-200"
                         id="ai_config_cancel" data-i18n="form.cancel">取消</button>
-                    <button class="px-5 py-2 text-sm font-semibold rounded-[var(--radius-pill,999px)]"
-                        class="btn btn-primary"
+                    <button class="h-9 px-3.5 text-[13px] font-black text-white bg-primary rounded-full hover:bg-primary-hover hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200"
                         id="ai_config_save" data-i18n="form.save">保存配置</button>
                 </div>
             </div>
@@ -331,10 +347,10 @@ function toggleKeyVisibility() {
     if (input && icon) {
         const isPassword = input.type === 'password';
         input.type = isPassword ? 'text' : 'password';
-        // 切换图标
+        // 切换图标 - eye / eye-off
         icon.innerHTML = isPassword
-            ? '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />'
-            : '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />';
+            ? '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />'
+            : '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />';
     }
 }
 

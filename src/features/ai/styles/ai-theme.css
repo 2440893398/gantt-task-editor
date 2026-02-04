@@ -14,9 +14,9 @@
     --ai-bg-gradient: var(--color-surface, #F8FAFC);
 
     /* 消息气泡 */
-    --msg-user-bg: var(--color-primary-soft, #E0F2FE);
-    --msg-user-text: var(--color-foreground, #0F172A);
-    --msg-ai-bg: var(--color-card, #FFFFFF);
+    --msg-user-bg: var(--color-primary-strong, #0369A1);
+    --msg-user-text: #FFFFFF;
+    --msg-ai-bg: var(--color-surface, #F8FAFC);
     --msg-ai-text: var(--color-foreground, #0F172A);
 
     /* 状态色 */
@@ -55,7 +55,7 @@
 
 #ai_floating_btn:hover {
     transform: translateY(-2px);
-    box-shadow: 0 8px 25px -5px rgba(139, 92, 246, 0.5);
+    box-shadow: 0 8px 25px -5px rgba(14, 165, 233, 0.35);
     background: var(--ai-primary-hover);
 }
 
@@ -68,20 +68,42 @@
    F-105: 现代化侧边栏
    ============================================ */
 .ai-drawer {
-    background: var(--ai-bg-gradient);
+    background: var(--color-card, #FFFFFF);
 }
 
-/* 消息气泡样式 */
+/* 消息气泡样式 - 基于设计稿优化 */
 .ai-message-user {
     background: var(--msg-user-bg);
     color: var(--msg-user-text);
-    border-radius: 1rem 1rem 0.25rem 1rem;
+    border-radius: 14px;
 }
 
 .ai-message-assistant {
     background: var(--msg-ai-bg);
     color: var(--msg-ai-text);
-    border-radius: 1rem 1rem 1rem 0.25rem;
+    border-radius: 12px;
+    border: 1px solid var(--color-border, #E2E8F0);
+}
+
+/* 消息气泡统一样式 */
+#ai_drawer .ai-bubble-user {
+    background: var(--color-primary-strong, #0369A1);
+    color: #FFFFFF;
+    border-radius: 14px;
+    padding: 10px 12px;
+}
+
+#ai_drawer .ai-bubble-ai {
+    background: var(--color-card, #FFFFFF);
+    border: 1px solid var(--color-border, #E2E8F0);
+    color: var(--color-foreground, #0F172A);
+    border-radius: 12px;
+    padding: 12px;
+}
+
+/* 消息间距 */
+#ai_drawer_messages {
+    gap: 12px;
 }
 
 /* ============================================
@@ -123,16 +145,38 @@
 }
 
 #ai_drawer .ai-bubble-user {
-    background: var(--color-primary-soft, #E0F2FE);
-    color: var(--color-foreground, #0F172A);
-    border-radius: var(--radius-m, 12px);
+    background: var(--color-primary-strong, #0369A1);
+    color: #FFFFFF;
+    border-radius: 14px;
 }
 
 #ai_drawer .ai-bubble-ai {
-    background: var(--color-card, #FFFFFF);
+    background: var(--color-surface, #F8FAFC);
     border: 1px solid var(--color-border, #E2E8F0);
     color: var(--color-foreground, #0F172A);
-    border-radius: var(--radius-m, 12px);
+    border-radius: 12px;
+}
+
+#ai_drawer .ai-msg-avatar {
+    width: 28px;
+    height: 28px;
+    border-radius: 14px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--color-secondary, #F1F5F9);
+    color: var(--color-muted-foreground, #64748B);
+}
+
+#ai_drawer .ai-msg-avatar-user {
+    background: var(--color-secondary, #F1F5F9);
+    color: var(--color-foreground, #0F172A);
+}
+
+#ai_drawer .ai-msg-avatar-ai {
+    background: var(--color-primary-soft, #E0F2FE);
+    color: var(--color-primary-strong, #0369A1);
+    border-radius: 14px;
 }
 
 #ai_drawer .chat-header {
@@ -146,33 +190,81 @@
 
 /* ============================================
    AI 结果卡片样式
-   F-107: 结构化输出渲染
+   F-107: 结构化输出渲染 - 基于设计稿优化
    ============================================ */
 .ai-result-card {
-    border-left: 3px solid var(--ai-primary);
+    border-radius: 14px;
+    border: 1px solid var(--color-border, #E2E8F0);
+    background: var(--color-card, #FFFFFF);
     transition: all 0.2s ease;
 }
 
 .ai-result-card:hover {
-    box-shadow: 0 4px 12px rgba(139, 92, 246, 0.15);
+    box-shadow: 0 4px 12px rgba(14, 165, 233, 0.15);
+    transform: translateY(-1px);
 }
 
-/* 应用按钮 */
-.ai-result-apply {
-    background: var(--ai-primary);
+/* 子任务列表 */
+.ai-result-card ul {
+    gap: 10px;
+}
+
+.ai-result-card ul li {
+    border-radius: 8px;
+    padding: 8px 10px;
+    background: var(--color-surface, #F8FAFC);
+    border: 1px solid var(--color-border, #E2E8F0);
+}
+
+/* 原因说明区域 */
+.ai-result-card details {
+    border-radius: 12px;
+    background: var(--color-primary-soft, #E0F2FE);
+    border: 1px solid var(--color-primary, #0EA5E9);
+}
+
+/* 应用按钮 - pill形状 */
+.ai-result-apply,
+.ai-result-apply-subtasks {
+    height: 36px;
+    padding: 0 14px;
+    border-radius: 999px;
+    background: var(--color-primary, #0EA5E9);
     color: white;
+    font-weight: 900;
+    font-size: 13px;
+    transition: all 0.2s ease;
+    border: none;
 }
 
-.ai-result-apply:hover {
-    background: var(--ai-primary-hover);
+.ai-result-apply:hover,
+.ai-result-apply-subtasks:hover {
+    background: var(--color-primary-hover, #0284C7);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(14, 165, 233, 0.25);
+}
+
+.ai-result-apply:active,
+.ai-result-apply-subtasks:active {
+    transform: translateY(0);
+}
+
+/* 撤回按钮 */
+.ai-result-undo {
+    height: 36px;
+    padding: 0 12px;
+    border-radius: 999px;
+    font-weight: 700;
+    font-size: 13px;
+    transition: all 0.2s ease;
 }
 
 /* ============================================
    AI 配置弹窗样式
-   F-001: 配置管理
+   F-001: 配置管理 - 基于设计稿优化
    ============================================ */
 .ai-config-modal .modal-box {
-    backdrop-filter: blur(4px);
+    backdrop-filter: none;
 }
 
 /* API Key 输入框 */
@@ -181,16 +273,62 @@
     letter-spacing: 0.05em;
 }
 
-/* ============================================
-   动画效果
-   ============================================ */
-@keyframes ai-pulse {
+/* 配置弹窗输入框统一样式 */
+#ai_config_modal input[type="text"],
+#ai_config_modal input[type="password"] {
+    font-size: 13px;
+    font-family: 'Source Sans 3', monospace;
+    font-weight: normal;
+}
 
+/* 配置弹窗 Toggle 开关样式 */
+#ai_config_modal .toggle {
+    width: 36px;
+    height: 20px;
+    --tglbg: var(--color-border);
+    border-width: 0;
+}
+
+#ai_config_modal .toggle:checked {
+    --tglbg: var(--color-primary);
+}
+
+/* 配置弹窗按钮hover效果 */
+#ai_config_save:hover {
+    transform: translateY(-1px);
+}
+
+#ai_config_save:active {
+    transform: translateY(0);
+}
+
+/* ============================================
+   全局动画效果 - 统一为0.2s过渡
+   ============================================ */
+
+/* 通用过渡类 */
+.ai-transition {
+    transition: all 0.2s ease;
+}
+
+/* 按钮hover效果 */
+button:not(:disabled) {
+    transition: all 0.2s ease;
+}
+
+/* 输入框focus效果已在配置弹窗中定义 */
+
+/* 卡片hover效果 */
+.card {
+    transition: all 0.2s ease;
+}
+
+/* 流式输出动画 */
+@keyframes ai-pulse {
     0%,
     100% {
         opacity: 1;
     }
-
     50% {
         opacity: 0.7;
     }
@@ -207,19 +345,43 @@
 }
 
 @keyframes blink {
-
     0%,
     100% {
         opacity: 1;
     }
-
     50% {
         opacity: 0;
     }
 }
 
+/* 消息滚动动画 */
+@keyframes ai-message-slide-in {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+#ai_drawer_messages .chat {
+    animation: ai-message-slide-in 0.3s ease-out;
+}
+
+/* 抽屉打开/关闭动画 */
+#ai_drawer {
+    transition: transform 0.3s ease;
+}
+
+/* 模态框背景动画 */
+#ai_drawer_backdrop {
+    transition: opacity 0.3s ease;
+}
+
 /* ============================================
-   Tool Call UI (Task 4A)
+   Tool Call UI (Task 4A) - 基于设计稿优化
    ============================================ */
 
 .ai-tool-call {
@@ -230,35 +392,66 @@
     border-radius: 8px;
     font-size: 13px;
     color: var(--color-foreground, #0F172A);
+    transition: all 0.2s ease;
 }
 
 .ai-tool-call summary {
     cursor: pointer;
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
     list-style: none;
+    font-weight: 600;
 }
 
 .ai-tool-call summary::-webkit-details-marker {
     display: none;
 }
 
+/* 工具图标 */
+.ai-tool-call .tool-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* 工具名称 */
+.ai-tool-call .tool-name {
+    flex: 1;
+    color: var(--color-foreground, #0F172A);
+}
+
+/* Spinner动画 - 运行中状态 */
 .ai-tool-call .tool-spinner {
     width: 14px;
     height: 14px;
-    border: 2px solid rgba(100, 116, 139, 0.35);
+    border: 2px solid rgba(100, 116, 139, 0.2);
     border-top-color: var(--color-primary, #0EA5E9);
     border-radius: 50%;
     animation: ai-tool-spin 0.6s linear infinite;
 }
 
+/* 完成状态图标 */
 .ai-tool-call .tool-done {
-    margin-left: 6px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
     color: #10B981;
     font-weight: 700;
+    font-size: 12px;
 }
 
+.ai-tool-call .tool-done::before {
+    content: '';
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    background: #10B981;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='currentColor'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M5 13l4 4L19 7'/%3E%3C/svg%3E") center/contain no-repeat;
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='currentColor'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M5 13l4 4L19 7'/%3E%3C/svg%3E") center/contain no-repeat;
+}
+
+/* 参数显示区 */
 .ai-tool-call pre {
     margin: 8px 0 0;
     padding: 8px;
@@ -271,8 +464,58 @@
     word-break: break-word;
 }
 
+/* 展开/折叠动画 */
+.ai-tool-call details {
+    overflow: hidden;
+}
+
+.ai-tool-call details[open] {
+    animation: ai-tool-expand 0.2s ease-out;
+}
+
+.ai-tool-call details:not([open]) {
+    animation: ai-tool-collapse 0.2s ease-in;
+}
+
+/* Chevron旋转动画 */
+.ai-tool-call summary::after {
+    content: '';
+    width: 14px;
+    height: 14px;
+    background: var(--color-muted-foreground);
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='currentColor'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E") center/contain no-repeat;
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='currentColor'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E") center/contain no-repeat;
+    transition: transform 0.2s ease;
+}
+
+.ai-tool-call details[open] summary::after {
+    transform: rotate(180deg);
+}
+
 @keyframes ai-tool-spin {
     to {
         transform: rotate(360deg);
+    }
+}
+
+@keyframes ai-tool-expand {
+    from {
+        opacity: 0;
+        max-height: 0;
+    }
+    to {
+        opacity: 1;
+        max-height: 500px;
+    }
+}
+
+@keyframes ai-tool-collapse {
+    from {
+        opacity: 1;
+        max-height: 500px;
+    }
+    to {
+        opacity: 0;
+        max-height: 0;
     }
 }
