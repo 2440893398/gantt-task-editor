@@ -85,25 +85,34 @@
     border: 1px solid var(--color-border, #E2E8F0);
 }
 
-/* 消息气泡统一样式 */
+/* 消息气泡统一样式 - 覆盖DaisyUI的chat-bubble类 */
 #ai_drawer .ai-bubble-user {
-    background: var(--color-primary-strong, #0369A1);
-    color: #FFFFFF;
-    border-radius: 14px;
-    padding: 10px 12px;
+    background: var(--color-primary-strong, #0369A1) !important;
+    color: #FFFFFF !important;
+    border-radius: 14px !important;
+    padding: 10px 12px !important;
 }
 
 #ai_drawer .ai-bubble-ai {
-    background: var(--color-card, #FFFFFF);
-    border: 1px solid var(--color-border, #E2E8F0);
-    color: var(--color-foreground, #0F172A);
-    border-radius: 12px;
-    padding: 12px;
+    background: var(--color-card, #FFFFFF) !important;
+    border: 1px solid var(--color-border, #E2E8F0) !important;
+    color: var(--color-foreground, #0F172A) !important;
+    border-radius: 12px !important;
+    padding: 12px !important;
 }
 
 /* 消息间距 */
 #ai_drawer_messages {
-    gap: 12px;
+    gap: 12px !important;
+}
+
+/* 确保DaisyUI的chat-bubble类被覆盖 */
+#ai_drawer .chat-bubble.ai-bubble-user,
+#ai_drawer .chat-bubble.ai-bubble-ai {
+    border-radius: inherit !important;
+    padding: inherit !important;
+    background-color: inherit !important;
+    color: inherit !important;
 }
 
 /* ============================================
@@ -158,25 +167,31 @@
 }
 
 #ai_drawer .ai-msg-avatar {
-    width: 28px;
-    height: 28px;
-    border-radius: 14px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    background: var(--color-secondary, #F1F5F9);
-    color: var(--color-muted-foreground, #64748B);
+    width: 28px !important;
+    height: 28px !important;
+    border-radius: 14px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    background: var(--color-secondary, #F1F5F9) !important;
+    color: var(--color-muted-foreground, #64748B) !important;
 }
 
 #ai_drawer .ai-msg-avatar-user {
-    background: var(--color-secondary, #F1F5F9);
-    color: var(--color-foreground, #0F172A);
+    background: var(--color-secondary, #F1F5F9) !important;
+    color: var(--color-foreground, #0F172A) !important;
 }
 
 #ai_drawer .ai-msg-avatar-ai {
-    background: var(--color-primary-soft, #E0F2FE);
-    color: var(--color-primary-strong, #0369A1);
-    border-radius: 14px;
+    background: var(--color-primary-soft, #E0F2FE) !important;
+    color: var(--color-primary-strong, #0369A1) !important;
+    border-radius: 14px !important;
+}
+
+/* Avatar内的SVG图标尺寸 */
+#ai_drawer .ai-msg-avatar svg {
+    width: 16px !important;
+    height: 16px !important;
 }
 
 #ai_drawer .chat-header {
@@ -273,33 +288,50 @@
     letter-spacing: 0.05em;
 }
 
-/* 配置弹窗输入框统一样式 */
-#ai_config_modal input[type="text"],
-#ai_config_modal input[type="password"] {
-    font-size: 13px;
-    font-family: 'Source Sans 3', monospace;
-    font-weight: normal;
+/* 强制应用自定义输入框样式 - 覆盖DaisyUI的input类 */
+#ai_config_modal .modal-box input.w-full {
+    height: 40px !important;
+    border-radius: 12px !important;
+    padding: 10px 12px !important;
+    background-color: var(--color-surface) !important;
+    border-color: var(--color-border) !important;
 }
 
-/* 配置弹窗 Toggle 开关样式 */
+#ai_config_modal .modal-box input.w-full:focus {
+    border-color: rgba(14, 165, 233, 0.5) !important;
+    box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.18) !important;
+    outline: none !important;
+}
+
+/* 配置弹窗输入框统一样式 - 提高优先级覆盖DaisyUI */
+#ai_config_modal input[type="text"],
+#ai_config_modal input[type="password"] {
+    font-size: 13px !important;
+    font-family: 'Source Sans 3', monospace !important;
+    font-weight: normal !important;
+}
+
+/* 配置弹窗 Toggle 开关样式 - 覆盖DaisyUI默认 */
 #ai_config_modal .toggle {
-    width: 36px;
-    height: 20px;
-    --tglbg: var(--color-border);
-    border-width: 0;
+    width: 36px !important;
+    height: 20px !important;
+    --tglbg: var(--color-border) !important;
+    border-width: 0 !important;
+    flex-shrink: 0 !important;
 }
 
 #ai_config_modal .toggle:checked {
-    --tglbg: var(--color-primary);
+    --tglbg: var(--color-primary) !important;
+    background-color: var(--color-primary) !important;
 }
 
 /* 配置弹窗按钮hover效果 */
 #ai_config_save:hover {
-    transform: translateY(-1px);
+    transform: translateY(-1px) !important;
 }
 
 #ai_config_save:active {
-    transform: translateY(0);
+    transform: translateY(0) !important;
 }
 
 /* ============================================
