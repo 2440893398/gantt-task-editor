@@ -10,6 +10,66 @@ import { initAiDrawer } from './components/AiDrawer.js';
 import AiService from './services/aiService.js';
 
 /**
+ * 从甘特图数据构建任务数据对象（用于 AI 抽屉中展示富卡片）
+ * @param {string} taskId
+ * @returns {Object|null}
+ */
+function buildTaskDataFromGantt(taskId) {
+    if (typeof gantt === 'undefined' || !taskId) return null;
+    try {
+        const task = gantt.getTask(taskId);
+        if (!task) return null;
+
+        let endDate = task.end_date;
+        if (!endDate && task.start_date && task.duration) {
+            endDate = gantt.calculateEndDate({
+                start_date: task.start_date,
+                duration: task.duration
+            });
+        }
+
+        const formatDate = (d) => {
+            if (!d) return null;
+            if (d instanceof Date) {
+                return d.toISOString().slice(0, 10);
+            }
+            return String(d);
+        };
+
+        const taskData = {
+            id: task.id,
+            text: task.text || '',
+            description: task.description || task.summary || '',
+            start_date: task.start_date ? formatDate(task.start_date) : null,
+            end_date: endDate ? formatDate(endDate) : null,
+            duration: task.duration || 0,
+            progress: Math.round((task.progress || 0) * 100),
+            priority: task.priority || 'medium',
+            status: task.status || 'pending',
+            assignee: task.assignee || null,
+            subtasks: []
+        };
+
+        if (gantt.hasChild && gantt.hasChild(task.id)) {
+            const childIds = gantt.getChildren(task.id);
+            taskData.subtasks = childIds.map(childId => {
+                const child = gantt.getTask(childId);
+                return {
+                    id: child.id,
+                    text: child.text || '',
+                    status: child.status || 'pending'
+                };
+            });
+        }
+
+        return taskData;
+    } catch (e) {
+        console.warn('[AI] Failed to build task data from gantt:', e);
+        return null;
+    }
+}
+
+/**
  * 初始化 AI 模块
  */
 export function initAiModule() {
@@ -73,10 +133,18 @@ function bindGlobalEvents() {
             onApply = (result) => AiService.applyToInput(context.element, result);
         }
 
+        // 构建完整任务数据（当来源是任务且智能体需要时）
+        let taskData = null;
+        if (context.source === 'task' && context.taskId &&
+            (agentId === 'task_refine' || agentId === 'task_breakdown')) {
+            taskData = buildTaskDataFromGantt(context.taskId);
+        }
+
         // 调用智能体
         await AiService.invokeAgent(agentId, {
             text: context.text,
             taskId: context.taskId,
+            taskData,
             onApply
         });
     });

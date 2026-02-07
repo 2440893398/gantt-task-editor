@@ -185,10 +185,14 @@ export function bindLeftSectionEvents(panel, task) {
                 return;
             }
 
+            // 构建完整任务数据（用于抽屉中展示富卡片）
+            const taskData = buildTaskDataForAI(task);
+
             const restore = setButtonLoading(refineBtn, true);
             await AiService.invokeAgent('task_refine', {
                 text: contextParts.join('\n'),
                 taskId: task.id,
+                taskData: taskData,
                 onApply: (result) => {
                     const optimized = extractOptimizedText(result);
                     if (!optimized) return;

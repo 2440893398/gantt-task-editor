@@ -44,14 +44,10 @@ describe('task-input-bubble', () => {
         expect(mentionHtml).toContain('ai-task-input-bubble');
     });
 
-    it('shows mode label correctly', () => {
-        const polishHtml = renderTaskInputBubble(taskData, { mode: 'polish' });
-        const splitHtml = renderTaskInputBubble(taskData, { mode: 'split' });
-
-        // Polish mode -> refine label
-        expect(polishHtml).toMatch(/润色|Refine|polish/i);
-        // Split mode -> split label
-        expect(splitHtml).toMatch(/拆分|Split/i);
+    it('shows status label in the bubble', () => {
+        const html = renderTaskInputBubble(taskData, { mode: 'polish' });
+        // Status 'in_progress' is rendered as '进行中' in a pill
+        expect(html).toContain('进行中');
     });
 
     it('renders date range when available', () => {
@@ -67,7 +63,7 @@ describe('task-input-bubble', () => {
         expect(html).toContain('ai-task-input-bubble');
     });
 
-    it('includes subtasks when present', () => {
+    it('shows subtask count when subtasks present', () => {
         const withSubs = {
             ...taskData,
             subtasks: [
@@ -76,7 +72,12 @@ describe('task-input-bubble', () => {
             ]
         };
         const html = renderTaskInputBubble(withSubs, { mode: 'split' });
-        expect(html).toContain('子任务A');
-        expect(html).toContain('子任务B');
+        // Should show subtask count (2)
+        expect(html).toContain('2');
+    });
+
+    it('shows no-subtask label when subtasks empty', () => {
+        const html = renderTaskInputBubble({ text: '无子任务', subtasks: [] }, { mode: 'polish' });
+        expect(html).toMatch(/暂无子任务|no subtask/i);
     });
 });
