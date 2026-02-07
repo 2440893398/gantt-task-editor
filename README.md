@@ -69,11 +69,20 @@ This project builds a comprehensive and interactive project management system ba
 - 依赖连线吸附到连接点
 - 基于 DHTMLX 默认行为，无额外性能开销
 
+### 5. AI 智能助手 | AI Assistant
+
+- **智能对话**: 基于 AI SDK 6 的多技能路由对话系统
+- **任务引用**: `@` 提及任务，AI 回复中的任务引用自动转为可点击标签
+- **项目分析**: 依赖分析、资源负荷、时间线偏差、关键路径等 13 种分析工具
+- **技能系统**: 8 种专业技能（任务润色、拆分、依赖分析、资源分析、时间线分析、任务详情、项目概览、字段信息）
+- **层级标识**: 动态生成的层级编号（如 `#1.2.3`）贯穿所有 AI 交互
+
 ## 技术栈 | Tech Stack
 
 - **Core**: HTML5, Tailwind CSS + DaisyUI, JavaScript (ES6+)
 - **Build Tool**: [Vite](https://vitejs.dev/) - 极速的开发服务器和构建工具
 - **Gantt Library**: [DHTMLX Gantt](https://dhtmlx.com/docs/products/dhtmlxGantt/) (Pro features partially implemented)
+- **AI**: [AI SDK 6](https://sdk.vercel.ai/) - AI 对话与工具调用框架
 - **Utilities**:
   - `ExcelJS` - Excel处理
   - `Dexie` - IndexedDB 封装
@@ -119,6 +128,7 @@ src/
 ├── config/              # 全局配置 (Gantt配置, 常量)
 ├── core/                # 核心逻辑 (事件总线, 初始化)
 ├── features/            # 功能模块
+│   ├── ai/              # AI 智能助手 (对话、技能、工具、渲染)
 │   ├── customFields/    # 自定义字段管理
 │   ├── export/          # 导出功能
 │   ├── gantt/           # 甘特图核心配置
@@ -174,4 +184,4 @@ npx playwright show-report
 
 MIT License
 
-> Last Updated: 2026-01-26
+> Last Updated: 2026-02-07
