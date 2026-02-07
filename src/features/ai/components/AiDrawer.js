@@ -609,6 +609,16 @@ export function showToolResult(toolResult, statusEl = null) {
         `;
     }
 
+    // 添加语义摘要
+    const toolNameEl = el.querySelector('.tool-name');
+    if (toolNameEl) {
+        const summary = generateToolSummary(toolResult.name, toolResult.result);
+        const summarySpan = document.createElement('span');
+        summarySpan.className = 'text-xs text-base-content/50 ml-1.5';
+        summarySpan.textContent = summary;
+        toolNameEl.insertAdjacentElement('afterend', summarySpan);
+    }
+
     const details = el.querySelector('details');
     if (details) {
         const resultEl = document.createElement('pre');
@@ -620,15 +630,10 @@ export function showToolResult(toolResult, statusEl = null) {
     messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
+import { getToolDisplayNameExtended, generateToolSummary } from '../tools/hierarchy.js';
+
 function getToolDisplayName(name) {
-    const nameMap = {
-        get_today_tasks: 'Today tasks',
-        get_overdue_tasks: 'Overdue tasks',
-        get_tasks_by_status: 'Tasks by status',
-        get_tasks_by_priority: 'Tasks by priority',
-        get_progress_summary: 'Progress summary'
-    };
-    return nameMap[name] || name;
+    return getToolDisplayNameExtended(name);
 }
 
 /**

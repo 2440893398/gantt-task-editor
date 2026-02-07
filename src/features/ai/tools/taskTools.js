@@ -1,5 +1,6 @@
 // src/features/ai/tools/taskTools.js
 import { tool, jsonSchema } from 'ai';
+import { attachHierarchyIds } from '../utils/hierarchy-id.js';
 
 /**
  * 创建符合 JSON Schema 规范的空对象 schema
@@ -51,7 +52,7 @@ export const taskTools = {
       const priorityOrder = { high: 0, medium: 1, low: 2 };
       tasks.sort((a, b) => (priorityOrder[a.priority] || 1) - (priorityOrder[b.priority] || 1));
 
-      return { tasks, count: tasks.length };
+      return { tasks: attachHierarchyIds(tasks), count: tasks.length };
     }
   }),
 
@@ -86,7 +87,7 @@ export const taskTools = {
           });
         }
       });
-      return { tasks, count: tasks.length };
+      return { tasks: attachHierarchyIds(tasks), count: tasks.length };
     }
   }),
 
@@ -118,7 +119,7 @@ export const taskTools = {
       });
 
       tasks.sort((a, b) => b.overdue_days - a.overdue_days);
-      return { tasks, count: tasks.length };
+      return { tasks: attachHierarchyIds(tasks), count: tasks.length };
     }
   }),
 
@@ -153,7 +154,7 @@ export const taskTools = {
           });
         }
       });
-      return { tasks, count: tasks.length };
+      return { tasks: attachHierarchyIds(tasks), count: tasks.length };
     }
   }),
 
