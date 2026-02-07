@@ -32,6 +32,52 @@ const KEYWORD_PATTERNS = {
         /项目.*概[况览]/,
         /风险/,
         /总[体结].*进/
+    ],
+    'dependency-analysis': [
+        /依赖/,
+        /关键路径/,
+        /前驱/,
+        /后继/,
+        /dependency/i,
+        /critical.?path/i
+    ],
+    'resource-analysis': [
+        /工作量/,
+        /负载/,
+        /资源冲突/,
+        /负责.*任务/,
+        /谁.*负责/,
+        /workload/i,
+        /resource/i
+    ],
+    'timeline-analysis': [
+        /截止日期/,
+        /时间线/,
+        /即将到期/,
+        /基线偏差/,
+        /日期范围/,
+        /deadline/i,
+        /timeline/i
+    ],
+    'task-detail-query': [
+        /任务详情/,
+        /子任务/,
+        /任务信息/,
+        /task.?detail/i
+    ],
+    'project-summary': [
+        /项目总结/,
+        /总结报告/,
+        /整体分析/,
+        /全局分析/,
+        /project.?summary/i
+    ],
+    'field-info': [
+        /字段配置/,
+        /自定义字段/,
+        /字段统计/,
+        /列配置/,
+        /field/i
     ]
 };
 
