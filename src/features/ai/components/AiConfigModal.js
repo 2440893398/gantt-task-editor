@@ -191,31 +191,39 @@ function createModalHTML() {
                     </label>
                 </div>
 
-                <!-- Skills 开关（按需加载） -->
-                <div class="form-control w-full">
-                    <label class="label pb-1">
-                        <span class="label-text text-xs font-extrabold text-base-content/60 uppercase tracking-wide">Skills（按需加载）</span>
-                    </label>
-                    <p class="text-xs text-base-content/60 mb-2.5">只加载当前任务需要的能力，减少提示词开销</p>
-                    
-                    <!-- Task Query 开关 -->
-                    <div class="flex items-center justify-between min-h-[52px] px-3 py-2.5 rounded-xl border border-base-300 bg-base-100 mb-2">
-                        <div class="flex-1 min-w-0 pr-3">
-                            <div class="text-sm font-semibold text-base-content">Task Query</div>
-                            <div class="text-xs text-base-content/60 leading-tight">查询任务/进度等数据（支持工具调用）</div>
+                <!-- Skills 开关（按需加载） - 默认折叠 -->
+                <details data-section="skills">
+                    <summary class="skills-collapse-header flex items-center justify-between cursor-pointer select-none py-2 px-1 rounded-lg hover:bg-base-200 transition-colors">
+                        <div class="flex items-center gap-2">
+                            <span class="label-text text-xs font-extrabold text-base-content/60 uppercase tracking-wide">Skills</span>
+                            <span class="badge badge-sm badge-primary skills-enabled-count">2</span>
                         </div>
-                        <input type="checkbox" class="toggle toggle-primary flex-shrink-0" id="ai_skill_task_query" checked />
-                    </div>
-                    
-                    <!-- Progress Analysis 开关 -->
-                    <div class="flex items-center justify-between min-h-[52px] px-3 py-2.5 rounded-xl border border-base-300 bg-base-100">
-                        <div class="flex-1 min-w-0 pr-3">
-                            <div class="text-sm font-semibold text-base-content">Progress Analysis</div>
-                            <div class="text-xs text-base-content/60 leading-tight">基于任务数据生成进度报告或瓶颈提示</div>
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-base-content/40 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                        </svg>
+                    </summary>
+                    <div class="skills-list mt-2 space-y-2">
+                        <p class="text-xs text-base-content/60 mb-2.5">只加载当前任务需要的能力，减少提示词开销</p>
+                        
+                        <!-- Task Query 开关 -->
+                        <div class="flex items-center justify-between min-h-[52px] px-3 py-2.5 rounded-xl border border-base-300 bg-base-100">
+                            <div class="flex-1 min-w-0 pr-3">
+                                <div class="text-sm font-semibold text-base-content">Task Query</div>
+                                <div class="text-xs text-base-content/60 leading-tight">查询任务/进度等数据（支持工具调用）</div>
+                            </div>
+                            <input type="checkbox" class="toggle toggle-primary flex-shrink-0 skill-toggle" id="ai_skill_task_query" checked />
                         </div>
-                        <input type="checkbox" class="toggle toggle-primary flex-shrink-0" id="ai_skill_progress_analysis" checked />
+                        
+                        <!-- Progress Analysis 开关 -->
+                        <div class="flex items-center justify-between min-h-[52px] px-3 py-2.5 rounded-xl border border-base-300 bg-base-100">
+                            <div class="flex-1 min-w-0 pr-3">
+                                <div class="text-sm font-semibold text-base-content">Progress Analysis</div>
+                                <div class="text-xs text-base-content/60 leading-tight">基于任务数据生成进度报告或瓶颈提示</div>
+                            </div>
+                            <input type="checkbox" class="toggle toggle-primary flex-shrink-0 skill-toggle" id="ai_skill_progress_analysis" checked />
+                        </div>
                     </div>
-                </div>
+                </details>
 
                 <!-- 连接测试结果 -->
                 <div id="ai_test_result" class="hidden">
@@ -342,6 +350,11 @@ function bindEvents() {
     // 刷新模型列表
     document.getElementById('ai_refresh_models_btn')?.addEventListener('click', () => handleRefreshModels(true));
 
+    // Skills toggle 联动计数徽标
+    document.querySelectorAll('.skill-toggle')?.forEach(toggle => {
+        toggle.addEventListener('change', updateSkillsEnabledCount);
+    });
+
     // 测试连接
     document.getElementById('ai_config_test')?.addEventListener('click', handleTestConnection);
 
@@ -353,6 +366,18 @@ function bindEvents() {
         hideTestResult();
         hideModelDropdown();
     });
+}
+
+/**
+ * 更新 Skills 已启用计数
+ */
+function updateSkillsEnabledCount() {
+    const toggles = document.querySelectorAll('.skill-toggle');
+    const enabledCount = Array.from(toggles).filter(t => t.checked).length;
+    const badge = document.querySelector('.skills-enabled-count');
+    if (badge) {
+        badge.textContent = enabledCount;
+    }
 }
 
 /**
