@@ -5,6 +5,8 @@
  */
 
 import { i18n } from '../../../utils/i18n.js';
+export { extractTaskCitations, replaceTaskCitationsWithChips } from './task-citation.js';
+export { renderTaskCitationChip } from './task-ui.js';
 
 /**
  * 渲染器注册表
@@ -94,7 +96,7 @@ function escapeHtml(text) {
  */
 function taskRefineRenderer(data, options = {}) {
     const { original, optimized, reasoning } = data;
-    const { onApply, onUndo, applied = false } = options;
+    const { onApply, onUndo, applied = false, canApply = true } = options;
 
     return `
         <div class="card bg-base-200 shadow-sm ai-result-card" data-type="task_refine">
@@ -151,14 +153,14 @@ function taskRefineRenderer(data, options = {}) {
                             </svg>
                             ${i18n.t('ai.result.applied') || '已应用'}
                         </button>
-                    ` : `
+                    ` : canApply ? `
                         <button class="btn btn-sm btn-ghost ai-result-undo" data-original="${escapeAttr(original || '')}">
                             ${i18n.t('ai.result.undo') || '撤回'}
                         </button>
                         <button class="btn btn-sm btn-primary ai-result-apply" data-value="${escapeAttr(optimized || '')}">
                             ${i18n.t('ai.result.apply') || '应用'}
                         </button>
-                    `}
+                    ` : ''}
                 </div>
             </div>
         </div>
@@ -170,6 +172,7 @@ function taskRefineRenderer(data, options = {}) {
  */
 function taskSplitRenderer(data, options = {}) {
     const { original, subtasks = [], reasoning } = data;
+    const { canApply = true } = options;
 
     return `
         <div class="card bg-base-200 shadow-sm ai-result-card" data-type="task_split">
@@ -208,9 +211,11 @@ function taskSplitRenderer(data, options = {}) {
                 
                 <!-- 操作按钮 -->
                 <div class="card-actions justify-end mt-3">
-                    <button class="btn btn-sm btn-primary ai-result-apply-subtasks">
-                        ${i18n.t('ai.result.createSubtasks') || '创建子任务'}
-                    </button>
+                    ${canApply ? `
+                        <button class="btn btn-sm btn-primary ai-result-apply-subtasks">
+                            ${i18n.t('ai.result.createSubtasks') || '创建子任务'}
+                        </button>
+                    ` : ''}
                 </div>
             </div>
         </div>

@@ -85,25 +85,26 @@
     border: 1px solid var(--color-border, #E2E8F0);
 }
 
-/* 消息气泡统一样式 - 使用DaisyUI主题色 */
+/* 消息气泡统一样式 - 使用DaisyUI主题色, 对齐设计稿 */
 #ai_drawer .ai-bubble-user {
-    background: hsl(var(--p)) !important;
-    color: hsl(var(--pc)) !important;
+    background: var(--color-primary) !important;
+    color: #FFFFFF !important;
     border-radius: 14px !important;
     padding: 10px 12px !important;
 }
 
 #ai_drawer .ai-bubble-ai {
-    background: hsl(var(--b1)) !important;
-    border: 1px solid hsl(var(--b3)) !important;
-    color: hsl(var(--bc)) !important;
-    border-radius: 12px !important;
+    background: var(--color-base-100) !important;
+    color: var(--color-base-content) !important;
+    border-radius: 14px !important;
     padding: 12px !important;
+    border: none !important;
 }
 
-/* 消息间距 */
+/* 消息间距 - 对齐设计稿 */
 #ai_drawer_messages {
     gap: 12px !important;
+    padding: 12px !important;
 }
 
 /* 确保DaisyUI的chat-bubble类被覆盖 */
@@ -128,19 +129,17 @@
     display: inline-flex !important;
     align-items: center !important;
     justify-content: center !important;
-    background: hsl(var(--b2)) !important;
-    color: hsl(var(--bc) / 0.6) !important;
+    flex-shrink: 0 !important;
 }
 
 #ai_drawer .ai-msg-avatar-user {
-    background: hsl(var(--b2)) !important;
-    color: hsl(var(--bc)) !important;
+    background: var(--color-base-200) !important;
+    color: var(--color-base-content) !important;
 }
 
 #ai_drawer .ai-msg-avatar-ai {
-    background: hsl(var(--p) / 0.1) !important;
-    color: hsl(var(--p)) !important;
-    border-radius: 14px !important;
+    background: color-mix(in oklch, var(--color-primary) 10%, transparent) !important;
+    color: var(--color-primary) !important;
 }
 
 /* Avatar内的SVG图标尺寸 */
@@ -150,13 +149,13 @@
 }
 
 #ai_drawer .chat-header {
-    color: hsl(var(--bc) / 0.6);
+    color: color-mix(in oklch, var(--color-base-content) 60%, transparent);
 }
 
 #ai_drawer .prose {
     font-size: 13px;
     line-height: 1.5;
-    color: hsl(var(--bc));
+    color: var(--color-base-content);
 }
 
 /* ============================================
@@ -165,13 +164,13 @@
    ============================================ */
 .ai-result-card {
     border-radius: 14px;
-    border: 1px solid hsl(var(--b3));
-    background: hsl(var(--b1));
+    border: 1px solid var(--color-base-300);
+    background: var(--color-base-100);
     transition: all 0.2s ease;
 }
 
 .ai-result-card:hover {
-    box-shadow: 0 4px 12px hsl(var(--p) / 0.15);
+    box-shadow: 0 4px 12px color-mix(in oklch, var(--color-primary) 15%, transparent);
     transform: translateY(-1px);
 }
 
@@ -183,15 +182,15 @@
 .ai-result-card ul li {
     border-radius: 8px;
     padding: 8px 10px;
-    background: hsl(var(--b2));
-    border: 1px solid hsl(var(--b3));
+    background: var(--color-base-200);
+    border: 1px solid var(--color-base-300);
 }
 
 /* 原因说明区域 */
 .ai-result-card details {
     border-radius: 12px;
-    background: hsl(var(--p) / 0.1);
-    border: 1px solid hsl(var(--p));
+    background: color-mix(in oklch, var(--color-primary) 10%, transparent);
+    border: 1px solid var(--color-primary);
 }
 
 /* 应用按钮样式通过DaisyUI btn类控制 */
@@ -200,8 +199,8 @@
     height: 36px;
     padding: 0 14px;
     border-radius: 999px;
-    background: hsl(var(--p));
-    color: hsl(var(--pc));
+    background: var(--color-primary);
+    color: var(--color-primary-content);
     font-weight: 900;
     font-size: 13px;
     transition: all 0.2s ease;
@@ -210,9 +209,9 @@
 
 .ai-result-apply:hover,
 .ai-result-apply-subtasks:hover {
-    background: hsl(var(--p) / 0.8);
+    background: color-mix(in oklch, var(--color-primary) 80%, transparent);
     transform: translateY(-1px);
-    box-shadow: 0 4px 12px hsl(var(--p) / 0.25);
+    box-shadow: 0 4px 12px color-mix(in oklch, var(--color-primary) 25%, transparent);
 }
 
 .ai-result-apply:active,
@@ -243,11 +242,11 @@
 
 /* Toggle开关尺寸调整 */
 #ai_config_modal .toggle {
-    --tglbg: hsl(var(--b3));
+    --tglbg: var(--color-base-300);
 }
 
 #ai_config_modal .toggle:checked {
-    --tglbg: hsl(var(--p));
+    --tglbg: var(--color-primary);
 }
 
 /* ============================================
@@ -335,11 +334,11 @@ button:not(:disabled) {
 .ai-tool-call {
     margin: 8px 0;
     padding: 8px 12px;
-    background: hsl(var(--b2));
-    border: 1px solid hsl(var(--b3));
+    background: var(--color-base-200);
+    border: none;
     border-radius: 8px;
     font-size: 13px;
-    color: hsl(var(--bc));
+    color: var(--color-base-content);
     transition: all 0.2s ease;
 }
 
@@ -366,15 +365,15 @@ button:not(:disabled) {
 /* 工具名称 */
 .ai-tool-call .tool-name {
     flex: 1;
-    color: hsl(var(--bc));
+    color: var(--color-base-content);
 }
 
 /* Spinner动画 - 运行中状态 */
 .ai-tool-call .tool-spinner {
     width: 14px;
     height: 14px;
-    border: 2px solid hsl(var(--bc) / 0.2);
-    border-top-color: hsl(var(--p));
+    border: 2px solid color-mix(in oklch, var(--color-base-content) 20%, transparent);
+    border-top-color: var(--color-primary);
     border-radius: 50%;
     animation: ai-tool-spin 0.6s linear infinite;
 }
@@ -430,7 +429,7 @@ button:not(:disabled) {
     content: '';
     width: 14px;
     height: 14px;
-    background: hsl(var(--bc) / 0.6);
+    background: color-mix(in oklch, var(--color-base-content) 60%, transparent);
     mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='currentColor'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E") center/contain no-repeat;
     -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='currentColor'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E") center/contain no-repeat;
     transition: transform 0.2s ease;
@@ -466,4 +465,293 @@ button:not(:disabled) {
         opacity: 0;
         max-height: 0;
     }
+}
+
+/* ============================================
+   工具调用卡片样式优化 - 对齐设计稿
+   ============================================ */
+
+/* 工具调用参数和结果区域背景色统一 */
+.ai-tool-call pre {
+    background: #E2E8F0 !important;
+    border-radius: 4px !important;
+    padding: 8px !important;
+    font-size: 12px !important;
+    margin-top: 8px !important;
+}
+
+/* Dark Mode 适配 */
+[data-theme='dark'] .ai-tool-call pre {
+    background: #374151 !important;
+}
+
+/* ============================================
+   空状态UI - 对齐设计稿
+   ============================================ */
+
+.ai-empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 24px;
+    padding: 32px 24px;
+    min-height: 400px;
+    background: var(--color-surface, #F8FAFC);
+}
+
+/* 大尺寸AI图标：64x64px */
+.ai-icon-large {
+    width: 64px;
+    height: 64px;
+    background: var(--color-primary-soft, #E0F2FE);
+    border-radius: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.ai-icon-large svg {
+    width: 36px;
+    height: 36px;
+    color: var(--color-primary-strong, #0369A1);
+}
+
+/* 空状态标题：18px/700 */
+.ai-empty-title {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--color-base-content);
+    margin: 0;
+}
+
+/* 空状态副标题：14px/normal */
+.ai-empty-subtitle {
+    font-size: 14px;
+    font-weight: normal;
+    color: color-mix(in oklch, var(--color-base-content) 60%, transparent);
+    text-align: center;
+    margin: 0;
+}
+
+/* 快捷建议容器 */
+.ai-suggestions {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: 100%;
+    max-width: 360px;
+}
+
+/* 快捷建议卡片：56px高度，无边框 - 对齐设计稿 */
+.ai-suggestion-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    height: 56px;
+    padding: 12px 16px;
+    background: var(--color-card, #FFFFFF);
+    border: none;
+    border-radius: 12px;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--color-base-content);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-align: left;
+}
+
+.ai-suggestion-card:hover {
+    box-shadow: 0 2px 8px color-mix(in oklch, var(--color-base-content) 8%, transparent);
+    transform: translateY(-1px);
+}
+
+.ai-suggestion-card:active {
+    transform: translateY(0);
+}
+
+/* 图标默认使用 primary 色 */
+.ai-suggestion-card svg {
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+    color: var(--color-primary);
+}
+
+/* 特殊颜色图标 - 红色警告图标 */
+.ai-suggestion-danger svg {
+    color: #DC2626;
+}
+
+/* Dark Mode 适配 */
+[data-theme='dark'] .ai-suggestion-card {
+    background: var(--color-base-200);
+}
+
+[data-theme='dark'] .ai-suggestion-card:hover {
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+}
+
+/* ============================================
+   Markdown 渲染样式（marked 库输出）
+   ============================================ */
+
+/* AI 消息中的 prose 容器 */
+#ai_drawer .prose {
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--color-base-content);
+}
+
+/* 段落间距 */
+#ai_drawer .prose p {
+    margin: 0.5em 0;
+}
+
+/* 列表样式 */
+#ai_drawer .prose ul,
+#ai_drawer .prose ol {
+    margin: 0.5em 0;
+    padding-left: 1.5em;
+}
+
+#ai_drawer .prose ul {
+    list-style-type: disc;
+}
+
+#ai_drawer .prose ol {
+    list-style-type: decimal;
+}
+
+#ai_drawer .prose li {
+    margin: 0.25em 0;
+}
+
+/* 表格样式 - 使用 DaisyUI 风格 */
+#ai_drawer .prose table {
+    width: 100%;
+    margin: 0.75em 0;
+    border-collapse: collapse;
+    font-size: 12px;
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+#ai_drawer .prose thead {
+    background: var(--color-base-200);
+}
+
+#ai_drawer .prose th {
+    padding: 8px 12px;
+    text-align: left;
+    font-weight: 600;
+    border-bottom: 1px solid var(--color-base-300);
+}
+
+#ai_drawer .prose td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--color-base-200);
+}
+
+#ai_drawer .prose tbody tr:hover {
+    background: var(--color-base-200);
+}
+
+#ai_drawer .prose tbody tr:last-child td {
+    border-bottom: none;
+}
+
+/* 代码块样式 */
+#ai_drawer .prose pre {
+    background: var(--color-base-200);
+    padding: 12px;
+    border-radius: 8px;
+    overflow-x: auto;
+    margin: 0.75em 0;
+}
+
+#ai_drawer .prose pre code {
+    font-size: 12px;
+    font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+    background: none;
+    padding: 0;
+}
+
+/* 行内代码 */
+#ai_drawer .prose code {
+    background: var(--color-base-200);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+}
+
+/* 引用块 */
+#ai_drawer .prose blockquote {
+    border-left: 3px solid var(--color-primary);
+    padding-left: 12px;
+    margin: 0.75em 0;
+    color: color-mix(in oklch, var(--color-base-content) 80%, transparent);
+    font-style: italic;
+}
+
+/* 标题样式 */
+#ai_drawer .prose h1,
+#ai_drawer .prose h2,
+#ai_drawer .prose h3,
+#ai_drawer .prose h4 {
+    font-weight: 600;
+    margin: 0.75em 0 0.5em;
+    line-height: 1.3;
+}
+
+#ai_drawer .prose h1 { font-size: 1.25em; }
+#ai_drawer .prose h2 { font-size: 1.15em; }
+#ai_drawer .prose h3 { font-size: 1.05em; }
+#ai_drawer .prose h4 { font-size: 1em; }
+
+/* 水平分割线 */
+#ai_drawer .prose hr {
+    border: none;
+    border-top: 1px solid var(--color-base-300);
+    margin: 1em 0;
+}
+
+/* 链接 */
+#ai_drawer .prose a {
+    color: var(--color-primary);
+    text-decoration: underline;
+}
+
+#ai_drawer .prose a:hover {
+    opacity: 0.8;
+}
+
+/* 加粗和斜体 */
+#ai_drawer .prose strong {
+    font-weight: 600;
+}
+
+#ai_drawer .prose em {
+    font-style: italic;
+}
+
+/* Dark mode 适配 */
+[data-theme='dark'] #ai_drawer .prose table {
+    border-color: var(--color-base-300);
+}
+
+[data-theme='dark'] #ai_drawer .prose pre,
+[data-theme='dark'] #ai_drawer .prose code {
+    background: var(--color-base-300);
+}
+
+.ai-task-citation {
+    transition: border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease;
+    cursor: pointer;
+}
+
+.ai-task-citation:hover {
+    background: color-mix(in oklch, var(--color-primary) 8%, transparent);
 }
