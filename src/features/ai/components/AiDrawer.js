@@ -12,6 +12,8 @@ import { openAiConfigModal } from './AiConfigModal.js';
 import { showConfirmDialog } from '../../../components/common/confirm-dialog.js';
 import { extractTaskCitations } from '../renderers/task-citation.js';
 import { renderTaskCitationChip } from '../renderers/task-ui.js';
+import { createMentionComposer } from './mention-composer.js';
+import { getAllTasksWithHierarchy } from '../utils/hierarchy-id.js';
 
 // 配置 marked
 marked.setOptions({
@@ -32,6 +34,9 @@ let conversationHistory = [];
 
 // 工具调用状态 DOM 缓存（toolCallId -> element）
 const toolStatusElById = new Map();
+
+// @ Mention composer 实例
+let mentionComposer = null;
 
 // Token 统计 (F-111)
 let tokenStats = {
@@ -271,13 +276,34 @@ function bindEvents() {
     // F-106: 发送消息按钮
     document.getElementById('ai_send_btn')?.addEventListener('click', handleSendMessage);
 
-    // F-106: 聊天输入框回车发送
-    document.getElementById('ai_chat_input')?.addEventListener('keydown', (e) => {
+    // F-106: 聊天输入框回车发送 + @ mention 支持
+    const chatInput = document.getElementById('ai_chat_input');
+    chatInput?.addEventListener('keydown', (e) => {
+        // 让 mention composer 先处理键盘事件
+        if (mentionComposer && mentionComposer.handleKeydown(e)) return;
+
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             handleSendMessage();
         }
     });
+
+    // @ mention 输入监听
+    chatInput?.addEventListener('input', () => {
+        if (mentionComposer) {
+            mentionComposer.handleInput(chatInput.value);
+        }
+    });
+
+    // 初始化 mention composer
+    const inputContainer = chatInput?.closest('.flex.gap-2\\.5');
+    if (inputContainer) {
+        mentionComposer = createMentionComposer({
+            containerEl: inputContainer,
+            getTaskList: () => getAllTasksWithHierarchy()
+        });
+        mentionComposer.init();
+    }
 
     // 结构化结果操作（任务润色 / 任务分解）
     messagesEl?.addEventListener('click', handleResultAction);
@@ -882,6 +908,11 @@ export function clearConversation() {
     tokenStats = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
     toolStatusElById.clear();
 
+    // 清空 mention 选择
+    if (mentionComposer) {
+        mentionComposer.clearSelection();
+    }
+
     if (messagesEl) {
         messagesEl.innerHTML = renderEmptyState();
     }
@@ -902,13 +933,22 @@ function handleSendMessage() {
 
     if (!text) return;
 
+    // 构建消息载荷（含 @ 引用的任务）
+    let detail = { message: text };
+    if (mentionComposer) {
+        const payload = mentionComposer.buildPayload(text);
+        detail = {
+            message: payload.text,
+            referencedTasks: payload.referencedTasks
+        };
+        mentionComposer.clearSelection();
+    }
+
     // 清空输入框
     inputEl.value = '';
 
     // 触发发送事件，由 Service 层处理
-    document.dispatchEvent(new CustomEvent('aiSend', {
-        detail: { message: text }
-    }));
+    document.dispatchEvent(new CustomEvent('aiSend', { detail }));
 }
 
 /**
