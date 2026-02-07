@@ -16,6 +16,9 @@ export default {
         importJSON: 'Import JSON',
         language: 'Language',
         searchPlaceholder: 'Search tasks...',
+        viewSplit: 'Split',
+        viewTable: 'Table',
+        viewGantt: 'Gantt',
         criticalPath: 'Critical Path',
         lag: 'Lag (days)'
     },
@@ -109,7 +112,8 @@ export default {
         confirmClearCache: 'Clear all cached data? This will delete all saved tasks and configurations.',
         cacheCleared: 'Cache cleared',
         dataRestored: 'Restored {{count}} tasks',
-        updateSuccess: 'Updated {{count}} tasks'
+        updateSuccess: 'Updated {{count}} tasks',
+        comingSoon: 'Feature in development'
     },
 
     // Shortcuts Panel
@@ -376,7 +380,29 @@ export default {
             retry: 'Retry',
             apply: 'Apply Changes',
             copied: 'Copied to clipboard',
-            applied: 'Changes applied'
+            applied: 'Changes applied',
+            clear: 'Clear Chat',
+            clearTitle: 'Clear Conversation',
+            clearConfirm: 'Are you sure you want to clear all messages? This cannot be undone.',
+            cleared: 'Conversation cleared',
+            empty: 'Start a new conversation',
+            emptyTitle: 'Start a new conversation',
+            emptySubtitle: 'I can help you query tasks, analyze progress...',
+            you: 'You',
+            copy: 'Copy',
+            session: 'This session',
+            tokens: 'Tokens',
+            tokenUsage: 'Token usage',
+            chatPlaceholder: 'Type a message to continue the conversation...',
+            chatHint: 'Enter to send, Shift+Enter for new line',
+            send: 'Send',
+            attach: 'Attach'
+        },
+        // Suggestions
+        suggestions: {
+            todayTasks: 'Query today\'s tasks',
+            overdueTasks: 'View overdue tasks',
+            progressOverview: 'Get progress overview'
         },
         // Agents
         agents: {
@@ -396,5 +422,43 @@ export default {
             network: 'Network error, please check connection',
             unknown: 'An unknown error occurred'
         }
+    },
+    baseline: {
+        save: 'Save Baseline',
+        show: 'Show Baseline',
+        saveConfirm: 'Save current project state as baseline? Previous baseline will be overwritten',
+        saved: 'Baseline saved',
+        delayed: 'Delayed',
+        ahead: 'Ahead'
+    },
+    resource: {
+        overload: 'Resource Overload',
+        on: 'on',
+        workload: 'Workload',
+        hours: 'hours',
+        overloadAmount: 'Overload'
+    },
+    export: {
+        title: 'Export',
+        excel: 'Export Excel',
+        imageTitle: 'Image Export',
+        currentView: 'Export Current View',
+        fullGantt: 'Export Full Gantt (Long Image)',
+        pdf: 'Export PDF',
+        exporting: 'Exporting...',
+        capturing: 'Capturing...',
+        preparing: 'Preparing...',
+        stitching: 'Stitching...',
+        downloading: 'Downloading...',
+        serverProcessing: 'Server processing, please wait...',
+        apiNotAvailable: 'Export service unavailable, please check network',
+        success: 'Export successful',
+        error: 'Export failed',
+        fail: 'Export failed'
+    },
+    snapping: {
+        today: 'Today',
+        startOf: 'Start of',
+        endOf: 'End of'
     }
 };

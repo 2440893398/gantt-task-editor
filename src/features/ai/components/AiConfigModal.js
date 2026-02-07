@@ -142,6 +142,16 @@ function createModalHTML() {
                             <span data-i18n="ai.config.localHint">本地模型需确保 Ollama 已启动</span>
                         </span>
                     </label>
+                    <!-- API 兼容性警告 -->
+                    <div id="ai_compatibility_warning" class="alert alert-warning py-2 mt-2 hidden">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                        </svg>
+                        <div class="flex flex-col gap-1">
+                            <span class="font-semibold text-sm" id="ai_compatibility_title"></span>
+                            <span class="text-xs" id="ai_compatibility_message"></span>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- 模型选择 (F-102 Combobox) -->
@@ -274,6 +284,8 @@ function bindEvents() {
             const url = item.dataset.url;
             document.getElementById('ai_base_url').value = url;
             updateLocalHint(url);
+            // 清除之前的测试结果
+            hideCompatibilityWarning();
             // 触发模型列表刷新
             handleRefreshModels();
         }
@@ -281,7 +293,10 @@ function bindEvents() {
 
     // Base URL 变化时更新本地提示
     document.getElementById('ai_base_url')?.addEventListener('input', (e) => {
-        updateLocalHint(e.target.value);
+        const url = e.target.value;
+        updateLocalHint(url);
+        // 清除之前的测试结果（因为配置变了）
+        hideCompatibilityWarning();
     });
 
     // 模型输入框 (Combobox)
@@ -294,6 +309,8 @@ function bindEvents() {
 
     modelInput?.addEventListener('input', (e) => {
         filterModelList(e.target.value);
+        // 清除之前的测试结果（因为模型变了）
+        hideCompatibilityWarning();
     });
 
     // 点击外部关闭下拉
@@ -316,6 +333,8 @@ function bindEvents() {
                 // 触发 input 事件以更新可能的状态
                 modelInput.dispatchEvent(new Event('input', { bubbles: true }));
             }
+            // 清除之前的测试结果
+            hideCompatibilityWarning();
             hideModelDropdown();
         }
     });
@@ -359,6 +378,41 @@ function updateLocalHint(url) {
     const hintEl = document.getElementById('ai_local_hint');
     if (hintEl) {
         hintEl.style.display = isLocalUrl(url) ? 'flex' : 'none';
+    }
+}
+
+/**
+ * 显示 API 兼容性警告
+ */
+function showCompatibilityWarning(title, message, isError = false) {
+    const warningEl = document.getElementById('ai_compatibility_warning');
+    const titleEl = document.getElementById('ai_compatibility_title');
+    const messageEl = document.getElementById('ai_compatibility_message');
+    
+    if (!warningEl || !titleEl || !messageEl) return;
+    
+    warningEl.classList.remove('hidden');
+    
+    // 根据是否是错误调整样式
+    if (isError) {
+        warningEl.classList.remove('alert-warning');
+        warningEl.classList.add('alert-error');
+    } else {
+        warningEl.classList.remove('alert-error');
+        warningEl.classList.add('alert-warning');
+    }
+    
+    titleEl.textContent = title;
+    messageEl.textContent = message;
+}
+
+/**
+ * 隐藏 API 兼容性警告
+ */
+function hideCompatibilityWarning() {
+    const warningEl = document.getElementById('ai_compatibility_warning');
+    if (warningEl) {
+        warningEl.classList.add('hidden');
     }
 }
 
@@ -583,8 +637,38 @@ async function handleTestConnection() {
             baseUrl: document.getElementById('ai_base_url')?.value || 'https://api.openai.com/v1',
             model: document.getElementById('ai_model_input')?.value || 'gpt-3.5-turbo'
         };
+        
         const result = await testConnection(tempConfig);
+        
+        // 保存测试结果到 localStorage（供 executor 使用）
+        // 包含 testedModel 以区分不同模型的测试结果
+        localStorage.setItem('gantt_ai_last_test_result', JSON.stringify({
+            ...result,
+            testedModel: tempConfig.model,
+            testedAt: Date.now()
+        }));
+        
+        // 显示基础测试结果
         showTestResult(result.success, result.message);
+        
+        // 如果连接成功但不支持函数调用，显示警告
+        if (result.success && result.toolCallSupported === false) {
+            showCompatibilityWarning(
+                '⚠️ 不支持函数调用',
+                result.warning || '该 API/模型不支持函数调用，AI 将无法获取实时任务数据',
+                false
+            );
+        } else if (result.success && result.toolCallSupported === true) {
+            // 成功且支持，隐藏警告
+            hideCompatibilityWarning();
+        } else if (result.success && result.toolCallSupported === null) {
+            // 未知支持情况
+            showCompatibilityWarning(
+                'ℹ️ 函数调用支持未知',
+                result.warning || '无法确定是否支持函数调用，保存后如遇错误请切换其他模型',
+                false
+            );
+        }
 
     } finally {
         isTestingConnection = false;
@@ -606,8 +690,37 @@ function handleSaveConfig() {
         return;
     }
 
+    // 检查是否有测试结果
+    let testResult = null;
+    try {
+        const savedResult = localStorage.getItem('gantt_ai_last_test_result');
+        if (savedResult) {
+            testResult = JSON.parse(savedResult);
+        }
+    } catch (e) {
+        console.warn('[AI Config] Failed to read test result:', e);
+    }
+    
+    // 保存配置
     updateAiConfig({ apiKey, baseUrl, model });
-    showToast(i18n.t('ai.config.saved') || '配置已保存', 'success');
+    
+    // 根据测试结果显示不同提示
+    if (testResult && testResult.toolCallSupported === false) {
+        showToast(
+            '配置已保存 - ⚠️ 该配置不支持函数调用', 
+            'warning', 
+            4000
+        );
+    } else if (testResult && testResult.toolCallSupported === null) {
+        showToast(
+            '配置已保存 - ℹ️ 请先测试连接以确认函数调用支持', 
+            'info', 
+            3000
+        );
+    } else {
+        showToast(i18n.t('ai.config.saved') || '配置已保存', 'success');
+    }
+    
     closeModal();
 
     // 触发配置更新事件
@@ -630,6 +743,7 @@ export function openAiConfigModal() {
 
     updateLocalHint(config.baseUrl);
     hideTestResult();
+    hideCompatibilityWarning(); // 清除之前的警告
     updateCacheExpiredHint();
 
     // 尝试加载缓存的模型列表

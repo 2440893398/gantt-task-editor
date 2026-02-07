@@ -34,13 +34,50 @@ This project builds a comprehensive and interactive project management system ba
 - **现代工具栏**: 包含缩放控制、列显示切换、全屏模式等实用功能
 - **Toast反馈**: 操作成功/失败的实时视觉反馈
 
+## v1.5 新特性 | v1.5 New Features
+
+### 📌 项目基线 | Project Baseline
+- 保存项目基线快照
+- 对比展示：灰色基线条位于任务条下方
+- 偏差提示：延迟/提前天数显示在提示框
+- 单基线策略：新保存覆盖旧基线
+
+### 🖼️ 高级导出 | Advanced Export
+- **导出当前视图**：快速截图
+- **导出完整甘特图**：长图拼接导出
+- 进度提示与百分比显示
+- 2x 高清 PNG 输出
+
+### 👤 资源冲突检测 | Resource Conflict Detection
+- 工作量阈值：>8 小时/天判定冲突
+- 小时级精度：0.125 天 = 1 小时
+- 视觉提示：橙色边框 + 阴影
+- 详情提示：人员、日期、总时长、超额量
+
+### ⏱️ 时间显示优化 | Time Display Optimization
+- 人类可读的时长格式
+- 本地化输出：
+  - 中文："1 天 4 小时"
+  - 英文："1d 4h"
+  - 日文："1日4時間"
+  - 韩文："1일 4시간"
+- 文本输入支持："4小时" / "4h" 自动转换
+- 短任务（<4h）最小宽度可视化
+
+### 🧲 智能吸附 | Smart Snapping
+- 任务拖拽自动对齐时间刻度
+- 依赖连线吸附到连接点
+- 基于 DHTMLX 默认行为，无额外性能开销
+
 ## 技术栈 | Tech Stack
 
 - **Core**: HTML5, Tailwind CSS + DaisyUI, JavaScript (ES6+)
 - **Build Tool**: [Vite](https://vitejs.dev/) - 极速的开发服务器和构建工具
 - **Gantt Library**: [DHTMLX Gantt](https://dhtmlx.com/docs/products/dhtmlxGantt/) (Pro features partially implemented)
 - **Utilities**:
-  - `SheetJS (xlsx)` - Excel处理
+  - `ExcelJS` - Excel处理
+  - `Dexie` - IndexedDB 封装
+  - `html2canvas` - 图片导出
   - `SortableJS` - 拖拽排序
 - **Testing**:
   - [Vitest](https://vitest.dev/) - 单元测试

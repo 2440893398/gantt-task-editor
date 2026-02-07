@@ -61,11 +61,10 @@ const routerSchema = z.object({
 /**
  * AI 路由（调用 LLM 判断意图）
  * @param {string} userMessage
- * @param {Function} openai - createOpenAI 实例
- * @param {string} model
+ * @param {LanguageModel} model - 已创建的模型实例
  * @returns {Promise<{skill: string|null, confidence: number, reasoning: string}>}
  */
-export async function routeToSkill(userMessage, openai, model) {
+export async function routeToSkill(userMessage, model) {
     const skills = getSkillDescriptions();
 
     const systemPrompt = `你是一个意图路由器。根据用户消息判断应该使用哪个 Skill。
@@ -79,7 +78,7 @@ ${skills.map(s => `- ${s.name}: ${s.description}`).join('\n')}
 3. 如果不确定，返回置信度较低的最佳匹配`;
 
     const result = await generateObject({
-        model: openai(model),
+        model: model,
         schema: routerSchema,
         system: systemPrompt,
         prompt: userMessage
@@ -97,11 +96,10 @@ const CACHE_MAX_SIZE = 50;
 /**
  * 带缓存的统一路由入口
  * @param {string} message
- * @param {Function} openai
- * @param {string} model
+ * @param {LanguageModel} model - 已创建的模型实例
  * @returns {Promise<{skill: string|null, confidence: number, method: string}>}
  */
-export async function routeWithCache(message, openai, model) {
+export async function routeWithCache(message, model) {
     // 1. 关键词快速匹配
     const quick = quickRoute(message);
     if (quick) {
@@ -115,7 +113,7 @@ export async function routeWithCache(message, openai, model) {
 
     // 3. AI 路由
     try {
-        const result = await routeToSkill(message, openai, model);
+        const result = await routeToSkill(message, model);
 
         // 缓存结果
         if (routeCache.size >= CACHE_MAX_SIZE) {

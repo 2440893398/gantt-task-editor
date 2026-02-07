@@ -16,7 +16,8 @@ vi.mock('@ai-sdk/openai', () => ({
 }));
 
 vi.mock('ai', () => ({
-    streamText: vi.fn()
+    streamText: vi.fn(),
+    tool: vi.fn((definition) => definition)
 }));
 
 describe('AI Client', () => {

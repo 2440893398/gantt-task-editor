@@ -16,6 +16,9 @@ export default {
         importJSON: 'JSON 가져오기',
         language: '언어',
         searchPlaceholder: '작업 검색...',
+        viewSplit: '분할',
+        viewTable: '표',
+        viewGantt: '간트',
         criticalPath: '크리티컬 패스',
         lag: '지연(일)'
     },
@@ -108,7 +111,8 @@ export default {
         confirmClearCache: '모든 캐시를 삭제하시겠습니까? 저장된 모든 작업과 설정이 삭제됩니다.',
         cacheCleared: '캐시가 삭제되었습니다',
         dataRestored: '{{count}}개의 작업이 복원되었습니다',
-        updateSuccess: '{{count}}개의 작업이 업데이트되었습니다'
+        updateSuccess: '{{count}}개의 작업이 업데이트되었습니다',
+        comingSoon: '기능 개발 중'
     },
 
     // 단축키 패널
@@ -386,5 +390,43 @@ export default {
             network: '네트워크 오류. 연결을 확인하세요',
             unknown: '알 수 없는 오류가 발생했습니다'
         }
+    },
+    baseline: {
+        save: '기준선 저장',
+        show: '기준선 표시',
+        saveConfirm: '현재 프로젝트 상태를 기준선으로 저장할까요? 이전 기준선은 덮어씁니다',
+        saved: '기준선이 저장되었습니다',
+        delayed: '지연',
+        ahead: '앞당김'
+    },
+    resource: {
+        overload: '리소스 과부하',
+        on: '일자',
+        workload: '작업량',
+        hours: '시간',
+        overloadAmount: '초과'
+    },
+    export: {
+        title: '내보내기',
+        excel: 'Excel 내보내기',
+        imageTitle: '이미지 내보내기',
+        currentView: '현재 보기 내보내기',
+        fullGantt: '전체 간트 내보내기(긴 이미지)',
+        pdf: 'PDF 내보내기',
+        exporting: '내보내는 중...',
+        capturing: '캡처 중...',
+        preparing: '준비 중...',
+        stitching: '이미지 합치는 중...',
+        downloading: '다운로드 중...',
+        serverProcessing: '서버 처리 중, 잠시 기다려 주세요...',
+        apiNotAvailable: '내보내기 서비스를 사용할 수 없습니다. 네트워크를 확인하세요',
+        success: '내보내기 성공',
+        error: '내보내기 실패',
+        fail: '내보내기 실패'
+    },
+    snapping: {
+        today: '오늘',
+        startOf: '시작',
+        endOf: '끝'
     }
 };

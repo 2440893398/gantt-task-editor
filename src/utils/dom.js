@@ -30,11 +30,22 @@ function notifyOptionsChange() {
 export function addOptionInput(value = '') {
     const optionsList = document.getElementById('options-list');
     const optionDiv = document.createElement('div');
-    optionDiv.className = 'flex gap-2 mb-2';
+    optionDiv.className = 'flex gap-2 mb-2 items-center group option-item';
 
     optionDiv.innerHTML = `
-        <input type="text" value="${value}" placeholder="${i18n.t('fieldManagement.optionValue')}" class="input input-sm input-bordered flex-1 text-sm">
-        <button type="button" class="btn btn-sm btn-error text-white remove-option-btn">${i18n.t('fieldManagement.remove')}</button>
+        <div class="option-drag-handle cursor-move opacity-0 group-hover:opacity-100 transition-opacity">
+            <svg class="h-4 w-4 text-base-content/40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                    d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
+            </svg>
+        </div>
+        <input type="text" value="${value}" placeholder="${i18n.t('fieldManagement.optionValue')}" 
+               class="input input-sm input-bordered flex-1 text-sm bg-white">
+        <button type="button" class="btn btn-ghost btn-xs btn-circle text-error hover:bg-error/10 remove-option-btn">
+            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+        </button>
     `;
 
     // 绑定输入变化事件
@@ -50,8 +61,37 @@ export function addOptionInput(value = '') {
 
     optionsList.appendChild(optionDiv);
 
+    // 初始化拖拽排序
+    initOptionsSortable();
+
     // 添加后通知变化
     notifyOptionsChange();
+}
+
+/**
+ * 初始化选项列表的拖拽排序
+ */
+function initOptionsSortable() {
+    const optionsList = document.getElementById('options-list');
+    if (!optionsList) return;
+    
+    // 销毁旧实例
+    if (optionsList.sortableInstance) {
+        optionsList.sortableInstance.destroy();
+    }
+    
+    // 创建新实例
+    if (typeof Sortable !== 'undefined') {
+        optionsList.sortableInstance = new Sortable(optionsList, {
+            animation: 200,
+            handle: '.option-drag-handle',
+            ghostClass: 'opacity-40 bg-base-200',
+            dragClass: 'opacity-100 shadow-lg',
+            onEnd: function() {
+                notifyOptionsChange();
+            }
+        });
+    }
 }
 
 /**

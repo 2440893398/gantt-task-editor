@@ -63,7 +63,7 @@ export function renderRightSection(task) {
         ` : ''}
 
         <!-- 基本属性 -->
-        <div class="space-y-1">
+        <div class="space-y-2">
             ${renderAssigneeRow(task.assignee)}
             ${renderPriorityRow(task.priority)}
             ${showProgress ? renderProgressRow(task.progress) : ''}
@@ -71,16 +71,16 @@ export function renderRightSection(task) {
 
 
         <!-- 排期区块 -->
-        <div class="border-t border-base-200/50 pt-3 mt-3">
+        <div class="border-t border-base-200/50 pt-4 mt-4">
             <h4 class="text-xs font-medium text-base-content/50 mb-2 uppercase tracking-wider">
                 ${i18n.t('taskDetails.schedule') || '排期'}
             </h4>
-            <div class="space-y-1">
+            <div class="space-y-2">
                 ${renderDateRow('start-date', i18n.t('taskDetails.planStart') || '开始', formatDateValue(task.start_date), 'calendar')}
                 ${renderDateRow('end-date', i18n.t('taskDetails.planEnd') || '截止', formatDateValue(getEndDate(task)), 'calendar-check')}
             </div>
             ${showActualDates ? `
-            <div class="mt-2 pt-2 border-t border-base-200/30 space-y-1">
+            <div class="mt-2 pt-2 border-t border-base-200/30 space-y-2">
                 ${showActualStart ? renderDateRow('actual-start', i18n.t('taskDetails.actualStart') || '实际开始', formatDateValue(task.actual_start), 'play', true) : ''}
                 ${showActualEnd ? renderDateRow('actual-end', i18n.t('taskDetails.actualEnd') || '实际结束', formatDateValue(task.actual_end), 'stop', true) : ''}
             </div>
@@ -89,11 +89,11 @@ export function renderRightSection(task) {
 
         <!-- 工时区块 -->
         ${showWorkloadSection ? `
-        <div class="border-t border-base-200/50 pt-3 mt-3">
+        <div class="border-t border-base-200/50 pt-4 mt-4">
             <h4 class="text-xs font-medium text-base-content/50 mb-2 uppercase tracking-wider">
                 ${i18n.t('taskDetails.workload') || '工时'}
             </h4>
-            <div class="space-y-1">
+            <div class="space-y-2">
                 ${showDuration ? renderDurationRow(task) : ''}
                 ${showActualHours ? renderWorkloadRow('actual-hours', i18n.t('taskDetails.actualHours') || '实际', task.actual_hours, i18n.t('taskDetails.dayUnit') || '天', true) : ''}
             </div>
@@ -302,7 +302,7 @@ function renderPropertyRow(id, label, value, iconType) {
     const displayValue = value || '';
 
     return `
-        <div class="flex items-center justify-between py-2">
+        <div class="flex items-center justify-between py-2.5">
             <div class="flex items-center gap-2 text-sm text-base-content/70">
                 ${iconSvg}
                 <span>${label}</span>
@@ -337,7 +337,7 @@ function renderAssigneeRow(currentValue) {
         const renderLabel = (opt) => `<span>${opt.label}</span>`;
 
         return `
-            <div class="flex items-center justify-between py-2">
+            <div class="flex items-center justify-between py-2.5">
                 <div class="flex items-center gap-2 text-sm text-base-content/70">
                     ${iconSvg}
                     <span>${label}</span>
@@ -350,7 +350,7 @@ function renderAssigneeRow(currentValue) {
     } else {
         // Render as text input (default)
         return `
-            <div class="flex items-center justify-between py-2">
+            <div class="flex items-center justify-between py-2.5">
                 <div class="flex items-center gap-2 text-sm text-base-content/70">
                     ${iconSvg}
                     <span>${label}</span>
@@ -384,7 +384,7 @@ function renderPriorityRow(currentPriority) {
     `;
 
     return `
-        <div class="flex items-center justify-between py-2">
+        <div class="flex items-center justify-between py-2.5">
             <div class="flex items-center gap-2 text-sm text-base-content/70">
                 <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                     <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>
@@ -415,7 +415,7 @@ function renderProgressRow(progress) {
     const label = i18n.t('taskDetails.progress') || '进度';
 
     return `
-        <div class="flex items-center justify-between py-2">
+        <div class="flex items-center justify-between py-2.5">
             <div class="flex items-center gap-2 text-sm text-base-content/70">
                 <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                     <path d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z" />
@@ -447,7 +447,7 @@ function renderDateRow(id, label, value, iconType, isOptional = false) {
     const iconSvg = getDateIcon(iconType);
 
     return `
-        <div class="flex items-center justify-between py-2">
+        <div class="flex items-center justify-between py-2.5">
             <div class="flex items-center gap-2 text-sm text-base-content/70">
                 ${iconSvg}
                 <span>${label}</span>
@@ -473,7 +473,7 @@ function renderDurationRow(task) {
     const unit = i18n.t('taskDetails.dayUnit') || '天';
 
     return `
-        <div class="flex items-center justify-between py-2">
+        <div class="flex items-center justify-between py-2.5">
             <div class="flex items-center gap-2 text-sm text-base-content/70">
                 <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                     <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
@@ -504,7 +504,7 @@ function renderWorkloadRow(id, label, value, unit, isOptional = false) {
     const valueClass = value ? 'text-base-content' : 'text-base-content/40';
 
     return `
-        <div class="flex items-center justify-between py-2">
+        <div class="flex items-center justify-between py-2.5">
             <div class="flex items-center gap-2 text-sm text-base-content/70">
                 <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                     <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
@@ -555,7 +555,7 @@ function renderCustomFieldsSection(task) {
         const fieldId = `custom-field-${field.name}`;
 
         html += `
-            <div class="flex items-center justify-between py-2">
+            <div class="flex items-center justify-between py-2.5">
                 <div class="flex items-center gap-2 text-sm text-base-content/70">
                     <span>${icon}</span>
                     <span>${field.label}</span>

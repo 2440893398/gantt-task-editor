@@ -7,8 +7,8 @@ export default {
     theme: {
         extend: {
             colors: {
-                primary: "#4A90E2",
-                "primary-hover": "#3a7bc8", // Custom color to match old variables if needed, or stick to daisyui primary
+                primary: "#0EA5E9",
+                "primary-hover": "#0284C7",
             }
         },
     },
@@ -20,11 +20,14 @@ export default {
             {
                 light: {
                     ...require("daisyui/src/theming/themes")["light"],
-                    primary: "#4A90E2",
-                    secondary: "#6B7280",
+                    primary: "#0EA5E9",
+                    "primary-content": "#FFFFFF",
+                    secondary: "#F1F5F9",
+                    "secondary-content": "#64748B",
                     accent: "#50E3C2",
-                    "base-100": "#ffffff",
-                    "base-200": "#F9FAFB",
+                    "base-100": "#FFFFFF",
+                    "base-200": "#F8FAFC",
+                    "base-300": "#F1F5F9",
                 },
             },
         ],

@@ -59,11 +59,11 @@ function escapeHtml(text) {
 export function updateGanttColumns() {
     const columns = [];
 
-    // Checkbox 选择列
+    // Checkbox 选择列 - 宽度38px匹配设计稿
     columns.push({
         name: "buttons",
         label: '<input type="checkbox" id="select-all-checkbox" style="cursor: pointer;">',
-        width: 40,
+        width: 38,
         align: "center",
         template: function (task) {
             const checked = state.selectedTasks.has(task.id) ? "checked" : "";
@@ -83,12 +83,21 @@ export function updateGanttColumns() {
                 name: "text",
                 label: getColumnLabel("text"),
                 tree: true,
-                width: 200,
+                width: 220,
                 resize: true,
                 template: function (task) {
                     const text = task.text || '';
+                    let html = '';
+                    
+                    // 如果是项目（父任务），添加项目编号徽章
+                    if (task.type === 'project' || (task.parent === 0 && gantt.hasChild(task.id))) {
+                        const projectNum = task.project_number || task.id;
+                        html += `<span class="project-id-badge-gantt">#${projectNum}</span>`;
+                    }
+                    
                     // Add title attribute for tooltip on hover
-                    return `<span title="${escapeHtml(text)}">${escapeHtml(text)}</span>`;
+                    html += `<span title="${escapeHtml(text)}">${escapeHtml(text)}</span>`;
+                    return html;
                 }
             });
         } else if (fieldName === "start_date") {
@@ -96,7 +105,7 @@ export function updateGanttColumns() {
                 name: "start_date",
                 label: getColumnLabel("start_date"),
                 align: "center",
-                width: 90,
+                width: 110,
                 resize: true,
                 template: function (task) {
                     const date = task.start_date;
@@ -120,7 +129,7 @@ export function updateGanttColumns() {
             });
         } else if (fieldName === "progress") {
             columns.push({
-                name: "progress", label: getColumnLabel("progress"), align: "center", width: 120, resize: true,
+                name: "progress", label: getColumnLabel("progress"), align: "center", width: 90, resize: true,
                 template: function (task) {
                     return renderProgressBar(task);
                 }
@@ -188,12 +197,17 @@ export function updateGanttColumns() {
                 // 使用本地化列名，优先使用翻译，其次使用customField.label
                 const label = getColumnLabel(fieldName, customField.label);
 
+                // 根据设计稿设置特定字段的宽度
+                let width = customField.width || 100;
+                if (fieldName === 'priority') width = 90;
+                else if (fieldName === 'assignee') width = 100;
+                else if (fieldName === 'status') width = 100;
 
                 columns.push({
                     name: fieldName,
                     label: label,
                     align: "center",
-                    width: customField.width || 100,
+                    width: width,
                     resize: true,
                     template: templateFn
                 });
@@ -249,6 +263,7 @@ export function updateGanttColumns() {
 
     });
 
+    // 添加列 - 宽度44px匹配设计稿
     columns.push({ name: "add", label: "", width: 44 });
 
     gantt.config.columns = columns;

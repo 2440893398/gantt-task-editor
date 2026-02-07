@@ -247,6 +247,12 @@ export function renderFieldList() {
         }
     });
 
+    // 更新字段计数显示
+    const fieldCountEl = document.getElementById('field-count');
+    if (fieldCountEl) {
+        fieldCountEl.textContent = `${allFields.length} 个字段`;
+    }
+
     sortedFields.forEach((fieldName) => {
         const isSystem = !!SYSTEM_FIELD_CONFIG[fieldName];
         let fieldConfig;
@@ -276,31 +282,35 @@ export function renderFieldList() {
 
 
         html += `
-            <div class="field-item flex items-center gap-[10px] p-3 transition-all group ${!enabled ? 'opacity-60' : ''} h-16 bg-base-100 border border-base-300 rounded-xl"
+            <div class="field-item flex items-center gap-3 p-4 transition-all duration-200 group ${!enabled ? 'opacity-60' : ''} 
+                 h-[72px] bg-base-100 border border-base-300 rounded-xl hover:border-primary/30 hover:shadow-md hover:-translate-y-0.5"
                  data-field-name="${fieldName}"
                  data-field-label="${escapeAttr(fieldLabel)}"
+                 data-is-system="${isSystem}"
+                 data-enabled="${enabled}"
                  role="button" tabindex="0">
-                <div class="field-drag-handle cursor-move flex items-center justify-center w-4 shrink-0 text-base-300">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24"
+                <div class="field-drag-handle cursor-move flex items-center justify-center w-5 shrink-0 text-base-content/30 hover:text-base-content/60 transition-colors">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24"
                         stroke="currentColor" stroke-width="2">
                         <path stroke-linecap="round" stroke-linejoin="round"
                             d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
                     </svg>
                 </div>
 
-                <div class="w-8 h-8 flex items-center justify-center rounded-[8px] text-lg shrink-0 bg-sky-100 text-primary ${!enabled ? 'grayscale' : ''}">
+                <div class="w-10 h-10 flex items-center justify-center rounded-xl text-xl shrink-0 ${!enabled ? 'grayscale' : ''}"
+                     style="background: ${isSystem ? 'linear-gradient(135deg, #E3F2FD 0%, #BBDEFB 100%)' : 'linear-gradient(135deg, #F3E5F5 0%, #E1BEE7 100%)'}; color: ${isSystem ? '#1976D2' : '#7B1FA2'};">
                     ${fieldIcon}
                 </div>
 
-                <div class="flex-1 min-w-0 flex flex-col gap-1">
+                <div class="flex-1 min-w-0 flex flex-col gap-1.5">
                     <div class="text-sm font-semibold truncate leading-none text-base-content">
                         ${fieldLabel}
                     </div>
-                    <div class="flex items-center gap-1">
-                        <span class="badge badge-ghost text-base-content/60 text-[10px]">
+                    <div class="flex items-center gap-1.5">
+                        <span class="text-[10px] px-2 py-0.5 rounded-full font-medium ${isSystem ? 'bg-blue-100 text-blue-700 border border-blue-200' : 'bg-green-100 text-green-700 border border-green-200'}">
                             ${isSystem ? i18n.t('fieldManagement.systemTag') : i18n.t('fieldManagement.customTag')}
                         </span>
-                        <span class="badge badge-ghost text-base-content/60 text-[10px]">
+                        <span class="badge badge-ghost text-base-content/60 text-[10px] px-2 py-0.5 rounded-full">
                             ${getLocalizedFieldTypeLabel(fieldType)}
                         </span>
                     </div>
@@ -309,11 +319,11 @@ export function renderFieldList() {
                 <div class="flex gap-2 items-center opacity-100 sm:opacity-0 group-hover:opacity-100 transition-opacity">
                     ${canDisable ? `
                         <label title="${enabled ? i18n.t('fieldManagement.disableField') : i18n.t('fieldManagement.enableField')}" class="inline-flex items-center">
-                            <input type="checkbox" class="toggle toggle-primary toggle-field-enabled" data-field="${fieldName}" ${enabled ? 'checked' : ''}>
+                            <input type="checkbox" class="toggle toggle-primary toggle-sm toggle-field-enabled" data-field="${fieldName}" ${enabled ? 'checked' : ''}>
                         </label>
                     ` : `
-                        <div class="flex items-center text-[14px] text-base-content/60" title="${i18n.t('fieldManagement.required')}">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-[14px] w-[14px]" fill="none" viewBox="0 0 24 24"
+                        <div class="flex items-center text-base-content/40" title="${i18n.t('fieldManagement.required')}">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24"
                                 stroke="currentColor" stroke-width="2">
                                 <path stroke-linecap="round" stroke-linejoin="round"
                                     d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
@@ -322,7 +332,14 @@ export function renderFieldList() {
                     `}
 
                     ${!isSystem ? `
-                        <button class="field-action-btn w-8 h-8 inline-flex items-center justify-center rounded-[8px] bg-base-100 border border-base-300 text-error"
+                        <button class="field-action-btn w-8 h-8 inline-flex items-center justify-center rounded-lg bg-base-100 border border-base-300 text-base-content/60 hover:text-primary hover:border-primary/30 transition-colors"
+                            data-action="edit" data-field="${fieldName}" title="编辑">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round"
+                                    d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                            </svg>
+                        </button>
+                        <button class="field-action-btn w-8 h-8 inline-flex items-center justify-center rounded-lg bg-base-100 border border-base-300 text-error hover:bg-error/10 hover:border-error transition-colors"
                             data-action="delete" data-field="${fieldName}" title="${i18n.t('form.delete')}">
                             <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                                 <path stroke-linecap="round" stroke-linejoin="round"
@@ -355,8 +372,13 @@ export function renderFieldList() {
     container.querySelectorAll('.field-action-btn').forEach(btn => {
         btn.addEventListener('click', function (e) {
             e.stopPropagation();
+            const action = this.dataset.action;
             const fieldName = this.dataset.field;
-            deleteField(fieldName);
+            if (action === 'delete') {
+                deleteField(fieldName);
+            } else if (action === 'edit') {
+                editField(fieldName);
+            }
         });
     });
 
@@ -378,72 +400,69 @@ export function renderFieldList() {
     // Initialize drag-and-drop sorting
     if (sortableInstance) {
         sortableInstance.destroy();
+        sortableInstance = null;
     }
 
-    if (typeof Sortable !== 'undefined') {
-        sortableInstance = new Sortable(container, {
-            animation: 150,
-            handle: '.field-drag-handle',
-            draggable: '[data-field-name]', // dragging only items
-            onEnd: function (evt) {
-                // Update fieldOrder based on new positions
-                const items = container.querySelectorAll('[data-field-name]');
-                const newOrderFromDOM = Array.from(items).map(item => item.dataset.fieldName);
+    // Check for Sortable availability
+    const SortableClass = (typeof Sortable !== 'undefined' ? Sortable : undefined) || (window.Sortable || undefined);
 
-                // Reconstruct state.fieldOrder:
-                // It should contain:
-                // 1. Internal fields (hidden ones that we want to keep enabled if they are) -> INTERNAL_FIELDS
-                // 2. Visible enabled fields from DOM (toggles checked)
-                // Wait, sortable works on the list which includes disabled items now!
-                // We should NOT add ALL items to `state.fieldOrder`. Only ENABLED items should be in `state.fieldOrder`.
-                // Sorting disabled items doesn't really matter for Gantt, but it might matter for user preference if they re-enable it.
-                // However, `state.fieldOrder` defines columns. If we put disabled fields in it, they will show up.
+    window.__debugLogs = window.__debugLogs || [];
+    window.__debugLogs.push('[Debug] renderFieldList called. Sortable available: ' + !!SortableClass);
 
-                // So: we iterate the DOM order. If the item is marked as enabled (checkbox is checked), we add it to the new order.
-                // For internal fields (which are not in DOM), we keep them as is?
-                // INTERNAL_FIELDS are usually things like 'id', 'open', 'type' which are always needed by Gantt but maybe hidden or implicitly handled?
-                // Let's check how `fieldOrder` is initialized.
-                // `defaultFieldOrder` contains 'text', 'priority', ...
+    if (SortableClass) {
+        window.__debugLogs.push('[Debug] Sortable initializing on container');
+        try {
+            sortableInstance = new SortableClass(container, {
+                animation: 200,
+                easing: "cubic-bezier(0.4, 0, 0.2, 1)",
+                // handle: '.field-drag-handle',
+                draggable: '.field-item',
+                ghostClass: 'opacity-40 bg-base-200',
+                dragClass: 'opacity-100 shadow-xl rotate-2',
+                onStart: function (evt) {
+                    const msg = '[Debug] Sortable onStart';
+                    console.log(msg, evt);
+                    window.__debugLogs.push(msg);
+                },
+                onEnd: function (evt) {
+                    console.log('[Debug] Sortable onEnd', evt.oldIndex, '->', evt.newIndex);
+                    // Update fieldOrder based on new positions
+                    const items = container.querySelectorAll('[data-field-name]');
+                    const newOrderFromDOM = Array.from(items).map(item => item.dataset.fieldName);
 
-                // Strategy: 
-                // We regenerate `state.fieldOrder` by taking the new DOM order, filtering only ENABLED ones.
-                // AND we must preserve any hidden INTERNAL/System fields that were already in the order but not in the manager list?
-                // Accessing `toggle-field-enabled` checkbox for checked state is reliable.
+                    const enabledFields = [];
+                    items.forEach(item => {
+                        const checkbox = item.querySelector('.toggle-field-enabled');
 
-                const enabledFields = [];
-                items.forEach(item => {
-                    const checkbox = item.querySelector('.toggle-field-enabled');
-                    // If checkbox exists and checked, OR if no checkbox (system required fields), include it.
-                    // System required fields (canDisable=false) don't have checkbox in my new HTML above? 
-                    // Wait, logic says `if canDisable` render checkbox. If CANNOT disable, it is enabled by default?
-                    // Yes, `const enabled = state.fieldOrder.includes(fieldName);`.
-                    // If canDisable is false, we should assume it stays enabled.
-
-                    if (checkbox) {
-                        if (checkbox.checked) {
+                        if (checkbox) {
+                            if (checkbox.checked) {
+                                enabledFields.push(item.dataset.fieldName);
+                            }
+                        } else {
+                            // Not togglable, means mandatory enabled
                             enabledFields.push(item.dataset.fieldName);
                         }
-                    } else {
-                        // Not togglable, means mandatory enabled
-                        enabledFields.push(item.dataset.fieldName);
-                    }
-                });
+                    });
 
-                // Preserve internal fields that are not in the valid "manageable" list
-                const internalFieldsPreserved = state.fieldOrder.filter(f => INTERNAL_FIELDS.includes(f));
+                    // Preserve internal fields that are not in the valid "manageable" list
+                    const internalFieldsPreserved = state.fieldOrder.filter(f => INTERNAL_FIELDS.includes(f));
 
-                // Combine
-                const uniqueNewOrder = [...new Set([...enabledFields, ...internalFieldsPreserved])];
+                    // Combine
+                    const uniqueNewOrder = [...new Set([...enabledFields, ...internalFieldsPreserved])];
 
-                // NOTE: The order of enabledFields comes from DOM order, which the user just dragged. This handles reordering correctly.
+                    console.log('[Debug] New field order:', uniqueNewOrder);
+                    state.fieldOrder = uniqueNewOrder;
 
-                state.fieldOrder = uniqueNewOrder;
-
-                updateGanttColumns();
-                refreshLightbox();
-                persistCustomFields();
-            }
-        });
+                    updateGanttColumns();
+                    refreshLightbox();
+                    persistCustomFields();
+                }
+            });
+        } catch (e) {
+            console.error('[Debug] Error creating Sortable instance:', e);
+        }
+    } else {
+        console.error('[Debug] Sortable is UNDEFINED in manager.js scope!');
     }
 }
 
@@ -523,9 +542,11 @@ export function updateDefaultValueInput(fieldType) {
 
     if (!container) return;
 
-    // 显示默认值配置区域
+    // 显示默认值配置区域并添加高亮样式
     if (configSection) {
         configSection.style.display = 'block';
+        // 添加黄色高亮背景
+        configSection.classList.add('bg-warning/10', 'p-3', 'rounded-lg', 'border', 'border-warning/20');
     }
 
     let inputHTML = '';
@@ -1006,10 +1027,59 @@ export function initCustomFieldsUI() {
         showToast(i18n.t('message.comingSoon') || '功能开发中', 'info');
     });
 
-    // 筛选按钮（预留功能）
-    document.getElementById('field-filter-btn')?.addEventListener('click', function () {
-        showToast(i18n.t('message.comingSoon') || '功能开发中', 'info');
+    // 筛选下拉菜单功能
+    const filterLabelEl = document.getElementById('field-filter-label');
+    const filterBtn = document.getElementById('field-filter-btn');
+    let currentFilter = 'all';
+
+    document.querySelectorAll('#field-filter-btn + ul a').forEach(item => {
+        item.addEventListener('click', function (e) {
+            e.preventDefault();
+            const filter = this.dataset.filter;
+            currentFilter = filter;
+
+            // 更新按钮文字
+            if (filterLabelEl) {
+                filterLabelEl.textContent = this.textContent;
+            }
+
+            // 应用筛选
+            applyFieldFilter(filter);
+
+            // 关闭下拉菜单
+            document.activeElement.blur();
+        });
     });
+
+    // 筛选逻辑
+    function applyFieldFilter(filter) {
+        document.querySelectorAll('#field-list-container [data-field-name]').forEach((el) => {
+            const isSystem = el.dataset.isSystem === 'true';
+            const isEnabled = el.dataset.enabled === 'true';
+
+            let shouldShow = true;
+
+            switch (filter) {
+                case 'system':
+                    shouldShow = isSystem;
+                    break;
+                case 'custom':
+                    shouldShow = !isSystem;
+                    break;
+                case 'enabled':
+                    shouldShow = isEnabled;
+                    break;
+                case 'disabled':
+                    shouldShow = !isEnabled;
+                    break;
+                case 'all':
+                default:
+                    shouldShow = true;
+            }
+
+            el.style.display = shouldShow ? '' : 'none';
+        });
+    }
 
     // 点击遮罩关闭
     document.getElementById('field-config-modal')?.addEventListener('click', (e) => {
@@ -1022,16 +1092,52 @@ export function initCustomFieldsUI() {
     document.getElementById('close-field-management').addEventListener('click', closeFieldManagementPanel);
     document.getElementById('field-management-backdrop')?.addEventListener('click', closeFieldManagementPanel);
 
-    // Drawer 搜索过滤（不重渲染，直接隐藏不匹配项）
-    document.getElementById('field-management-search-input')?.addEventListener('input', (e) => {
-        const query = (e.target.value || '').toLowerCase().trim();
-        document.querySelectorAll('#field-list-container [data-field-name]').forEach((el) => {
-            const label = (el.dataset.fieldLabel || '').toLowerCase();
-            const fieldName = (el.dataset.fieldName || '').toLowerCase();
-            const match = !query || label.includes(query) || fieldName.includes(query);
-            el.style.display = match ? '' : 'none';
-        });
-    });
+    // 防抖函数
+    function debounce(func, wait) {
+        let timeout;
+        return function executedFunction(...args) {
+            const later = () => {
+                clearTimeout(timeout);
+                func(...args);
+            };
+            clearTimeout(timeout);
+            timeout = setTimeout(later, wait);
+        };
+    }
+
+    // Drawer 搜索过滤（防抖300ms）
+    document.getElementById('field-management-search-input')?.addEventListener('input',
+        debounce((e) => {
+            const query = (e.target.value || '').toLowerCase().trim();
+            document.querySelectorAll('#field-list-container [data-field-name]').forEach((el) => {
+                const label = (el.dataset.fieldLabel || '').toLowerCase();
+                const fieldName = (el.dataset.fieldName || '').toLowerCase();
+
+                // 同时考虑搜索和筛选
+                const matchesSearch = !query || label.includes(query) || fieldName.includes(query);
+                const isSystem = el.dataset.isSystem === 'true';
+                const isEnabled = el.dataset.enabled === 'true';
+
+                let matchesFilter = true;
+                switch (currentFilter) {
+                    case 'system':
+                        matchesFilter = isSystem;
+                        break;
+                    case 'custom':
+                        matchesFilter = !isSystem;
+                        break;
+                    case 'enabled':
+                        matchesFilter = isEnabled;
+                        break;
+                    case 'disabled':
+                        matchesFilter = !isEnabled;
+                        break;
+                }
+
+                el.style.display = (matchesSearch && matchesFilter) ? '' : 'none';
+            });
+        }, 300)
+    );
 
     // 字段类型变化
     document.getElementById('field-type').addEventListener('change', function () {

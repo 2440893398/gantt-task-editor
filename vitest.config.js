@@ -7,6 +7,14 @@ export default defineConfig({
     pool: 'forks',
     singleFork: true,
     setupFiles: ['./tests/setup.js'],
+    include: ['tests/**/*.{test,spec}.{js,jsx,ts,tsx}'],
+    exclude: [
+      'node_modules',
+      'dist',
+      'tests/e2e/**',
+      '.worktrees/**',
+      '**/.worktrees/**'
+    ],
     // 测试报告输出配置
     reporters: ['default', 'html', 'json'],
     outputFile: {

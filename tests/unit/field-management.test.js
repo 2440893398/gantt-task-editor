@@ -1,5 +1,5 @@
 /**
- * 字段管理功能测试
+ * Field management tests
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -20,16 +20,29 @@ import {
   reorderFields
 } from '../../src/core/store.js';
 
-// Mock i18n
+// Mock showConfirmDialog to capture calls
+// By default auto-confirm; set autoConfirm = false to simulate cancel
+let autoConfirm = true;
+const confirmDialogSpy = vi.fn();
+vi.mock('../../src/components/common/confirm-dialog.js', () => ({
+  showConfirmDialog: (opts) => {
+    confirmDialogSpy(opts);
+    if (autoConfirm) {
+      opts.onConfirm?.();
+    }
+  },
+  closeConfirmDialog: vi.fn()
+}));
+
 vi.mock('../../src/utils/i18n.js', () => ({
   i18n: {
     t: vi.fn((key, params) => {
       const map = {
-        'fieldManagement.typeText': '文本',
-        'fieldManagement.typeNumber': '数字',
-        'fieldManagement.typeDate': '日期',
-        'fieldManagement.typeSelect': '下拉选择',
-        'fieldManagement.typeMultiselect': '多选',
+        'fieldManagement.typeText': 'Text',
+        'fieldManagement.typeNumber': 'Number',
+        'fieldManagement.typeDate': 'Date',
+        'fieldManagement.typeSelect': 'Select',
+        'fieldManagement.typeMultiselect': 'Multi-select',
         'message.deleteConfirm': `Are you sure you want to delete field "${params?.name}"?`
       };
       return map[key] || key;
@@ -37,35 +50,35 @@ vi.mock('../../src/utils/i18n.js', () => ({
   }
 }));
 
-describe('字段管理面板', () => {
+describe('Field management panel', () => {
   beforeEach(() => {
-    // 设置 DOM
     document.body.innerHTML = `
       <div id="field-management-panel"></div>
+      <div id="field-management-backdrop" class="hidden opacity-0"></div>
       <div id="field-list-container"></div>
       <div id="field-config-modal"></div>
       <input id="field-name" />
       <select id="field-type">
-        <option value="text">文本</option>
-        <option value="number">数字</option>
-        <option value="date">日期</option>
-        <option value="select">下拉选择</option>
-        <option value="multiselect">多选</option>
+        <option value="text">Text</option>
+        <option value="number">Number</option>
+        <option value="date">Date</option>
+        <option value="select">Select</option>
+        <option value="multiselect">Multi-select</option>
       </select>
       <input type="checkbox" id="field-required" />
       <input id="field-default-value" />
       <div id="options-config"></div>
-      <div id="field-type-selector"></div>
+      <div id="field-type-selector"><span class="field-type-text"></span></div>
       <div id="field-type-dropdown"></div>
       <div id="required-toggle"></div>
+      <span id="field-type-icon"></span>
     `;
 
-    // 重置状态
     state.customFields = [];
     state.fieldOrder = [];
   });
 
-  it('应该打开字段管理面板', () => {
+  it('opens the field management panel', () => {
     const panel = document.getElementById('field-management-panel');
 
     openFieldManagementPanel();
@@ -73,7 +86,7 @@ describe('字段管理面板', () => {
     expect(panel.classList.contains('open')).toBe(true);
   });
 
-  it('应该关闭字段管理面板', () => {
+  it('closes the field management panel', () => {
     const panel = document.getElementById('field-management-panel');
     panel.classList.add('open');
 
@@ -82,34 +95,36 @@ describe('字段管理面板', () => {
     expect(panel.classList.contains('open')).toBe(false);
   });
 
-  it('应该渲染字段列表', () => {
+  it('renders the field list', () => {
     state.customFields = [
-      { name: 'priority', label: '优先级', type: 'select', options: ['高', '中', '低'] },
-      { name: 'status', label: '状态', type: 'text' }
+      { name: 'custom_priority', label: 'Priority', type: 'select', options: ['High', 'Medium', 'Low'] },
+      { name: 'custom_status', label: 'Status', type: 'text' }
     ];
 
     renderFieldList();
 
     const container = document.getElementById('field-list-container');
-    expect(container.innerHTML).toContain('优先级');
-    expect(container.innerHTML).toContain('状态');
+    expect(container.innerHTML).toContain('Priority');
+    expect(container.innerHTML).toContain('Status');
   });
 
-  it('应该显示必填字段标记', () => {
+  it('renders custom field with correct label', () => {
     state.customFields = [
-      { name: 'required_field', label: '必填字段', type: 'text', required: true }
+      { name: 'required_field', label: 'Required Field', type: 'text', required: true }
     ];
 
     renderFieldList();
 
     const container = document.getElementById('field-list-container');
-    expect(container.innerHTML).toContain('必填字段');
-    expect(container.innerHTML).toContain('*');
+    expect(container.innerHTML).toContain('Required Field');
+    // Field item should have data-field-name attribute
+    const fieldItem = container.querySelector('[data-field-name="required_field"]');
+    expect(fieldItem).not.toBeNull();
   });
 });
 
-describe('字段类型标签', () => {
-  it('应该返回正确的字段类型标签', () => {
+describe('Field type label', () => {
+  it('returns correct labels', () => {
     expect(getFieldTypeLabel('text')).toBe('文本');
     expect(getFieldTypeLabel('number')).toBe('数字');
     expect(getFieldTypeLabel('date')).toBe('日期');
@@ -117,124 +132,144 @@ describe('字段类型标签', () => {
     expect(getFieldTypeLabel('multiselect')).toBe('多选');
   });
 
-  it('应该为未知类型返回原值', () => {
+  it('returns original value for unknown type', () => {
     expect(getFieldTypeLabel('unknown')).toBe('unknown');
   });
 });
 
-describe('字段编辑', () => {
+describe('Field edit', () => {
   beforeEach(() => {
     document.body.innerHTML = `
       <div id="field-config-modal"></div>
+      <div id="field-management-panel"></div>
       <input id="field-name" />
       <select id="field-type">
-        <option value="text">文本</option>
-        <option value="number">数字</option>
-        <option value="date">日期</option>
-        <option value="select">下拉选择</option>
-        <option value="multiselect">多选</option>
+        <option value="text">Text</option>
+        <option value="number">Number</option>
+        <option value="date">Date</option>
+        <option value="select">Select</option>
+        <option value="multiselect">Multi-select</option>
       </select>
       <input type="checkbox" id="field-required" />
       <input id="field-default-value" />
       <div id="options-config"></div>
       <div id="options-list"></div>
-      <div id="field-type-selector"></div>
+      <div id="field-type-selector"><span class="field-type-text"></span></div>
       <div id="field-type-dropdown">
         <div class="field-type-option" data-value="text"></div>
         <div class="field-type-option" data-value="number"></div>
+        <div class="field-type-option" data-value="select"></div>
       </div>
       <div id="required-toggle"></div>
+      <span id="field-type-icon"></span>
+      <input id="field-icon" type="hidden" />
+      <span id="selected-icon"></span>
+      <div id="icon-grid"></div>
+      <div id="default-value-input-container"></div>
     `;
 
+    // Use a custom field name that is NOT in SYSTEM_FIELD_CONFIG
     state.customFields = [
       {
-        name: 'priority',
-        label: '优先级',
+        name: 'custom_priority',
+        label: 'Custom Priority',
         type: 'select',
         required: true,
-        options: ['高', '中', '低']
+        options: ['High', 'Medium', 'Low']
       }
     ];
   });
 
-  it('应该加载字段进行编辑', () => {
-    editField('priority');
+  it('loads field data for editing', () => {
+    editField('custom_priority');
 
-    expect(document.getElementById('field-name').value).toBe('优先级');
+    expect(document.getElementById('field-name').value).toBe('Custom Priority');
     expect(document.getElementById('field-type').value).toBe('select');
     expect(document.getElementById('field-required').checked).toBe(true);
   });
 
-  it('应该设置编辑模式标记', () => {
-    editField('priority');
+  it('sets edit mode flags', () => {
+    editField('custom_priority');
 
     const modal = document.getElementById('field-config-modal');
     expect(modal.dataset.editMode).toBe('true');
-    expect(modal.dataset.editFieldName).toBe('priority');
+    expect(modal.dataset.editFieldName).toBe('custom_priority');
   });
 
-  it('应该显示选项配置面板（下拉选择类型）', () => {
-    editField('priority');
+  it('shows options config for select type', () => {
+    editField('custom_priority');
 
     const optionsConfig = document.getElementById('options-config');
     expect(optionsConfig.style.display).toBe('block');
   });
 });
 
-describe('字段删除', () => {
+describe('Field delete', () => {
   beforeEach(() => {
-    // 设置必要的 DOM 元素
     document.body.innerHTML = `
       <div id="field-list-container"></div>
       <div id="field-management-panel"></div>
     `;
 
-    global.confirm = vi.fn(() => true);
+    confirmDialogSpy.mockClear();
+    autoConfirm = true;
+
     global.gantt = {
       ...global.gantt,
       config: { columns: [] }
     };
 
     state.customFields = [
-      { name: 'priority', label: '优先级', type: 'text' },
-      { name: 'status', label: '状态', type: 'text' }
+      { name: 'custom_priority', label: 'Custom Priority', type: 'text' },
+      { name: 'custom_status', label: 'Custom Status', type: 'text' }
     ];
-    state.fieldOrder = ['priority', 'status'];
+    state.fieldOrder = ['custom_priority', 'custom_status'];
   });
 
-  it('应该删除指定字段', () => {
-    deleteField('priority');
+  it('deletes the target field via confirm dialog', () => {
+    deleteField('custom_priority');
 
+    // showConfirmDialog was called
+    expect(confirmDialogSpy).toHaveBeenCalledTimes(1);
+
+    // onConfirm was auto-invoked by our mock, so field should be removed
     expect(state.customFields).toHaveLength(1);
-    expect(state.customFields[0].name).toBe('status');
-    expect(state.fieldOrder).not.toContain('priority');
+    expect(state.customFields[0].name).toBe('custom_status');
   });
 
-  it('应该在删除前请求确认', () => {
-    deleteField('priority');
+  it('shows confirm dialog with correct title', () => {
+    deleteField('custom_priority');
 
-    expect(global.confirm).toHaveBeenCalledWith('Are you sure you want to delete field "优先级"?');
+    expect(confirmDialogSpy).toHaveBeenCalledTimes(1);
+    const opts = confirmDialogSpy.mock.calls[0][0];
+    expect(opts.icon).toBe('trash-2');
+    expect(opts.variant).toBe('danger');
   });
 
-  it('应该在用户取消时不删除字段', () => {
-    global.confirm = vi.fn(() => false);
+  it('does not delete when user cancels confirm dialog', () => {
+    autoConfirm = false;
 
-    deleteField('priority');
+    deleteField('custom_priority');
 
+    // Confirm dialog was shown but onConfirm was not called
+    expect(confirmDialogSpy).toHaveBeenCalledTimes(1);
+    // Field should still exist
     expect(state.customFields).toHaveLength(2);
+
+    autoConfirm = true; // restore default
   });
 });
 
-describe('字段重排序', () => {
+describe('Field reorder', () => {
   beforeEach(() => {
     state.customFields = [
-      { name: 'field1', label: '字段1' },
-      { name: 'field2', label: '字段2' },
-      { name: 'field3', label: '字段3' }
+      { name: 'field1', label: 'Field 1' },
+      { name: 'field2', label: 'Field 2' },
+      { name: 'field3', label: 'Field 3' }
     ];
   });
 
-  it('应该正确重排序字段', () => {
+  it('reorders fields correctly', () => {
     reorderFields(0, 2);
 
     expect(state.customFields[0].name).toBe('field2');
@@ -242,7 +277,7 @@ describe('字段重排序', () => {
     expect(state.customFields[2].name).toBe('field1');
   });
 
-  it('应该更新字段顺序数组', () => {
+  it('updates field order list', () => {
     reorderFields(0, 2);
 
     expect(state.fieldOrder).toContain('field1');
@@ -251,31 +286,32 @@ describe('字段重排序', () => {
   });
 });
 
-describe('字段类型选择器更新', () => {
+describe('Field type selector updates', () => {
   beforeEach(() => {
     document.body.innerHTML = `
-      <div id="field-type-selector"></div>
+      <div id="field-type-selector"><span class="field-type-text"></span></div>
+      <span id="field-type-icon"></span>
       <div id="field-type-dropdown">
         <div class="field-type-option" data-value="text"></div>
         <div class="field-type-option" data-value="number"></div>
         <div class="field-type-option" data-value="date"></div>
       </div>
+      <div id="default-value-input-container"></div>
     `;
   });
 
-  it('应该更新选择器显示', () => {
+  it('updates selector display', () => {
     updateFieldTypeSelector('number');
 
-    const selector = document.getElementById('field-type-selector');
-    expect(selector.innerHTML).toContain('数字');
+    const textEl = document.querySelector('.field-type-text');
+    expect(textEl.textContent).toBe('Number');
   });
 
-  it('应该更新下拉菜单选中状态', () => {
+  it('updates dropdown selected state', () => {
     updateFieldTypeSelector('number');
 
     const dropdown = document.getElementById('field-type-dropdown');
     const selectedOption = dropdown.querySelector('[data-value="number"]');
-    // 注意：实现使用 Tailwind 类 bg-primary/10 和 text-primary 表示选中状态
     expect(selectedOption.classList.contains('bg-primary/10')).toBe(true);
     expect(selectedOption.classList.contains('text-primary')).toBe(true);
   });

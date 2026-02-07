@@ -19,9 +19,15 @@ export function openBatchEditPanel() {
     const panel = document.getElementById('batch-edit-panel');
     panel.classList.add('open');
 
-    const batchCountEl = document.getElementById('batch-selected-count-text');
-    if (batchCountEl) {
-        batchCountEl.textContent = `ℹ️ 已选中 ${state.selectedTasks.size} 个任务`;
+    const countText = `ℹ️ 已选中 ${state.selectedTasks.size} 个任务`;
+    const countNumber = String(state.selectedTasks.size);
+    const textEl = document.getElementById('batch-selected-count-text');
+    if (textEl) {
+        textEl.textContent = countText;
+    }
+    const countEl = document.getElementById('batch-selected-count');
+    if (countEl) {
+        countEl.textContent = countNumber;
     }
 
     // 填充字段选择下拉框

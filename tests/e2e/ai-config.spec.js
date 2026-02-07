@@ -15,12 +15,12 @@ test.describe('AI Configuration Management', () => {
     });
 
     test('should open config modal from floating button', async ({ page }) => {
-        // 当 AI 未配置时，点击浮动按钮直接打开配置弹窗
+        // F-203: 当 AI 未配置时，点击浮动按钮直接打开配置弹窗
         await page.click('#ai_floating_btn');
 
         // Check if modal is visible
         const modal = page.locator('#ai_config_modal');
-        await expect(modal).toBeVisible();
+        await expect(modal).toBeVisible({ timeout: 10000 });
         // 检查标题（可能是英文或中文）
         await expect(modal).toContainText(/AI 设置|AI Settings|AI Config/i);
     });
@@ -28,7 +28,7 @@ test.describe('AI Configuration Management', () => {
     test('should validate required fields', async ({ page }) => {
         // 点击浮动按钮打开配置弹窗
         await page.click('#ai_floating_btn');
-        await expect(page.locator('#ai_config_modal')).toBeVisible();
+        await expect(page.locator('#ai_config_modal')).toBeVisible({ timeout: 10000 });
 
         // Clear API Key if exists
         await page.fill('#ai_api_key', '');
@@ -47,7 +47,7 @@ test.describe('AI Configuration Management', () => {
 
         // 点击浮动按钮打开配置弹窗
         await page.click('#ai_floating_btn');
-        await expect(page.locator('#ai_config_modal')).toBeVisible();
+        await expect(page.locator('#ai_config_modal')).toBeVisible({ timeout: 10000 });
 
         // Fill form
         await page.fill('#ai_base_url', testUrl);

@@ -56,22 +56,12 @@ test.describe('AI Agent Interaction', () => {
         await page.waitForSelector('#app-loading', { state: 'hidden', timeout: 30000 });
     });
 
-    // F-203: AI 菜单现在只保留 "设置" 和 "开始对话" 按钮
+    // F-203: 点击浮动按钮直接打开 chat drawer (配置完成时)
     test('should open chat drawer from floating button', async ({ page }) => {
-        // 1. Open Agent Menu
+        // F-203: 点击按钮直接触发 chat 模式，不需要菜单
         await page.click('#ai_floating_btn');
-        await page.waitForTimeout(300);
 
-        // 2. Verify menu is visible and has chat button
-        const agentMenu = page.locator('#ai_agent_menu');
-        await expect(agentMenu).toBeVisible();
-
-        // 3. Click chat button (data-agent-id="chat")
-        const chatBtn = page.locator('button[data-agent-id="chat"]');
-        await expect(chatBtn).toBeVisible();
-        await chatBtn.click();
-
-        // 4. Verify Drawer Opens
+        // Verify Drawer Opens directly
         const drawer = page.locator('#ai_drawer');
         await expect(drawer).toBeVisible({ timeout: 10000 });
     });

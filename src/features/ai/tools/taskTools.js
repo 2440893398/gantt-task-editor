@@ -1,18 +1,28 @@
 // src/features/ai/tools/taskTools.js
-import { tool } from 'ai';
-import { z } from 'zod';
+import { tool, jsonSchema } from 'ai';
+
+/**
+ * 创建符合 JSON Schema 规范的空对象 schema
+ * 第三方 API（如 DeepSeek）要求严格的 JSON Schema 格式
+ */
+const emptyObjectSchema = jsonSchema({
+  type: 'object',
+  properties: {},
+  required: [],
+  additionalProperties: false
+});
 
 /**
  * 任务查询工具集
- * 使用 AI SDK 6 的 tool() 函数定义
+ * 使用 AI SDK 6 的 tool() + jsonSchema() 定义
+ * 
+ * 重要：AI SDK 6 使用 inputSchema 而非 parameters！
  */
 export const taskTools = {
   get_today_tasks: tool({
     description: '获取今日需处理的任务（开始日期 ≤ 今天 且 未完成）',
-    parameters: z.object({
-      include_subtasks: z.boolean().default(false).describe('是否包含子任务，默认 false')
-    }),
-    execute: async ({ include_subtasks = false }) => {
+    inputSchema: emptyObjectSchema,
+    execute: async () => {
       if (typeof gantt === 'undefined') {
         return { error: 'Gantt 未初始化', tasks: [], count: 0 };
       }
@@ -24,7 +34,8 @@ export const taskTools = {
       gantt.eachTask(task => {
         const startDate = new Date(task.start_date);
         if (startDate <= today && (task.progress || 0) < 1) {
-          if (include_subtasks || !gantt.getParent(task.id)) {
+          // 默认不包含子任务
+          if (!gantt.getParent(task.id)) {
             tasks.push({
               id: task.id,
               text: task.text,
@@ -46,9 +57,17 @@ export const taskTools = {
 
   get_tasks_by_status: tool({
     description: '按状态筛选任务',
-    parameters: z.object({
-      status: z.enum(['pending', 'in_progress', 'completed', 'suspended'])
-        .describe('任务状态：pending(待开始), in_progress(进行中), completed(已完成), suspended(已暂停)')
+    inputSchema: jsonSchema({
+      type: 'object',
+      properties: {
+        status: {
+          type: 'string',
+          enum: ['pending', 'in_progress', 'completed', 'suspended'],
+          description: '任务状态：pending(待开始), in_progress(进行中), completed(已完成), suspended(已暂停)'
+        }
+      },
+      required: ['status'],
+      additionalProperties: false
     }),
     execute: async ({ status }) => {
       if (typeof gantt === 'undefined') {
@@ -73,7 +92,7 @@ export const taskTools = {
 
   get_overdue_tasks: tool({
     description: '获取已逾期任务（结束日期 < 今天 且 未完成）',
-    parameters: z.object({}),
+    inputSchema: emptyObjectSchema,
     execute: async () => {
       if (typeof gantt === 'undefined') {
         return { error: 'Gantt 未初始化', tasks: [], count: 0 };
@@ -105,8 +124,17 @@ export const taskTools = {
 
   get_tasks_by_priority: tool({
     description: '按优先级筛选任务',
-    parameters: z.object({
-      priority: z.enum(['high', 'medium', 'low']).describe('优先级：high(高), medium(中), low(低)')
+    inputSchema: jsonSchema({
+      type: 'object',
+      properties: {
+        priority: {
+          type: 'string',
+          enum: ['high', 'medium', 'low'],
+          description: '优先级：high(高), medium(中), low(低)'
+        }
+      },
+      required: ['priority'],
+      additionalProperties: false
     }),
     execute: async ({ priority }) => {
       if (typeof gantt === 'undefined') {
@@ -131,7 +159,7 @@ export const taskTools = {
 
   get_progress_summary: tool({
     description: '获取项目整体进度概览',
-    parameters: z.object({}),
+    inputSchema: emptyObjectSchema,
     execute: async () => {
       if (typeof gantt === 'undefined') {
         return { error: 'Gantt 未初始化' };

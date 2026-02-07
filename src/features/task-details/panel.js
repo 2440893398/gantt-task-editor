@@ -173,7 +173,7 @@ function buildPanelHTML(task) {
             </div>
 
             <!-- 右侧属性面板 -->
-            <div id="task-details-right" class="w-[260px] shrink-0 p-4 overflow-y-auto bg-base-200/30 border-l border-base-200/50">
+            <div id="task-details-right" class="w-[260px] shrink-0 p-5 overflow-y-auto bg-base-200/30 border-l border-base-200/50">
                 ${renderRightSection(task)}
             </div>
         </div>

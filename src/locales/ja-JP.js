@@ -16,6 +16,9 @@ export default {
         importJSON: 'JSONインポート',
         language: '言語',
         searchPlaceholder: 'タスクを検索...',
+        viewSplit: '分割',
+        viewTable: 'テーブル',
+        viewGantt: 'ガント',
         criticalPath: 'クリティカルパス',
         lag: '遅延(日)'
     },
@@ -110,7 +113,8 @@ export default {
         confirmClearCache: 'すべてのキャッシュを削除しますか？保存されたタスクと設定がすべて削除されます。',
         cacheCleared: 'キャッシュを削除しました',
         dataRestored: '{{count}}件のタスクを復元しました',
-        updateSuccess: '{{count}}件のタスクを更新しました'
+        updateSuccess: '{{count}}件のタスクを更新しました',
+        comingSoon: '機能開発中'
     },
 
     // ショートカットパネル
@@ -390,5 +394,43 @@ export default {
             network: 'ネットワークエラー。接続を確認してください',
             unknown: '不明なエラーが発生しました'
         }
+    },
+    baseline: {
+        save: 'ベースライン保存',
+        show: 'ベースライン表示',
+        saveConfirm: '現在のプロジェクト状態をベースラインとして保存しますか？以前のベースラインは上書きされます',
+        saved: 'ベースラインを保存しました',
+        delayed: '遅延',
+        ahead: '前倒し'
+    },
+    resource: {
+        overload: 'リソース超過',
+        on: '日付',
+        workload: '作業量',
+        hours: '時間',
+        overloadAmount: '超過'
+    },
+    export: {
+        title: 'エクスポート',
+        excel: 'Excelエクスポート',
+        imageTitle: '画像エクスポート',
+        currentView: '現在の表示をエクスポート',
+        fullGantt: 'ガント全体をエクスポート（長い画像）',
+        pdf: 'PDFエクスポート',
+        exporting: 'エクスポート中...',
+        capturing: 'キャプチャ中...',
+        preparing: '準備中...',
+        stitching: '結合中...',
+        downloading: 'ダウンロード中...',
+        serverProcessing: 'サーバー処理中、お待ちください...',
+        apiNotAvailable: 'エクスポートサービスが利用できません。ネットワークを確認してください',
+        success: 'エクスポート成功',
+        error: 'エクスポート失敗',
+        fail: 'エクスポート失敗'
+    },
+    snapping: {
+        today: '今日',
+        startOf: '開始',
+        endOf: '終了'
     }
 };

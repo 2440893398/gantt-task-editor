@@ -7,6 +7,7 @@
  * 3. 单元测试文件如果需要真实的模块导出，应该在各自测试文件中配置自己的 mock
  */
 
+import 'fake-indexeddb/auto';
 import { vi } from 'vitest';
 
 // Mock showToast 函数避免 DOM 操作问题

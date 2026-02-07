@@ -16,6 +16,9 @@ export default {
         importJSON: '导入JSON',
         language: '语言',
         searchPlaceholder: '搜索任务...',
+        viewSplit: '分屏',
+        viewTable: '表格',
+        viewGantt: '甘特',
         criticalPath: '关键路径',
         lag: '延迟(天)'
     },
@@ -108,7 +111,8 @@ export default {
         confirmClearCache: '确定清除所有缓存数据吗？这将删除所有保存的任务和配置。',
         cacheCleared: '缓存已清除',
         dataRestored: '已恢复 {{count}} 个任务',
-        updateSuccess: '已更新 {{count}} 个任务'
+        updateSuccess: '已更新 {{count}} 个任务',
+        comingSoon: '功能开发中'
     },
 
     // 快捷键面板
@@ -392,15 +396,25 @@ export default {
             clearConfirm: '确定要清空所有对话记录吗？此操作无法撤销。',
             cleared: '对话已清空',
             empty: '开始新对话',
+            // 空状态
+            emptyTitle: '开始新对话',
+            emptySubtitle: '我可以帮你查询任务、分析进度...',
             you: '你',
             copy: '复制',
             session: '本次会话',
             // F-111 Token 统计
             tokens: 'Tokens',
             tokenUsage: '令牌使用',
-            chatPlaceholder: '输入消息继续对话/提问...',
-            chatHint: 'Enter 发送，Shift+Enter 换行',
-            send: '发送'
+            chatPlaceholder: '输入消息继续对话，提问...',
+            chatHint: 'Enter 发送, Shift+Enter 换行',
+            send: '发送',
+            attach: '附件'
+        },
+        // 快捷建议
+        suggestions: {
+            todayTasks: '查询今日任务',
+            overdueTasks: '查看逾期任务',
+            progressOverview: '获取进度概览'
         },
         // 智能体
         agents: {
@@ -458,5 +472,43 @@ export default {
             viewDetails: '查看详情',
             originalError: '原始错误信息'
         }
+    },
+    baseline: {
+        save: '保存基线',
+        show: '显示基线',
+        saveConfirm: '确定保存当前项目状态为基线？之前的基线将被覆盖',
+        saved: '基线已保存',
+        delayed: '延迟',
+        ahead: '提前'
+    },
+    resource: {
+        overload: '资源超载',
+        on: '在',
+        workload: '工作量',
+        hours: '小时',
+        overloadAmount: '超载'
+    },
+    export: {
+        title: '导出',
+        excel: '导出 Excel',
+        imageTitle: '图片导出',
+        currentView: '导出当前视图',
+        fullGantt: '导出完整甘特图（长图）',
+        pdf: '导出 PDF',
+        exporting: '正在导出...',
+        capturing: '正在截图...',
+        preparing: '正在准备...',
+        stitching: '正在拼接...',
+        downloading: '正在下载...',
+        serverProcessing: '服务器正在处理，请稍候...',
+        apiNotAvailable: '导出服务不可用，请检查网络连接',
+        success: '导出成功',
+        error: '导出失败',
+        fail: '导出失败'
+    },
+    snapping: {
+        today: '今天',
+        startOf: '开始于',
+        endOf: '结束于'
     }
 };

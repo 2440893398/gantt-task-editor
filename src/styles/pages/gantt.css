@@ -2,10 +2,32 @@
    甘特图组件样式
    ======================================== */
 
+/* 设计系统颜色变量 - 来自设计稿 */
+:root {
+  --design-bg-surface-2: #EEF2F6;
+  --design-bg-surface: #F8FAFC;
+  --design-bg-white: #FFFFFF;
+  --design-text-primary: #0F172A;
+  --design-text-secondary: #64748B;
+  --design-text-strong: #0369A1;
+  --design-primary-soft: #E0F2FE;
+  --design-primary: #0EA5E9;
+  --design-secondary: #F1F5F9;
+  --design-secondary-text: #475569;
+  --design-warning-bg: #FEF3C7;
+  --design-warning-text: #92400E;
+  --design-border: #E2E8F0;
+  --design-checkbox: #CBD5E1;
+  --design-font-family: 'Source Sans 3', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
 /* 容器 - 工具栏已移到外部，无需内边距 */
 .gantt_container {
     border: none;
     padding-top: 0 !important;
+    background-color: var(--design-bg-white);
+    border-radius: 12px;
+    overflow: hidden;
 }
 
 .gantt_grid,
@@ -16,9 +38,20 @@
 /* 甘特图头部刻度行 */
 .gantt_grid_scale,
 .gantt_task_scale {
-    background-color: var(--background-white);
-    border-bottom: 1px solid var(--border-color);
-    color: var(--text-secondary);
+    background-color: var(--design-bg-white);
+    border-bottom: 2px solid var(--design-border);
+    color: var(--design-text-secondary);
+    height: 40px !important;
+    line-height: 40px !important;
+}
+
+/* 时间轴刻度单元格 */
+.gantt_task_scale .gantt_scale_cell {
+    font-family: var(--design-font-family);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--design-text-secondary);
+    text-align: center;
 }
 
 /* ========================================
@@ -26,40 +59,96 @@
    ======================================== */
 
 .gantt_grid_head_cell {
-    font-weight: var(--font-weight-semibold);
-    font-size: var(--font-size-body);
-    color: var(--text-primary);
+    font-family: var(--design-font-family);
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--design-text-secondary);
+    background-color: var(--design-bg-white);
+    border-bottom: 2px solid var(--design-border);
+    padding: 0 12px;
+    height: 40px;
+    line-height: 40px;
     cursor: move;
     user-select: none;
-    transition: all 0.2s ease;
+    transition: all 0.15s ease;
     position: relative;
 }
 
 .gantt_grid_head_cell:hover {
-    background-color: #F3F4F6;
-    transform: translateY(-1px);
+    background-color: var(--design-bg-surface);
+    color: var(--design-text-primary);
+}
+
+/* 复选框列特殊处理 */
+.gantt_grid_head_cell:first-child {
+    padding: 0 10px;
 }
 
 .gantt_row {
-    border-bottom: 1px solid var(--border-color);
+    min-height: 44px;
+    border-bottom: 1px solid var(--design-border);
     transition: background-color 0.2s ease;
+    background-color: var(--design-bg-white);
 }
 
 .gantt_row:hover {
-    background-color: var(--background-hover-gray);
+    background-color: #F0F4F8;
 }
 
+/* 斑马纹 - 奇数行使用浅色背景 */
 .gantt_row.odd {
-    background-color: var(--background-white);
+    background-color: var(--design-bg-surface);
 }
 
 .gantt_grid_data .gantt_cell {
-    font-size: var(--font-size-body);
-    font-weight: var(--font-weight-regular);
+    font-family: var(--design-font-family);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--design-text-primary);
+    padding: 8px 0;
+    display: flex;
+    align-items: center;
+}
+
+/* 复选框列特殊内边距 */
+.gantt_grid_data .gantt_cell:first-child {
+    padding: 10px 0;
+    justify-content: center;
 }
 
 .gantt_tree_content {
-    font-weight: var(--font-weight-medium);
+    font-family: var(--design-font-family);
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--design-text-primary);
+}
+
+/* 项目行（父任务）样式 */
+.gantt_row[data-is-project="true"] .gantt_tree_content,
+.gantt_row.gantt_project .gantt_tree_content {
+    font-weight: 800;
+}
+
+/* 项目编号徽章 */
+.project-id-badge-gantt {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    background-color: var(--design-primary-soft);
+    color: var(--design-text-strong);
+    border-radius: 8px;
+    font-family: var(--design-font-family);
+    font-size: 11px;
+    font-weight: 800;
+    margin-right: 8px;
+    flex-shrink: 0;
+}
+
+/* 展开图标样式 */
+.gantt_tree_icon {
+    color: var(--design-text-secondary);
 }
 
 .gantt_grid_data {
@@ -71,8 +160,10 @@
    ======================================== */
 
 .gantt_task_scale .gantt_scale_cell {
-    font-size: var(--font-size-small);
-    font-weight: var(--font-weight-regular);
+    font-family: var(--design-font-family);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--design-text-secondary);
 }
 
 .gantt_data_area {
@@ -80,11 +171,12 @@
 }
 
 .gantt_task_row {
-    border-bottom: 1px solid var(--border-color);
+    border-bottom: 1px solid var(--design-border);
+    background-color: var(--design-bg-white);
 }
 
 .gantt_task_row.odd {
-    background-color: var(--background-white);
+    background-color: var(--design-bg-surface);
 }
 
 .weekend {
@@ -92,63 +184,74 @@
 }
 
 /* ========================================
-   任务条 - Figma设计双色进度条
+   任务条 - 设计稿双色进度条
    ======================================== */
 
 .gantt_task_line {
-    background: var(--color-primary-soft, #E0F2FE);
-    border: 1px solid var(--color-border, #E2E8F0);
-    border-radius: 6px;
-    box-shadow: 0 2px 8px rgba(2, 132, 199, 0.18);
+    background: #E0F2FE !important;
+    border: none !important;
+    border-radius: 8px !important;
+    box-shadow: none !important;
     overflow: hidden;
+    height: 16px !important;
 }
 
 .gantt_task_line:hover {
-    box-shadow: 0 4px 14px rgba(2, 132, 199, 0.24);
-    transform: translateY(-1px);
+    box-shadow: 0 2px 6px rgba(14, 165, 233, 0.15) !important;
+    transform: none;
 }
 
 .gantt_task_progress {
-    background: var(--color-primary, #0EA5E9);
-    border-radius: 6px 0 0 6px;
-    opacity: 1;
+    background: #0EA5E9 !important;
+    border-radius: 8px !important;
+    opacity: 1 !important;
+    height: 100% !important;
 }
 
-/* 当进度为100%时，整条绿色 */
+/* 当进度为100%时，整条蓝色 */
 .gantt_task_line.task_completed {
-    background: var(--color-primary, #0EA5E9);
-    box-shadow: 0 2px 8px rgba(2, 132, 199, 0.22);
+    background: #0EA5E9 !important;
+    box-shadow: none !important;
 }
 
 .gantt_task_line.task_completed:hover {
-    box-shadow: 0 4px 14px rgba(2, 132, 199, 0.28);
+    box-shadow: 0 2px 6px rgba(14, 165, 233, 0.2) !important;
+}
+
+.gantt_task_line.task_completed .gantt_task_progress {
+    background: #0EA5E9 !important;
 }
 
 /* 逾期任务 - 增强红色 */
 .gantt_task_line.task_overdue {
-    background: var(--color-danger-soft, #FEE2E2);
-    box-shadow: 0 2px 8px rgba(220, 38, 38, 0.22);
-    border-color: rgba(220, 38, 38, 0.35);
+    background: #FEE2E2 !important;
+    box-shadow: 0 2px 8px rgba(220, 38, 38, 0.22) !important;
+    border: none !important;
 }
 
 .gantt_task_line.task_overdue .gantt_task_progress {
-    background: var(--color-danger, #DC2626);
+    background: #DC2626 !important;
 }
 
 /* 任务条上的文字 - 居中显示任务名 */
 .gantt_task_content {
-    color: var(--color-foreground, #0F172A);
+    color: var(--design-text-primary) !important;
+    font-family: var(--design-font-family);
     font-weight: 600;
-    font-size: 12px;
+    font-size: 11px;
     text-shadow: none;
-    padding: 0 8px;
+    padding: 0 6px;
+    white-space: nowrap;
+    overflow: visible;
+    text-overflow: clip;
+    line-height: 16px;
 }
 
 .gantt_task_line .gantt_task_content {
-    background: rgba(255, 255, 255, 0.65);
-    border-radius: 999px;
-    margin: 0 6px;
-    padding: 2px 8px;
+    background: transparent;
+    border-radius: 0;
+    margin: 0;
+    padding: 0 6px;
 }
 
 /* ========================================
@@ -975,20 +1078,40 @@
     margin-right: 6px;
 }
 
-/* 复选框样式优化 */
-.gantt-checkbox-selection {
-    width: 18px !important;
-    height: 18px !important;
-    cursor: pointer;
-    accent-color: #3B82F6;
+/* 复选框样式 - 精确匹配设计稿 */
+.gantt-checkbox-selection,
+#select-all-checkbox {
+    width: 16px;
+    height: 16px;
+    border: 1px solid var(--design-checkbox);
     border-radius: 4px;
+    background-color: var(--design-bg-white);
+    cursor: pointer;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    position: relative;
+    margin: 0;
+    flex-shrink: 0;
 }
 
-#select-all-checkbox {
-    width: 18px !important;
-    height: 18px !important;
-    cursor: pointer;
-    accent-color: #3B82F6;
+.gantt-checkbox-selection:checked,
+#select-all-checkbox:checked {
+    background-color: var(--design-primary);
+    border-color: var(--design-primary);
+}
+
+.gantt-checkbox-selection:checked::after,
+#select-all-checkbox:checked::after {
+    content: '✓';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: white;
+    font-size: 10px;
+    font-weight: bold;
+    line-height: 1;
 }
 
 /* 添加按钮列样式 */
@@ -1049,86 +1172,101 @@
    状态标签和徽章样式
    ======================================== */
 
-/* 状态标签样式 */
+/* 状态标签样式 - 带圆点，匹配设计稿 */
 .status-badge-gantt {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
-    padding: 4px 12px;
-    border-radius: 16px;
-    font-size: 12px;
-    font-weight: 500;
+    gap: 6px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    font-family: var(--design-font-family);
+    font-size: 11px;
+    font-weight: 800;
     white-space: nowrap;
 }
 
+/* 状态圆点 */
+.status-dot-gantt {
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    flex-shrink: 0;
+}
+
+/* 状态颜色 - 根据设计稿配色 */
 .status-badge-gantt.status-pending {
-    background: #F3F4F6;
-    color: #6B7280;
+    background-color: var(--design-secondary);
+    color: var(--design-secondary-text);
 }
 
 .status-badge-gantt.status-progress {
-    background: #EFF6FF;
-    color: #3B82F6;
+    background-color: var(--design-primary-soft);
+    color: var(--design-text-strong);
 }
 
 .status-badge-gantt.status-completed {
-    background: #D1FAE5;
-    color: #10B981;
+    background-color: #D1FAE5;
+    color: #059669;
 }
 
 .status-badge-gantt.status-paused {
-    background: #FEF3C7;
-    color: #F59E0B;
+    background-color: var(--design-warning-bg);
+    color: var(--design-warning-text);
 }
 
-/* 优先级标签样式 */
+/* 优先级标签样式 - 匹配设计稿 */
 .priority-badge-gantt {
     display: inline-block;
-    padding: 3px 10px;
-    border-radius: 12px;
-    font-size: 12px;
-    font-weight: 500;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-family: var(--design-font-family);
+    font-size: 11px;
+    font-weight: 800;
+    white-space: nowrap;
 }
 
 .priority-badge-gantt.priority-high {
-    background: #FEE2E2;
-    color: #EF4444;
+    background-color: var(--design-secondary);
+    color: var(--design-secondary-text);
 }
 
 .priority-badge-gantt.priority-medium {
-    background: #FEF3C7;
-    color: #F59E0B;
+    background-color: var(--design-warning-bg);
+    color: var(--design-warning-text);
 }
 
 .priority-badge-gantt.priority-low {
-    background: #D1FAE5;
-    color: #10B981;
+    background-color: #D1FAE5;
+    color: #059669;
 }
 
-/* 负责人样式 */
+/* 负责人样式 - 匹配设计稿 */
 .assignee-cell-gantt {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
 }
 
 .assignee-avatar-gantt {
-    width: 24px;
-    height: 24px;
-    border-radius: 50%;
-    background: #DBEAFE;
-    color: #3B82F6;
+    width: 22px;
+    height: 22px;
+    border-radius: 999px;
+    background-color: var(--design-primary-soft);
+    color: var(--design-text-strong);
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    font-weight: 600;
+    font-family: var(--design-font-family);
     font-size: 11px;
+    font-weight: 800;
     flex-shrink: 0;
 }
 
 .assignee-name-gantt {
-    font-size: 13px;
-    color: #374151;
+    font-family: var(--design-font-family);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--design-text-primary);
 }
 
 /* 进度条单元格样式 */
@@ -1165,9 +1303,10 @@
 }
 
 .progress-text-gantt {
+    font-family: var(--design-font-family);
     font-size: 12px;
-    font-weight: 600;
-    color: #374151;
+    font-weight: 700;
+    color: var(--design-text-primary);
     min-width: 36px;
     text-align: right;
 }
@@ -1259,7 +1398,7 @@
     background-color: transparent !important;
 }
 
-/* 今日标记线 - 红色虚线 */
+/* 今日标记线 - 2px半透明蓝色实线 */
 .gantt_marker.today-marker::before {
     content: '';
     position: absolute;
@@ -1268,24 +1407,24 @@
     transform: translateX(-50%);
     width: 2px;
     height: 100%;
-    background: repeating-linear-gradient(to bottom,
-            var(--color-primary, #0EA5E9) 0px,
-            var(--color-primary, #0EA5E9) 6px,
-            transparent 6px,
-            transparent 10px);
+    background: #0369A199;
     z-index: 100;
+    pointer-events: none;
 }
 
-/* 今日标记文字 */
+/* 今日标记文字 - pill形状 */
 .gantt_marker.today-marker .gantt_marker_content {
     position: absolute;
     top: -24px;
     left: 50%;
     transform: translateX(-50%);
-    background: var(--color-primary, #0EA5E9);
+    background: var(--design-primary);
     color: white;
-    padding: 4px 10px;
-    border-radius: 12px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-family: var(--design-font-family);
+    font-size: 11px;
+    font-weight: 600;
     font-size: 11px;
     font-weight: 600;
     white-space: nowrap;
@@ -1490,14 +1629,14 @@
 }
 
 .gantt_task_line.task_milestone {
-    width: 14px !important;
-    min-width: 14px !important;
-    height: 14px !important;
-    border-radius: 3px !important;
+    width: 10px !important;
+    min-width: 10px !important;
+    height: 10px !important;
+    border-radius: 2px !important;
     transform: rotate(45deg);
-    background: var(--color-primary, #0EA5E9) !important;
+    background: var(--design-text-strong) !important;
     border: none !important;
-    box-shadow: 0 2px 8px rgba(2, 132, 199, 0.25) !important;
+    box-shadow: none !important;
 }
 
 .gantt_task_line.task_milestone .gantt_task_progress,
@@ -1590,4 +1729,72 @@
 
 .gantt-tooltip-status-pending {
     color: #F59E0B;
+}
+
+/* ========================================
+   自定义滚动条样式 - 匹配设计稿
+   ======================================== */
+
+/* 水平滚动条容器 */
+.gantt_hor_scroll {
+    background-color: var(--design-bg-surface) !important;
+    height: 12px !important;
+}
+
+/* Webkit浏览器滚动条样式 */
+.gantt_layout_content::-webkit-scrollbar,
+.gantt_grid::-webkit-scrollbar,
+.gantt_task::-webkit-scrollbar {
+    height: 12px;
+    width: 12px;
+    background-color: var(--design-bg-surface);
+}
+
+.gantt_layout_content::-webkit-scrollbar-track,
+.gantt_grid::-webkit-scrollbar-track,
+.gantt_task::-webkit-scrollbar-track {
+    background-color: var(--design-border);
+    border-radius: 2px;
+    margin: 5px 12px;
+}
+
+.gantt_layout_content::-webkit-scrollbar-thumb,
+.gantt_grid::-webkit-scrollbar-thumb,
+.gantt_task::-webkit-scrollbar-thumb {
+    background-color: var(--design-text-secondary);
+    border-radius: 3px;
+}
+
+.gantt_layout_content::-webkit-scrollbar-thumb:hover,
+.gantt_grid::-webkit-scrollbar-thumb:hover,
+.gantt_task::-webkit-scrollbar-thumb:hover {
+    background-color: var(--design-text-primary);
+}
+
+/* Firefox滚动条样式 */
+.gantt_layout_content,
+.gantt_grid,
+.gantt_task {
+    scrollbar-width: thin;
+    scrollbar-color: var(--design-text-secondary) var(--design-bg-surface);
+}
+
+/* ========================================
+   甘特图网格线 - 垂直分隔线
+   ======================================== */
+
+/* 时间轴刻度单元格的右边框作为垂直线 */
+.gantt_task_scale .gantt_scale_cell {
+    border-right: 1px solid var(--design-border);
+}
+
+/* 时间轴区域的垂直网格线 */
+.gantt_task_cell {
+    border-right: 1px solid var(--design-border);
+}
+
+/* 确保最后一个单元格没有右边框 */
+.gantt_task_scale .gantt_scale_cell:last-child,
+.gantt_task_cell:last-child {
+    border-right: none;
 }

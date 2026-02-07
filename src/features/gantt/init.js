@@ -253,6 +253,14 @@ export function initGantt() {
         }
     ];
 
+    // 任务文本模板 - 恢复内部显示
+    gantt.templates.task_text = function (start, end, task) {
+        return task.text;
+    };
+    gantt.templates.rightside_text = function () {
+        return "";
+    };
+
     // 任务样式模板
     gantt.templates.task_class = function (start, end, task) {
         let classes = [];
@@ -272,9 +280,9 @@ export function initGantt() {
             classes.push('resource-conflict');
         }
 
-        if (task.progress < 1 && new Date() > end) {
-            classes.push("task_overdue");
-        }
+        // if (task.progress < 1 && new Date() > end) {
+        //    classes.push("task_overdue");
+        // }
         if (task.progress >= 1) {
             classes.push("task_completed");
         }
@@ -309,7 +317,8 @@ export function initGantt() {
     }
 
     // 行高配置
-    gantt.config.row_height = 50;
+    gantt.config.row_height = 40;
+    gantt.config.bar_height = 24;
     gantt.config.scale_height = 40;
     gantt.config.reorder_grid_columns = true;
 

@@ -31,6 +31,8 @@ doc/testdoc/playwright-report/
 doc/testdoc/screenshot/
 doc/testdoc/screenshots/
 coverage/
+tests/e2e/downloads/
+tests/e2e/screenshots/
 
 # Output files
 output*.txt
@@ -55,3 +57,4 @@ temp/
 .next/
 .nuxt/
 .tmp/
+.*
