@@ -7,6 +7,7 @@
 import { i18n } from '../../../utils/i18n.js';
 export { extractTaskCitations, replaceTaskCitationsWithChips } from './task-citation.js';
 export { renderTaskCitationChip } from './task-ui.js';
+export { renderTaskInputBubble } from './task-input-bubble.js';
 
 /**
  * 渲染器注册表
