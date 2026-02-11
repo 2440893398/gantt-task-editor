@@ -103,16 +103,26 @@ export default {
         deleteSuccess: '删除成功',
         importSuccess: '导入成功，共 {{count}} 条数据',
         exportSuccess: '导出成功',
+        exportError: '导出失败',
         validationError: '请检查表单填写是否正确',
         noData: '暂无数据',
         confirmTitle: '确认操作',
         deleteLink: '确定删除依赖关系吗？',
         deleteTask: '确定删除任务吗？',
+        confirmDeleteTitle: '删除任务',
+        confirmDelete: '确定要删除此任务吗？此操作无法撤销。',
         confirmClearCache: '确定清除所有缓存数据吗？这将删除所有保存的任务和配置。',
         cacheCleared: '缓存已清除',
         dataRestored: '已恢复 {{count}} 个任务',
         updateSuccess: '已更新 {{count}} 个任务',
-        comingSoon: '功能开发中'
+        comingSoon: '功能开发中',
+        // 备份相关
+        backupExportSuccess: '系统备份导出成功',
+        backupImportSuccess: '系统还原成功',
+        backupImportError: '系统还原失败',
+        backupValidationError: '备份文件验证失败',
+        backupOldFormat: '检测到旧格式配置文件，仅恢复字段设置',
+        backupCancelled: '还原已取消'
     },
 
     // 快捷键面板
@@ -135,7 +145,8 @@ export default {
         legend: '图例',
         completed: '已完成',
         incomplete: '未完成',
-        dependency: '依赖关系'
+        dependency: '依赖关系',
+        close: '关闭'
     },
 
     // 批量编辑
@@ -186,6 +197,7 @@ export default {
         deleteTitle: '确认删除',
         deleteMessage: '确定要删除字段 "{{name}}" 吗？此操作无法撤销。',
         editSystemField: '编辑系统字段',
+        editSystemFieldDesc: '调整字段类型和选项配置',
         systemFieldNameHint: '系统字段名称不可修改',
         typeNotEditable: '此字段类型不可修改',
         systemTag: '系统',

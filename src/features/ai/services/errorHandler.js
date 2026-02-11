@@ -89,11 +89,9 @@ const ERROR_TYPES = {
  */
 export function parseError(error) {
     let errorType = 'unknown';
-    let originalError = null;
-
-    // 提取错误信息
-    const message = error?.message || error?.error?.message || String(error);
-    originalError = error?.error || error;
+    const extracted = extractApiErrorInfo(error);
+    const message = extracted.message || error?.message || error?.error?.message || String(error);
+    const originalError = extracted.originalError || error?.error || error;
 
     // 根据错误内容判断类型
     if (message.includes('401') || message.includes('Unauthorized') || message.includes('invalid_api_key')) {
@@ -117,10 +115,83 @@ export function parseError(error) {
         type: config.type,
         icon: config.icon,
         title: i18n.t(config.titleKey) || config.defaultTitle,
-        message: i18n.t(config.messageKey) || config.defaultMessage,
+        message: message || i18n.t(config.messageKey) || config.defaultMessage,
         action: i18n.t(config.actionKey) || config.defaultAction,
         originalError: originalError
     };
+}
+
+function extractApiErrorInfo(error) {
+    const candidates = [];
+
+    if (!error) return { message: '', originalError: error };
+
+    const push = (val) => {
+        if (val !== undefined && val !== null) candidates.push(val);
+    };
+
+    push(error.error);
+    push(error.cause);
+    push(error.response);
+    push(error.data);
+    push(error.body);
+    push(error);
+    push(error.response?.error);
+    push(error.response?.data);
+    push(error.response?.body);
+    push(error.cause?.error);
+    push(error.cause?.response);
+    push(error.cause?.data);
+
+    for (const item of candidates) {
+        if (!item) continue;
+
+        if (typeof item === 'string') {
+            const parsed = tryParseJson(item);
+            if (parsed) {
+                const fromParsed = extractApiErrorInfo(parsed);
+                if (fromParsed.message) return fromParsed;
+            }
+            if (item.trim()) {
+                return { message: item.trim(), originalError: error };
+            }
+            continue;
+        }
+
+        const nestedMessage = item?.error?.message
+            || item?.data?.error?.message
+            || item?.response?.data?.error?.message
+            || item?.response?.error?.message;
+
+        if (typeof nestedMessage === 'string' && nestedMessage.trim()) {
+            return { message: nestedMessage.trim(), originalError: item };
+        }
+
+        if (item instanceof Error) {
+            const frameworkMessage = String(item.message || '');
+            const isFrameworkWrapper = frameworkMessage.includes('AI_NoOutputGeneratedError')
+                || frameworkMessage.includes('AI_APICallError')
+                || frameworkMessage.includes('AI_');
+
+            if (isFrameworkWrapper && item.cause) {
+                continue;
+            }
+        }
+
+        if (typeof item?.message === 'string' && item.message.trim()) {
+            return { message: item.message.trim(), originalError: item };
+        }
+    }
+
+    return { message: '', originalError: error };
+}
+
+function tryParseJson(text) {
+    try {
+        return JSON.parse(text);
+    } catch {
+        return null;
+    }
 }
 
 /**

@@ -32,7 +32,8 @@ describe('router skill expansion', () => {
             // field-info
             { input: '字段配置', expected: 'field-info' },
             { input: '自定义字段', expected: 'field-info' },
-            { input: '字段统计', expected: 'field-info' }
+            { input: '字段统计', expected: 'field-info' },
+            { input: '当前任务管理支持录入哪些字段', expected: 'field-info' }
         ];
 
         cases.forEach(({ input, expected }) => {

@@ -13,7 +13,7 @@ import { i18n } from '../../utils/i18n.js';
 import { INTERNAL_PRIORITY_VALUES, INTERNAL_STATUS_VALUES } from '../../config/constants.js';
 
 /**
- * 导出配置
+ * 导出配置（仅字段定义）
  */
 export function exportConfig() {
     const config = {
@@ -31,6 +31,254 @@ export function exportConfig() {
     URL.revokeObjectURL(url);
 
     showToast('配置导出成功', 'success');
+}
+
+/**
+ * 将数据通过浏览器原生 CompressionStream 进行 gzip 压缩
+ * @param {string} text - 要压缩的文本
+ * @returns {Promise<Blob>} 压缩后的 Blob
+ */
+async function compressData(text) {
+    const blob = new Blob([text]);
+    const stream = blob.stream().pipeThrough(new CompressionStream('gzip'));
+    return new Response(stream).blob();
+}
+
+/**
+ * 将 gzip 压缩的 Blob/File 解压为文本
+ * @param {Blob|File} blob - 压缩的数据
+ * @returns {Promise<string>} 解压后的文本
+ */
+async function decompressData(blob) {
+    const stream = blob.stream().pipeThrough(new DecompressionStream('gzip'));
+    return new Response(stream).text();
+}
+
+/**
+ * 导出完整系统备份（单个压缩文件，包含所有数据）
+ */
+export async function exportFullBackup() {
+    try {
+        // 获取所有数据
+        const ganttData = gantt.serialize();
+
+        // 获取 baseline 数据
+        let baselineData = null;
+        try {
+            const { loadBaseline } = await import('../../core/store.js');
+            const baseline = await loadBaseline();
+            baselineData = baseline ? baseline.snapshot : null;
+        } catch (error) {
+            console.warn('[Backup] Could not load baseline:', error);
+        }
+
+        // 构建单一备份数据结构
+        const backup = {
+            version: "1.0.0",
+            exportTime: new Date().toISOString(),
+            metadata: {
+                taskCount: ganttData.data.length,
+                linkCount: ganttData.links.length,
+                appVersion: "1.0.0"
+            },
+            data: {
+                tasks: ganttData.data,
+                links: ganttData.links,
+                customFields: state.customFields,
+                fieldOrder: state.fieldOrder,
+                systemFieldSettings: state.systemFieldSettings,
+                baseline: baselineData,
+                preferences: {
+                    locale: localStorage.getItem('gantt_locale'),
+                    viewMode: state.viewMode,
+                    gridWidth: localStorage.getItem('gantt_grid_width')
+                }
+            }
+        };
+
+        // JSON 不带缩进，减小体积
+        const jsonStr = JSON.stringify(backup);
+
+        // gzip 压缩
+        const compressedBlob = await compressData(jsonStr);
+
+        // 计算压缩率
+        const originalSize = new Blob([jsonStr]).size;
+        const compressedSize = compressedBlob.size;
+        const ratio = Math.round((1 - compressedSize / originalSize) * 100);
+        console.log(`[Backup] Compressed: ${(originalSize / 1024).toFixed(1)}KB → ${(compressedSize / 1024).toFixed(1)}KB (${ratio}% smaller)`);
+
+        // 下载单个压缩文件
+        const url = URL.createObjectURL(compressedBlob);
+        const a = document.createElement('a');
+        a.href = url;
+        const dateStr = new Date().toISOString().split('T')[0];
+        a.download = `gantt-backup-${dateStr}.json.gz`;
+        a.dispatchEvent(new MouseEvent('click'));
+        URL.revokeObjectURL(url);
+
+        showToast(
+            `备份导出成功 (${backup.metadata.taskCount} 个任务, 压缩${ratio}%)`,
+            'success'
+        );
+    } catch (error) {
+        console.error('[Backup] Export failed:', error);
+        showToast('备份导出失败: ' + error.message, 'error', 3000);
+    }
+}
+
+/**
+ * 验证备份文件格式
+ * @param {Object} backup - 备份数据对象
+ * @returns {Object} { valid: boolean, error: string }
+ */
+function validateBackup(backup) {
+    if (!backup || typeof backup !== 'object') {
+        return { valid: false, error: '备份文件格式不正确' };
+    }
+
+    // 检查版本
+    if (!backup.version) {
+        return { valid: false, error: '缺少版本信息' };
+    }
+
+    // 检查必要数据
+    if (!backup.data) {
+        return { valid: false, error: '缺少数据部分' };
+    }
+
+    // 验证任务数据
+    if (!Array.isArray(backup.data.tasks)) {
+        return { valid: false, error: '任务数据格式不正确' };
+    }
+
+    // 验证链接数据
+    if (!Array.isArray(backup.data.links)) {
+        return { valid: false, error: '链接数据格式不正确' };
+    }
+
+    return { valid: true };
+}
+
+/**
+ * 从备份文件还原完整系统数据
+ * 支持 .json.gz（压缩）和 .json（未压缩）两种格式
+ * @param {File} file - 备份文件
+ */
+export async function importFullBackup(file) {
+    if (!file) return;
+
+    try {
+        // 根据文件类型自动判断是否需要解压
+        let text;
+        if (file.name.endsWith('.gz')) {
+            // gzip 压缩文件 → 解压
+            text = await decompressData(file);
+        } else {
+            // 普通 JSON 文件
+            text = await file.text();
+        }
+        const backup = JSON.parse(text);
+
+        // 验证备份格式
+        const validation = validateBackup(backup);
+        if (!validation.valid) {
+            showToast(validation.error, 'error', 3000);
+            return;
+        }
+
+        // 兼容旧格式（只有字段配置）
+        const isOldFormat = !backup.version && backup.customFields;
+        if (isOldFormat) {
+            showToast('检测到旧格式配置文件，仅恢复字段设置', 'warning', 3000);
+            state.customFields = backup.customFields || [];
+            state.fieldOrder = backup.fieldOrder || [];
+            updateGanttColumns();
+            refreshLightbox();
+            showToast('配置恢复成功', 'success');
+            return;
+        }
+
+        // 确认操作（会清除现有数据）
+        const confirmed = confirm(
+            `即将从备份还原数据:\n` +
+            `- 任务: ${backup.metadata?.taskCount || backup.data.tasks.length} 个\n` +
+            `- 链接: ${backup.metadata?.linkCount || backup.data.links.length} 个\n` +
+            `- 自定义字段: ${backup.data.customFields?.length || 0} 个\n\n` +
+            `警告: 这将覆盖当前所有数据，是否继续？`
+        );
+
+        if (!confirmed) {
+            showToast('还原已取消', 'info');
+            return;
+        }
+
+        // 还原任务和链接数据
+        gantt.batchUpdate(() => {
+            gantt.clearAll();
+            gantt.parse({
+                data: backup.data.tasks || [],
+                links: backup.data.links || []
+            });
+        });
+
+        // 还原字段配置
+        if (backup.data.customFields) {
+            state.customFields = backup.data.customFields;
+        }
+        if (backup.data.fieldOrder) {
+            state.fieldOrder = backup.data.fieldOrder;
+        }
+        if (backup.data.systemFieldSettings) {
+            state.systemFieldSettings = backup.data.systemFieldSettings;
+        }
+
+        // 持久化到存储
+        const { saveGanttData } = await import('../../core/storage.js');
+        const { persistCustomFields, persistSystemFieldSettings, persistLocale } = await import('../../core/store.js');
+        
+        await saveGanttData(gantt.serialize());
+        persistCustomFields();
+        persistSystemFieldSettings();
+
+        // 还原 baseline（如果存在）
+        if (backup.data.baseline) {
+            try {
+                const { saveBaseline } = await import('../../core/store.js');
+                await saveBaseline(backup.data.baseline);
+            } catch (error) {
+                console.warn('[Backup] Could not restore baseline:', error);
+            }
+        }
+
+        // 还原偏好设置
+        if (backup.data.preferences) {
+            // 还原语言设置
+            if (backup.data.preferences.locale) {
+                await i18n.setLanguage(backup.data.preferences.locale);
+                persistLocale(backup.data.preferences.locale); // 持久化语言设置
+            }
+            // 还原视图模式
+            if (backup.data.preferences.viewMode) {
+                state.viewMode = backup.data.preferences.viewMode;
+                const { saveViewMode } = await import('../../core/storage.js');
+                saveViewMode(backup.data.preferences.viewMode); // 持久化视图模式
+            }
+        }
+
+        // 刷新界面
+        updateGanttColumns();
+        refreshLightbox();
+
+        showToast(
+            `系统还原成功: ${backup.metadata?.taskCount || backup.data.tasks.length} 个任务`,
+            'success',
+            3000
+        );
+    } catch (error) {
+        console.error('[Backup] Import failed:', error);
+        showToast('系统还原失败: ' + error.message, 'error', 3000);
+    }
 }
 
 /**
@@ -797,7 +1045,31 @@ export function initConfigIO() {
         input.click();
     });
 
-    // JSON导入 (备用)
+    // JSON完整备份导出
+    document.getElementById('dropdown-export-json')?.addEventListener('click', async function () {
+        // 关闭下拉菜单
+        const dropdown = document.querySelector('.dropdown-content.active');
+        if (dropdown) dropdown.classList.remove('active');
+        
+        await exportFullBackup();
+    });
+
+    // JSON完整备份导入
+    document.getElementById('dropdown-import-json')?.addEventListener('click', function () {
+        // 关闭下拉菜单
+        const dropdown = document.querySelector('.dropdown-content.active');
+        if (dropdown) dropdown.classList.remove('active');
+        
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.json,.json.gz,.gz';
+        input.onchange = async (e) => {
+            await importFullBackup(e.target.files[0]);
+        };
+        input.click();
+    });
+
+    // JSON配置导入 (备用 - 保持兼容旧功能)
     document.getElementById('config-import-btn')?.addEventListener('click', function () {
         document.getElementById('config-file-input').click();
     });

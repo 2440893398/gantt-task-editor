@@ -38,10 +38,27 @@
       "Skill(superpowers:executing-plans:*)",
       "Bash(node --check:*)",
       "Bash(git commit:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(dir \"c:\\\\Users\\\\24408\\\\Desktop\\\\新建文件夹\\\\src\" /B /S)",
+      "Bash(git worktree:*)",
+      "WebFetch(domain:docs.dhtmlx.com)",
+      "WebFetch(domain:www.anthropic.com)",
+      "WebFetch(domain:glama.ai)",
+      "WebFetch(domain:vercel.com)",
+      "WebFetch(domain:ai-sdk.dev)",
+      "WebFetch(domain:github.com)",
+      "Bash(tree:*)",
+      "Bash(npx vite:*)",
+      "Bash(where claude)",
+      "Bash(echo:*)",
+      "Bash(code:*)",
+      "Bash(wc:*)",
+      "Bash(powershell:*)",
+      "Bash(node -e:*)"
     ],
     "additionalDirectories": [
-      "C:\\Users\\24408\\AppData\\Local\\Temp"
+      "C:\\Users\\24408\\AppData\\Local\\Temp",
+      "C:\\Users\\CHENLO~1\\.claude\\superpower-mcp"
     ]
   }
 }

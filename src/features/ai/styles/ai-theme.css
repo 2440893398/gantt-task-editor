@@ -285,6 +285,72 @@ button:not(:disabled) {
     animation: ai-pulse 1.5s ease-in-out infinite;
 }
 
+.ai-incubating {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 22px;
+    color: hsl(var(--bc) / 0.88);
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.ai-incubating-icon {
+    color: var(--color-primary, #0EA5E9);
+    font-size: 16px;
+    display: inline-block;
+    transform-origin: center;
+    animation: ai-incubating-spin 1.6s linear infinite, ai-incubating-pulse 1.2s ease-in-out infinite;
+}
+
+.ai-thinking-label {
+    color: hsl(var(--bc) / 0.9);
+    letter-spacing: 0.2px;
+}
+
+.ai-thinking-dot {
+    opacity: 0.15;
+    animation: ai-thinking-dot 1.2s infinite;
+}
+
+.ai-thinking-dot-2 {
+    animation-delay: 0.2s;
+}
+
+.ai-thinking-dot-3 {
+    animation-delay: 0.4s;
+}
+
+@keyframes ai-incubating-pulse {
+    0%,
+    100% {
+        opacity: 0.55;
+    }
+    50% {
+        opacity: 1;
+    }
+}
+
+@keyframes ai-incubating-spin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+@keyframes ai-thinking-dot {
+    0%,
+    60%,
+    100% {
+        opacity: 0.2;
+    }
+    30% {
+        opacity: 1;
+    }
+}
+
 /* 打字机光标效果 */
 .ai-typing-cursor::after {
     content: '▋';
@@ -320,6 +386,56 @@ button:not(:disabled) {
 /* 抽屉打开/关闭动画 */
 #ai_drawer {
     transition: transform 0.3s ease;
+}
+
+#ai_drawer .ai-drawer-resize-handle {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -5px;
+    width: 10px;
+    cursor: ew-resize;
+    z-index: 2;
+}
+
+#ai_drawer .ai-drawer-resize-handle::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 4px;
+    width: 2px;
+    height: 56px;
+    transform: translateY(-50%);
+    border-radius: 999px;
+    background: color-mix(in oklch, var(--color-base-content) 20%, transparent);
+    transition: background-color 0.2s ease;
+}
+
+#ai_drawer .ai-drawer-resize-handle:hover::after {
+    background: color-mix(in oklch, var(--color-primary) 55%, transparent);
+}
+
+#ai_drawer .ai-drawer-input-resize-handle {
+    height: 10px;
+    cursor: ns-resize;
+    position: relative;
+}
+
+#ai_drawer .ai-drawer-input-resize-handle::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 4px;
+    width: 52px;
+    height: 2px;
+    transform: translateX(-50%);
+    border-radius: 999px;
+    background: color-mix(in oklch, var(--color-base-content) 18%, transparent);
+    transition: background-color 0.2s ease;
+}
+
+#ai_drawer .ai-drawer-input-resize-handle:hover::after {
+    background: color-mix(in oklch, var(--color-primary) 45%, transparent);
 }
 
 /* 模态框背景动画 */
@@ -748,15 +864,92 @@ button:not(:disabled) {
 }
 
 .ai-task-citation {
-    transition: border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease;
     cursor: pointer;
 }
 
-.ai-task-citation:hover {
-    background: color-mix(in oklch, var(--color-primary) 8%, transparent);
+.ai-task-citation-link {
+    color: hsl(var(--p));
+    text-decoration: underline;
+    text-decoration-color: hsl(var(--p) / 0.4);
+    text-underline-offset: 2px;
+    font-weight: 600;
+    transition: color 0.15s ease, text-decoration-color 0.15s ease;
+}
+
+.ai-task-citation-link:hover {
+    color: hsl(var(--pf, var(--p)));
+    text-decoration-color: hsl(var(--p));
+}
+
+/* User bubble inline mention chips */
+.ai-user-mention-chips {
+    display: inline;
+}
+
+.ai-user-mentioned-task {
+    padding-right: 0;
+    margin-bottom: 0;
 }
 
 /* Mention popup + chips */
+.ai-chat-editor {
+    min-height: 40px;
+    max-height: 140px;
+    padding: 8px 10px;
+    border: 1px solid hsl(var(--b3));
+    background: hsl(var(--b1));
+    border-radius: 10px;
+    font-size: 14px;
+    line-height: 1.5;
+    color: hsl(var(--bc));
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-y: auto;
+    outline: none;
+    transition: height 180ms ease, border-color 150ms ease, box-shadow 150ms ease, background-color 150ms ease;
+}
+
+.ai-chat-editor:focus {
+    border-color: hsl(var(--p));
+    box-shadow: 0 0 0 1px hsl(var(--p) / 0.25);
+}
+
+.ai-chat-editor:empty::before {
+    content: attr(data-placeholder);
+    color: hsl(var(--bc) / 0.45);
+    pointer-events: none;
+}
+
+.mention-token {
+    display: inline-flex;
+    align-items: center;
+    margin-right: 6px;
+    margin-bottom: 2px;
+    vertical-align: baseline;
+    padding-right: 4px;
+}
+
+.mention-token-remove {
+    width: 16px;
+    height: 16px;
+    min-height: 16px;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    background: hsl(var(--pc) / 0.2);
+    color: hsl(var(--pc));
+    transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.mention-token-remove:hover {
+    background: hsl(var(--pc) / 0.3);
+    border-color: hsl(var(--pc) / 0.45);
+}
+
+.mention-token-remove:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px hsl(var(--pc) / 0.35);
+}
+
 .mention-popup {
     background: hsl(var(--b1));
     border: 1px solid hsl(var(--b3));

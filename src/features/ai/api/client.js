@@ -304,6 +304,7 @@ export async function runSmartChat(userMessage, history, callbacks = {}) {
         // 使用 fullStream 来正确处理多步骤流（包括工具调用后的继续生成）
         // textStream 在某些情况下可能不会等待所有 steps 完成
         let stepCount = 0;
+        let streamError = null;
         console.log('[SmartChat] Starting to consume fullStream...');
         
         for await (const part of result.fullStream) {
@@ -328,10 +329,17 @@ export async function runSmartChat(userMessage, history, callbacks = {}) {
                 onToolResult?.([{ id: part.toolCallId, name: part.toolName, result: part.output }]);
             } else if (part.type === 'finish') {
                 console.log(`[SmartChat] Stream finished:`, part.finishReason);
+            } else if (part.type === 'error') {
+                streamError = part.error || new Error('Stream returned error part');
+                console.error('[SmartChat] Stream error part:', streamError);
             }
         }
-        
+
         console.log('[SmartChat] fullStream consumption complete, total steps:', stepCount);
+
+        if (streamError) {
+            throw streamError;
+        }
 
         const usage = await result.usage;
         setAiStatus('idle');

@@ -108,6 +108,8 @@ export default {
         confirmTitle: '확인',
         deleteLink: '이 종속성을 삭제하시겠습니까?',
         deleteTask: '이 작업을 삭제하시겠습니까?',
+        confirmDeleteTitle: '작업 삭제',
+        confirmDelete: '이 작업을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.',
         confirmClearCache: '모든 캐시를 삭제하시겠습니까? 저장된 모든 작업과 설정이 삭제됩니다.',
         cacheCleared: '캐시가 삭제되었습니다',
         dataRestored: '{{count}}개의 작업이 복원되었습니다',
@@ -135,7 +137,8 @@ export default {
         legend: '범례',
         completed: '완료',
         incomplete: '미완료',
-        dependency: '종속성'
+        dependency: '종속성',
+        close: '닫기'
     },
 
     // 일괄 편집
@@ -186,6 +189,7 @@ export default {
         deleteTitle: '삭제 확인',
         deleteMessage: '필드 "{{name}}"을(를) 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.',
         editSystemField: '시스템 필드 편집',
+        editSystemFieldDesc: '필드 유형과 옵션 구성을 조정합니다',
         systemFieldNameHint: '시스템 필드 이름은 수정할 수 없습니다',
         typeNotEditable: '이 필드 유형은 수정할 수 없습니다',
         systemTag: '시스템',

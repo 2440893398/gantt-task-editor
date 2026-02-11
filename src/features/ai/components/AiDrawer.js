@@ -11,7 +11,8 @@ import { getAgentName } from '../prompts/agentRegistry.js';
 import { openAiConfigModal } from './AiConfigModal.js';
 import { showConfirmDialog } from '../../../components/common/confirm-dialog.js';
 import { extractTaskCitations } from '../renderers/task-citation.js';
-import { renderTaskCitationChip } from '../renderers/task-ui.js';
+import { renderTaskCitationChip, renderInlineReferencedTasks } from '../renderers/task-ui.js';
+import { renderTaskInputBubble } from '../renderers/task-input-bubble.js';
 import { createMentionComposer } from './mention-composer.js';
 import { getAllTasksWithHierarchy } from '../utils/hierarchy-id.js';
 
@@ -31,6 +32,18 @@ let currentAgentId = null;
 let isStreaming = false; // 流式输出状态
 // 对话历史 (F-106)
 let conversationHistory = [];
+
+const DRAWER_WIDTH_KEY = 'gantt_ai_drawer_width';
+const INPUT_HEIGHT_KEY = 'gantt_ai_drawer_input_height';
+const DRAWER_MIN_WIDTH = 360;
+const DRAWER_DEFAULT_WIDTH = 420;
+const DRAWER_MAX_MARGIN = 120;
+const INPUT_PANEL_MIN_HEIGHT = 96;
+const INPUT_PANEL_DEFAULT_HEIGHT = 124;
+const INPUT_PANEL_MAX_HEIGHT = 280;
+
+let drawerResizeState = null;
+let inputResizeState = null;
 
 // 工具调用状态 DOM 缓存（toolCallId -> element）
 const toolStatusElById = new Map();
@@ -53,6 +66,7 @@ function createDrawerHTML() {
     <!-- AI 流式响应抽屉 -->
     <div id="ai_drawer" class="fixed inset-y-0 right-0 z-[6100] w-[420px] max-w-full transform translate-x-full transition-transform duration-300 flex flex-col bg-base-100 border-l border-base-300 rounded-l-xl shadow-xl"
          role="dialog" aria-modal="false" aria-labelledby="ai_drawer_title">
+        <div id="ai_drawer_resize_handle" class="ai-drawer-resize-handle" aria-hidden="true"></div>
         <!-- 头部 - 56px高度 -->
         <div class="h-14 px-3.5 flex items-center justify-between sticky top-0 z-10 bg-base-100 border-b border-base-300">
             <div class="flex items-center gap-2.5">
@@ -98,6 +112,8 @@ function createDrawerHTML() {
             <!-- 消息气泡动态生成 -->
         </div>
 
+        <div id="ai_drawer_input_resize_handle" class="ai-drawer-input-resize-handle" aria-hidden="true"></div>
+
         <!-- Token 统计区 (F-111) -->
         <div class="flex justify-between items-center px-4 py-2 bg-base-100 text-xs text-base-content/60 border-y border-base-300 hidden" id="ai_token_stats">
             <span>${i18n.t('ai.drawer.session') || 'Session'}</span>
@@ -126,13 +142,14 @@ function createDrawerHTML() {
                                 </div>
                             </details>
                         </div>
+                        <button class="btn btn-ghost btn-xs btn-square rounded-md" id="ai_error_close" aria-label="关闭错误提示">✕</button>
                     </div>
                 </div>
             </div>
         </div>
 
         <!-- 底部区域：聊天输入 -->
-        <div class="bg-base-100 border-t border-base-300 sticky bottom-0 z-10">
+        <div class="bg-base-100 border-t border-base-300 sticky bottom-0 z-10" id="ai_drawer_input_panel">
             <!-- F-106: 聊天输入框 - 对齐设计稿 -->
             <div class="p-3 bg-base-100">
                 <div class="flex gap-2.5 items-end">
@@ -146,13 +163,17 @@ function createDrawerHTML() {
                         </svg>
                     </button>
                     
-                    <!-- 输入框 -->
-                    <textarea 
-                        class="textarea textarea-bordered flex-1 text-sm resize-none min-h-[40px] rounded-[10px]" 
-                        rows="1"
-                        id="ai_chat_input"
-                        placeholder="${i18n.t('ai.drawer.chatPlaceholder') || '输入消息继续对话，提问...'}"
-                    ></textarea>
+                    <!-- 输入框（支持 mention 标签） -->
+                    <div class="ai-chat-input-container flex-1 min-w-0" id="ai_chat_input_container">
+                        <div
+                            class="ai-chat-editor"
+                            id="ai_chat_input"
+                            contenteditable="true"
+                            role="textbox"
+                            aria-multiline="true"
+                            data-placeholder="${i18n.t('ai.drawer.chatPlaceholder') || '输入消息继续对话，提问...'}"
+                        ></div>
+                    </div>
                     
                     <!-- 发送按钮：40×40圆形 -->
                     <button class="btn btn-primary w-10 h-10 min-h-[40px] p-0 rounded-full flex-shrink-0" 
@@ -243,6 +264,7 @@ export function initAiDrawer() {
 
     // 绑定事件
     bindEvents();
+    initResizableLayout();
 }
 
 /**
@@ -251,9 +273,6 @@ export function initAiDrawer() {
 function bindEvents() {
     // 关闭按钮
     document.getElementById('ai_drawer_close')?.addEventListener('click', closeDrawer);
-
-    // 遮罩层点击关闭
-    document.getElementById('ai_drawer_backdrop')?.addEventListener('click', closeDrawer);
 
     // 设置按钮
     document.getElementById('ai_drawer_settings')?.addEventListener('click', () => {
@@ -273,11 +292,15 @@ function bindEvents() {
         });
     });
 
+    // 关闭错误提示
+    document.getElementById('ai_error_close')?.addEventListener('click', hideError);
+
     // F-106: 发送消息按钮
     document.getElementById('ai_send_btn')?.addEventListener('click', handleSendMessage);
 
     // F-106: 聊天输入框回车发送 + @ mention 支持
     const chatInput = document.getElementById('ai_chat_input');
+    autoResizeChatInput(chatInput);
     chatInput?.addEventListener('keydown', (e) => {
         // 让 mention composer 先处理键盘事件
         if (mentionComposer && mentionComposer.handleKeydown(e)) return;
@@ -291,16 +314,19 @@ function bindEvents() {
     // @ mention 输入监听
     chatInput?.addEventListener('input', () => {
         if (mentionComposer) {
-            mentionComposer.handleInput(chatInput.value);
+            mentionComposer.handleInput();
         }
+        autoResizeChatInput(chatInput);
     });
 
     // 初始化 mention composer
-    const inputContainer = chatInput?.closest('.flex.gap-2\\.5');
+    const inputContainer = document.getElementById('ai_chat_input_container');
     if (inputContainer) {
         mentionComposer = createMentionComposer({
             containerEl: inputContainer,
-            getTaskList: () => getAllTasksWithHierarchy()
+            inputEl: chatInput,
+            getTaskList: () => getAllTasksWithHierarchy(),
+            onSelect: () => autoResizeChatInput(chatInput)
         });
         mentionComposer.init();
     }
@@ -311,12 +337,188 @@ function bindEvents() {
     // 快捷建议点击事件（事件委托）
     messagesEl?.addEventListener('click', handleSuggestionClick);
 
+    // 任务引用链接点击（打开任务详情）
+    messagesEl?.addEventListener('click', handleTaskCitationClick);
+
     // ESC 关闭
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' && isOpen) {
             closeDrawer();
         }
     });
+}
+
+function clamp(value, min, max) {
+    return Math.min(max, Math.max(min, value));
+}
+
+function getStoredNumber(key, fallback) {
+    try {
+        const raw = localStorage.getItem(key);
+        const parsed = Number(raw);
+        return Number.isFinite(parsed) ? parsed : fallback;
+    } catch {
+        return fallback;
+    }
+}
+
+function setDrawerWidth(width) {
+    if (!drawerEl) return;
+    const maxWidth = Math.max(DRAWER_MIN_WIDTH, window.innerWidth - DRAWER_MAX_MARGIN);
+    const clamped = clamp(width, DRAWER_MIN_WIDTH, maxWidth);
+    drawerEl.style.width = `${clamped}px`;
+    localStorage.setItem(DRAWER_WIDTH_KEY, String(clamped));
+}
+
+function setInputPanelHeight(height) {
+    const panel = document.getElementById('ai_drawer_input_panel');
+    if (!panel) return;
+    const clamped = clamp(height, INPUT_PANEL_MIN_HEIGHT, INPUT_PANEL_MAX_HEIGHT);
+    panel.style.height = `${clamped}px`;
+    panel.style.minHeight = `${INPUT_PANEL_MIN_HEIGHT}px`;
+    localStorage.setItem(INPUT_HEIGHT_KEY, String(clamped));
+}
+
+function handleDrawerResizeMove(event) {
+    if (!drawerResizeState) return;
+    const desired = drawerResizeState.startWidth + (drawerResizeState.startX - event.clientX);
+    setDrawerWidth(desired);
+}
+
+function stopDrawerResize() {
+    drawerResizeState = null;
+    document.removeEventListener('mousemove', handleDrawerResizeMove);
+    document.removeEventListener('mouseup', stopDrawerResize);
+}
+
+function handleInputResizeMove(event) {
+    if (!inputResizeState) return;
+    const desired = inputResizeState.startHeight + (inputResizeState.startY - event.clientY);
+    setInputPanelHeight(desired);
+}
+
+function stopInputResize() {
+    inputResizeState = null;
+    document.removeEventListener('mousemove', handleInputResizeMove);
+    document.removeEventListener('mouseup', stopInputResize);
+}
+
+function initResizableLayout() {
+    if (!drawerEl) return;
+
+    const resizeHandle = document.getElementById('ai_drawer_resize_handle');
+    const inputResizeHandle = document.getElementById('ai_drawer_input_resize_handle');
+
+    if (resizeHandle && !resizeHandle.dataset.bound) {
+        resizeHandle.dataset.bound = 'true';
+        resizeHandle.addEventListener('mousedown', (event) => {
+            event.preventDefault();
+            const currentWidth = parseInt(drawerEl.style.width || `${DRAWER_DEFAULT_WIDTH}`, 10);
+            drawerResizeState = {
+                startX: event.clientX,
+                startWidth: Number.isFinite(currentWidth) ? currentWidth : DRAWER_DEFAULT_WIDTH
+            };
+            document.addEventListener('mousemove', handleDrawerResizeMove);
+            document.addEventListener('mouseup', stopDrawerResize);
+        });
+    }
+
+    if (inputResizeHandle && !inputResizeHandle.dataset.bound) {
+        inputResizeHandle.dataset.bound = 'true';
+        inputResizeHandle.addEventListener('mousedown', (event) => {
+            event.preventDefault();
+            const panel = document.getElementById('ai_drawer_input_panel');
+            const currentHeight = parseInt(panel?.style.height || `${INPUT_PANEL_DEFAULT_HEIGHT}`, 10);
+            inputResizeState = {
+                startY: event.clientY,
+                startHeight: Number.isFinite(currentHeight) ? currentHeight : INPUT_PANEL_DEFAULT_HEIGHT
+            };
+            document.addEventListener('mousemove', handleInputResizeMove);
+            document.addEventListener('mouseup', stopInputResize);
+        });
+    }
+
+    setDrawerWidth(getStoredNumber(DRAWER_WIDTH_KEY, DRAWER_DEFAULT_WIDTH));
+    setInputPanelHeight(getStoredNumber(INPUT_HEIGHT_KEY, INPUT_PANEL_DEFAULT_HEIGHT));
+}
+
+function findTaskByHierarchyId(hierarchyId, taskList = getAllTasksWithHierarchy()) {
+    if (!hierarchyId) return null;
+    const target = String(hierarchyId).trim();
+    if (!target) return null;
+    if (!Array.isArray(taskList)) return null;
+
+    return taskList.find(task => String(task?.hierarchy_id || '').trim() === target) || null;
+}
+
+function normalizeTaskText(text) {
+    return String(text || '')
+        .toLowerCase()
+        .replace(/[\s\u3000]+/g, '')
+        .replace(/[()（）【】\[\]「」『』:：,，.。!！?？\-—_、\/]/g, '');
+}
+
+function findTaskForCitation({ hierarchyId, taskName }, taskList = getAllTasksWithHierarchy()) {
+    if (!Array.isArray(taskList)) return null;
+
+    const byHierarchy = findTaskByHierarchyId(hierarchyId, taskList);
+    if (byHierarchy) return byHierarchy;
+
+    const normalizedName = normalizeTaskText(taskName);
+    if (!normalizedName) return null;
+
+    const candidates = taskList
+        .map(task => ({ task, normalizedTaskName: normalizeTaskText(task?.text || '') }))
+        .filter(item => item.normalizedTaskName.length > 0);
+
+    const exact = candidates.find(item => item.normalizedTaskName === normalizedName);
+    if (exact) return exact.task;
+
+    const contains = candidates.filter(item => item.normalizedTaskName.includes(normalizedName));
+    if (contains.length === 1) return contains[0].task;
+    if (contains.length > 1) {
+        contains.sort((a, b) => a.normalizedTaskName.length - b.normalizedTaskName.length);
+        return contains[0].task;
+    }
+
+    const reverseContains = candidates.filter(item => normalizedName.includes(item.normalizedTaskName) && item.normalizedTaskName.length >= 4);
+    if (reverseContains.length === 1) return reverseContains[0].task;
+    if (reverseContains.length > 1) {
+        reverseContains.sort((a, b) => b.normalizedTaskName.length - a.normalizedTaskName.length);
+        return reverseContains[0].task;
+    }
+
+    return null;
+}
+
+function handleTaskCitationClick(event, deps = {}) {
+    const citationEl = event?.target?.closest?.('.ai-task-citation[data-hierarchy-id]');
+    if (!citationEl) return;
+
+    event.preventDefault();
+
+    const hierarchyId = citationEl.dataset.hierarchyId;
+    const taskName = citationEl.dataset.taskName;
+    const taskList = Array.isArray(deps.taskList) ? deps.taskList : getAllTasksWithHierarchy();
+    const task = findTaskForCitation({ hierarchyId, taskName }, taskList);
+
+    if (!task?.id) {
+        const notify = typeof deps.notify === 'function' ? deps.notify : showToast;
+        notify('未找到对应任务，可能已被删除或层级编号已变化', 'warning');
+        return;
+    }
+
+    const openTaskDetails = typeof deps.openTaskDetails === 'function'
+        ? deps.openTaskDetails
+        : (typeof window !== 'undefined' ? window.openTaskDetailsPanel : null);
+
+    if (typeof openTaskDetails === 'function') {
+        openTaskDetails(task.id);
+        return;
+    }
+
+    const notify = typeof deps.notify === 'function' ? deps.notify : showToast;
+    notify('任务详情面板不可用', 'warning');
 }
 
 /**
@@ -328,7 +530,7 @@ export function openDrawer(options = {}) {
         initAiDrawer();
     }
 
-    const { title, context, onApply, agentId } = options;
+    const { title, context, onApply, agentId, contextTaskData, contextMode } = options;
     currentAgentId = agentId;
 
     // 设置标题
@@ -342,14 +544,14 @@ export function openDrawer(options = {}) {
 
     // 添加用户消息到历史
     if (context) {
-        addMessage('user', context);
+        const userMeta = contextTaskData
+            ? { inputBubble: { taskData: contextTaskData, mode: contextMode || 'mention' } }
+            : {};
+        addMessage('user', context, userMeta);
     }
 
     // 显示抽屉
-    const backdropEl = document.getElementById('ai_drawer_backdrop');
-    backdropEl?.classList.remove('hidden');
     requestAnimationFrame(() => {
-        backdropEl?.classList.add('opacity-100');
         drawerEl?.classList.remove('translate-x-full');
     });
 
@@ -363,14 +565,7 @@ export function openDrawer(options = {}) {
 export function closeDrawer() {
     if (!drawerEl) return;
 
-    const backdropEl = document.getElementById('ai_drawer_backdrop');
-
     drawerEl?.classList.add('translate-x-full');
-    backdropEl?.classList.remove('opacity-100');
-
-    setTimeout(() => {
-        backdropEl?.classList.add('hidden');
-    }, 300);
 
     isOpen = false;
     drawerEl?.setAttribute('aria-hidden', 'true');
@@ -445,7 +640,7 @@ function renderMessage(message) {
             </div>
             <div class="chat-bubble ${bubbleColor}">
                 <div class="prose prose-sm max-w-none" id="msg_content_${message.id}">
-                    ${isUser ? escapeHtml(message.content) : renderMarkdownWithTaskCitations(message.content)}
+                    ${isUser ? renderUserMessageContent(message) : renderMarkdownWithTaskCitations(message.content)}
                 </div>
                 ${!isUser && message.tokens ? `
                     <div class="flex items-center justify-between text-xs text-base-content/60 mt-2 pt-2 border-t border-base-300/50">
@@ -501,6 +696,23 @@ function renderMessage(message) {
     applyBtn?.addEventListener('click', () => {
         handleApply(message.content, message.id);
     });
+}
+
+export function renderUserMessageContent(message) {
+    if (message?.inputBubble?.taskData) {
+        return renderTaskInputBubble(message.inputBubble.taskData, {
+            mode: message.inputBubble.mode || 'mention'
+        });
+    }
+
+    const escapedContent = escapeHtml(message?.content || '');
+
+    // Render inline mention chips when referencedTasks are present
+    if (Array.isArray(message?.referencedTasks) && message.referencedTasks.length > 0) {
+        return renderInlineReferencedTasks(message.referencedTasks, escapedContent);
+    }
+
+    return escapedContent;
 }
 
 /**
@@ -718,7 +930,7 @@ export function startStreaming() {
     // 显示光标
     const contentEl = document.getElementById(`msg_content_${messageId}`);
     if (contentEl) {
-        contentEl.innerHTML = '<span class="ai-cursor">|</span>';
+        contentEl.innerHTML = renderIncubatingPlaceholder();
     }
 
     showLoading(true);
@@ -727,7 +939,7 @@ export function startStreaming() {
     return messageId;
 }
 
-import { renderResult } from '../renderers/index.js';
+import { renderResult, isRegisteredResultType } from '../renderers/index.js';
 
 /**
  * 追加文本块
@@ -788,21 +1000,24 @@ export function finishStreaming(usage = {}) {
 
             if (jsonText.startsWith('{')) {
                 const data = JSON.parse(jsonText);
-                // 渲染结构化结果
-                renderHTML = renderResult(data, {
-                    // 传递操作回调
-                    onApply: (text) => handleApply(text, lastMsg.id),
-                    canApply: typeof onApplyCallback === 'function' && currentAgentId !== 'chat',
-                    // onUndo: ... 
-                });
+                if (isRegisteredResultType(data?.type)) {
+                    // 渲染结构化结果
+                    renderHTML = renderResult(data, {
+                        // 传递操作回调
+                        onApply: (text) => handleApply(text, lastMsg.id),
+                        canApply: typeof onApplyCallback === 'function' && currentAgentId !== 'chat',
+                        // onUndo: ...
+                    });
 
-                // 更新消息内容为结构化对象，避免重复解析
-                lastMsg.isStructured = true;
-                lastMsg.structuredData = data;
+                    // 更新消息内容为结构化对象，避免重复解析
+                    lastMsg.isStructured = true;
+                    lastMsg.structuredData = data;
 
-                // 隐藏该消息底部的默认操作栏（因为渲染器自带了操作按钮）
-                if (footerEl) footerEl.style.display = 'none';
-
+                    // 隐藏该消息底部的默认操作栏（因为渲染器自带了操作按钮）
+                    if (footerEl) footerEl.style.display = 'none';
+                } else {
+                    renderHTML = renderMarkdownWithTaskCitations(lastMsg.content);
+                }
             } else {
                 // 非 JSON，使用 Markdown 渲染
                 renderHTML = renderMarkdownWithTaskCitations(lastMsg.content);
@@ -871,11 +1086,12 @@ export function showError(message, details = null) {
         errorEl.classList.remove('hidden');
 
         if (details && detailsEl && rawEl) {
-            rawEl.textContent = typeof details === 'string' ? details : JSON.stringify(details, null, 2);
+            rawEl.textContent = formatErrorDetails(details);
             detailsEl.classList.remove('hidden');
         }
     }
 
+    clearStreamingStateOnError();
     showLoading(false);
 }
 
@@ -884,9 +1100,67 @@ export function showError(message, details = null) {
  */
 function hideError() {
     const errorEl = document.getElementById('ai_drawer_error');
+    const msgEl = document.getElementById('ai_error_message');
     const detailsEl = document.getElementById('ai_error_details');
+    const rawEl = document.getElementById('ai_error_raw');
     errorEl?.classList.add('hidden');
     detailsEl?.classList.add('hidden');
+    if (msgEl) msgEl.textContent = '';
+    if (rawEl) rawEl.textContent = '';
+}
+
+function clearStreamingStateOnError() {
+    isStreaming = false;
+
+    const lastMsg = conversationHistory.filter(m => m.role === 'assistant').pop();
+    if (!lastMsg) return;
+    if (!lastMsg.streaming) return;
+
+    lastMsg.streaming = false;
+
+    const contentEl = document.getElementById(`msg_content_${lastMsg.id}`);
+    const footerEl = document.getElementById(`msg_footer_${lastMsg.id}`);
+
+    const hasContent = typeof lastMsg.content === 'string' && lastMsg.content.trim().length > 0;
+    if (!hasContent) {
+        const msgEl = document.querySelector(`[data-message-id="${lastMsg.id}"]`);
+        msgEl?.remove();
+        conversationHistory = conversationHistory.filter(m => m.id !== lastMsg.id);
+        return;
+    }
+
+    if (contentEl) {
+        contentEl.innerHTML = renderMarkdownWithTaskCitations(lastMsg.content);
+    }
+
+    if (footerEl && !lastMsg.isStructured) {
+        footerEl.classList.remove('hidden');
+        bindMessageFooterEvents(lastMsg);
+    }
+}
+
+function formatErrorDetails(details) {
+    if (typeof details === 'string') return details;
+    try {
+        return JSON.stringify(details, errorDetailReplacer, 2);
+    } catch (e) {
+        return String(details);
+    }
+}
+
+function errorDetailReplacer(_key, value) {
+    if (value instanceof Error) {
+        const serialized = {
+            name: value.name,
+            message: value.message,
+            stack: value.stack
+        };
+        if (value.cause !== undefined) {
+            serialized.cause = value.cause;
+        }
+        return serialized;
+    }
+    return value;
 }
 
 /**
@@ -934,26 +1208,52 @@ export function clearConversation() {
  */
 function handleSendMessage() {
     const inputEl = document.getElementById('ai_chat_input');
-    const text = inputEl?.value?.trim();
-
-    if (!text) return;
-
-    // 构建消息载荷（含 @ 引用的任务）
-    let detail = { message: text };
+    let detail = { message: getChatInputText(inputEl), referencedTasks: [] };
     if (mentionComposer) {
-        const payload = mentionComposer.buildPayload(text);
+        const payload = mentionComposer.buildPayload();
         detail = {
             message: payload.text,
             referencedTasks: payload.referencedTasks
         };
+    }
+
+    const text = (detail.message || '').trim();
+    if (!text) return;
+
+    detail.message = text;
+
+    // 清空输入框
+    clearChatInput(inputEl);
+    autoResizeChatInput(inputEl);
+    if (mentionComposer) {
         mentionComposer.clearSelection();
     }
 
-    // 清空输入框
-    inputEl.value = '';
-
     // 触发发送事件，由 Service 层处理
     document.dispatchEvent(new CustomEvent('aiSend', { detail }));
+}
+
+function getChatInputText(inputEl) {
+    if (!inputEl) return '';
+    return (inputEl.textContent || '').replace(/\u00A0/g, ' ').trim();
+}
+
+function clearChatInput(inputEl) {
+    if (!inputEl) return;
+    inputEl.textContent = '';
+    inputEl.focus();
+}
+
+function autoResizeChatInput(inputEl) {
+    if (!inputEl) return;
+
+    const minHeight = 40;
+    const maxHeight = 140;
+
+    inputEl.style.height = 'auto';
+    const nextHeight = Math.min(maxHeight, Math.max(minHeight, inputEl.scrollHeight));
+    inputEl.style.height = `${nextHeight}px`;
+    inputEl.style.overflowY = inputEl.scrollHeight > maxHeight ? 'auto' : 'hidden';
 }
 
 /**
@@ -1070,7 +1370,11 @@ function tryParseStructuredData(text) {
     }
     if (!raw.startsWith('{')) return null;
     try {
-        return JSON.parse(raw);
+        const data = JSON.parse(raw);
+        if (!isRegisteredResultType(data?.type)) {
+            return null;
+        }
+        return data;
     } catch (error) {
         return null;
     }
@@ -1100,45 +1404,76 @@ export function isDrawerOpen() {
  */
 function renderMarkdown(text) {
     if (!text) return '';
+    const normalizedText = normalizeAiMarkdown(text);
     
     try {
         // marked.parse 返回 HTML 字符串
-        return marked.parse(text);
+        return marked.parse(normalizedText);
     } catch (e) {
         console.warn('[AiDrawer] Markdown parse error:', e);
-        return escapeHtml(text).replace(/\n/g, '<br>');
+        return escapeHtml(normalizedText).replace(/\n/g, '<br>');
     }
+}
+
+function normalizeAiMarkdown(text) {
+    if (!text || typeof text !== 'string') return text || '';
+
+    return text
+        .replace(/^\s*•\s+/gm, '- ')
+        .replace(/^(\s*[-*]\s+)!{2,}\s+(?=\[#\d+(?:\.\d+)*\])/gm, '$1')
+        .replace(/^(\s*[-*]\s+)\[[ xX]\]\s+(?=\[#\d+(?:\.\d+)*\])/gm, '$1');
+}
+
+function renderIncubatingPlaceholder() {
+    return `
+        <div class="ai-incubating" role="status" aria-live="polite">
+            <span class="ai-incubating-icon" aria-hidden="true">✶</span>
+            <span class="ai-thinking-label">
+                thinking<span class="ai-thinking-dot ai-thinking-dot-1">.</span><span class="ai-thinking-dot ai-thinking-dot-2">.</span><span class="ai-thinking-dot ai-thinking-dot-3">.</span>
+            </span>
+        </div>
+    `;
 }
 
 export function renderMarkdownWithTaskCitations(text) {
     if (!text) return '';
 
-    const citations = extractTaskCitations(text);
+    const normalizedText = normalizeAiMarkdown(text);
+
+    const citations = extractTaskCitations(normalizedText);
     if (!citations.length) {
-        return renderMarkdown(text);
+        return renderMarkdown(normalizedText);
     }
 
     let cursor = 0;
-    let html = '';
+    let markdownWithTokens = '';
+    const tokenToHtml = new Map();
 
-    for (const citation of citations) {
+    citations.forEach((citation, idx) => {
         const start = citation.index;
         const end = start + citation.raw.length;
+        const token = `@@AI_TASK_CITATION_${idx}@@`;
 
         if (start > cursor) {
-            html += renderMarkdown(text.slice(cursor, start));
+            markdownWithTokens += normalizedText.slice(cursor, start);
         }
 
-        html += renderTaskCitationChip({
+        markdownWithTokens += token;
+        tokenToHtml.set(token, renderTaskCitationChip({
             hierarchyId: citation.hierarchyId,
             name: citation.name
-        });
+        }));
 
         cursor = end;
+    });
+
+    if (cursor < normalizedText.length) {
+        markdownWithTokens += normalizedText.slice(cursor);
     }
 
-    if (cursor < text.length) {
-        html += renderMarkdown(text.slice(cursor));
+    let html = renderMarkdown(markdownWithTokens);
+    for (const [token, citationHtml] of tokenToHtml.entries()) {
+        html = html.split(token).join(citationHtml);
     }
 
     return html;
@@ -1178,6 +1513,13 @@ export function clearAdditionalInstruction() {
         textarea.value = '';
     }
 }
+
+export const __test__ = {
+    tryParseStructuredData,
+    handleTaskCitationClick,
+    findTaskByHierarchyId,
+    findTaskForCitation
+};
 
 export default {
     init: initAiDrawer,

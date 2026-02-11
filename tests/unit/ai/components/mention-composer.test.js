@@ -36,6 +36,16 @@ describe('mention-composer', () => {
             const results = filterTasksForMention(sampleTasks, '不存在的任务xyz');
             expect(results).toHaveLength(0);
         });
+
+        it('matches regardless of whitespace differences in query and task name', () => {
+            const tasks = [
+                { id: 10, text: '4A映射规则', hierarchy_id: '#3', status: 'pending', priority: 'medium', progress: 0 }
+            ];
+
+            const results = filterTasksForMention(tasks, '4A 映射 规则');
+            expect(results).toHaveLength(1);
+            expect(results[0].id).toBe(10);
+        });
     });
 
     describe('buildReferencedTasksPayload', () => {
@@ -116,6 +126,26 @@ describe('mention-composer', () => {
             expect(selected[0].id).toBe(1);
         });
 
+        it('clears @query text in input after selecting task', () => {
+            const inputEl = document.createElement('textarea');
+            container.appendChild(inputEl);
+
+            const composer = createMentionComposer({
+                containerEl: container,
+                inputEl,
+                getTaskList: () => sampleTasks
+            });
+            composer.init();
+
+            inputEl.value = '@确认';
+            composer.handleInput(inputEl.value);
+            composer.selectTask(sampleTasks[0]);
+
+            expect(inputEl.value).toBe('');
+            expect(document.activeElement).toBe(inputEl);
+            expect(composer.getSelectedTasks()).toHaveLength(1);
+        });
+
         it('emits payload with referencedTasks', () => {
             const composer = createMentionComposer({
                 containerEl: container,
@@ -134,6 +164,51 @@ describe('mention-composer', () => {
                 hierarchy_id: '#1',
                 text: '设计登录页面'
             });
+        });
+
+        it('inserts mention token inline for contenteditable input', () => {
+            const inputEl = document.createElement('div');
+            inputEl.setAttribute('contenteditable', 'true');
+            container.appendChild(inputEl);
+
+            const composer = createMentionComposer({
+                containerEl: container,
+                inputEl,
+                getTaskList: () => sampleTasks
+            });
+            composer.init();
+
+            inputEl.textContent = '@设计';
+            composer.handleInput(inputEl.textContent);
+            composer.selectTask(sampleTasks[0]);
+
+            expect(inputEl.querySelector('.mention-token')).not.toBeNull();
+            expect(composer.getSelectedTasks()).toHaveLength(1);
+        });
+
+        it('keeps popup visible when @query contains spaces (for full task names)', () => {
+            const tasks = [
+                { id: 11, text: '人员子域需求与验收文档（用户字段、账号生命周期、4A映射规则、示例数据）', hierarchy_id: '#4', status: 'pending', priority: 'medium', progress: 0 }
+            ];
+
+            const inputEl = document.createElement('div');
+            inputEl.setAttribute('contenteditable', 'true');
+            container.appendChild(inputEl);
+
+            const composer = createMentionComposer({
+                containerEl: container,
+                inputEl,
+                getTaskList: () => tasks
+            });
+            composer.init();
+
+            inputEl.textContent = '@人员子域需求 与验收文档';
+            composer.handleInput(inputEl.textContent);
+
+            const popup = container.querySelector('.mention-popup');
+            expect(popup).not.toBeNull();
+            expect(popup?.classList.contains('hidden')).toBe(false);
+            expect(popup?.textContent || '').toContain('人员子域需求与验收文档');
         });
 
         it('removes a selected task chip', () => {

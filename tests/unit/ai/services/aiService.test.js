@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import AiService, { invokeAgent, getSmartContext, applyToInput } from '../../../../src/features/ai/services/aiService.js';
 import { checkAiConfigured } from '../../../../src/core/store.js';
-import { runAgentStream } from '../../../../src/features/ai/api/client.js';
+import { runAgentStream, runSmartChat } from '../../../../src/features/ai/api/client.js';
 import { getAgent, getAgentName } from '../../../../src/features/ai/prompts/agentRegistry.js';
 import AiDrawer from '../../../../src/features/ai/components/AiDrawer.js';
 import { showToast } from '../../../../src/utils/toast.js';
@@ -13,7 +13,8 @@ vi.mock('../../../../src/core/store.js', () => ({
     checkAiConfigured: vi.fn()
 }));
 vi.mock('../../../../src/features/ai/api/client.js', () => ({
-    runAgentStream: vi.fn()
+    runAgentStream: vi.fn(),
+    runSmartChat: vi.fn()
 }));
 vi.mock('../../../../src/features/ai/prompts/agentRegistry.js', () => ({
     getAgent: vi.fn(),
@@ -27,7 +28,12 @@ vi.mock('../../../../src/features/ai/components/AiDrawer.js', () => ({
         finishStreaming: vi.fn(),
         showError: vi.fn(),
         clearConversation: vi.fn(),
-        getAdditionalInstruction: vi.fn().mockReturnValue('')
+        getAdditionalInstruction: vi.fn().mockReturnValue(''),
+        getConversationHistory: vi.fn().mockReturnValue([]),
+        addMessage: vi.fn(),
+        removeMessagesAfter: vi.fn(),
+        showToolCall: vi.fn(),
+        showToolResult: vi.fn()
     }
 }));
 vi.mock('../../../../src/utils/toast.js', () => ({
@@ -123,6 +129,38 @@ describe('AI Service', () => {
             // Test onError - now uses parsed error message from handleAiError
             onError(new Error('test error'));
             expect(AiDrawer.showError).toHaveBeenCalled();
+        });
+
+        it('starts streaming immediately for chat before first chunk', async () => {
+            runSmartChat.mockResolvedValue(undefined);
+
+            await invokeAgent('chat', { text: 'hello' });
+
+            expect(runSmartChat).toHaveBeenCalled();
+            expect(AiDrawer.startStreaming).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    describe('aiSend event handling', () => {
+        it('passes referenced task context into smart chat message', async () => {
+            await invokeAgent('chat', { text: '' });
+
+            document.dispatchEvent(new CustomEvent('aiSend', {
+                detail: {
+                    message: '介绍一下这个任务',
+                    referencedTasks: [
+                        { id: 101, hierarchy_id: '#1.1', text: '确认需求与验收标准' }
+                    ]
+                }
+            }));
+
+            await Promise.resolve();
+
+            expect(runSmartChat).toHaveBeenCalledTimes(1);
+            const [message] = runSmartChat.mock.calls[0];
+            expect(message).toContain('介绍一下这个任务');
+            expect(message).toContain('#1.1');
+            expect(message).toContain('确认需求与验收标准');
         });
     });
 

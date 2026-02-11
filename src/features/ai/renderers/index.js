@@ -33,6 +33,15 @@ export function getRenderer(type) {
 }
 
 /**
+ * 检查结果类型是否已注册
+ * @param {string} type
+ * @returns {boolean}
+ */
+export function isRegisteredResultType(type) {
+    return typeof type === 'string' && renderers.has(type);
+}
+
+/**
  * 渲染 JSON 结果
  * @param {Object} data - JSON 数据 (必须包含 type 字段)
  * @param {Object} options - { onApply, onUndo }
@@ -194,7 +203,10 @@ function taskSplitRenderer(data, options = {}) {
                     ${subtasks.map((task, idx) => `
                         <li class="flex items-start gap-2 text-sm bg-base-100 rounded-lg p-3">
                             <span class="badge badge-sm badge-primary">${idx + 1}</span>
-                            <span class="flex-1">${escapeHtml(typeof task === 'string' ? task : task.name || task.text || '')}</span>
+                            <div class="flex-1 min-w-0">
+                                <div>${escapeHtml(typeof task === 'string' ? task : task.name || task.text || '')}</div>
+                                ${typeof task === 'object' && task?.description ? `<div class="text-xs text-base-content/60 mt-1 whitespace-pre-wrap">${escapeHtml(task.description)}</div>` : ''}
+                            </div>
                         </li>
                     `).join('')}
                 </ul>
@@ -214,7 +226,7 @@ function taskSplitRenderer(data, options = {}) {
                 <div class="card-actions justify-end mt-3">
                     ${canApply ? `
                         <button class="btn btn-sm btn-primary ai-result-apply-subtasks">
-                            ${i18n.t('ai.result.createSubtasks') || '创建子任务'}
+                            ${i18n.t('ai.result.createSubtasks') || '应用子任务方案'}
                         </button>
                     ` : ''}
                 </div>

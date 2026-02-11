@@ -194,8 +194,23 @@ describe('built-in renderers', () => {
             });
 
             expect(html).toContain('ai-result-apply-subtasks');
-            // Chinese fallback for createSubtasks
-            expect(html).toContain('创建子任务');
+            expect(html).toContain('应用子任务方案');
+        });
+
+        it('renders subtask description when provided', () => {
+            const html = renderResult({
+                type: 'task_split',
+                original: 'parent task',
+                subtasks: [
+                    {
+                        text: '子任务A',
+                        description: '这是更详细的执行说明'
+                    }
+                ]
+            });
+
+            expect(html).toContain('子任务A');
+            expect(html).toContain('这是更详细的执行说明');
         });
 
         it('hides create subtasks button when canApply=false', () => {

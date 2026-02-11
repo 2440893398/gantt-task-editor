@@ -17,6 +17,15 @@ describe('task citation renderer', () => {
         expect(items[1].name).toBe('实现用户认证');
     });
 
+    it('does not include trailing pipe metadata in citation name', () => {
+        const text = '- [#1.2] 设计登录页面 | 逾期: 5 天 | 截止: 2026-02-01';
+        const items = extractTaskCitations(text);
+
+        expect(items).toHaveLength(1);
+        expect(items[0].hierarchyId).toBe('#1.2');
+        expect(items[0].name).toBe('设计登录页面');
+    });
+
     it('ignores malformed citations', () => {
         const text = 'bad [#] foo and [1.2] bar and [#1.2]';
         const items = extractTaskCitations(text);
@@ -28,6 +37,21 @@ describe('task citation renderer', () => {
 
         expect(html).toContain('ai-task-citation');
         expect(html).toContain('data-hierarchy-id="#1.2"');
+        expect(html).toContain('设计登录页面');
+    });
+
+    it('renders citation as an <a> link, not a <button> chip', () => {
+        const html = renderTaskCitationChip({ hierarchyId: '#1.2', name: '设计登录页面' });
+
+        // Should be an <a> element, not a <button>
+        expect(html).toContain('<a ');
+        expect(html).not.toContain('<button');
+        // Should have link-style class
+        expect(html).toContain('ai-task-citation-link');
+        // Should still have data attribute for click handling
+        expect(html).toContain('data-hierarchy-id="#1.2"');
+        // Should contain the hierarchy ID and name
+        expect(html).toContain('#1.2');
         expect(html).toContain('设计登录页面');
     });
 

@@ -118,7 +118,7 @@ function getLocalizedFieldTypeLabel(type) {
 export function openFieldManagementPanel() {
     const panel = document.getElementById('field-management-panel');
     panel.classList.add('open');
-    openFieldManagementBackdrop();
+    // openFieldManagementBackdrop(); // 移除灰色遮罩层
     attachFieldDrawerEscClose();
     renderFieldList();
 }
@@ -129,7 +129,7 @@ export function openFieldManagementPanel() {
 export function closeFieldManagementPanel() {
     const panel = document.getElementById('field-management-panel');
     panel.classList.remove('open');
-    closeFieldManagementBackdrop();
+    // closeFieldManagementBackdrop(); // 移除灰色遮罩层
 
     if (fieldDrawerEscHandler) {
         document.removeEventListener('keydown', fieldDrawerEscHandler);
@@ -721,79 +721,146 @@ function openSystemFieldEditModal(fieldName) {
     const fieldLabel = i18n.t(config.i18nKey) || fieldName;
     const isSelectType = currentType === 'select' || currentType === 'multiselect';
 
-    // Create modal HTML with options configuration section
+    // Create modal HTML with options configuration section (matching custom field modal style)
     const modalHtml = `
-        <div id="system-field-modal" class="modal modal-open">
-            <div class="modal-box max-w-md">
-                <h3 class="font-bold text-lg mb-4">${i18n.t('fieldManagement.editSystemField')}</h3>
-
-                <div class="form-control mb-4">
-                    <label class="label">
-                        <span class="label-text">${i18n.t('fieldManagement.fieldName')}</span>
-                    </label>
-                    <input type="text" value="${fieldLabel}" disabled class="input input-bordered input-disabled bg-base-200">
-                    <label class="label">
-                        <span class="label-text-alt text-base-content/60">${i18n.t('fieldManagement.systemFieldNameHint')}</span>
-                    </label>
-                </div>
-
-                <div class="form-control mb-4">
-                    <label class="label">
-                        <span class="label-text">${i18n.t('fieldManagement.fieldType')}</span>
-                    </label>
-                    ${config.allowedTypes.length > 1 ? `
-                        <select id="system-field-type-select" class="select select-bordered w-full">
-                            ${config.allowedTypes.map(type => `
-                                <option value="${type}" ${type === currentType ? 'selected' : ''}>
-                                    ${i18n.t('fieldTypes.' + type)}
-                                </option>
-                            `).join('')}
-                        </select>
-                    ` : `
-                        <input type="text" value="${i18n.t('fieldTypes.' + config.type)}" disabled class="input input-bordered input-disabled bg-base-200">
-                        <label class="label">
-                            <span class="label-text-alt text-base-content/60">${i18n.t('fieldManagement.typeNotEditable')}</span>
-                        </label>
-                    `}
-                </div>
-
-                <!-- Options configuration section (for select/multiselect) -->
-                <div id="system-field-options-section" class="form-control mb-4 ${isSelectType ? '' : 'hidden'}">
-                    <label class="label">
-                        <span class="label-text">${i18n.t('fieldManagement.options')}</span>
-                    </label>
-                    <div id="system-field-options-list" class="space-y-2 mb-2">
-                        ${currentOptions.map(opt => `
-                            <div class="flex gap-2 items-center">
-                                <input type="text" class="input input-sm input-bordered flex-1 system-field-option-input" value="${opt}">
-                                <button type="button" class="btn btn-ghost btn-xs btn-circle text-error system-field-remove-option">✕</button>
+        <div id="system-field-modal" class="fixed inset-0 z-[6200] flex items-center justify-center transition-opacity duration-200"
+            style="background: var(--backdrop-color, rgba(15, 23, 42, 0.3));">
+            <div class="w-[520px] max-w-[92vw] p-0 overflow-hidden transition-all duration-200"
+                style="background: var(--color-card, #FFFFFF); border: 1px solid var(--color-border, #E2E8F0); border-radius: var(--radius-m, 12px); box-shadow: var(--shadow-modal, 0 12px 40px rgba(15,23,42,0.18));">
+                <!-- 头部 -->
+                <div class="h-16 px-5 flex items-center justify-between"
+                    style="background: var(--color-surface, #F8FAFC); border-bottom: 1px solid var(--color-border, #E2E8F0);">
+                    <div class="flex items-center gap-3 min-w-0">
+                        <div class="w-9 h-9 rounded-xl flex items-center justify-center bg-primary/10 text-primary">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" 
+                                    d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            </svg>
+                        </div>
+                        <div class="min-w-0">
+                            <div class="text-sm font-semibold truncate" style="color: var(--color-foreground, #0F172A);">
+                                ${escapeAttr(i18n.t('fieldManagement.editSystemField'))}
                             </div>
-                        `).join('')}
+                            <div class="text-xs truncate" style="color: var(--color-muted-foreground, #64748B);">
+                                ${escapeAttr(i18n.t('fieldManagement.editSystemFieldDesc') || '调整字段类型和选项配置')}
+                            </div>
+                        </div>
                     </div>
-                    <button type="button" id="system-field-add-option-btn" class="btn btn-sm btn-ghost btn-outline border-dashed w-full gap-2">
-                        + ${i18n.t('fieldManagement.addOption')}
+                    <button id="system-field-close-x" type="button"
+                        class="w-8 h-8 inline-flex items-center justify-center rounded-lg"
+                        style="color: var(--color-muted-foreground, #64748B);" aria-label="Close">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24"
+                            stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M6 18L18 6M6 6l12 12" />
+                        </svg>
                     </button>
                 </div>
 
-                <!-- Default value section (for select/multiselect) -->
-                <div id="system-field-default-section" class="form-control mb-4 ${isSelectType ? '' : 'hidden'}">
-                    <label class="label">
-                        <span class="label-text">${i18n.t('fieldManagement.defaultOneTime')}</span>
-                    </label>
-                    <select id="system-field-default-value" class="select select-sm select-bordered w-full">
-                        <option value="">${i18n.t('form.selectPlaceholder')}</option>
-                        ${currentOptions.map(opt => `
-                            <option value="${opt}" ${opt === currentDefaultValue ? 'selected' : ''}>${opt}</option>
-                        `).join('')}
-                    </select>
+                <!-- 内容区域 -->
+                <div class="p-4 space-y-4 max-h-[70vh] overflow-y-auto">
+                    <!-- 字段名称 -->
+                    <div class="form-control">
+                        <label class="label">
+                            <span class="label-text font-medium flex items-center gap-2">
+                                <span class="text-primary">T</span>
+                                <span>${escapeAttr(i18n.t('fieldManagement.fieldName'))}</span>
+                            </span>
+                        </label>
+                        <input type="text" value="${escapeAttr(fieldLabel)}" disabled class="input input-bordered w-full bg-base-200 h-12">
+                        <label class="label">
+                            <span class="label-text-alt text-base-content/60">${escapeAttr(i18n.t('fieldManagement.systemFieldNameHint'))}</span>
+                        </label>
+                    </div>
+
+                    <!-- 字段类型 -->
+                    <div class="form-control">
+                        <label class="label">
+                            <span class="label-text font-medium flex items-center gap-2">
+                                <span class="text-primary">≡</span>
+                                <span>${escapeAttr(i18n.t('fieldManagement.fieldType'))}</span>
+                            </span>
+                        </label>
+                        ${config.allowedTypes.length > 1 ? `
+                            <select id="system-field-type-select" class="select select-bordered w-full h-12">
+                                ${config.allowedTypes.map(type => `
+                                    <option value="${escapeAttr(type)}" ${type === currentType ? 'selected' : ''}>
+                                        ${escapeAttr(i18n.t('fieldTypes.' + type))}
+                                    </option>
+                                `).join('')}
+                            </select>
+                        ` : `
+                            <input type="text" value="${escapeAttr(i18n.t('fieldTypes.' + config.type))}" disabled class="input input-bordered w-full bg-base-200 h-12">
+                            <label class="label">
+                                <span class="label-text-alt text-base-content/60">${escapeAttr(i18n.t('fieldManagement.typeNotEditable'))}</span>
+                            </label>
+                        `}
+                    </div>
+
+                    <!-- 选项配置 -->
+                    <div id="system-field-options-section" class="form-control w-full ${isSelectType ? '' : 'hidden'}">
+                        <label class="label">
+                            <span class="label-text font-medium flex items-center gap-2">
+                                <span>☰</span>
+                                <span>${escapeAttr(i18n.t('fieldManagement.options'))}</span>
+                            </span>
+                        </label>
+                        <div id="system-field-options-list" class="space-y-2 mb-2">
+                            ${currentOptions.map(opt => `
+                                <div class="flex gap-2 items-center">
+                                    <input type="text" class="input input-sm input-bordered flex-1 system-field-option-input" value="${escapeAttr(opt)}">
+                                    <button type="button" class="btn btn-ghost btn-xs btn-circle text-error system-field-remove-option">✕</button>
+                                </div>
+                            `).join('')}
+                        </div>
+                        <button type="button" id="system-field-add-option-btn" class="btn btn-sm btn-ghost btn-outline border-dashed w-full gap-2">
+                            + ${escapeAttr(i18n.t('fieldManagement.addOption'))}
+                        </button>
+                    </div>
+
+                    <!-- 默认值配置 -->
+                    <div id="system-field-default-section" class="bg-base-200/50 border-none rounded-xl block text-left p-4 ${isSelectType ? '' : 'hidden'}">
+                        <div class="flex items-start gap-3 mb-3">
+                            <div class="w-8 h-8 flex items-center justify-center bg-primary/10 rounded-lg text-lg shrink-0">💡</div>
+                            <div class="flex-1">
+                                <h4 class="font-medium text-sm">${escapeAttr(i18n.t('fieldManagement.defaultOneTime'))}</h4>
+                                <p class="text-xs text-gray-500">${escapeAttr(i18n.t('fieldManagement.defaultDesc') || '现有任务将自动填充此值')}</p>
+                            </div>
+                        </div>
+                        <select id="system-field-default-value" class="select select-sm select-bordered w-full bg-white">
+                            <option value="">${escapeAttr(i18n.t('form.selectPlaceholder'))}</option>
+                            ${currentOptions.map(opt => `
+                                <option value="${escapeAttr(opt)}" ${opt === currentDefaultValue ? 'selected' : ''}>${escapeAttr(opt)}</option>
+                            `).join('')}
+                        </select>
+                        <div class="text-xs text-gray-400 mt-2">
+                            ${escapeAttr(i18n.t('fieldManagement.defaultNote') || '新增字段时，所有现有任务将被设置为此默认值。')}
+                        </div>
+                    </div>
                 </div>
 
-                <div class="modal-action">
-                    <button id="system-field-cancel-btn" class="btn">${i18n.t('form.cancel')}</button>
-                    <button id="system-field-save-btn" class="btn btn-primary">${i18n.t('form.save')}</button>
+                <!-- 底部按钮 -->
+                <div class="px-5 py-4 flex items-center justify-between"
+                    style="background: var(--color-surface, #F8FAFC); border-top: 1px solid var(--color-border, #E2E8F0);">
+                    <div class="text-xs text-base-content/40 flex items-center gap-1">
+                        <kbd class="kbd kbd-xs">Esc</kbd>
+                        <span>${escapeAttr(i18n.t('shortcuts.close') || '关闭')}</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button id="system-field-cancel-btn" type="button"
+                            class="px-4 py-2 text-sm font-semibold rounded-[var(--radius-pill,999px)] hover:bg-black/5"
+                            style="color: var(--color-foreground, #0F172A);">
+                            ${escapeAttr(i18n.t('form.cancel'))}
+                        </button>
+                        <button id="system-field-save-btn" type="button"
+                            class="px-5 py-2 text-sm font-semibold rounded-[var(--radius-pill,999px)]"
+                            style="background: var(--color-primary, #0EA5E9); color: #FFFFFF;">
+                            ${escapeAttr(i18n.t('form.save'))}
+                        </button>
+                    </div>
                 </div>
             </div>
-            <div class="modal-backdrop" id="system-field-backdrop"></div>
         </div>
     `;
 
@@ -814,7 +881,7 @@ function openSystemFieldEditModal(fieldName) {
     const modal = document.getElementById('system-field-modal');
     const cancelBtn = document.getElementById('system-field-cancel-btn');
     const saveBtn = document.getElementById('system-field-save-btn');
-    const backdrop = document.getElementById('system-field-backdrop');
+    const closeXBtn = document.getElementById('system-field-close-x');
     const typeSelect = document.getElementById('system-field-type-select');
     const optionsSection = document.getElementById('system-field-options-section');
     const defaultSection = document.getElementById('system-field-default-section');
@@ -825,7 +892,16 @@ function openSystemFieldEditModal(fieldName) {
     const closeModal = () => modal.remove();
 
     cancelBtn.addEventListener('click', closeModal);
-    backdrop.addEventListener('click', closeModal);
+    if (closeXBtn) closeXBtn.addEventListener('click', closeModal);
+    
+    // ESC 键关闭
+    const escHandler = (e) => {
+        if (e.key === 'Escape') {
+            closeModal();
+            document.removeEventListener('keydown', escHandler);
+        }
+    };
+    document.addEventListener('keydown', escHandler);
 
     // Function to add a new option input
     const addNewOption = (value = '') => {

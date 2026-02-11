@@ -23,4 +23,21 @@ describe('AiDrawer citation rendering', () => {
         expect(html).toContain('<code>code</code>');
         expect(html).not.toContain('ai-task-citation');
     });
+
+    it('renders markdown list citations without orphan dash lines', () => {
+        const html = renderMarkdownWithTaskCitations('- [#3] 新任务\n- [#2] 另一个任务');
+
+        expect(html).toContain('ai-task-citation');
+        expect(html).toContain('<ul>');
+        expect(html).toContain('<li>');
+        expect(html).not.toContain('<p>-</p>');
+    });
+
+    it('normalizes overdue list marker artifacts and removes leading !! before citation', () => {
+        const html = renderMarkdownWithTaskCitations('• !! [#1.2] 设计登录页 | 逾期: 5 天');
+
+        expect(html).toContain('ai-task-citation');
+        expect(html).toContain('<ul>');
+        expect(html).not.toContain('!!');
+    });
 });

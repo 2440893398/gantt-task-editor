@@ -1,6 +1,6 @@
 import { renderTaskCitationChip } from './task-ui.js';
 
-const CITATION_PATTERN = /\[(#\d+(?:\.\d+)*)\]\s*([^\n\[]+?)(?=\s*(?:和|及|,|，)?\s*\[#\d|\n|$)/g;
+const CITATION_PATTERN = /\[(#\d+(?:\.\d+)*)\]\s*([^\n\[\]|]+?)(?=\s*(?:\||\n|$|\[#\d|(?:和|及|,|，)\s*\[#\d))/g;
 
 function escapeHtml(value) {
     const div = document.createElement('div');

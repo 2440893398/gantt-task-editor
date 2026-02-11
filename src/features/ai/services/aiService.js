@@ -85,6 +85,46 @@ function formatTaskDataForDisplay(taskData) {
     return lines.join('\n');
 }
 
+function resolveInputBubbleMode(agentId) {
+    if (agentId === 'task_refine') return 'polish';
+    if (agentId === 'task_breakdown') return 'split';
+    return 'mention';
+}
+
+function formatReferencedTasksBlock(referencedTasks = []) {
+    if (!Array.isArray(referencedTasks) || referencedTasks.length === 0) {
+        return '';
+    }
+
+    const lines = referencedTasks.map((task, index) => {
+        const hierarchy = task?.hierarchy_id ? `${task.hierarchy_id}` : '';
+        const title = task?.text || '未命名任务';
+        const id = task?.id !== undefined ? String(task.id) : '';
+        const prefix = hierarchy ? `${hierarchy} ` : '';
+        const suffix = id ? ` (ID: ${id})` : '';
+        return `${index + 1}. ${prefix}${title}${suffix}`.trim();
+    });
+
+    return `【已选任务上下文】\n${lines.join('\n')}`;
+}
+
+function enrichMessageWithReferences(message, referencedTasks = []) {
+    const baseMessage = (message || '').trim();
+    const referencesBlock = formatReferencedTasksBlock(referencedTasks);
+
+    if (!referencesBlock) return baseMessage;
+    if (!baseMessage) return referencesBlock;
+
+    return `${referencesBlock}\n\n【用户问题】\n${baseMessage}`;
+}
+
+function toModelMessage(msg) {
+    return {
+        role: msg.role,
+        content: enrichMessageWithReferences(msg.content, msg.referencedTasks)
+    };
+}
+
 // 当前调用上下文
 let currentContext = {
     agentId: null,
@@ -142,6 +182,8 @@ export async function invokeAgent(agentId, context = {}) {
         title: getAgentName(agentId),
         agentId,
         context: displayContext,
+        contextTaskData: context.taskData || null,
+        contextMode: resolveInputBubbleMode(agentId),
         onApply: (result) => {
             if (context.onApply) {
                 context.onApply(result);
@@ -153,7 +195,8 @@ export async function invokeAgent(agentId, context = {}) {
     if (context.text) {
         // chat agent 使用 runSmartChat（带工具 + 路由）
         if (agentId === 'chat') {
-            let hasStartedAssistant = false;
+            AiDrawer.startStreaming();
+            let hasStartedAssistant = true;
             const toolStatusById = new Map();
 
             await runSmartChat(context.text, [], {
@@ -246,8 +289,8 @@ if (typeof document !== 'undefined') {
     });
 
     document.addEventListener('aiSend', (e) => {
-        const { message } = e.detail || {};
-        continueConversation(message);
+        const { message, referencedTasks = [] } = e.detail || {};
+        continueConversation(message, null, { referencedTasks });
     });
 }
 
@@ -256,7 +299,7 @@ if (typeof document !== 'undefined') {
  * @param {string} userMessage - 用户输入的新消息
  * @param {string} [messageId] - 关联的消息ID（用于重试特定消息）
  */
-export async function continueConversation(userMessage, messageId = null) {
+export async function continueConversation(userMessage, messageId = null, options = {}) {
     if (!currentContext.agentId) {
         showToast(i18n.t('ai.error.noAgent') || '对话已失效，请重新开始', 'error');
         return;
@@ -283,19 +326,19 @@ export async function continueConversation(userMessage, messageId = null) {
     }
 
     // 将历史消息转换为 OpenAI 格式
-    const messages = history.map(msg => ({
-        role: msg.role,
-        content: msg.content
-    }));
+    const messages = history.map(toModelMessage);
+
+    const referencedTasks = Array.isArray(options.referencedTasks) ? options.referencedTasks : [];
+    const enrichedUserMessage = enrichMessageWithReferences(userMessage, referencedTasks);
 
     // 如果是新消息（非重试），添加到历史
     if (userMessage) {
         messages.push({
             role: 'user',
-            content: userMessage
+            content: enrichedUserMessage
         });
         // UI 上显示用户消息
-        AiDrawer.addMessage('user', userMessage);
+        AiDrawer.addMessage('user', userMessage, { referencedTasks });
     }
 
     // F-109: 如果有附加指令且是第一轮（或者作为 System 补充），需要处理
@@ -312,16 +355,19 @@ export async function continueConversation(userMessage, messageId = null) {
 
     // chat agent：走 runSmartChat（带工具 + 路由）
     if (currentContext.agentId === 'chat') {
-        let hasStartedAssistant = false;
+        AiDrawer.startStreaming();
+        let hasStartedAssistant = true;
         const toolStatusById = new Map();
 
         // Retry: 没有新输入时，复用最后一条 user 消息（避免追加空 user 消息）
         let effectiveMessage = userMessage;
+        let effectiveReferencedTasks = referencedTasks;
         let effectiveHistory = history;
         if (!effectiveMessage) {
             const lastUserIndex = [...history].map(m => m.role).lastIndexOf('user');
             if (lastUserIndex >= 0) {
                 effectiveMessage = history[lastUserIndex].content || '';
+                effectiveReferencedTasks = history[lastUserIndex].referencedTasks || [];
                 effectiveHistory = history.slice(0, lastUserIndex);
             } else {
                 effectiveMessage = '';
@@ -329,7 +375,10 @@ export async function continueConversation(userMessage, messageId = null) {
             }
         }
 
-        await runSmartChat(effectiveMessage, effectiveHistory, {
+        const modelHistory = effectiveHistory.map(toModelMessage);
+        const modelMessage = enrichMessageWithReferences(effectiveMessage, effectiveReferencedTasks);
+
+        await runSmartChat(modelMessage, modelHistory, {
             onToolCall: (toolCalls = []) => {
                 toolCalls.forEach(tc => {
                     const el = AiDrawer.showToolCall(tc);
@@ -376,7 +425,7 @@ function handleError(error) {
     const parsedError = handleAiError(error, { showToastMsg: false });
 
     // 在抽屉中显示错误详情
-    AiDrawer.showError(parsedError.message, error);
+    AiDrawer.showError(parsedError.message, parsedError.originalError || error);
 
     console.error('[AI Service] Error:', parsedError.errorType, error);
 }

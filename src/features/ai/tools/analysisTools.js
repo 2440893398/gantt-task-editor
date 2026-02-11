@@ -1,6 +1,14 @@
 // src/features/ai/tools/analysisTools.js
 import { tool, jsonSchema } from 'ai';
 import { attachHierarchyIds } from '../utils/hierarchy-id.js';
+import {
+    state,
+    isFieldEnabled,
+    getFieldType,
+    getSystemFieldOptions,
+    getSystemFieldDefaultValue
+} from '../../../core/store.js';
+import { SYSTEM_FIELD_CONFIG, INTERNAL_FIELDS } from '../../../data/fields.js';
 
 const emptyObjectSchema = jsonSchema({
     type: 'object',
@@ -343,13 +351,51 @@ export const analysisTools = {
         description: '获取 Gantt 列/字段配置信息',
         inputSchema: emptyObjectSchema,
         execute: async () => {
-            if (typeof gantt === 'undefined') return { error: 'Gantt 未初始化' };
-            const columns = (gantt.config?.columns || []).map(col => ({
+            const ganttColumns = (typeof gantt !== 'undefined' && gantt.config?.columns)
+                ? gantt.config.columns
+                : [];
+
+            const columns = ganttColumns.map(col => ({
                 name: col.name,
                 label: col.label || col.name,
                 width: col.width || null
             }));
-            return { columns, count: columns.length };
+
+            const visibleFieldOrder = (state.fieldOrder || [])
+                .filter(fieldName => !INTERNAL_FIELDS.includes(fieldName));
+
+            const systemFields = Object.entries(SYSTEM_FIELD_CONFIG).map(([name, config]) => ({
+                name,
+                i18nKey: config.i18nKey,
+                type: getFieldType(name),
+                baseType: config.type,
+                allowedTypes: config.allowedTypes,
+                canDisable: config.canDisable,
+                linkedGroup: config.linkedGroup,
+                enabled: isFieldEnabled(name),
+                options: getSystemFieldOptions(name),
+                defaultValue: getSystemFieldDefaultValue(name)
+            }));
+
+            const customFields = (state.customFields || []).map(field => ({
+                name: field.name,
+                label: field.label || field.name,
+                type: field.type,
+                required: !!field.required,
+                width: field.width || null,
+                options: field.options || null,
+                enabled: visibleFieldOrder.includes(field.name)
+            }));
+
+            return {
+                columns,
+                count: columns.length,
+                field_management: {
+                    field_order: visibleFieldOrder,
+                    system_fields: systemFields,
+                    custom_fields: customFields
+                }
+            };
         }
     }),
 

@@ -16,11 +16,17 @@ export function filterTasksForMention(tasks, query) {
     if (!query || !query.trim()) return [...tasks];
 
     const q = query.trim().toLowerCase();
+    const qCompact = normalizeMentionSearchText(q);
 
     return tasks.filter(task => {
-        const nameMatch = (task.text || '').toLowerCase().includes(q);
-        const idMatch = (task.hierarchy_id || '').toLowerCase().includes(q);
-        return nameMatch || idMatch;
+        const name = (task.text || '').toLowerCase();
+        const hierarchyId = (task.hierarchy_id || '').toLowerCase();
+        const nameCompact = normalizeMentionSearchText(name);
+        const idCompact = normalizeMentionSearchText(hierarchyId);
+
+        const rawMatch = name.includes(q) || hierarchyId.includes(q);
+        const compactMatch = nameCompact.includes(qCompact) || idCompact.includes(qCompact);
+        return rawMatch || compactMatch;
     });
 }
 
@@ -45,25 +51,39 @@ export function buildReferencedTasksPayload(selectedTasks) {
  * @param {Function} [options.onSelect] - 选中任务时的回调
  * @returns {Object} composer 实例
  */
-export function createMentionComposer({ containerEl, getTaskList, onSelect }) {
+export function createMentionComposer({ containerEl, inputEl = null, getTaskList, onSelect }) {
     let popupEl = null;
     let selectedTasks = [];
     let chipsEl = null;
     let isPopupVisible = false;
     let currentQuery = '';
     let highlightedIndex = -1;
+    let onDocumentMouseDown = null;
+    const isInlineInput = !!inputEl && (inputEl.isContentEditable || inputEl.getAttribute('contenteditable') === 'true');
 
     function init() {
-        // 创建 mention chips 容器
-        chipsEl = document.createElement('div');
-        chipsEl.className = 'mention-chips flex flex-wrap gap-1 mb-1 empty:hidden';
-        containerEl.prepend(chipsEl);
+        if (!isInlineInput) {
+            // textarea 模式：单独 chips 容器
+            chipsEl = document.createElement('div');
+            chipsEl.className = 'mention-chips flex flex-wrap gap-1 mb-1 empty:hidden';
+            containerEl.prepend(chipsEl);
+        }
 
         // 创建弹出层
         popupEl = document.createElement('div');
-        popupEl.className = 'mention-popup hidden absolute bottom-full left-0 right-0 mb-1 bg-base-100 border border-base-300 rounded-lg shadow-lg max-h-48 overflow-y-auto z-50';
+        popupEl.className = 'mention-popup hidden absolute bottom-full left-0 right-0 mb-1 z-50';
         containerEl.style.position = 'relative';
         containerEl.appendChild(popupEl);
+
+        onDocumentMouseDown = (e) => {
+            if (!isPopupVisible) return;
+            const inPopup = popupEl?.contains(e.target);
+            const inInput = inputEl?.contains?.(e.target) || e.target === inputEl;
+            if (!inPopup && !inInput) {
+                hidePopup();
+            }
+        };
+        document.addEventListener('mousedown', onDocumentMouseDown);
     }
 
     function destroy() {
@@ -73,18 +93,21 @@ export function createMentionComposer({ containerEl, getTaskList, onSelect }) {
         chipsEl = null;
         selectedTasks = [];
         isPopupVisible = false;
+        if (onDocumentMouseDown) {
+            document.removeEventListener('mousedown', onDocumentMouseDown);
+            onDocumentMouseDown = null;
+        }
     }
 
     function handleInput(text) {
-        // 检测 @ 触发
-        const atIndex = text.lastIndexOf('@');
-        if (atIndex === -1 || (atIndex > 0 && text[atIndex - 1] !== ' ' && atIndex !== 0)) {
+        const sourceText = isInlineInput ? getTextBeforeCaret(inputEl) : (text ?? getInputText());
+        const parsed = parseMentionQuery(sourceText);
+        if (!parsed) {
             hidePopup();
             return;
         }
 
-        // 提取 @ 后面的查询文本
-        currentQuery = text.slice(atIndex + 1);
+        currentQuery = parsed.query;
         showPopup(currentQuery);
     }
 
@@ -98,15 +121,16 @@ export function createMentionComposer({ containerEl, getTaskList, onSelect }) {
         const available = filtered.filter(t => !selectedTasks.some(s => s.id === t.id));
 
         if (available.length === 0) {
-            popupEl.innerHTML = `<div class="p-3 text-xs text-base-content/50 text-center">${i18n.t('ai.mention.noResults') || '无匹配任务'}</div>`;
+            popupEl.innerHTML = `<div class="mention-empty">${i18n.t('ai.mention.noResults') || '无匹配任务'}</div>`;
         } else {
+            highlightedIndex = 0;
             popupEl.innerHTML = available.map((task, idx) => `
-                <div class="mention-item flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-base-200 text-sm ${idx === highlightedIndex ? 'bg-base-200' : ''}"
+                <div class="mention-item ${idx === highlightedIndex ? 'is-highlighted' : ''}"
                      data-task-id="${task.id}">
-                    <span class="mention-status-dot w-2 h-2 rounded-full flex-shrink-0 ${getStatusColor(task.status)}"></span>
-                    <span class="badge badge-xs badge-outline font-mono">${escapeHtml(task.hierarchy_id)}</span>
-                    <span class="flex-1 truncate">${escapeHtml(task.text)}</span>
-                    <span class="badge badge-xs ${getPriorityBadge(task.priority)}">${escapeHtml(task.priority)}</span>
+                    <span class="mention-status-dot ${getStatusColor(task.status)}"></span>
+                    <span class="mention-hierarchy">${escapeHtml(task.hierarchy_id)}</span>
+                    <span class="mention-title">${escapeHtml(task.text)}</span>
+                    <span class="mention-priority ${getPriorityBadge(task.priority)}">${escapeHtml(getPriorityLabel(task.priority))}</span>
                 </div>
             `).join('');
 
@@ -135,7 +159,15 @@ export function createMentionComposer({ containerEl, getTaskList, onSelect }) {
         if (selectedTasks.some(t => t.id === task.id)) return;
 
         selectedTasks.push(task);
-        renderChips();
+        if (isInlineInput) {
+            insertInlineToken(task);
+        } else {
+            renderChips();
+            clearInputQuery();
+        }
+        if (inputEl) {
+            inputEl.focus();
+        }
         hidePopup();
 
         if (onSelect) onSelect(task);
@@ -143,10 +175,18 @@ export function createMentionComposer({ containerEl, getTaskList, onSelect }) {
 
     function removeTask(taskId) {
         selectedTasks = selectedTasks.filter(t => t.id !== taskId);
-        renderChips();
+        if (isInlineInput) {
+            removeInlineToken(taskId);
+        } else {
+            renderChips();
+        }
+        if (inputEl) {
+            inputEl.focus();
+        }
     }
 
     function renderChips() {
+        if (isInlineInput) return;
         if (!chipsEl) return;
 
         chipsEl.innerHTML = selectedTasks.map(task => `
@@ -177,12 +217,17 @@ export function createMentionComposer({ containerEl, getTaskList, onSelect }) {
 
     function clearSelection() {
         selectedTasks = [];
-        renderChips();
+        if (isInlineInput) {
+            removeAllInlineTokens();
+        } else {
+            renderChips();
+        }
     }
 
     function buildPayload(text) {
+        const messageText = typeof text === 'string' ? text : getInputText();
         return {
-            text,
+            text: messageText.trim(),
             referencedTasks: buildReferencedTasksPayload(selectedTasks)
         };
     }
@@ -214,13 +259,96 @@ export function createMentionComposer({ containerEl, getTaskList, onSelect }) {
             hidePopup();
             return true;
         }
+        if (e.key === 'Backspace' && selectedTasks.length > 0) {
+            if (isInlineInput) {
+                const plainText = getInputText().trim();
+                if (!plainText) {
+                    e.preventDefault();
+                    removeTask(selectedTasks[selectedTasks.length - 1].id);
+                    return true;
+                }
+            } else if (inputEl && inputEl.value.length === 0) {
+                removeTask(selectedTasks[selectedTasks.length - 1].id);
+                return true;
+            }
+        }
         return false;
     }
 
     function updateHighlight(items) {
         items.forEach((el, i) => {
-            el.classList.toggle('bg-base-200', i === highlightedIndex);
+            el.classList.toggle('is-highlighted', i === highlightedIndex);
         });
+    }
+
+    function clearInputQuery() {
+        if (isInlineInput) return;
+        if (!inputEl) return;
+        const value = inputEl.value || '';
+        const atIndex = value.lastIndexOf('@');
+        if (atIndex === -1) return;
+        const prefix = value.slice(0, atIndex).replace(/\s+$/, '');
+        inputEl.value = prefix ? `${prefix} ` : '';
+    }
+
+    function getInputText() {
+        if (!inputEl) return '';
+        if (isInlineInput) {
+            return getPlainTextFromInlineInput(inputEl);
+        }
+        if (typeof inputEl.value === 'string') {
+            return inputEl.value;
+        }
+        return inputEl.textContent || '';
+    }
+
+    function insertInlineToken(task) {
+        if (!inputEl) return;
+
+        removeMentionQueryBeforeCaret(inputEl);
+        ensureCaretInInput(inputEl);
+
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0) {
+            appendTokenAtEnd(task);
+            return;
+        }
+
+        const range = selection.getRangeAt(0).cloneRange();
+        range.collapse(true);
+
+        const tokenEl = createInlineToken(task, removeTask);
+        const spaceNode = document.createTextNode(' ');
+
+        range.insertNode(spaceNode);
+        range.insertNode(tokenEl);
+        placeCaretAfterNode(spaceNode);
+        normalizeInlineInput(inputEl);
+    }
+
+    function appendTokenAtEnd(task) {
+        const tokenEl = createInlineToken(task, removeTask);
+        inputEl.appendChild(tokenEl);
+        inputEl.appendChild(document.createTextNode(' '));
+        placeCaretAtEnd(inputEl);
+    }
+
+    function removeInlineToken(taskId) {
+        if (!inputEl) return;
+        inputEl.querySelectorAll(`.mention-token[data-task-id="${taskId}"]`).forEach(el => {
+            const next = el.nextSibling;
+            el.remove();
+            if (next?.nodeType === Node.TEXT_NODE) {
+                next.textContent = next.textContent.replace(/^\s+/, '');
+            }
+        });
+        normalizeInlineInput(inputEl);
+    }
+
+    function removeAllInlineTokens() {
+        if (!inputEl) return;
+        inputEl.querySelectorAll('.mention-token').forEach(el => el.remove());
+        normalizeInlineInput(inputEl);
     }
 
     return {
@@ -237,6 +365,211 @@ export function createMentionComposer({ containerEl, getTaskList, onSelect }) {
     };
 }
 
+function parseMentionQuery(text) {
+    if (!text) return null;
+    const atIndex = text.lastIndexOf('@');
+    if (atIndex === -1) return null;
+    if (atIndex > 0 && !/\s/.test(text[atIndex - 1])) return null;
+
+    const query = text.slice(atIndex + 1);
+
+    return { query, atIndex };
+}
+
+function normalizeMentionSearchText(text) {
+    return String(text || '')
+        .toLowerCase()
+        .replace(/\s+/g, '');
+}
+
+function createInlineToken(task, onRemove) {
+    const token = document.createElement('span');
+    token.className = 'mention-token badge badge-primary gap-1 text-xs';
+    token.dataset.taskId = String(task.id);
+    token.setAttribute('contenteditable', 'false');
+
+    const mono = document.createElement('span');
+    mono.className = 'font-mono';
+    mono.textContent = task.hierarchy_id || '';
+
+    const text = document.createElement('span');
+    text.className = 'truncate max-w-[120px]';
+    text.textContent = task.text || '';
+
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'mention-token-remove btn btn-ghost btn-xs btn-circle w-4 h-4 min-h-0 p-0';
+    removeBtn.type = 'button';
+    removeBtn.setAttribute('aria-label', '移除任务引用');
+    removeBtn.innerHTML = `
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+            <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
+        </svg>
+    `;
+    removeBtn.addEventListener('mousedown', (e) => e.preventDefault());
+    removeBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onRemove(task.id);
+    });
+
+    token.appendChild(mono);
+    token.appendChild(text);
+    token.appendChild(removeBtn);
+    return token;
+}
+
+function getTextBeforeCaret(inputEl) {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) {
+        return getPlainTextFromInlineInput(inputEl);
+    }
+
+    const range = selection.getRangeAt(0);
+    if (!inputEl.contains(range.endContainer)) {
+        return getPlainTextFromInlineInput(inputEl);
+    }
+
+    const prefixRange = range.cloneRange();
+    prefixRange.selectNodeContents(inputEl);
+    prefixRange.setEnd(range.endContainer, range.endOffset);
+    const fragment = prefixRange.cloneContents();
+    return extractPlainText(fragment);
+}
+
+function getPlainTextFromInlineInput(inputEl) {
+    return extractPlainText(inputEl).replace(/\u00A0/g, ' ');
+}
+
+function extractPlainText(node) {
+    if (!node) return '';
+    if (node.nodeType === Node.TEXT_NODE) return node.textContent || '';
+    if (node.nodeType !== Node.ELEMENT_NODE && node.nodeType !== Node.DOCUMENT_FRAGMENT_NODE) return '';
+
+    const el = /** @type {Element} */ (node);
+    if (el.classList?.contains('mention-token')) return ' ';
+    if (el.tagName === 'BR') return '\n';
+
+    let text = '';
+    node.childNodes.forEach(child => {
+        text += extractPlainText(child);
+    });
+    return text;
+}
+
+function removeMentionQueryBeforeCaret(inputEl) {
+    const beforeCaret = getTextBeforeCaret(inputEl);
+    const match = beforeCaret.match(/(^|\s)@[^\s@]*$/);
+    if (!match) return;
+
+    const queryLength = match[0].trimStart().length;
+    const caretOffset = getCaretOffsetInPlainText(inputEl);
+    const startOffset = Math.max(0, caretOffset - queryLength);
+    removePlainTextByOffsets(inputEl, startOffset, caretOffset);
+}
+
+function getCaretOffsetInPlainText(inputEl) {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) {
+        return getPlainTextFromInlineInput(inputEl).length;
+    }
+
+    const range = selection.getRangeAt(0);
+    if (!inputEl.contains(range.endContainer)) {
+        return getPlainTextFromInlineInput(inputEl).length;
+    }
+
+    const prefixRange = range.cloneRange();
+    prefixRange.selectNodeContents(inputEl);
+    prefixRange.setEnd(range.endContainer, range.endOffset);
+    return extractPlainText(prefixRange.cloneContents()).length;
+}
+
+function removePlainTextByOffsets(inputEl, startOffset, endOffset) {
+    if (endOffset <= startOffset) return;
+
+    const positions = getTextPositions(inputEl);
+    if (!positions.length) return;
+
+    const start = resolveOffsetPosition(positions, startOffset);
+    const end = resolveOffsetPosition(positions, endOffset);
+    if (!start || !end) return;
+
+    const range = document.createRange();
+    range.setStart(start.node, start.offset);
+    range.setEnd(end.node, end.offset);
+    range.deleteContents();
+}
+
+function getTextPositions(root) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+        acceptNode: (textNode) => {
+            const parent = textNode.parentElement;
+            if (parent?.closest('.mention-token')) {
+                return NodeFilter.FILTER_REJECT;
+            }
+            return NodeFilter.FILTER_ACCEPT;
+        }
+    });
+
+    const positions = [];
+    let cursor = 0;
+    while (walker.nextNode()) {
+        const node = walker.currentNode;
+        const length = (node.textContent || '').length;
+        positions.push({ node, start: cursor, end: cursor + length });
+        cursor += length;
+    }
+
+    if (!positions.length) {
+        const text = document.createTextNode('');
+        root.appendChild(text);
+        positions.push({ node: text, start: 0, end: 0 });
+    }
+
+    return positions;
+}
+
+function resolveOffsetPosition(positions, offset) {
+    for (const p of positions) {
+        if (offset >= p.start && offset <= p.end) {
+            return { node: p.node, offset: offset - p.start };
+        }
+    }
+
+    const last = positions[positions.length - 1];
+    if (!last) return null;
+    return { node: last.node, offset: (last.node.textContent || '').length };
+}
+
+function ensureCaretInInput(inputEl) {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0 || !inputEl.contains(selection.anchorNode)) {
+        placeCaretAtEnd(inputEl);
+    }
+}
+
+function placeCaretAtEnd(el) {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    range.collapse(false);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+}
+
+function placeCaretAfterNode(node) {
+    const range = document.createRange();
+    range.setStartAfter(node);
+    range.collapse(true);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+}
+
+function normalizeInlineInput(inputEl) {
+    inputEl.normalize();
+}
+
 // ---- Helpers ----
 
 function getStatusColor(status) {
@@ -251,11 +584,20 @@ function getStatusColor(status) {
 
 function getPriorityBadge(priority) {
     const badges = {
-        'high': 'badge-error',
-        'medium': 'badge-warning',
-        'low': 'badge-info'
+        'high': 'is-high',
+        'medium': 'is-medium',
+        'low': 'is-low'
     };
     return badges[priority] || '';
+}
+
+function getPriorityLabel(priority) {
+    const labels = {
+        high: 'high',
+        medium: 'medium',
+        low: 'low'
+    };
+    return labels[priority] || 'normal';
 }
 
 function escapeHtml(text) {

@@ -424,6 +424,7 @@ function buildTaskDataForAI(task) {
             return {
                 id: child.id,
                 text: child.text || '',
+                description: child.description || child.summary || '',
                 start_date: child.start_date ? formatDate(child.start_date) : null,
                 end_date: childEndDate ? formatDate(childEndDate) : null,
                 duration: child.duration || 1,
@@ -580,6 +581,7 @@ function normalizeSubtasks(result) {
                 // 保留完整对象属性（包括时间偏移和负责人）
                 const subtask = {
                     text: (item?.name || item?.text || '').trim(),
+                    description: (item?.description || '').trim(),
                     duration: item?.duration || 1,
                     priority: item?.priority || 'medium',
                     progress: item?.progress || 0,
@@ -623,6 +625,14 @@ function tryParseJson(text) {
  * 创建子任务并刷新面板
  */
 function createSubtasks(task, subtasks) {
+    // 替换模式：先删除现有直属子任务，再创建新子任务
+    if (typeof gantt !== 'undefined' && gantt.hasChild && gantt.hasChild(task.id)) {
+        const existingChildIds = gantt.getChildren(task.id) || [];
+        existingChildIds.forEach((childId) => {
+            gantt.deleteTask(childId);
+        });
+    }
+
     let created = 0;
     const parentStartDate = task.start_date ? new Date(task.start_date) : new Date();
 
@@ -662,6 +672,10 @@ function createSubtasks(task, subtasks) {
         if (subtaskData?.assignee) {
             newTask.assignee = subtaskData.assignee;
         }
+        if (subtaskData?.description) {
+            newTask.description = subtaskData.description;
+            newTask.summary = subtaskData.description;
+        }
 
         gantt.addTask(newTask);
         created += 1;
@@ -687,3 +701,9 @@ function escapeHtml(str) {
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
 }
+
+export const __test__ = {
+    normalizeSubtasks,
+    createSubtasks,
+    tryParseJson
+};

@@ -104,16 +104,26 @@ export default {
         deleteSuccess: 'Deleted successfully',
         importSuccess: 'Imported {{count}} items successfully',
         exportSuccess: 'Exported successfully',
+        exportError: 'Export failed',
         validationError: 'Please check the form fields',
         noData: 'No data available',
         confirmTitle: 'Confirm',
         deleteLink: 'Delete this link?',
         deleteTask: 'Delete this task?',
+        confirmDeleteTitle: 'Delete Task',
+        confirmDelete: 'Are you sure you want to delete this task? This action cannot be undone.',
         confirmClearCache: 'Clear all cached data? This will delete all saved tasks and configurations.',
         cacheCleared: 'Cache cleared',
         dataRestored: 'Restored {{count}} tasks',
         updateSuccess: 'Updated {{count}} tasks',
-        comingSoon: 'Feature in development'
+        comingSoon: 'Feature in development',
+        // Backup related
+        backupExportSuccess: 'System backup exported successfully',
+        backupImportSuccess: 'System restored successfully',
+        backupImportError: 'System restore failed',
+        backupValidationError: 'Backup file validation failed',
+        backupOldFormat: 'Old format configuration detected, only restoring field settings',
+        backupCancelled: 'Restore cancelled'
     },
 
     // Shortcuts Panel
@@ -136,7 +146,8 @@ export default {
         legend: 'Legend',
         completed: 'Completed',
         incomplete: 'Incomplete',
-        dependency: 'Dependency'
+        dependency: 'Dependency',
+        close: 'Close'
     },
 
     // Batch Edit
@@ -187,6 +198,7 @@ export default {
         deleteTitle: 'Confirm Delete',
         deleteMessage: 'Are you sure you want to delete field "{{name}}"? This action cannot be undone.',
         editSystemField: 'Edit System Field',
+        editSystemFieldDesc: 'Adjust field type and option configuration',
         systemFieldNameHint: 'System field name cannot be modified',
         typeNotEditable: 'This field type cannot be modified',
         systemTag: 'System',

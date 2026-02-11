@@ -110,6 +110,8 @@ export default {
         confirmTitle: '確認',
         deleteLink: 'この依存関係を削除しますか？',
         deleteTask: 'このタスクを削除しますか？',
+        confirmDeleteTitle: 'タスク削除',
+        confirmDelete: 'このタスクを削除しますか？この操作は取り消せません。',
         confirmClearCache: 'すべてのキャッシュを削除しますか？保存されたタスクと設定がすべて削除されます。',
         cacheCleared: 'キャッシュを削除しました',
         dataRestored: '{{count}}件のタスクを復元しました',
@@ -137,7 +139,8 @@ export default {
         legend: '凡例',
         completed: '完了',
         incomplete: '未完了',
-        dependency: '依存関係'
+        dependency: '依存関係',
+        close: '閉じる'
     },
 
     // 一括編集
@@ -188,6 +191,7 @@ export default {
         deleteTitle: '削除の確認',
         deleteMessage: 'フィールド「{{name}}」を削除しますか？この操作は取り消せません。',
         editSystemField: 'システムフィールドを編集',
+        editSystemFieldDesc: 'フィールドタイプとオプション設定を調整します',
         systemFieldNameHint: 'システムフィールド名は変更できません',
         typeNotEditable: 'このフィールドタイプは変更できません',
         systemTag: 'システム',

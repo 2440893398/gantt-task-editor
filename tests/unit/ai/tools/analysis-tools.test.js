@@ -229,6 +229,17 @@ describe('analysisTools', () => {
             expect(result.columns).toBeDefined();
             expect(result.columns.length).toBeGreaterThanOrEqual(1);
         });
+
+        it('returns field management configuration from current system state', async () => {
+            setupGantt([]);
+            const result = await analysisTools.get_field_config.execute();
+
+            expect(result.field_management).toBeDefined();
+            expect(Array.isArray(result.field_management.system_fields)).toBe(true);
+            expect(Array.isArray(result.field_management.custom_fields)).toBe(true);
+            expect(Array.isArray(result.field_management.field_order)).toBe(true);
+            expect(result.field_management.system_fields.length).toBeGreaterThan(0);
+        });
     });
 
     describe('get_custom_fields', () => {
