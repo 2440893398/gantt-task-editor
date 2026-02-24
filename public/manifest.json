@@ -1,0 +1,21 @@
+{
+    "name": "Gantt Chart Project Manager",
+    "short_name": "GanttPM",
+    "description": "Free online Gantt chart project management tool with AI assistant, multi-language support, Excel import/export, and critical path analysis.",
+    "start_url": "/",
+    "display": "standalone",
+    "theme_color": "#0EA5E9",
+    "background_color": "#F8FAFC",
+    "icons": [
+        {
+            "src": "/icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png"
+        },
+        {
+            "src": "/icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png"
+        }
+    ]
+}

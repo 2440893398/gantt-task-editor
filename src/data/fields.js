@@ -10,9 +10,9 @@ export const defaultCustomFields = [
 
 /**
  * 字段显示顺序
- * F-112: 添加 summary 任务概述字段
+ * description 列直接展示富文本摘要（悬浮 tooltip 预览完整内容）
  */
-export const defaultFieldOrder = ["text", "priority", "assignee", "status", "summary", "start_date", "duration", "progress"];
+export const defaultFieldOrder = ["text", "priority", "assignee", "status", "description", "start_date", "duration", "progress"];
 
 /**
  * System field configuration
@@ -113,4 +113,3 @@ export const INTERNAL_FIELDS = [
     'summary', 'parent', 'id', 'open', 'type', 'render',
     '$level', '$open', '$virtual', 'estimated_hours'
 ];
-

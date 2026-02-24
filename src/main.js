@@ -17,6 +17,10 @@ import { i18n } from './utils/i18n.js';
 import { showToast } from './utils/toast.js';
 // AI 模块
 import { initAiModule, setupLightboxAiIntegration } from './features/ai/manager.js';
+// SEO / GEO / Analytics
+import { initAnalytics, trackEvent } from './utils/analytics.js';
+import { injectStructuredData } from './utils/structuredData.js';
+import { initGeoSeo, updateMetaForLanguage } from './utils/geoSeo.js';
 import {
     restoreStateFromCache,
     restoreGanttDataFromCache,
@@ -107,6 +111,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     setupLightboxAiIntegration();
     console.log('🤖 AI 模块初始化完成');
 
+    // 初始化 SEO / GEO / Analytics
+    initAnalytics();
+    injectStructuredData();
+    initGeoSeo();
+    console.log('📊 Analytics & SEO 初始化完成');
+
     // 设置数据变化时自动保存
     setupAutoSave();
 
@@ -183,6 +193,10 @@ function setupAutoSave() {
     // 监听语言切换事件
     document.addEventListener('languageChanged', (e) => {
         persistLocale(e.detail.language);
+        // 更新 SEO meta 标签 (GEO)
+        updateMetaForLanguage(e.detail.language);
+        // 追踪语言切换事件
+        trackEvent('language_switch', { language: e.detail.language });
         console.log('💾 语言设置已保存:', e.detail.language);
     });
 

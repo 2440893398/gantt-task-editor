@@ -21,19 +21,33 @@ import undoManager from './undoManager.js';
 function formatTaskDataForDisplay(taskData) {
     if (!taskData) return '';
 
+    const t = (key, fallback) => {
+        const value = i18n.t(key);
+        return value === key ? fallback : value;
+    };
+
     const lines = [];
 
     // 任务名称
-    lines.push(`📋 ${taskData.text || '未命名任务'}`);
+    lines.push(`📋 ${taskData.text || t('task.name', 'Untitled Task')}`);
 
     // 基本信息
     const basicInfo = [];
     if (taskData.priority) {
-        const priorityMap = { high: '🔴 高', medium: '🟡 中', low: '🟢 低' };
+        const priorityMap = {
+            high: `🔴 ${t('enums.priority.high', 'High')}`,
+            medium: `🟡 ${t('enums.priority.medium', 'Medium')}`,
+            low: `🟢 ${t('enums.priority.low', 'Low')}`
+        };
         basicInfo.push(priorityMap[taskData.priority] || taskData.priority);
     }
     if (taskData.status) {
-        const statusMap = { pending: '待开始', in_progress: '进行中', completed: '已完成', suspended: '已取消' };
+        const statusMap = {
+            pending: t('enums.status.pending', 'Pending'),
+            in_progress: t('enums.status.in_progress', 'In Progress'),
+            completed: t('enums.status.completed', 'Completed'),
+            suspended: t('enums.status.suspended', 'Cancelled')
+        };
         basicInfo.push(statusMap[taskData.status] || taskData.status);
     }
     if (taskData.assignee) {
@@ -46,16 +60,16 @@ function formatTaskDataForDisplay(taskData) {
     // 时间信息
     const timeInfo = [];
     if (taskData.start_date) {
-        timeInfo.push(`开始: ${taskData.start_date}`);
+        timeInfo.push(`${t('tooltip.start', 'Start')}: ${taskData.start_date}`);
     }
     if (taskData.end_date) {
-        timeInfo.push(`截止: ${taskData.end_date}`);
+        timeInfo.push(`${t('taskDetails.planEnd', 'Due')}: ${taskData.end_date}`);
     }
     if (taskData.duration) {
-        timeInfo.push(`工期: ${taskData.duration}天`);
+        timeInfo.push(`${t('tooltip.duration', 'Duration')}: ${taskData.duration}${t('tooltip.days', 'days')}`);
     }
     if (taskData.progress !== undefined && taskData.progress !== null) {
-        timeInfo.push(`进度: ${taskData.progress}%`);
+        timeInfo.push(`${t('tooltip.progress', 'Progress')}: ${taskData.progress}%`);
     }
     if (timeInfo.length > 0) {
         lines.push(`📅 ${timeInfo.join(' | ')}`);
@@ -63,13 +77,17 @@ function formatTaskDataForDisplay(taskData) {
 
     // 子任务信息
     if (taskData.subtasks && taskData.subtasks.length > 0) {
-        lines.push(`\n📂 现有 ${taskData.subtasks.length} 个子任务:`);
+        lines.push(`\n📂 ${t('taskDetails.subtasks', 'Subtasks')}: ${taskData.subtasks.length}`);
         taskData.subtasks.forEach((sub, idx) => {
             const subInfo = [`  ${idx + 1}. ${sub.text}`];
             const subMeta = [];
-            if (sub.duration) subMeta.push(`${sub.duration}天`);
+            if (sub.duration) subMeta.push(`${sub.duration}${t('tooltip.days', 'days')}`);
             if (sub.status) {
-                const statusMap = { pending: '待开始', in_progress: '进行中', completed: '已完成' };
+                const statusMap = {
+                    pending: t('enums.status.pending', 'Pending'),
+                    in_progress: t('enums.status.in_progress', 'In Progress'),
+                    completed: t('enums.status.completed', 'Completed')
+                };
                 subMeta.push(statusMap[sub.status] || sub.status);
             }
             if (sub.progress !== undefined && sub.progress !== null) subMeta.push(`${sub.progress}%`);
@@ -79,7 +97,7 @@ function formatTaskDataForDisplay(taskData) {
             lines.push(subInfo.join(' '));
         });
     } else {
-        lines.push('\n📂 暂无子任务');
+        lines.push(`\n📂 ${t('taskDetails.noSubtasks', 'No subtasks')}`);
     }
 
     return lines.join('\n');
@@ -98,14 +116,14 @@ function formatReferencedTasksBlock(referencedTasks = []) {
 
     const lines = referencedTasks.map((task, index) => {
         const hierarchy = task?.hierarchy_id ? `${task.hierarchy_id}` : '';
-        const title = task?.text || '未命名任务';
+        const title = task?.text || i18n.t('task.name');
         const id = task?.id !== undefined ? String(task.id) : '';
         const prefix = hierarchy ? `${hierarchy} ` : '';
         const suffix = id ? ` (ID: ${id})` : '';
         return `${index + 1}. ${prefix}${title}${suffix}`.trim();
     });
 
-    return `【已选任务上下文】\n${lines.join('\n')}`;
+    return `[Selected Task Context]\n${lines.join('\n')}`;
 }
 
 function enrichMessageWithReferences(message, referencedTasks = []) {
@@ -115,7 +133,7 @@ function enrichMessageWithReferences(message, referencedTasks = []) {
     if (!referencesBlock) return baseMessage;
     if (!baseMessage) return referencesBlock;
 
-    return `${referencesBlock}\n\n【用户问题】\n${baseMessage}`;
+    return `${referencesBlock}\n\n[User Question]\n${baseMessage}`;
 }
 
 function toModelMessage(msg) {
@@ -141,7 +159,7 @@ let currentContext = {
 export async function invokeAgent(agentId, context = {}) {
     // 检查配置
     if (!checkAiConfigured()) {
-        showToast(i18n.t('ai.error.notConfigured') || '请先配置 AI 设置', 'warning');
+        showToast(i18n.t('ai.error.notConfigured'), 'warning');
         openAiConfigModal();
         return;
     }
@@ -149,14 +167,14 @@ export async function invokeAgent(agentId, context = {}) {
     // 获取智能体配置
     const agent = getAgent(agentId);
     if (!agent) {
-        showToast(i18n.t('ai.error.agentNotFound') || '未找到该智能体', 'error');
+        showToast(i18n.t('ai.error.agentNotFound'), 'error');
         return;
     }
 
     // 检查上下文
     // F-203: 对于通用聊天，允许上下文为空
     if (agentId !== 'chat' && !context.text) {
-        showToast(i18n.t('ai.error.noContext') || '请先选择或输入内容', 'warning');
+        showToast(i18n.t('ai.error.noContext'), 'warning');
         return;
     }
 
@@ -301,7 +319,7 @@ if (typeof document !== 'undefined') {
  */
 export async function continueConversation(userMessage, messageId = null, options = {}) {
     if (!currentContext.agentId) {
-        showToast(i18n.t('ai.error.noAgent') || '对话已失效，请重新开始', 'error');
+        showToast(i18n.t('ai.error.noAgent'), 'error');
         return;
     }
 

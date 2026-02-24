@@ -11,7 +11,15 @@ export default defineConfig({
     build: {
         outDir: 'dist',
         assetsDir: 'assets',
-        // 生成 sourcemap 便于调试
-        sourcemap: true
+        // 生产环境关闭 sourcemap（减小体积 + 防止源码泄露）
+        sourcemap: false,
+        rollupOptions: {
+            output: {
+                manualChunks: {
+                    vendor: ['dexie', 'exceljs', 'marked', 'quill', 'zod'],
+                    ai: ['ai', '@ai-sdk/openai']
+                }
+            }
+        }
     }
 })

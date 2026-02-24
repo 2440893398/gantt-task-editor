@@ -151,8 +151,23 @@ function updatePageTranslations() {
     // 更新 data-i18n-title 属性的元素
     document.querySelectorAll('[data-i18n-title]').forEach(el => {
         const key = el.getAttribute('data-i18n-title');
-        el.title = t(key);
+        const translated = t(key);
+        el.title = translated;
+        // daisyUI tooltip 依赖 data-tip
+        if (el.hasAttribute('data-tip')) {
+            el.setAttribute('data-tip', translated);
+        }
     });
+
+    // 更新 data-i18n-tip 属性的元素（仅 tooltip 文本）
+    document.querySelectorAll('[data-i18n-tip]').forEach(el => {
+        const key = el.getAttribute('data-i18n-tip');
+        el.setAttribute('data-tip', t(key));
+    });
+}
+
+function refresh() {
+    updatePageTranslations();
 }
 
 /**
@@ -272,7 +287,8 @@ export const i18n = {
     init,
     detectBrowserLanguage,
     loadAllLocales,
-    getAllLocales
+    getAllLocales,
+    refresh
 };
 
 // 挂载到 window 对象，便于在 HTML 中使用

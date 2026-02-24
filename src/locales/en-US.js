@@ -31,7 +31,9 @@ export default {
         quarter: 'Quarter',
         year: 'Year',
         zoomOut: 'Zoom Out',
-        zoomIn: 'Zoom In'
+        zoomIn: 'Zoom In',
+        tablePanel: 'Task Table',
+        ganttPanel: 'Gantt Chart'
     },
 
     // Columns (table headers)
@@ -44,7 +46,8 @@ export default {
         priority: 'Priority',
         assignee: 'Assignee',
         status: 'Status',
-        summary: 'Summary'
+        summary: 'Summary',
+        description: 'Description'
     },
 
 
@@ -205,7 +208,15 @@ export default {
         customTag: 'Custom',
         enableField: 'Enable',
         disableField: 'Disable',
-        linkedFieldsHint: 'Linked fields will be {{action}} together'
+        linkedFieldsHint: 'Linked fields will be {{action}} together',
+        searchPlaceholder: 'Search fields...',
+        filterAll: 'All',
+        filterSystem: 'System',
+        filterCustom: 'Custom',
+        filterEnabled: 'Enabled',
+        filterDisabled: 'Disabled',
+        fieldCount: '{{count}} fields',
+        editField: 'Edit'
     },
 
     // Field types
@@ -375,13 +386,34 @@ export default {
             recommended: 'Recommended',
             noMatch: 'No matches',
             willUseInput: 'Will use input value',
-            modelsAvailable: 'available',
+            modelsAvailable: '{{count}} models available',
             // Refresh
             refresh: 'Refresh',
             refreshing: 'Refreshing...',
             refreshed: 'Updated',
             refreshFailed: 'Refresh failed',
-            modelsUpdated: 'Model list updated'
+            modelsUpdated: 'Fetched {{count}} models',
+            skillsTitle: 'Skills',
+            skillsDesc: 'Load only capabilities needed for this task to reduce prompt overhead',
+            skillTaskQueryName: 'Task Query',
+            skillTaskQueryDesc: 'Query task and progress data (supports tool calling)',
+            skillProgressAnalysisName: 'Progress Analysis',
+            skillProgressAnalysisDesc: 'Generate progress reports and bottleneck insights from task data',
+            compatibilityNotSupportedTitle: 'Warning: Tool Calling Not Supported',
+            compatibilityNotSupportedMessage: 'This API/model does not support tool calling. AI cannot fetch realtime task data.',
+            compatibilityUnknownTitle: 'Info: Tool Calling Support Unknown',
+            compatibilityUnknownMessage: 'Unable to determine tool calling support. If errors occur after saving, switch to another model.',
+            savedWithCompatibilityWarning: 'Settings saved - warning: this config does not support tool calling',
+            savedWithCompatibilityUnknown: 'Settings saved - please run connection test to confirm tool calling support',
+            reasoningNoToolCall: 'Reasoning models usually do not support tool calling',
+            toolTestTimeout: 'Tool-call test timed out; support cannot be determined',
+            toolChoiceRequiredNoCall: 'Model did not call a tool even with required tool choice',
+            connectionSuccess: 'Connection successful',
+            connectionSuccessNoToolCall: 'Connected, but tool calling is not supported',
+            connectionSuccessWithToolCall: 'Connected, tool calling is supported',
+            connectionSuccessUnknownToolCall: 'Connected, tool calling support is unknown',
+            connection404Details: 'Connection failed (404): endpoint path is invalid\n\nbaseURL: {{baseUrl}}\nmodel: {{model}}\n\nPossible causes:\n1. baseURL path is incorrect (check whether /v1 is required)\n2. model name triggered incorrect endpoint selection\n3. API does not support this endpoint',
+            connectionFailed: 'Connection failed, please check your configuration'
         },
 
         // Drawer
@@ -404,17 +436,25 @@ export default {
             copy: 'Copy',
             session: 'This session',
             tokens: 'Tokens',
+            tokensUnit: 'tokens',
             tokenUsage: 'Token usage',
             chatPlaceholder: 'Type a message to continue the conversation...',
+            inputLabel: 'Message',
             chatHint: 'Enter to send, Shift+Enter for new line',
             send: 'Send',
-            attach: 'Attach'
+            attach: 'Attach',
+            callingTool: 'Calling {{name}}',
+            taskNotFound: 'Task not found. It may have been removed or its hierarchy changed.',
+            taskPanelUnavailable: 'Task details panel is unavailable'
         },
         // Suggestions
         suggestions: {
             todayTasks: 'Query today\'s tasks',
             overdueTasks: 'View overdue tasks',
-            progressOverview: 'Get progress overview'
+            progressOverview: 'Get progress overview',
+            todayTasksPrompt: 'What are today\'s tasks?',
+            overdueTasksPrompt: 'Which tasks are overdue?',
+            progressOverviewPrompt: 'How is the overall project progress?'
         },
         // Agents
         agents: {
@@ -426,13 +466,33 @@ export default {
         },
         // Errors
         error: {
+            title: 'Request failed',
             notConfigured: 'Please configure AI settings first',
             agentNotFound: 'Agent not found',
             noContext: 'Please select a task or enter content',
+            noAgent: 'Conversation expired. Please start again',
+            quotaExceeded: 'Quota exceeded',
+            quotaExceededMsg: 'The free quota for this model is exhausted',
+            quotaAction: 'Switch model or upgrade plan',
             invalidKey: 'Invalid API Key, please check settings',
+            invalidKeyMsg: 'Please verify API key configuration and remove extra spaces',
+            checkConfig: 'Check settings',
             rateLimit: 'Too many requests, please try again later',
+            rateLimitMsg: 'Please try again later',
+            waitRetry: 'Retry later',
+            modelNotFound: 'Model not found',
+            modelNotFoundMsg: 'Requested model was not found',
+            selectOther: 'Choose another model',
             network: 'Network error, please check connection',
-            unknown: 'An unknown error occurred'
+            networkMsg: 'Unable to connect to AI service',
+            checkNetwork: 'Check network or Base URL',
+            contextLength: 'Input too long',
+            contextLengthMsg: 'Input exceeds model context limit',
+            shortenInput: 'Shorten input',
+            unknown: 'An unknown error occurred',
+            unknownMsg: 'An unknown error occurred',
+            viewDetails: 'View details',
+            originalError: 'Original error details'
         }
     },
     baseline: {

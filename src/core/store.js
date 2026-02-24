@@ -75,16 +75,25 @@ export async function restoreStateFromCache() {
         // 恢复字段顺序
         const cachedFieldOrder = getStoredFieldOrder();
         if (cachedFieldOrder && Array.isArray(cachedFieldOrder) && cachedFieldOrder.length > 0) {
-            // F-112: 确保 summary 字段存在 (兼容旧缓存)
-            if (!cachedFieldOrder.includes('summary')) {
-                // 插入 summary 到 start_date 之前
+            // 兼容旧缓存：将 summary 替换为 description
+            const summaryIdx = cachedFieldOrder.indexOf('summary');
+            if (summaryIdx >= 0) {
+                if (!cachedFieldOrder.includes('description')) {
+                    cachedFieldOrder[summaryIdx] = 'description';
+                } else {
+                    cachedFieldOrder.splice(summaryIdx, 1);
+                }
+                console.log('[Store] Migrated summary -> description in fieldOrder');
+            }
+            // 确保 description 字段存在
+            if (!cachedFieldOrder.includes('description')) {
                 const insertIndex = cachedFieldOrder.indexOf('start_date');
                 if (insertIndex >= 0) {
-                    cachedFieldOrder.splice(insertIndex, 0, 'summary');
+                    cachedFieldOrder.splice(insertIndex, 0, 'description');
                 } else {
-                    cachedFieldOrder.push('summary');
+                    cachedFieldOrder.push('description');
                 }
-                console.log('[Store] Added missing summary field to fieldOrder');
+                console.log('[Store] Added missing description field to fieldOrder');
             }
             state.fieldOrder = cachedFieldOrder;
             console.log('[Store] Restored field order from cache');

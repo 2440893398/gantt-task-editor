@@ -34,16 +34,13 @@ let isStreaming = false; // 流式输出状态
 let conversationHistory = [];
 
 const DRAWER_WIDTH_KEY = 'gantt_ai_drawer_width';
-const INPUT_HEIGHT_KEY = 'gantt_ai_drawer_input_height';
 const DRAWER_MIN_WIDTH = 360;
 const DRAWER_DEFAULT_WIDTH = 420;
 const DRAWER_MAX_MARGIN = 120;
 const INPUT_PANEL_MIN_HEIGHT = 96;
-const INPUT_PANEL_DEFAULT_HEIGHT = 124;
-const INPUT_PANEL_MAX_HEIGHT = 280;
 
 let drawerResizeState = null;
-let inputResizeState = null;
+let chatInputResizeState = null;
 
 // 工具调用状态 DOM 缓存（toolCallId -> element）
 const toolStatusElById = new Map();
@@ -82,24 +79,26 @@ function createDrawerHTML() {
                 </h3>
             </div>
             <div class="flex items-center gap-2">
-                <button class="btn btn-ghost btn-sm btn-square rounded-[10px]" 
-                        data-tip="${i18n.t('ai.config.title') || 'Settings'}" 
+                <button class="btn btn-ghost btn-sm btn-square rounded-[10px]"
+                        data-i18n-tip="ai.config.title"
+                        data-tip="${i18n.t('ai.config.title')}"
                         id="ai_drawer_settings">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                     </svg>
                 </button>
-                <button class="btn btn-ghost btn-sm btn-square rounded-[10px]" 
-                        data-tip="${i18n.t('ai.drawer.clear') || 'Clear chat'}" 
+                <button class="btn btn-ghost btn-sm btn-square rounded-[10px]"
+                        data-i18n-tip="ai.drawer.clear"
+                        data-tip="${i18n.t('ai.drawer.clear')}"
                         id="ai_drawer_clear">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                     </svg>
                 </button>
-                <button class="btn btn-ghost btn-sm btn-square rounded-[10px]" 
+                <button class="btn btn-ghost btn-sm btn-square rounded-[10px]"
                         id="ai_drawer_close" 
-                        aria-label="关闭">
+                        aria-label="${i18n.t('shortcuts.close')}">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
                     </svg>
@@ -112,13 +111,11 @@ function createDrawerHTML() {
             <!-- 消息气泡动态生成 -->
         </div>
 
-        <div id="ai_drawer_input_resize_handle" class="ai-drawer-input-resize-handle" aria-hidden="true"></div>
-
         <!-- Token 统计区 (F-111) -->
         <div class="flex justify-between items-center px-4 py-2 bg-base-100 text-xs text-base-content/60 border-y border-base-300 hidden" id="ai_token_stats">
-            <span>${i18n.t('ai.drawer.session') || 'Session'}</span>
+            <span>${i18n.t('ai.drawer.session')}</span>
             <span class="font-mono">
-                ${i18n.t('ai.drawer.tokens') || 'Total'}: <span class="text-primary font-semibold" id="ai_total_tokens">0</span> tokens
+                ${i18n.t('ai.drawer.tokens')}: <span class="text-primary font-semibold" id="ai_total_tokens">0</span> ${i18n.t('ai.drawer.tokensUnit')}
             </span>
         </div>
 
@@ -131,18 +128,18 @@ function createDrawerHTML() {
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                         </svg>
                         <div class="flex-1 min-w-0">
-                            <h4 class="font-semibold" id="ai_error_title">${i18n.t('ai.error.title') || 'Request failed'}</h4>
+                            <h4 class="font-semibold" id="ai_error_title">${i18n.t('ai.error.title')}</h4>
                             <p class="text-xs opacity-80 mt-1" id="ai_error_message"></p>
                             <details class="collapse mt-2 hidden" id="ai_error_details">
                                 <summary class="collapse-title text-xs font-medium p-2 min-h-0 bg-[--color-surface] rounded cursor-pointer">
-                                    ${i18n.t('ai.error.viewDetails') || 'View details'}
+                                    ${i18n.t('ai.error.viewDetails')}
                                 </summary>
                                 <div class="collapse-content bg-[--color-surface] rounded-b">
                                     <pre class="text-xs overflow-x-auto p-2 whitespace-pre-wrap break-all" id="ai_error_raw"></pre>
                                 </div>
                             </details>
                         </div>
-                        <button class="btn btn-ghost btn-xs btn-square rounded-md" id="ai_error_close" aria-label="关闭错误提示">✕</button>
+                        <button class="btn btn-ghost btn-xs btn-square rounded-md" id="ai_error_close" aria-label="${i18n.t('shortcuts.close')}">✕</button>
                     </div>
                 </div>
             </div>
@@ -151,19 +148,10 @@ function createDrawerHTML() {
         <!-- 底部区域：聊天输入 -->
         <div class="bg-base-100 border-t border-base-300 sticky bottom-0 z-10" id="ai_drawer_input_panel">
             <!-- F-106: 聊天输入框 - 对齐设计稿 -->
-            <div class="p-3 bg-base-100">
-                <div class="flex gap-2.5 items-end">
-                    <!-- 附件按钮 -->
-                    <button class="btn btn-ghost w-8 h-8 min-h-[32px] p-0 rounded-[10px] flex-shrink-0" 
-                            id="ai_attach_btn" 
-                            aria-label="附件"
-                            title="${i18n.t('ai.drawer.attach') || '附件'}">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-                        </svg>
-                    </button>
-                    
-                    <!-- 输入框（支持 mention 标签） -->
+            <div class="p-3 bg-base-100 ai-chat-compose">
+                <div id="ai_chat_input_resize_handle" class="ai-chat-input-resize-handle" aria-hidden="true"></div>
+                <div class="ai-chat-input-label">${i18n.t('ai.drawer.inputLabel')}</div>
+                <div class="flex gap-2.5 items-end ai-chat-input-row">
                     <div class="ai-chat-input-container flex-1 min-w-0" id="ai_chat_input_container">
                         <div
                             class="ai-chat-editor"
@@ -171,21 +159,21 @@ function createDrawerHTML() {
                             contenteditable="true"
                             role="textbox"
                             aria-multiline="true"
-                            data-placeholder="${i18n.t('ai.drawer.chatPlaceholder') || '输入消息继续对话，提问...'}"
+                            data-placeholder="${i18n.t('ai.drawer.chatPlaceholder')}"
                         ></div>
+                        <button class="btn btn-primary w-11 h-11 min-h-[44px] p-0 rounded-full ai-send-inside"
+                                id="ai_send_btn"
+                                type="button"
+                                aria-label="${i18n.t('ai.drawer.send')}">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                            </svg>
+                        </button>
                     </div>
-                    
-                    <!-- 发送按钮：40×40圆形 -->
-                    <button class="btn btn-primary w-10 h-10 min-h-[40px] p-0 rounded-full flex-shrink-0" 
-                            id="ai_send_btn" 
-                            type="button">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-                        </svg>
-                    </button>
                 </div>
-                <div class="text-xs text-base-content/60 mt-2 px-1">
-                    <span>${i18n.t('ai.drawer.chatHint') || 'Enter 发送, Shift+Enter 换行'}</span>
+                <div class="text-xs text-base-content/60 mt-2 px-1 ai-chat-meta-row">
+                    <span>${i18n.t('ai.drawer.chatHint')}</span>
+                    <span id="ai_chat_char_count" class="font-semibold">0/2000</span>
                 </div>
             </div>
         </div>
@@ -265,6 +253,7 @@ export function initAiDrawer() {
     // 绑定事件
     bindEvents();
     initResizableLayout();
+    i18n.refresh();
 }
 
 /**
@@ -301,6 +290,20 @@ function bindEvents() {
     // F-106: 聊天输入框回车发送 + @ mention 支持
     const chatInput = document.getElementById('ai_chat_input');
     autoResizeChatInput(chatInput);
+    updateChatInputMeta(chatInput);
+
+    chatInput?.addEventListener('pointerup', () => {
+        const currentHeight = Number(chatInput.offsetHeight);
+        const autoHeight = Number(chatInput.dataset.autoHeight || 0);
+        if (Number.isFinite(currentHeight) && currentHeight > 0 && Number.isFinite(autoHeight)) {
+            if (Math.abs(currentHeight - autoHeight) > 2) {
+                chatInput.dataset.manualHeight = String(currentHeight);
+            } else {
+                delete chatInput.dataset.manualHeight;
+            }
+        }
+    });
+
     chatInput?.addEventListener('keydown', (e) => {
         // 让 mention composer 先处理键盘事件
         if (mentionComposer && mentionComposer.handleKeydown(e)) return;
@@ -317,6 +320,7 @@ function bindEvents() {
             mentionComposer.handleInput();
         }
         autoResizeChatInput(chatInput);
+        updateChatInputMeta(chatInput);
     });
 
     // 初始化 mention composer
@@ -333,6 +337,29 @@ function bindEvents() {
 
     // 结构化结果操作（任务润色 / 任务分解）
     messagesEl?.addEventListener('click', handleResultAction);
+
+    const inputResizeHandle = document.getElementById('ai_chat_input_resize_handle');
+    if (inputResizeHandle && !inputResizeHandle.dataset.bound) {
+        inputResizeHandle.dataset.bound = 'true';
+        inputResizeHandle.addEventListener('mousedown', (event) => {
+            const inputEl = document.getElementById('ai_chat_input');
+            if (!inputEl) return;
+            event.preventDefault();
+            chatInputResizeState = {
+                startY: event.clientY,
+                startHeight: Number(inputEl.offsetHeight) || 46
+            };
+            document.addEventListener('mousemove', handleChatInputResizeMove);
+            document.addEventListener('mouseup', stopChatInputResize);
+        });
+
+        inputResizeHandle.addEventListener('dblclick', () => {
+            const inputEl = document.getElementById('ai_chat_input');
+            if (!inputEl) return;
+            delete inputEl.dataset.manualHeight;
+            autoResizeChatInput(inputEl);
+        });
+    }
 
     // 快捷建议点击事件（事件委托）
     messagesEl?.addEventListener('click', handleSuggestionClick);
@@ -370,13 +397,11 @@ function setDrawerWidth(width) {
     localStorage.setItem(DRAWER_WIDTH_KEY, String(clamped));
 }
 
-function setInputPanelHeight(height) {
+function setInputPanelAutoHeight() {
     const panel = document.getElementById('ai_drawer_input_panel');
     if (!panel) return;
-    const clamped = clamp(height, INPUT_PANEL_MIN_HEIGHT, INPUT_PANEL_MAX_HEIGHT);
-    panel.style.height = `${clamped}px`;
+    panel.style.height = '';
     panel.style.minHeight = `${INPUT_PANEL_MIN_HEIGHT}px`;
-    localStorage.setItem(INPUT_HEIGHT_KEY, String(clamped));
 }
 
 function handleDrawerResizeMove(event) {
@@ -391,23 +416,31 @@ function stopDrawerResize() {
     document.removeEventListener('mouseup', stopDrawerResize);
 }
 
-function handleInputResizeMove(event) {
-    if (!inputResizeState) return;
-    const desired = inputResizeState.startHeight + (inputResizeState.startY - event.clientY);
-    setInputPanelHeight(desired);
+function handleChatInputResizeMove(event) {
+    if (!chatInputResizeState) return;
+    const inputEl = document.getElementById('ai_chat_input');
+    if (!inputEl) return;
+
+    const minHeight = 46;
+    const maxHeight = 220;
+    const desired = chatInputResizeState.startHeight + (chatInputResizeState.startY - event.clientY);
+    const clamped = clamp(desired, minHeight, maxHeight);
+
+    inputEl.style.height = `${clamped}px`;
+    inputEl.style.overflowY = inputEl.scrollHeight > clamped ? 'auto' : 'hidden';
+    inputEl.dataset.manualHeight = String(clamped);
 }
 
-function stopInputResize() {
-    inputResizeState = null;
-    document.removeEventListener('mousemove', handleInputResizeMove);
-    document.removeEventListener('mouseup', stopInputResize);
+function stopChatInputResize() {
+    chatInputResizeState = null;
+    document.removeEventListener('mousemove', handleChatInputResizeMove);
+    document.removeEventListener('mouseup', stopChatInputResize);
 }
 
 function initResizableLayout() {
     if (!drawerEl) return;
 
     const resizeHandle = document.getElementById('ai_drawer_resize_handle');
-    const inputResizeHandle = document.getElementById('ai_drawer_input_resize_handle');
 
     if (resizeHandle && !resizeHandle.dataset.bound) {
         resizeHandle.dataset.bound = 'true';
@@ -423,23 +456,13 @@ function initResizableLayout() {
         });
     }
 
-    if (inputResizeHandle && !inputResizeHandle.dataset.bound) {
-        inputResizeHandle.dataset.bound = 'true';
-        inputResizeHandle.addEventListener('mousedown', (event) => {
-            event.preventDefault();
-            const panel = document.getElementById('ai_drawer_input_panel');
-            const currentHeight = parseInt(panel?.style.height || `${INPUT_PANEL_DEFAULT_HEIGHT}`, 10);
-            inputResizeState = {
-                startY: event.clientY,
-                startHeight: Number.isFinite(currentHeight) ? currentHeight : INPUT_PANEL_DEFAULT_HEIGHT
-            };
-            document.addEventListener('mousemove', handleInputResizeMove);
-            document.addEventListener('mouseup', stopInputResize);
-        });
-    }
-
     setDrawerWidth(getStoredNumber(DRAWER_WIDTH_KEY, DRAWER_DEFAULT_WIDTH));
-    setInputPanelHeight(getStoredNumber(INPUT_HEIGHT_KEY, INPUT_PANEL_DEFAULT_HEIGHT));
+    setInputPanelAutoHeight();
+    try {
+        localStorage.removeItem('gantt_ai_drawer_input_height');
+    } catch {
+        // no-op
+    }
 }
 
 function findTaskByHierarchyId(hierarchyId, taskList = getAllTasksWithHierarchy()) {
@@ -504,7 +527,7 @@ function handleTaskCitationClick(event, deps = {}) {
 
     if (!task?.id) {
         const notify = typeof deps.notify === 'function' ? deps.notify : showToast;
-        notify('未找到对应任务，可能已被删除或层级编号已变化', 'warning');
+        notify(i18n.t('ai.drawer.taskNotFound'), 'warning');
         return;
     }
 
@@ -518,7 +541,7 @@ function handleTaskCitationClick(event, deps = {}) {
     }
 
     const notify = typeof deps.notify === 'function' ? deps.notify : showToast;
-    notify('任务详情面板不可用', 'warning');
+    notify(i18n.t('ai.drawer.taskPanelUnavailable'), 'warning');
 }
 
 /**
@@ -582,7 +605,7 @@ export function addMessage(role, content, meta = {}) {
         id: Date.now(),
         role,
         content,
-        timestamp: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
+        timestamp: new Date().toLocaleTimeString(i18n.getLanguage(), { hour: '2-digit', minute: '2-digit' }),
         ...meta
     };
 
@@ -627,7 +650,7 @@ function renderMessage(message) {
         </span>
     `;
     const avatar = isUser ? userAvatar : aiAvatar;
-    const label = isUser ? (i18n.t('ai.drawer.you') || 'You') : 'AI';
+    const label = isUser ? i18n.t('ai.drawer.you') : 'AI';
 
     const canApply = !isUser && typeof onApplyCallback === 'function' && currentAgentId !== 'chat';
 
@@ -644,7 +667,7 @@ function renderMessage(message) {
                 </div>
                 ${!isUser && message.tokens ? `
                     <div class="flex items-center justify-between text-xs text-base-content/60 mt-2 pt-2 border-t border-base-300/50">
-                        <span>${i18n.t('ai.drawer.tokens') || 'Tokens'}: ${message.tokens.total || 0}</span>
+                        <span>${i18n.t('ai.drawer.tokens')}: ${message.tokens.total || 0}</span>
                     </div>
                 ` : ''}
             </div>
@@ -654,20 +677,20 @@ function renderMessage(message) {
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
                         </svg>
-                        ${i18n.t('ai.drawer.copy') || 'Copy'}
+                        ${i18n.t('ai.drawer.copy')}
                     </button>
                     <button class="btn btn-xs btn-ghost gap-1 ai-msg-retry" data-message-id="${message.id}">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                         </svg>
-                        ${i18n.t('ai.drawer.retry') || 'Retry'}
+                        ${i18n.t('ai.drawer.retry')}
                     </button>
                     ${canApply ? `
                         <button class="btn btn-xs btn-primary gap-1 ai-msg-apply" data-message-id="${message.id}">
                             <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
                             </svg>
-                            ${i18n.t('ai.drawer.apply') || 'Apply'}
+                            ${i18n.t('ai.drawer.apply')}
                         </button>
                     ` : ''}
                 </div>
@@ -681,7 +704,7 @@ function renderMessage(message) {
     const copyBtn = messagesEl.querySelector(`[data-message-id="${message.id}"] .ai-msg-copy`);
     copyBtn?.addEventListener('click', () => {
         navigator.clipboard.writeText(message.content).then(() => {
-            showToast(i18n.t('ai.drawer.copied') || 'Copied', 'success', 1500);
+            showToast(i18n.t('ai.drawer.copied'), 'success', 1500);
         });
     });
 
@@ -731,7 +754,7 @@ function bindMessageFooterEvents(message) {
         copyBtn.parentNode.replaceChild(newCopyBtn, copyBtn);
         newCopyBtn.addEventListener('click', () => {
             navigator.clipboard.writeText(message.content).then(() => {
-                showToast(i18n.t('ai.drawer.copied') || 'Copied', 'success', 1500);
+                showToast(i18n.t('ai.drawer.copied'), 'success', 1500);
             });
         });
     }
@@ -779,7 +802,7 @@ export function showToolCall(toolCall) {
                         <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                         <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                     </svg>
-                    <span class="tool-name">调用 ${escapeHtml(getToolDisplayName(toolCall.name))}</span>
+                    <span class="tool-name">${i18n.t('ai.drawer.callingTool', { name: escapeHtml(getToolDisplayName(toolCall.name)) })}</span>
                 </div>
                 <div class="flex items-center gap-1.5">
                     <span class="tool-spinner" aria-hidden="true"></span>
@@ -855,7 +878,8 @@ function renderEmptyState() {
     // 安全获取翻译文本
     const t = (key, fallback) => {
         try {
-            return i18n.t(key) || fallback;
+            const value = i18n.t(key);
+            return value === key ? fallback : value;
         } catch {
             return fallback;
         }
@@ -871,30 +895,30 @@ function renderEmptyState() {
             </div>
             
             <!-- 标题和副标题 -->
-            <h3 class="ai-empty-title">${t('ai.drawer.emptyTitle', '开始新对话')}</h3>
-            <p class="ai-empty-subtitle">${t('ai.drawer.emptySubtitle', '我可以帮你查询任务、分析进度...')}</p>
+            <h3 class="ai-empty-title">${t('ai.drawer.emptyTitle', 'Start a new conversation')}</h3>
+            <p class="ai-empty-subtitle">${t('ai.drawer.emptySubtitle', 'I can help query tasks and analyze progress...')}</p>
             
             <!-- 快捷建议 -->
             <div class="ai-suggestions">
-                <button class="ai-suggestion-card" data-suggestion="今天有什么任务？">
+                <button class="ai-suggestion-card" data-suggestion="${t('ai.suggestions.todayTasksPrompt', 'What are today\'s tasks?')}">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
                     </svg>
-                    <span>${t('ai.suggestions.todayTasks', '查询今日任务')}</span>
+                    <span>${t('ai.suggestions.todayTasks', 'Today\'s tasks')}</span>
                 </button>
                 
-                <button class="ai-suggestion-card ai-suggestion-danger" data-suggestion="哪些任务逾期了？">
+                <button class="ai-suggestion-card ai-suggestion-danger" data-suggestion="${t('ai.suggestions.overdueTasksPrompt', 'Which tasks are overdue?')}">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                     </svg>
-                    <span>${t('ai.suggestions.overdueTasks', '查看逾期任务')}</span>
+                    <span>${t('ai.suggestions.overdueTasks', 'Overdue tasks')}</span>
                 </button>
                 
-                <button class="ai-suggestion-card" data-suggestion="项目整体进度如何？">
+                <button class="ai-suggestion-card" data-suggestion="${t('ai.suggestions.progressOverviewPrompt', 'How is overall project progress?')}">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
                     </svg>
-                    <span>${t('ai.suggestions.progressOverview', '获取进度概览')}</span>
+                    <span>${t('ai.suggestions.progressOverview', 'Progress overview')}</span>
                 </button>
             </div>
         </div>
@@ -1200,7 +1224,7 @@ export function clearConversation() {
     document.getElementById('ai_token_stats')?.classList.add('hidden');
 
     hideError();
-    showToast(i18n.t('ai.drawer.cleared') || 'Conversation cleared', 'success', 1500);
+    showToast(i18n.t('ai.drawer.cleared'), 'success', 1500);
 }
 
 /**
@@ -1242,18 +1266,37 @@ function clearChatInput(inputEl) {
     if (!inputEl) return;
     inputEl.textContent = '';
     inputEl.focus();
+    updateChatInputMeta(inputEl);
+}
+
+function updateChatInputMeta(inputEl) {
+    const counterEl = document.getElementById('ai_chat_char_count');
+    if (!counterEl) return;
+
+    const maxChars = 2000;
+    const length = (inputEl?.textContent || '').replace(/\u00A0/g, ' ').trim().length;
+    counterEl.textContent = `${length}/${maxChars}`;
 }
 
 function autoResizeChatInput(inputEl) {
     if (!inputEl) return;
 
-    const minHeight = 40;
-    const maxHeight = 140;
+    const minHeight = 46;
+    const maxHeight = 220;
+
+    const manualHeight = Number(inputEl.dataset.manualHeight);
+    if (Number.isFinite(manualHeight) && manualHeight > 0) {
+        const clampedManual = Math.min(maxHeight, Math.max(minHeight, manualHeight));
+        inputEl.style.height = `${clampedManual}px`;
+        inputEl.style.overflowY = inputEl.scrollHeight > clampedManual ? 'auto' : 'hidden';
+        return;
+    }
 
     inputEl.style.height = 'auto';
     const nextHeight = Math.min(maxHeight, Math.max(minHeight, inputEl.scrollHeight));
     inputEl.style.height = `${nextHeight}px`;
     inputEl.style.overflowY = inputEl.scrollHeight > maxHeight ? 'auto' : 'hidden';
+    inputEl.dataset.autoHeight = String(nextHeight);
 }
 
 /**
@@ -1291,7 +1334,7 @@ function handleApply(content, messageId) {
 
     if (onApplyCallback && textToApply) {
         onApplyCallback(textToApply);
-        showToast(i18n.t('ai.drawer.applied') || 'Applied changes', 'success');
+        showToast(i18n.t('ai.drawer.applied'), 'success');
 
         // 更新对应消息的应用按钮状态
         if (messageId) {
@@ -1301,7 +1344,7 @@ function handleApply(content, messageId) {
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
                     </svg>
-                    ${i18n.t('ai.drawer.applied') || 'Applied'}
+                    ${i18n.t('ai.drawer.applied')}
                 `;
                 applyBtn.classList.remove('btn-primary');
                 applyBtn.classList.add('btn-success');
@@ -1358,7 +1401,8 @@ function markResultApplied(messageEl, button) {
     button.disabled = true;
     button.classList.remove('btn-primary');
     button.classList.add('btn-success');
-    button.textContent = i18n.t('ai.result.applied') || 'Applied';
+    const appliedLabel = i18n.t('ai.result.applied');
+    button.textContent = appliedLabel === 'ai.result.applied' ? i18n.t('ai.drawer.applied') : appliedLabel;
 }
 
 function tryParseStructuredData(text) {

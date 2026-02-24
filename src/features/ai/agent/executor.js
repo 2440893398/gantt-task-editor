@@ -7,6 +7,21 @@
 import { streamText, stepCountIs } from 'ai';
 import { loadSkill } from '../skills/registry.js';
 import { getToolsForSkill } from '../tools/registry.js';
+import { i18n } from '../../../utils/i18n.js';
+
+function getLanguageInstruction() {
+    const currentLanguage = i18n.getLanguage();
+    const localeNameMap = {
+        'zh-CN': 'Simplified Chinese',
+        'en-US': 'English',
+        'ja-JP': 'Japanese',
+        'ko-KR': 'Korean'
+    };
+    return {
+        language: currentLanguage,
+        languageName: localeNameMap[currentLanguage] || 'English'
+    };
+}
 
 /**
  * Check if tool calling should be disabled based on previous test results
@@ -106,7 +121,8 @@ export async function executeSkill(skillId, messages, model, callbacks = {}) {
 
     // 5. 拼接 system prompt（基础 + Skill 内容 + 当前时间）
     const now = new Date();
-    const currentDateTime = now.toLocaleString('zh-CN', {
+    const { language, languageName } = getLanguageInstruction();
+    const currentDateTime = now.toLocaleString(language, {
         year: 'numeric',
         month: '2-digit',
         day: '2-digit',
@@ -116,25 +132,24 @@ export async function executeSkill(skillId, messages, model, callbacks = {}) {
     });
     const todayDate = now.toISOString().split('T')[0]; // YYYY-MM-DD 格式
     
-    const systemPrompt = `你是一个专业的 Gantt 项目管理助手。
+    const systemPrompt = `You are a professional Gantt project management assistant.
 
-## 当前时间
-- 现在是：${currentDateTime}
-- 今天日期：${todayDate}
+## Current Time
+- Current time: ${currentDateTime}
+- Today's date: ${todayDate}
 
 ${skill.content}
 
-## 重要规则
-- ${hasTools ? '只使用上述工具获取数据，绝不编造数据' : '根据你的知识回答问题，但提醒用户你无法访问实时任务数据'}
-- 如果工具返回空结果，如实告知用户"当前没有符合条件的任务"
-- 如果工具返回 error 字段，向用户解释问题并建议解决方案
-- 输出使用中文，回复必须重点突出、简洁，禁止长篇大论
-- 禁止复述“工具返回/原始字段清单/数据一致性说明”等冗余内容
-- 概览类问题先给 1-2 句结论，再给最多 3 条关键风险或建议
-- 列表类问题可展示多条任务，但每条必须单行，且只保留必要字段（任务名、状态、截止/逾期、进度）
-- 任务详情默认给必要信息，不展开冗长描述
-- 涉及任务时优先使用引用链接格式：[#层级] 任务名，便于用户点击查看详情
-- 支持 Markdown 格式输出；需要结构化展示时优先使用标准 Markdown（标题、列表、表格、代码块），禁止伪表格文本`;
+## Critical Rules
+- ${hasTools ? 'Use the provided tools for factual task data. Do not fabricate task data.' : 'You can answer generally, but clearly state you cannot access realtime task data without tool calls.'}
+- If a tool returns an empty result, clearly say there are no matching tasks.
+- If a tool returns an error field, explain the issue and suggest a next action.
+- Response language must follow the current UI locale: ${languageName} (${language}). Do not switch languages unless the user explicitly asks.
+- Keep answers concise and scannable. Avoid verbose filler.
+- For overview questions, provide a 1-2 sentence conclusion first, then up to 3 key risks/suggestions.
+- For list questions, keep one task per line and include only necessary fields (task name, status, due/overdue, progress).
+- Prefer task citation format when applicable: [#hierarchy] Task Name.
+- Use clean Markdown for structured output (headings, lists, tables, code blocks), not pseudo-table text.`;
 
     // 6. 通知 UI：Skill 开始
     callbacks?.onSkillStart?.({ skillId, skillName: skill.name });
@@ -202,10 +217,12 @@ ${skill.content}
  * @param {Object} callbacks - 回调函数
  */
 export async function executeGeneralChat(messages, model, callbacks = {}) {
+    const { language, languageName } = getLanguageInstruction();
     return streamText({
         model: model,
-        system: `你是一个友好的项目管理助手，帮助用户解答关于 Gantt 项目的问题。
-如果用户询问具体任务数据，建议他们使用更具体的问题，如"今天有什么任务"或"哪些任务逾期了"。`,
+        system: `You are a helpful project management assistant for Gantt workflows.
+Response language must follow the current UI locale: ${languageName} (${language}).
+If users ask for specific realtime task data, suggest they ask focused questions like "today's tasks" or "overdue tasks" so tool-enabled flows can provide precise results.`,
         messages,
         maxSteps: 1
     });

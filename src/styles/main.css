@@ -130,18 +130,17 @@
 #task-toolbar .task-search {
     height: 32px;
     border-radius: var(--radius-pill);
-    border: 1px solid var(--color-border);
-    background: var(--color-card);
+    border: none;
+    background: var(--color-background);
     color: var(--color-foreground);
     font-size: 13px;
     padding-right: 12px;
     outline: none;
-    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    transition: box-shadow 0.2s ease;
 }
 
 #task-toolbar .task-search:focus {
-    border-color: rgba(14, 165, 233, 0.5);
-    box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.18);
+    box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.25);
 }
 
 .toolbar-pill {
@@ -153,55 +152,63 @@
     border-radius: var(--radius-pill);
     font-size: 13px;
     font-weight: 600;
-    border: 1px solid var(--color-border);
-    background: var(--color-card);
+    border: none;
+    background: var(--color-secondary);
     color: var(--color-foreground);
     cursor: pointer;
-    transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+    transition: background 0.2s ease, color 0.2s ease;
     white-space: nowrap;
+}
+
+.toolbar-pill:hover {
+    background: var(--color-border);
 }
 
 .toolbar-pill.toolbar-muted {
     background: var(--color-secondary);
-    border-color: transparent;
+    color: var(--color-muted-foreground);
+}
+
+.toolbar-pill.toolbar-muted:hover {
+    background: var(--color-border);
+    color: var(--color-foreground);
 }
 
 .toolbar-pill.toolbar-primary {
     background: var(--color-primary);
-    border-color: var(--color-primary);
     color: #FFFFFF;
 }
 
 .toolbar-pill.toolbar-primary:hover {
     background: var(--color-primary-hover);
-    border-color: var(--color-primary-hover);
 }
 
 .toolbar-icon-btn {
     width: 32px;
     height: 32px;
     border-radius: 8px;
-    background: var(--color-card);
-    border: 1px solid var(--color-border);
-    display: inline-flex;
+    background: transparent;
+    border: none;
+    display: inline-flex !important;
     align-items: center;
     justify-content: center;
     color: var(--color-muted-foreground);
     cursor: pointer;
-    transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+    transition: background 0.2s ease, color 0.2s ease;
+    vertical-align: middle;
 }
 
 .toolbar-icon-btn:hover {
     color: var(--color-foreground);
-    background: var(--color-surface);
+    background: var(--color-secondary);
 }
 
 .toolbar-sep {
     width: 1px;
     height: 16px;
     background: var(--color-border);
-    margin: 0 8px;
-    opacity: 0.5;
+    margin: 0 4px;
+    opacity: 0.6;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -219,7 +226,79 @@
     }
 }
 
-/* Gantt specific styles */
+/* =========================================
+   Split Panel Bar - 分屏模式面板标题栏
+   ========================================= */
+
+#split-panel-bar {
+    display: flex;
+    align-items: stretch;
+    height: 36px;
+    background: var(--color-surface-2, #EEF2F6);
+    border-radius: var(--radius-m, 12px) var(--radius-m, 12px) 0 0;
+    overflow: hidden;
+    flex-shrink: 0;
+    position: relative;
+}
+
+#split-panel-bar.hidden {
+    display: none;
+}
+
+.split-panel-bar-section {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 12px;
+    gap: 6px;
+    flex-shrink: 0;
+    overflow: hidden;
+}
+
+/* 右侧面板：flex-grow 占满剩余空间，左边界线与 resizer 对齐 */
+.split-panel-bar-right {
+    flex: 1 1 0;
+    min-width: 0;
+    margin-left: 0 !important; /* JS 不再用 margin-left，直接 flex */
+    border-left: 1px solid var(--color-border, #E2E8F0);
+}
+
+.split-panel-bar-inner {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+
+.split-panel-icon {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    color: var(--color-muted-foreground, #64748B);
+    stroke-width: 1.8;
+}
+
+.split-panel-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--color-foreground, #0F172A);
+    white-space: nowrap;
+}
+
+.split-panel-meta {
+    font-size: 11px;
+    color: var(--color-muted-foreground, #64748B);
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+/* 甘特纯视图：隐藏 grid 的列表头添加按钮，grid 底部无滚动条 */
+.gantt-only-mode .gantt_grid_scale .gantt_add {
+    display: none !important;
+}
+
+/* =========================================
+   Gantt specific styles */
 .gantt_task_line.short-task .gantt_task_content {
     min-width: 20px !important;
     border: 2px solid currentColor;

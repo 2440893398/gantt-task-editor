@@ -31,7 +31,9 @@ export default {
         quarter: '분기',
         year: '년',
         zoomOut: '축소',
-        zoomIn: '확대'
+        zoomIn: '확대',
+        tablePanel: '작업 표',
+        ganttPanel: '간트 차트'
     },
 
     // 열 이름 (테이블 헤더)
@@ -44,7 +46,8 @@ export default {
         priority: '우선순위',
         assignee: '담당자',
         status: '상태',
-        summary: '요약'
+        summary: '요약',
+        description: '설명'
     },
 
     // 열거값 (내부값 → 로컬라이즈된 표시값)
@@ -196,7 +199,15 @@ export default {
         customTag: '사용자 정의',
         enableField: '활성화',
         disableField: '비활성화',
-        linkedFieldsHint: '연결된 필드도 함께 {{action}}됩니다'
+        linkedFieldsHint: '연결된 필드도 함께 {{action}}됩니다',
+        searchPlaceholder: '필드 검색...',
+        filterAll: '전체',
+        filterSystem: '시스템 필드',
+        filterCustom: '사용자 정의 필드',
+        filterEnabled: '활성화됨',
+        filterDisabled: '비활성화됨',
+        fieldCount: '{{count}}개 필드',
+        editField: '편집'
     },
 
     // Field types
@@ -359,13 +370,34 @@ export default {
             recommended: '추천',
             noMatch: '일치하는 결과 없음',
             willUseInput: '입력값을 사용합니다',
-            modelsAvailable: '사용 가능',
+            modelsAvailable: '{{count}}개 사용 가능한 모델',
             // 새로고침
             refresh: '새로고침',
             refreshing: '새로고침 중...',
             refreshed: '업데이트됨',
             refreshFailed: '새로고침 실패',
-            modelsUpdated: '모델 목록이 업데이트되었습니다'
+            modelsUpdated: '{{count}}개 모델을 가져왔습니다',
+            skillsTitle: 'Skills',
+            skillsDesc: '현재 작업에 필요한 기능만 로드해 프롬프트 비용을 줄입니다',
+            skillTaskQueryName: 'Task Query',
+            skillTaskQueryDesc: '작업/진행률 데이터를 조회합니다(툴 호출 지원)',
+            skillProgressAnalysisName: 'Progress Analysis',
+            skillProgressAnalysisDesc: '작업 데이터를 기반으로 진행 보고서와 병목 힌트를 제공합니다',
+            compatibilityNotSupportedTitle: '⚠️ 함수 호출을 지원하지 않습니다',
+            compatibilityNotSupportedMessage: '이 API/모델은 함수 호출을 지원하지 않아 AI가 실시간 작업 데이터를 가져올 수 없습니다.',
+            compatibilityUnknownTitle: 'ℹ️ 함수 호출 지원 여부를 알 수 없습니다',
+            compatibilityUnknownMessage: '함수 호출 지원 여부를 확인할 수 없습니다. 저장 후 오류가 발생하면 다른 모델로 전환하세요.',
+            savedWithCompatibilityWarning: '설정이 저장되었습니다 - ⚠️ 이 구성은 함수 호출을 지원하지 않습니다',
+            savedWithCompatibilityUnknown: '설정이 저장되었습니다 - ℹ️ 연결 테스트로 함수 호출 지원 여부를 확인하세요',
+            reasoningNoToolCall: 'Reasoning 모델은 일반적으로 함수 호출을 지원하지 않습니다',
+            toolTestTimeout: '툴 호출 테스트가 시간 초과되어 지원 여부를 확인할 수 없습니다',
+            toolChoiceRequiredNoCall: 'toolChoice를 required로 설정해도 모델이 툴을 호출하지 않았습니다',
+            connectionSuccess: '연결 성공',
+            connectionSuccessNoToolCall: '✓ 연결 성공, 하지만 함수 호출은 지원되지 않습니다',
+            connectionSuccessWithToolCall: '✓ 연결 성공, 함수 호출을 지원합니다',
+            connectionSuccessUnknownToolCall: '✓ 연결 성공, 함수 호출 지원 여부는 알 수 없습니다',
+            connection404Details: '연결 실패 (404): 엔드포인트 경로가 잘못되었습니다\n\nbaseURL: {{baseUrl}}\nmodel: {{model}}\n\n가능한 원인:\n1. baseURL 경로가 올바르지 않음(/v1 포함 여부 확인)\n2. 모델 이름으로 인해 잘못된 엔드포인트가 선택됨\n3. API가 해당 엔드포인트를 지원하지 않음',
+            connectionFailed: '연결 실패, 설정을 확인해 주세요'
         },
         // 드로어
         drawer: {
@@ -375,7 +407,31 @@ export default {
             retry: '다시 시도',
             apply: '변경 적용',
             copied: '클립보드에 복사됨',
-            applied: '변경이 적용되었습니다'
+            applied: '변경이 적용되었습니다',
+            clear: '대화 지우기',
+            clearTitle: '대화 지우기',
+            clearConfirm: '모든 대화를 지우시겠습니까? 이 작업은 되돌릴 수 없습니다.',
+            cleared: '대화가 지워졌습니다',
+            you: '나',
+            copy: '복사',
+            session: '현재 세션',
+            tokens: 'Tokens',
+            tokensUnit: 'tokens',
+            chatPlaceholder: '메시지를 입력해 대화를 이어가세요...',
+            inputLabel: '메시지',
+            chatHint: 'Enter 전송, Shift+Enter 줄바꿈',
+            attach: '첨부',
+            callingTool: '{{name}} 호출 중',
+            taskNotFound: '해당 작업을 찾을 수 없습니다. 삭제되었거나 계층이 변경되었을 수 있습니다.',
+            taskPanelUnavailable: '작업 상세 패널을 사용할 수 없습니다'
+        },
+        suggestions: {
+            todayTasks: '오늘 작업 조회',
+            overdueTasks: '지연 작업 보기',
+            progressOverview: '진행 개요 확인',
+            todayTasksPrompt: '오늘 해야 할 작업은 무엇인가요?',
+            overdueTasksPrompt: '어떤 작업이 지연되었나요?',
+            progressOverviewPrompt: '프로젝트 전체 진행률은 어떤가요?'
         },
         // 에이전트
         agents: {
@@ -386,13 +442,17 @@ export default {
         },
         // 오류
         error: {
+            title: '요청 실패',
             notConfigured: '먼저 AI 설정을 해주세요',
             agentNotFound: '에이전트를 찾을 수 없습니다',
             noContext: '작업을 선택하거나 내용을 입력하세요',
+            noAgent: '대화가 만료되었습니다. 다시 시작해 주세요',
             invalidKey: 'API 키가 유효하지 않습니다. 설정을 확인하세요',
             rateLimit: '요청이 너무 많습니다. 나중에 다시 시도하세요',
             network: '네트워크 오류. 연결을 확인하세요',
-            unknown: '알 수 없는 오류가 발생했습니다'
+            unknown: '알 수 없는 오류가 발생했습니다',
+            viewDetails: '자세히 보기',
+            originalError: '원본 오류 정보'
         }
     },
     baseline: {

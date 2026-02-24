@@ -40,7 +40,8 @@ export function initInlineEdit() {
 function getEditorType(columnName) {
     // 特殊字段处理
     if (columnName === 'progress') return 'progress';
-    if (columnName === 'summary') return 'textarea';  // F-112
+    // 富文本字段在详情面板编辑，避免内联 textarea 覆盖 HTML 格式
+    if (columnName === 'summary' || columnName === 'description') return 'none';
 
     // 使用 store 中的 getFieldType 获取实际字段类型
     // 这会自动处理系统字段的类型覆盖

@@ -195,7 +195,7 @@ function createModalHTML() {
                 <details data-section="skills">
                     <summary class="skills-collapse-header flex items-center justify-between cursor-pointer select-none py-2 px-1 rounded-lg hover:bg-base-200 transition-colors">
                         <div class="flex items-center gap-2">
-                            <span class="label-text text-xs font-extrabold text-base-content/60 uppercase tracking-wide">Skills</span>
+                        <span class="label-text text-xs font-extrabold text-base-content/60 uppercase tracking-wide" data-i18n="ai.config.skillsTitle">Skills</span>
                             <span class="badge badge-sm badge-primary skills-enabled-count">2</span>
                         </div>
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-base-content/40 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -203,13 +203,13 @@ function createModalHTML() {
                         </svg>
                     </summary>
                     <div class="skills-list mt-2 space-y-2">
-                        <p class="text-xs text-base-content/60 mb-2.5">只加载当前任务需要的能力，减少提示词开销</p>
+                        <p class="text-xs text-base-content/60 mb-2.5" data-i18n="ai.config.skillsDesc">只加载当前任务需要的能力，减少提示词开销</p>
                         
                         <!-- Task Query 开关 -->
                         <div class="flex items-center justify-between min-h-[52px] px-3 py-2.5 rounded-xl border border-base-300 bg-base-100">
                             <div class="flex-1 min-w-0 pr-3">
-                                <div class="text-sm font-semibold text-base-content">Task Query</div>
-                                <div class="text-xs text-base-content/60 leading-tight">查询任务/进度等数据（支持工具调用）</div>
+                                <div class="text-sm font-semibold text-base-content" data-i18n="ai.config.skillTaskQueryName">Task Query</div>
+                                <div class="text-xs text-base-content/60 leading-tight" data-i18n="ai.config.skillTaskQueryDesc">查询任务/进度等数据（支持工具调用）</div>
                             </div>
                             <input type="checkbox" class="toggle toggle-primary flex-shrink-0 skill-toggle" id="ai_skill_task_query" checked />
                         </div>
@@ -217,8 +217,8 @@ function createModalHTML() {
                         <!-- Progress Analysis 开关 -->
                         <div class="flex items-center justify-between min-h-[52px] px-3 py-2.5 rounded-xl border border-base-300 bg-base-100">
                             <div class="flex-1 min-w-0 pr-3">
-                                <div class="text-sm font-semibold text-base-content">Progress Analysis</div>
-                                <div class="text-xs text-base-content/60 leading-tight">基于任务数据生成进度报告或瓶颈提示</div>
+                                <div class="text-sm font-semibold text-base-content" data-i18n="ai.config.skillProgressAnalysisName">Progress Analysis</div>
+                                <div class="text-xs text-base-content/60 leading-tight" data-i18n="ai.config.skillProgressAnalysisDesc">基于任务数据生成进度报告或瓶颈提示</div>
                             </div>
                             <input type="checkbox" class="toggle toggle-primary flex-shrink-0 skill-toggle" id="ai_skill_progress_analysis" checked />
                         </div>
@@ -272,6 +272,7 @@ export function initAiConfigModal() {
 
     // 绑定事件
     bindEvents();
+    i18n.refresh();
 }
 
 /**
@@ -482,7 +483,7 @@ function renderModelList(filter = '') {
         );
 
         if (filteredDynamic.length > 0) {
-            html += `<li class="menu-title text-xs text-[--color-muted-foreground] px-3 py-2">${i18n.t('ai.config.availableModels') || '可用模型'}</li>`;
+            html += `<li class="menu-title text-xs text-[--color-muted-foreground] px-3 py-2">${i18n.t('ai.config.availableModels')}</li>`;
             filteredDynamic.forEach(m => {
                 html += `<li><a data-model="${m.id}" class="flex justify-between">
                     <span class="truncate">${m.id}</span>
@@ -505,7 +506,7 @@ function renderModelList(filter = '') {
             filteredModels.forEach(m => {
                 html += `<li><a data-model="${m.value}" class="flex justify-between">
                     <span>${m.label}</span>
-                    ${m.recommended ? `<span class="badge badge-xs badge-primary">${i18n.t('ai.config.recommended') || '推荐'}</span>` : ''}
+                    ${m.recommended ? `<span class="badge badge-xs badge-primary">${i18n.t('ai.config.recommended')}</span>` : ''}
                 </a></li>`;
                 totalCount++;
             });
@@ -516,8 +517,8 @@ function renderModelList(filter = '') {
     if (totalCount === 0 && filter) {
         html = `<li class="px-4 py-3 text-sm text-[--color-muted-foreground]">
             <div class="flex flex-col items-center gap-1">
-                <span>${i18n.t('ai.config.noMatch') || '无匹配结果'}</span>
-                <span class="text-xs text-primary">${i18n.t('ai.config.willUseInput') || '将使用输入值'}: "${filter}"</span>
+                <span>${i18n.t('ai.config.noMatch')}</span>
+                <span class="text-xs text-primary">${i18n.t('ai.config.willUseInput')}: "${filter}"</span>
             </div>
         </li>`;
     }
@@ -527,7 +528,7 @@ function renderModelList(filter = '') {
     // 更新模型计数
     const countEl = document.getElementById('ai_model_count');
     if (countEl && dynamicModels.length > 0) {
-        countEl.textContent = `${dynamicModels.length} ${i18n.t('ai.config.modelsAvailable') || '个可用模型'}`;
+        countEl.textContent = i18n.t('ai.config.modelsAvailable', { count: dynamicModels.length });
     }
 }
 
@@ -557,7 +558,7 @@ async function handleRefreshModels(forceRefresh = false) {
 
         // 更新按钮状态
         if (icon) icon.classList.add('animate-spin');
-        if (text) text.textContent = i18n.t('ai.config.refreshing') || '刷新中...';
+        if (text) text.textContent = i18n.t('ai.config.refreshing');
         btn?.setAttribute('disabled', 'true');
 
         const result = await fetchModelList(forceRefresh);
@@ -567,7 +568,7 @@ async function handleRefreshModels(forceRefresh = false) {
             renderModelList(document.getElementById('ai_model_input')?.value || '');
 
             // 更新按钮为成功状态
-            if (text) text.textContent = i18n.t('ai.config.refreshed') || '已更新';
+            if (text) text.textContent = i18n.t('ai.config.refreshed');
             if (icon) {
                 icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />';
             }
@@ -575,14 +576,14 @@ async function handleRefreshModels(forceRefresh = false) {
 
             // 2秒后恢复
             setTimeout(() => {
-                if (text) text.textContent = i18n.t('ai.config.refresh') || '刷新';
+                if (text) text.textContent = i18n.t('ai.config.refresh');
                 if (icon) {
                     icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />';
                 }
             }, 2000);
 
             if (!result.fromCache) {
-                showToast(i18n.t('ai.config.modelsUpdated') || `已获取${result.models.length} 个模型`, 'success', 2000);
+                showToast(i18n.t('ai.config.modelsUpdated', { count: result.models.length }), 'success', 2000);
             }
         } else {
             throw new Error(result.error || 'Failed to fetch models');
@@ -590,10 +591,10 @@ async function handleRefreshModels(forceRefresh = false) {
 
     } catch (error) {
         console.error('[AI Config] Refresh models error:', error);
-        if (text) text.textContent = i18n.t('ai.config.refreshFailed') || '刷新失败';
+        if (text) text.textContent = i18n.t('ai.config.refreshFailed');
 
         setTimeout(() => {
-            if (text) text.textContent = i18n.t('ai.config.refresh') || '刷新';
+            if (text) text.textContent = i18n.t('ai.config.refresh');
         }, 2000);
 
     } finally {
@@ -653,7 +654,7 @@ async function handleTestConnection() {
 
     try {
         isTestingConnection = true;
-        testBtn.innerHTML = `<span class="loading loading-spinner loading-sm"></span> ${i18n.t('ai.config.testing') || '测试中...'}`;
+        testBtn.innerHTML = `<span class="loading loading-spinner loading-sm"></span> ${i18n.t('ai.config.testing')}`;
         testBtn.disabled = true;
 
         // 临时保存配置用于测试
@@ -679,8 +680,8 @@ async function handleTestConnection() {
         // 如果连接成功但不支持函数调用，显示警告
         if (result.success && result.toolCallSupported === false) {
             showCompatibilityWarning(
-                '⚠️ 不支持函数调用',
-                result.warning || '该 API/模型不支持函数调用，AI 将无法获取实时任务数据',
+                i18n.t('ai.config.compatibilityNotSupportedTitle'),
+                result.warning || i18n.t('ai.config.compatibilityNotSupportedMessage'),
                 false
             );
         } else if (result.success && result.toolCallSupported === true) {
@@ -689,8 +690,8 @@ async function handleTestConnection() {
         } else if (result.success && result.toolCallSupported === null) {
             // 未知支持情况
             showCompatibilityWarning(
-                'ℹ️ 函数调用支持未知',
-                result.warning || '无法确定是否支持函数调用，保存后如遇错误请切换其他模型',
+                i18n.t('ai.config.compatibilityUnknownTitle'),
+                result.warning || i18n.t('ai.config.compatibilityUnknownMessage'),
                 false
             );
         }
@@ -711,7 +712,7 @@ function handleSaveConfig() {
     const model = document.getElementById('ai_model_input')?.value || 'gpt-3.5-turbo';
 
     if (!apiKey && !isLocalUrl(baseUrl)) {
-        showToast(i18n.t('ai.config.apiKeyRequired') || '请输入 API Key', 'warning');
+        showToast(i18n.t('ai.config.apiKeyRequired'), 'warning');
         return;
     }
 
@@ -732,18 +733,18 @@ function handleSaveConfig() {
     // 根据测试结果显示不同提示
     if (testResult && testResult.toolCallSupported === false) {
         showToast(
-            '配置已保存 - ⚠️ 该配置不支持函数调用', 
+            i18n.t('ai.config.savedWithCompatibilityWarning'),
             'warning', 
             4000
         );
     } else if (testResult && testResult.toolCallSupported === null) {
         showToast(
-            '配置已保存 - ℹ️ 请先测试连接以确认函数调用支持', 
+            i18n.t('ai.config.savedWithCompatibilityUnknown'),
             'info', 
             3000
         );
     } else {
-        showToast(i18n.t('ai.config.saved') || '配置已保存', 'success');
+        showToast(i18n.t('ai.config.saved'), 'success');
     }
     
     closeModal();

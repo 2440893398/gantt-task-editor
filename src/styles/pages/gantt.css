@@ -1046,12 +1046,28 @@
     align-items: center !important;
 }
 
-/* 单元格内容截断 */
-.gantt_cell > * {
+/* 单元格内容截断 — 排除树形缩进与图标 */
+.gantt_cell > *:not(.gantt_tree_indent):not(.gantt_tree_icon) {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    max-width: 100%;
+    min-width: 0;
+}
+
+/* 树形缩进块：保持固定宽度，不被 flex 压缩 */
+.gantt_tree_indent {
+    flex: none !important;
+}
+
+/* 树形图标（展开/折叠/文件夹）：保持固定大小 */
+.gantt_tree_icon {
+    flex: none !important;
+}
+
+/* 树形内容区：允许收缩以触发省略号 */
+.gantt_tree_content {
+    flex: 1 !important;
+    min-width: 0 !important;
 }
 
 .gantt_cell:last-child {
@@ -1273,7 +1289,7 @@
 .progress-cell-gantt {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
 }
 
 .progress-bar-gantt {
@@ -1307,7 +1323,7 @@
     font-size: 12px;
     font-weight: 700;
     color: var(--design-text-primary);
-    min-width: 36px;
+    min-width: 30px;
     text-align: right;
 }
 
@@ -1797,4 +1813,257 @@
 .gantt_task_scale .gantt_scale_cell:last-child,
 .gantt_task_cell:last-child {
     border-right: none;
+}
+
+/* ========================================
+   甘特纯视图（gantt-only-mode）层级增强
+   ======================================== */
+
+/* 父任务行：浅色背景区分 */
+.gantt-only-mode .gantt_row.gantt_project {
+    background-color: var(--color-surface, #F8FAFC) !important;
+}
+
+.gantt-only-mode .gantt_row.gantt_project .gantt_tree_content {
+    font-weight: 700 !important;
+    color: var(--color-foreground, #0F172A) !important;
+}
+
+/* 子任务缩进量 — 由 gantt.templates.grid_indent 控制，此处确保 flex 不压缩 */
+.gantt-only-mode .gantt_tree_indent {
+    width: 20px !important;
+    flex: none !important;
+}
+
+/* 折叠/展开箭头：放大、加深 */
+.gantt-only-mode .gantt_tree_icon.gantt_open,
+.gantt-only-mode .gantt_tree_icon.gantt_close {
+    width: 18px !important;
+    height: 18px !important;
+    opacity: 1 !important;
+    filter: brightness(0.4);
+}
+
+/* 树形图标颜色 */
+.gantt-only-mode .gantt_tree_icon {
+    color: var(--color-muted-foreground, #64748B) !important;
+}
+
+/* 任务名文字对齐方式 - 左对齐 */
+.gantt-only-mode .gantt_grid_head_cell {
+    text-align: left !important;
+    padding-left: 8px !important;
+}
+
+/* ========================================
+   富文本摘要预览（列表 + 悬浮 Tooltip 风格）
+   ======================================== */
+
+.gantt-richtext-cell {
+    display: block;
+    width: 100%;
+}
+
+/* ---- 富文本 Tooltip 主容器 ---- */
+.summary-popover.summary-popover-rich {
+    position: fixed;
+    width: min(440px, calc(100vw - 24px));
+    max-width: min(520px, calc(100vw - 24px));
+    max-height: min(380px, calc(100vh - 36px));
+    overflow: hidden;
+    padding: 0;
+    background: var(--design-bg-white);
+    border: 1px solid var(--design-border);
+    border-radius: 10px;
+    box-shadow:
+        0 12px 24px -8px rgba(15, 23, 42, 0.22),
+        0 2px 6px 0 rgba(15, 23, 42, 0.08);
+    animation: summaryPopoverIn 0.14s ease-out both;
+    z-index: 9999;
+}
+
+@keyframes summaryPopoverIn {
+    from {
+        opacity: 0;
+        transform: translateY(-4px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* ---- 箭头指示器 ---- */
+.summary-popover-arrow {
+    position: absolute;
+    width: 12px;
+    height: 12px;
+    pointer-events: none;
+}
+
+/* 箭头朝上（popover 在单元格下方）*/
+.summary-popover-arrow-top {
+    top: -6px;
+    border-left: 6px solid transparent;
+    border-right: 6px solid transparent;
+    border-bottom: 6px solid var(--design-border);
+    margin-left: -6px;
+}
+.summary-popover-arrow-top::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: -5px;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-bottom: 5px solid var(--design-bg-white);
+}
+
+/* 箭头朝下（popover 在单元格上方）*/
+.summary-popover-arrow-bottom {
+    bottom: -6px;
+    border-left: 6px solid transparent;
+    border-right: 6px solid transparent;
+    border-top: 6px solid var(--design-border);
+    margin-left: -6px;
+}
+.summary-popover-arrow-bottom::after {
+    content: '';
+    position: absolute;
+    bottom: 2px;
+    left: -5px;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 5px solid var(--design-bg-white);
+}
+
+/* ---- 标题栏 ---- */
+.summary-popover-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--design-border);
+    background: var(--design-bg-surface);
+    border-radius: 10px 10px 0 0;
+}
+
+.summary-popover-header-icon {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    color: var(--design-text-secondary);
+}
+
+.summary-popover-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--design-text-primary);
+    letter-spacing: 0.01em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 360px;
+}
+
+/* ---- 富文本预览区 ---- */
+.summary-rich-preview-host {
+    width: 100%;
+}
+
+.summary-rich-preview-host .ql-toolbar.ql-snow {
+    display: none;
+}
+
+.summary-rich-preview-host .ql-container.ql-snow {
+    border: 0;
+    background: var(--design-bg-white);
+}
+
+.summary-rich-preview-host .ql-editor {
+    max-height: min(320px, calc(100vh - 110px));
+    overflow: auto;
+    padding: 10px 12px 12px;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--design-text-primary);
+    background: var(--design-bg-white);
+    scrollbar-width: thin;
+    scrollbar-color: #cbd5e1 transparent;
+}
+
+.summary-rich-preview-host .ql-editor::-webkit-scrollbar {
+    width: 5px;
+}
+.summary-rich-preview-host .ql-editor::-webkit-scrollbar-track {
+    background: transparent;
+}
+.summary-rich-preview-host .ql-editor::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 3px;
+}
+.summary-rich-preview-host .ql-editor::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+}
+
+/* 富文本段落间距 */
+.summary-rich-preview-host .ql-editor p,
+.summary-rich-preview-host .ql-editor ul,
+.summary-rich-preview-host .ql-editor ol,
+.summary-rich-preview-host .ql-editor pre,
+.summary-rich-preview-host .ql-editor blockquote {
+    margin: 0 0 6px;
+}
+
+.summary-rich-preview-host .ql-editor p:last-child,
+.summary-rich-preview-host .ql-editor ul:last-child,
+.summary-rich-preview-host .ql-editor ol:last-child,
+.summary-rich-preview-host .ql-editor pre:last-child,
+.summary-rich-preview-host .ql-editor blockquote:last-child {
+    margin-bottom: 0;
+}
+
+/* 富文本内 h1~h3 标题 */
+.summary-rich-preview-host .ql-editor h1,
+.summary-rich-preview-host .ql-editor h2,
+.summary-rich-preview-host .ql-editor h3 {
+    color: var(--design-text-primary);
+    font-weight: 600;
+    margin: 0 0 6px;
+}
+.summary-rich-preview-host .ql-editor h1 { font-size: 15px; }
+.summary-rich-preview-host .ql-editor h2 { font-size: 14px; }
+.summary-rich-preview-host .ql-editor h3 { font-size: 13px; }
+
+/* 代码块 */
+.summary-rich-preview-host .ql-editor pre.ql-syntax {
+    background: #f8fafc;
+    color: #0f172a;
+    border: 1px solid var(--design-border);
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 12px;
+}
+
+/* 引用块 */
+.summary-rich-preview-host .ql-editor blockquote {
+    border-left: 3px solid var(--design-primary);
+    padding-left: 10px;
+    color: var(--design-text-secondary);
+}
+
+/* 列表 */
+.summary-rich-preview-host .ql-editor ul > li::before,
+.summary-rich-preview-host .ql-editor ol > li::before {
+    color: var(--design-text-secondary);
+}
+
+/* 加粗 / 斜体 */
+.summary-rich-preview-host .ql-editor strong,
+.summary-rich-preview-host .ql-editor b {
+    color: var(--design-text-primary);
+    font-weight: 600;
+}
+.summary-rich-preview-host .ql-editor em {
+    color: #334155;
 }

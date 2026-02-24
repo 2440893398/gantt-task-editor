@@ -5,6 +5,19 @@
 import { applySelectionStyles } from '../selection/selectionManager.js';
 
 /**
+ * 同步 Panel Bar 左侧宽度（避免循环引用，直接操作 DOM）
+ */
+function _syncPanelBarWidth(gridWidth) {
+    const leftSection = document.getElementById('split-panel-bar-left');
+    if (!leftSection) return;
+    const RESIZER_WIDTH = 6;
+    const totalLeft = gridWidth + RESIZER_WIDTH;
+    leftSection.style.width = totalLeft + 'px';
+    leftSection.style.minWidth = totalLeft + 'px';
+    leftSection.style.maxWidth = totalLeft + 'px';
+}
+
+/**
  * 初始化自定义 Resizer
  */
 export function initResizer() {
@@ -26,34 +39,39 @@ export function initResizer() {
         document.body.style.cursor = 'col-resize';
         document.body.style.userSelect = 'none';
 
+        // 判断当前是否是甘特纯视图模式（css class 含 gantt-only-mode）
+        const isGanttOnly = (gantt.config.layout.css || '').includes('gantt-only-mode');
+        const minWidth = isGanttOnly ? 100 : 200;
+        const storageKey = isGanttOnly ? 'gantt_only_grid_width' : 'gantt_grid_width';
+
         function onMouseMove(e) {
             const diff = e.clientX - startX;
             let newWidth = startWidth + diff;
-            // 只保留最小宽度限制
-            if (newWidth < 200) newWidth = 200;
+            if (newWidth < minWidth) newWidth = minWidth;
 
-            // 更新 Layout 配置并重绘
             colConfig.width = newWidth;
             gantt.resetLayout();
+
+            // 分屏模式才同步 Panel Bar
+            if (!isGanttOnly) {
+                _syncPanelBarWidth(newWidth);
+            }
         }
 
         function onMouseUp() {
             document.removeEventListener("mousemove", onMouseMove);
             document.removeEventListener("mouseup", onMouseUp);
 
-            // 恢复样式
             resizer.style.background = '';
             document.body.style.cursor = '';
             document.body.style.userSelect = '';
 
-            // 保存当前宽度到 localStorage
             try {
-                localStorage.setItem('gantt_grid_width', colConfig.width);
+                localStorage.setItem(storageKey, colConfig.width);
             } catch (e) {
                 console.warn('无法保存宽度设置:', e);
             }
 
-            // 重绘后需要重新绑定事件和应用选中样式
             resizer._isInitialized = false;
             initResizer();
             setTimeout(applySelectionStyles, 100);

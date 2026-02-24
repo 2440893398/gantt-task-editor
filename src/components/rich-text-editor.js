@@ -9,6 +9,39 @@ import 'quill/dist/quill.snow.css';
 let editorInstance = null;
 
 /**
+ * 创建独立的只读富文本预览实例
+ * 不影响任务详情面板的主编辑器实例
+ * @param {HTMLElement} container - 挂载容器
+ * @param {string} html - 富文本 HTML
+ * @param {Object} options - 预览选项
+ * @returns {Quill|null}
+ */
+export function createRichTextPreview(container, html = '', options = {}) {
+    if (!container) return null;
+
+    const config = {
+        theme: 'snow',
+        readOnly: true,
+        modules: {
+            toolbar: options.toolbar || false
+        }
+    };
+
+    container.innerHTML = '';
+    const preview = new Quill(container, config);
+
+    const safeHtml = typeof html === 'string' ? html : '';
+    if (safeHtml.trim()) {
+        preview.clipboard.dangerouslyPasteHTML(safeHtml);
+    } else {
+        preview.setText('');
+    }
+
+    preview.enable(false);
+    return preview;
+}
+
+/**
  * 初始化富文本编辑器
  * @param {string} containerId - 容器元素ID
  * @param {Object} options - 配置选项

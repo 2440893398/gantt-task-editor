@@ -8,6 +8,7 @@ import { streamText } from 'ai';
 import { getAiConfigState, setAiStatus } from '../../../core/store.js';
 import { quickRoute, routeToSkill } from '../agent/router.js';
 import { executeSkill, executeGeneralChat } from '../agent/executor.js';
+import { i18n } from '../../../utils/i18n.js';
 
 /**
  * Debug: Intercept fetch to log actual API endpoints
@@ -361,7 +362,7 @@ export async function testConnection(config = null) {
     if (!apiKey) {
         return { 
             success: false, 
-            message: 'API Key 未配置',
+            message: i18n.t('ai.config.apiKeyRequired'),
             toolCallSupported: false
         };
     }
@@ -448,7 +449,7 @@ export async function testConnection(config = null) {
                 // Reasoning 模型通常不支持工具调用，跳过测试
                 console.log('[Test Connection] Step 2: ⚠ Reasoning model detected, skipping tool call test');
                 toolCallSupported = false;
-                toolCallError = 'Reasoning models typically do not support tool calling';
+                toolCallError = i18n.t('ai.config.reasoningNoToolCall');
             } else {
                 // 使用 toolChoice: 'required' 强制模型调用工具
                 // 这样可以准确测试 API 是否支持函数调用
@@ -506,14 +507,14 @@ export async function testConnection(config = null) {
                         // 使用了 toolChoice: required 但还是没调用工具
                         // 可能是 API 不支持 toolChoice，我们认为支持是未知的
                         toolCallSupported = null;
-                        toolCallError = 'Model did not call tool even with toolChoice: required';
+                        toolCallError = i18n.t('ai.config.toolChoiceRequiredNoCall');
                         console.log('[Test Connection] Step 2: ⚠ Cannot determine - no tool call with required choice');
                     }
                 } catch (streamError) {
                     if (streamError.message === 'Tool test timeout') {
                         console.warn('[Test Connection] Step 2: ⚠ Tool test timed out');
                         toolCallSupported = null;
-                        toolCallError = 'Tool test timed out - cannot determine support';
+                        toolCallError = i18n.t('ai.config.toolTestTimeout');
                     } else {
                         throw streamError; // Re-throw other errors
                     }
@@ -551,19 +552,19 @@ export async function testConnection(config = null) {
         // 返回测试结果
         const result = {
             success: true,
-            message: '连接成功',
+            message: i18n.t('ai.config.connectionSuccess'),
             toolCallSupported: toolCallSupported
         };
         
         // 添加详细说明
         if (toolCallSupported === false) {
-            result.message = '✓ 连接成功，但不支持函数调用';
-            result.warning = '该 API/模型不支持函数调用，AI 将无法获取实时任务数据';
+            result.message = i18n.t('ai.config.connectionSuccessNoToolCall');
+            result.warning = i18n.t('ai.config.compatibilityNotSupportedMessage');
         } else if (toolCallSupported === true) {
-            result.message = '✓ 连接成功，支持函数调用';
+            result.message = i18n.t('ai.config.connectionSuccessWithToolCall');
         } else {
-            result.message = '✓ 连接成功，函数调用支持未知';
-            result.warning = '无法确定是否支持函数调用';
+            result.message = i18n.t('ai.config.connectionSuccessUnknownToolCall');
+            result.warning = i18n.t('ai.config.compatibilityUnknownMessage');
         }
         
         // Disable fetch interceptor
@@ -588,14 +589,17 @@ export async function testConnection(config = null) {
         if (error.status === 404) {
             return {
                 success: false,
-                message: `连接失败 (404): 端点路径错误\n\nbaseURL: ${baseUrl || '(default)'}\nmodel: ${model || 'gpt-3.5-turbo'}\n\n可能原因：\n1. baseURL 路径不正确（需要确认是否包含 /v1）\n2. 模型名称触发了错误的端点选择\n3. API 不支持该端点`,
+                message: i18n.t('ai.config.connection404Details', {
+                    baseUrl: baseUrl || '(default)',
+                    model: model || 'gpt-3.5-turbo'
+                }),
                 toolCallSupported: false
             };
         }
         
         return {
             success: false,
-            message: error.message || '连接失败，请检查配置',
+            message: error.message || i18n.t('ai.config.connectionFailed'),
             toolCallSupported: false
         };
     }
@@ -653,7 +657,7 @@ export async function fetchModelList(forceRefresh = false) {
     const { apiKey, baseUrl } = getAiConfigState();
 
     if (!apiKey && !isLocalUrl(baseUrl)) {
-        return { success: false, models: [], fromCache: false, error: 'API Key 未配置' };
+        return { success: false, models: [], fromCache: false, error: i18n.t('ai.config.apiKeyRequired') };
     }
 
     const cacheKey = getModelCacheKey(baseUrl);

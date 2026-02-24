@@ -8,6 +8,7 @@ import { INTERNAL_FIELDS, SYSTEM_FIELD_CONFIG } from '../../data/fields.js';
 import { renderPriorityBadge, renderStatusBadge, renderAssignee, renderProgressBar } from './templates.js';
 import { extractPlainText, escapeAttr } from '../../utils/dom.js';
 import { formatDuration } from '../../utils/time-formatter.js';
+import { applySavedColumnWidths, loadColumnWidthPrefs } from './column-widths.js';
 
 /**
  * 获取本地化的列名称
@@ -16,11 +17,6 @@ import { formatDuration } from '../../utils/time-formatter.js';
  * @returns {string} 本地化的列名称
  */
 function getColumnLabel(key, customFieldLabel = null) {
-    // 如果提供了自定义字段标签，优先使用
-    if (customFieldLabel) {
-        return customFieldLabel;
-    }
-
     // 如果 i18n 可用，使用本地化文本
     if (window.i18n && typeof window.i18n.t === 'function') {
         const translated = window.i18n.t(`columns.${key}`);
@@ -28,6 +24,11 @@ function getColumnLabel(key, customFieldLabel = null) {
         if (translated !== `columns.${key}`) {
             return translated;
         }
+    }
+
+    // 自定义字段标签兜底
+    if (customFieldLabel) {
+        return customFieldLabel;
     }
     // 默认中文
     const defaults = {
@@ -38,7 +39,7 @@ function getColumnLabel(key, customFieldLabel = null) {
         priority: '优先级',
         assignee: '负责人',
         status: '状态',
-        summary: '概述'  // F-112
+        description: '描述'
     };
     return defaults[key] || key;
 }
@@ -51,6 +52,100 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+const RICH_TEXT_PREVIEW_LIMIT = 40;
+
+function hasHtmlMarkup(value) {
+    return /<\s*\/?\s*[a-z][^>]*>/i.test(String(value || ''));
+}
+
+function richContentScore(value) {
+    const content = String(value || '');
+    if (!content.trim()) return -1;
+
+    let score = 0;
+
+    if (hasHtmlMarkup(content)) score += 100;
+    if (/<\s*(p|div|ul|ol|li|blockquote|pre|h[1-6]|br)\b/i.test(content)) score += 400;
+    if (/<\s*(strong|b|em|i|u|s|code|span)\b/i.test(content)) score += 120;
+    if (/&lt;\s*\/?\s*(p|div|ul|ol|li|blockquote|pre|h[1-6]|br)\b/i.test(content)) score += 300;
+    if (/\n/.test(content)) score += 20;
+
+    score += Math.min(content.length, 2000) / 2000;
+
+    return score;
+}
+
+function resolveRichTextField(task, preferredField) {
+    const candidateFields = Array.from(new Set([
+        preferredField,
+        preferredField === 'summary' ? 'description' : 'summary',
+        preferredField === 'description' ? 'summary' : 'description'
+    ]));
+
+    let bestField = preferredField;
+    let bestHtml = String(task?.[preferredField] || '');
+    let bestScore = richContentScore(bestHtml);
+
+    candidateFields.forEach((field) => {
+        const value = String(task?.[field] || '');
+        const score = richContentScore(value);
+        if (score > bestScore) {
+            bestScore = score;
+            bestField = field;
+            bestHtml = value;
+        }
+    });
+
+    return { field: bestField, html: bestHtml };
+}
+
+function truncatePlainText(text, maxLength = RICH_TEXT_PREVIEW_LIMIT) {
+    const safeText = String(text || '').trim();
+    if (safeText.length <= maxLength) return safeText;
+    return `${safeText.slice(0, maxLength)}...`;
+}
+
+function renderRichTextPreviewCell(task, preferredField) {
+    const { field, html } = resolveRichTextField(task, preferredField);
+
+    if (!html) {
+        return '<span class="text-base-content/40 text-xs italic">—</span>';
+    }
+
+    const plainText = extractPlainText(html);
+    if (!plainText) {
+        return '<span class="text-base-content/40 text-xs italic">—</span>';
+    }
+
+    const truncated = truncatePlainText(plainText);
+    return `<div class="gantt-summary-cell gantt-richtext-cell cursor-pointer"
+                 data-task-id="${escapeAttr(task?.id)}"
+                 data-rich-field="${escapeAttr(field)}"
+                 data-full-html="${escapeAttr(html)}"
+                 data-plain-text="${escapeAttr(plainText)}">
+                <span class="line-clamp-1 text-sm">${escapeHtml(truncated)}</span>
+            </div>`;
+}
+
+/**
+ * 统一甘特表格日期显示格式
+ * 优先使用 dhtmlx 的 date_grid 模板，保证 start/end 一致
+ */
+function formatGridDate(value) {
+    if (!value) return '';
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+
+    if (gantt?.templates?.date_grid) {
+        return gantt.templates.date_grid(date);
+    }
+
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
 }
 
 /**
@@ -83,18 +178,19 @@ export function updateGanttColumns() {
                 name: "text",
                 label: getColumnLabel("text"),
                 tree: true,
-                width: 220,
+                width: "*",
+                min_width: 240,
                 resize: true,
                 template: function (task) {
                     const text = task.text || '';
                     let html = '';
-                    
+
                     // 如果是项目（父任务），添加项目编号徽章
                     if (task.type === 'project' || (task.parent === 0 && gantt.hasChild(task.id))) {
                         const projectNum = task.project_number || task.id;
                         html += `<span class="project-id-badge-gantt">#${projectNum}</span>`;
                     }
-                    
+
                     // Add title attribute for tooltip on hover
                     html += `<span title="${escapeHtml(text)}">${escapeHtml(text)}</span>`;
                     return html;
@@ -105,12 +201,13 @@ export function updateGanttColumns() {
                 name: "start_date",
                 label: getColumnLabel("start_date"),
                 align: "center",
-                width: 110,
+                width: 80,
+                min_width: 80,
                 resize: true,
                 template: function (task) {
                     const date = task.start_date;
                     if (!date) return '<span class="text-base-content/40">—</span>';
-                    const formatted = gantt.templates.date_grid ? gantt.templates.date_grid(date) : date.toLocaleDateString();
+                    const formatted = formatGridDate(date);
                     return `<span title="${formatted}">${formatted}</span>`;
                 }
             });
@@ -119,7 +216,8 @@ export function updateGanttColumns() {
                 name: "duration",
                 label: getColumnLabel("duration"),
                 align: "center",
-                width: 80,
+                width: 56,
+                min_width: 56,
                 resize: true,
                 template: function (task) {
                     const duration = task.duration || 0;
@@ -129,39 +227,21 @@ export function updateGanttColumns() {
             });
         } else if (fieldName === "progress") {
             columns.push({
-                name: "progress", label: getColumnLabel("progress"), align: "center", width: 90, resize: true,
+                name: "progress", label: getColumnLabel("progress"), align: "center", width: 100, min_width: 84, resize: true,
                 template: function (task) {
                     return renderProgressBar(task);
                 }
             });
-        } else if (fieldName === "summary") {
-            // F-112: 任务概述字段 - 省略显示 + 悬停展开
+        } else if (fieldName === "description") {
+            // 描述字段：显示富文本摘要，悬浮展示完整 tooltip 预览
             columns.push({
-                name: "summary",
-                label: getColumnLabel("summary"),
-                width: 200,
+                name: "description",
+                label: getColumnLabel("description"),
+                width: 100,
+                min_width: 100,
                 resize: true,
                 template: function (task) {
-                    const html = task.summary || '';
-
-                    // 空值处理
-                    if (!html) {
-                        return '<span class="text-base-content/40 text-xs italic">—</span>';
-                    }
-
-                    // 提取纯文本
-                    const plainText = extractPlainText(html);
-
-                    // 截断显示（最多50字符）
-                    const truncated = plainText.length > 50
-                        ? plainText.substring(0, 50) + '...'
-                        : plainText;
-
-                    return `<div class="gantt-summary-cell cursor-pointer"
-                                 data-full-html="${escapeAttr(html)}"
-                                 data-plain-text="${escapeAttr(plainText)}">
-                                <span class="line-clamp-1 text-sm">${escapeHtml(truncated)}</span>
-                            </div>`;
+                    return renderRichTextPreviewCell(task, 'description');
                 }
             });
         } else {
@@ -187,6 +267,9 @@ export function updateGanttColumns() {
                     };
                 } else {
                     templateFn = function (task) {
+                        if (fieldName === 'description') {
+                            return renderRichTextPreviewCell(task, fieldName);
+                        }
                         const value = task[fieldName] || '';
                         if (!value) return '';
                         // Add title attribute for tooltip on hover
@@ -197,17 +280,18 @@ export function updateGanttColumns() {
                 // 使用本地化列名，优先使用翻译，其次使用customField.label
                 const label = getColumnLabel(fieldName, customField.label);
 
-                // 根据设计稿设置特定字段的宽度
-                let width = customField.width || 100;
-                if (fieldName === 'priority') width = 90;
-                else if (fieldName === 'assignee') width = 100;
-                else if (fieldName === 'status') width = 100;
+                // 根据设计稿设置特定字段的宽度（紧凑模式，悬浮显示全文）
+                let width = customField.width || 72;
+                if (fieldName === 'priority') width = 64;
+                else if (fieldName === 'assignee') width = 72;
+                else if (fieldName === 'status') width = 72;
 
                 columns.push({
                     name: fieldName,
                     label: label,
                     align: "center",
                     width: width,
+                    min_width: Math.max(Math.min(width, 100), 72),
                     resize: true,
                     template: templateFn
                 });
@@ -229,9 +313,8 @@ export function updateGanttColumns() {
                     templateFn = function (task) {
                         const value = task[fieldName];
                         if (!value) return '<span class="text-base-content/40">—</span>';
-                        const date = new Date(value);
-                        if (isNaN(date.getTime())) return '<span class="text-base-content/40">—</span>';
-                        const formatted = date.toLocaleDateString();
+                        const formatted = formatGridDate(value);
+                        if (!formatted) return '<span class="text-base-content/40">—</span>';
                         return `<span title="${formatted}">${formatted}</span>`;
                     };
                 } else if (systemFieldConfig.type === 'number') {
@@ -244,6 +327,9 @@ export function updateGanttColumns() {
                 } else {
                     // Default: just display the value with tooltip
                     templateFn = function (task) {
+                        if (fieldName === 'description') {
+                            return renderRichTextPreviewCell(task, fieldName);
+                        }
                         const value = task[fieldName] || '';
                         if (!value) return '';
                         return `<span title="${escapeHtml(String(value))}">${escapeHtml(String(value))}</span>`;
@@ -254,7 +340,8 @@ export function updateGanttColumns() {
                     name: fieldName,
                     label: label,
                     align: "center",
-                    width: 100,
+                    width: 72,
+                    min_width: 72,
                     resize: true,
                     template: templateFn
                 });
@@ -264,9 +351,41 @@ export function updateGanttColumns() {
     });
 
     // 添加列 - 宽度44px匹配设计稿
-    columns.push({ name: "add", label: "", width: 44 });
+    columns.push({ name: "add", label: "", width: 44, min_width: 44 });
 
-    gantt.config.columns = columns;
+    gantt.config.columns = applySavedColumnWidths(columns, loadColumnWidthPrefs());
+
+    if (gantt.$container) {
+        gantt.render();
+    }
+}
+
+/**
+ * 设置甘特纯视图的列配置（仅任务名称列，用于 gantt-only 模式）
+ */
+export function setGanttOnlyColumns() {
+    gantt.config.columns = [
+        {
+            name: "text",
+            label: getColumnLabel("text"),
+            tree: true,
+            width: "*",
+            min_width: 180,
+            resize: true,
+            template: function (task) {
+                const text = task.text || '';
+                let html = '';
+                if (task.type === 'project' || (task.parent === 0 && gantt.hasChild(task.id))) {
+                    const projectNum = task.project_number || task.id;
+                    html += `<span class="project-id-badge-gantt">#${projectNum}</span>`;
+                }
+                html += `<span title="${task.text || ''}">${escapeHtml(text)}</span>`;
+                return html;
+            }
+        }
+    ];
+
+    gantt.config.columns = applySavedColumnWidths(gantt.config.columns, loadColumnWidthPrefs());
 
     if (gantt.$container) {
         gantt.render();

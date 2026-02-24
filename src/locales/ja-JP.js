@@ -32,7 +32,9 @@ export default {
         quarter: '四半期',
         year: '年',
         zoomOut: '縮小',
-        zoomIn: '拡大'
+        zoomIn: '拡大',
+        tablePanel: 'タスク表',
+        ganttPanel: 'ガントチャート'
     },
 
     // カラム名（テーブルヘッダー）
@@ -45,7 +47,8 @@ export default {
         priority: '優先度',
         assignee: '担当者',
         status: 'ステータス',
-        summary: '概要'
+        summary: '概要',
+        description: '説明'
     },
 
 
@@ -198,7 +201,15 @@ export default {
         customTag: 'カスタム',
         enableField: '有効',
         disableField: '無効',
-        linkedFieldsHint: '関連フィールドも一緒に{{action}}されます'
+        linkedFieldsHint: '関連フィールドも一緒に{{action}}されます',
+        searchPlaceholder: 'フィールドを検索...',
+        filterAll: 'すべて',
+        filterSystem: 'システム',
+        filterCustom: 'カスタム',
+        filterEnabled: '有効',
+        filterDisabled: '無効',
+        fieldCount: '{{count}}件のフィールド',
+        editField: '編集'
     },
 
     // Field types
@@ -362,13 +373,34 @@ export default {
             recommended: '推奨',
             noMatch: '一致なし',
             willUseInput: '入力値を使用します',
-            modelsAvailable: '利用可能',
+            modelsAvailable: '{{count}}個の利用可能モデル',
             // 更新
             refresh: '更新',
             refreshing: '更新中...',
             refreshed: '更新しました',
             refreshFailed: '更新に失敗しました',
-            modelsUpdated: 'モデルリストを更新しました'
+            modelsUpdated: '{{count}}個のモデルを取得しました',
+            skillsTitle: 'Skills',
+            skillsDesc: 'このタスクに必要な機能のみを読み込み、プロンプトコストを削減します',
+            skillTaskQueryName: 'Task Query',
+            skillTaskQueryDesc: 'タスク/進捗データを照会します（ツール呼び出し対応）',
+            skillProgressAnalysisName: 'Progress Analysis',
+            skillProgressAnalysisDesc: 'タスクデータに基づき進捗レポートやボトルネックを提示します',
+            compatibilityNotSupportedTitle: '⚠️ ツール呼び出しは非対応です',
+            compatibilityNotSupportedMessage: 'この API/モデルはツール呼び出しに対応していません。AI はリアルタイムのタスクデータを取得できません。',
+            compatibilityUnknownTitle: 'ℹ️ ツール呼び出し対応は不明です',
+            compatibilityUnknownMessage: 'ツール呼び出し対応を判定できません。保存後にエラーが出る場合は別モデルに切り替えてください。',
+            savedWithCompatibilityWarning: '設定を保存しました - ⚠️ この設定はツール呼び出しに非対応です',
+            savedWithCompatibilityUnknown: '設定を保存しました - ℹ️ 接続テストでツール呼び出し対応を確認してください',
+            reasoningNoToolCall: 'Reasoningモデルは通常ツール呼び出しをサポートしません',
+            toolTestTimeout: 'ツール呼び出しテストがタイムアウトしました。対応可否を判定できません。',
+            toolChoiceRequiredNoCall: 'toolChoice を required にしてもモデルがツールを呼び出しませんでした',
+            connectionSuccess: '接続に成功しました',
+            connectionSuccessNoToolCall: '✓ 接続成功（ツール呼び出しは非対応）',
+            connectionSuccessWithToolCall: '✓ 接続成功（ツール呼び出し対応）',
+            connectionSuccessUnknownToolCall: '✓ 接続成功（ツール呼び出し対応は不明）',
+            connection404Details: '接続失敗 (404): エンドポイントパスが不正です\n\nbaseURL: {{baseUrl}}\nmodel: {{model}}\n\n考えられる原因:\n1. baseURL のパスが不正（/v1 が必要か確認）\n2. モデル名により誤ったエンドポイントが選択された\n3. API がこのエンドポイントをサポートしていない',
+            connectionFailed: '接続に失敗しました。設定を確認してください'
         },
 
         // ドロワー
@@ -379,7 +411,31 @@ export default {
             retry: 'リトライ',
             apply: '変更を適用',
             copied: 'クリップボードにコピーしました',
-            applied: '変更を適用しました'
+            applied: '変更を適用しました',
+            clear: '会話をクリア',
+            clearTitle: '会話をクリア',
+            clearConfirm: 'すべての会話を削除しますか？この操作は取り消せません。',
+            cleared: '会話をクリアしました',
+            you: 'あなた',
+            copy: 'コピー',
+            session: 'このセッション',
+            tokens: 'Tokens',
+            tokensUnit: 'tokens',
+            chatPlaceholder: 'メッセージを入力して会話を続ける...',
+            inputLabel: 'メッセージ',
+            chatHint: 'Enterで送信、Shift+Enterで改行',
+            attach: '添付',
+            callingTool: '{{name}} を呼び出し中',
+            taskNotFound: '対象タスクが見つかりません。削除されたか階層が変更された可能性があります。',
+            taskPanelUnavailable: 'タスク詳細パネルを利用できません'
+        },
+        suggestions: {
+            todayTasks: '今日のタスクを確認',
+            overdueTasks: '期限超過タスクを確認',
+            progressOverview: '進捗概要を取得',
+            todayTasksPrompt: '今日のタスクは何ですか？',
+            overdueTasksPrompt: '期限超過のタスクはどれですか？',
+            progressOverviewPrompt: 'プロジェクト全体の進捗はどうですか？'
         },
         // エージェント
         agents: {
@@ -390,13 +446,17 @@ export default {
         },
         // エラー
         error: {
+            title: 'リクエスト失敗',
             notConfigured: '先にAI設定を行ってください',
             agentNotFound: 'エージェントが見つかりません',
             noContext: 'タスクを選択するかコンテンツを入力してください',
+            noAgent: '会話が期限切れです。もう一度開始してください',
             invalidKey: 'APIキーが無効です。設定を確認してください',
             rateLimit: 'リクエストが多すぎます。後でもう一度お試しください',
             network: 'ネットワークエラー。接続を確認してください',
-            unknown: '不明なエラーが発生しました'
+            unknown: '不明なエラーが発生しました',
+            viewDetails: '詳細を見る',
+            originalError: '元のエラー情報'
         }
     },
     baseline: {

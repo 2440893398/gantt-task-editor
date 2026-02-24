@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://gantt-task-editor.vercel.app/sitemap.xml

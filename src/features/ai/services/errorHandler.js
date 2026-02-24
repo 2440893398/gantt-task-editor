@@ -14,73 +14,78 @@ const ERROR_TYPES = {
         type: 'warning',
         icon: '⚠️',
         titleKey: 'ai.error.quotaExceeded',
-        defaultTitle: '额度已用尽',
+        defaultTitle: 'Quota exceeded',
         messageKey: 'ai.error.quotaExceededMsg',
-        defaultMessage: '当前模型免费额度已用完',
+        defaultMessage: 'The free quota for this model is exhausted',
         actionKey: 'ai.error.quotaAction',
-        defaultAction: '切换模型或充值'
+        defaultAction: 'Switch model or upgrade plan'
     },
     invalid_api_key: {
         type: 'error',
         icon: '❌',
         titleKey: 'ai.error.invalidKey',
-        defaultTitle: 'API Key 无效',
+        defaultTitle: 'Invalid API key',
         messageKey: 'ai.error.invalidKeyMsg',
-        defaultMessage: '请检查您的 API Key 是否正确配置，确保没有多余的空格',
+        defaultMessage: 'Please verify API key configuration and remove extra spaces',
         actionKey: 'ai.error.checkConfig',
-        defaultAction: '检查配置'
+        defaultAction: 'Check settings'
     },
     rate_limit_exceeded: {
         type: 'warning',
         icon: '⏱️',
         titleKey: 'ai.error.rateLimit',
-        defaultTitle: '请求过于频繁',
+        defaultTitle: 'Too many requests',
         messageKey: 'ai.error.rateLimitMsg',
-        defaultMessage: '请稍后再试',
+        defaultMessage: 'Please try again later',
         actionKey: 'ai.error.waitRetry',
-        defaultAction: '稍后重试'
+        defaultAction: 'Retry later'
     },
     model_not_found: {
         type: 'error',
         icon: '🔍',
         titleKey: 'ai.error.modelNotFound',
-        defaultTitle: '模型不存在',
+        defaultTitle: 'Model not found',
         messageKey: 'ai.error.modelNotFoundMsg',
-        defaultMessage: '请求的模型未找到',
+        defaultMessage: 'Requested model was not found',
         actionKey: 'ai.error.selectOther',
-        defaultAction: '选择其他模型'
+        defaultAction: 'Choose another model'
     },
     network_error: {
         type: 'error',
         icon: '🌐',
         titleKey: 'ai.error.network',
-        defaultTitle: '网络连接失败',
+        defaultTitle: 'Network connection failed',
         messageKey: 'ai.error.networkMsg',
-        defaultMessage: '无法连接到 AI 服务',
+        defaultMessage: 'Unable to connect to AI service',
         actionKey: 'ai.error.checkNetwork',
-        defaultAction: '检查网络或 Base URL'
+        defaultAction: 'Check network or Base URL'
     },
     context_length_exceeded: {
         type: 'warning',
         icon: '📏',
         titleKey: 'ai.error.contextLength',
-        defaultTitle: '内容过长',
+        defaultTitle: 'Input too long',
         messageKey: 'ai.error.contextLengthMsg',
-        defaultMessage: '输入内容超出模型上下文限制',
+        defaultMessage: 'Input exceeds model context limit',
         actionKey: 'ai.error.shortenInput',
-        defaultAction: '缩短输入内容'
+        defaultAction: 'Shorten input'
     },
     unknown: {
         type: 'error',
         icon: '❓',
         titleKey: 'ai.error.unknown',
-        defaultTitle: '未知错误',
+        defaultTitle: 'Unknown error',
         messageKey: 'ai.error.unknownMsg',
-        defaultMessage: '发生未知错误',
+        defaultMessage: 'An unknown error occurred',
         actionKey: 'ai.error.viewDetails',
-        defaultAction: '查看详情'
+        defaultAction: 'View details'
     }
 };
+
+function tr(key, fallback) {
+    const value = i18n.t(key);
+    return value === key ? fallback : value;
+}
 
 /**
  * 解析 API 错误
@@ -114,9 +119,9 @@ export function parseError(error) {
         errorType,
         type: config.type,
         icon: config.icon,
-        title: i18n.t(config.titleKey) || config.defaultTitle,
-        message: message || i18n.t(config.messageKey) || config.defaultMessage,
-        action: i18n.t(config.actionKey) || config.defaultAction,
+        title: tr(config.titleKey, config.defaultTitle),
+        message: message || tr(config.messageKey, config.defaultMessage),
+        action: tr(config.actionKey, config.defaultAction),
         originalError: originalError
     };
 }
@@ -213,7 +218,7 @@ export function createErrorAlertHTML(parsedError, showDetails = true) {
         detailsHTML = `
             <details class="collapse collapse-arrow mt-2">
                 <summary class="collapse-title text-xs font-medium p-2 min-h-0 bg-base-300 rounded-lg">
-                    ${i18n.t('ai.error.originalError') || '原始错误信息'}
+                    ${tr('ai.error.originalError', 'Original error details')}
                 </summary>
                 <div class="collapse-content bg-base-300 rounded-b-lg">
                     <pre class="text-xs overflow-x-auto p-2 mt-0 whitespace-pre-wrap break-all">${escapeHtml(errorJson)}</pre>
@@ -236,7 +241,7 @@ export function createErrorAlertHTML(parsedError, showDetails = true) {
                             </button>
                             ${showDetails ? `
                                 <button class="btn btn-xs btn-ghost opacity-60 ai-error-toggle-details">
-                                    ${i18n.t('ai.error.viewDetails') || '查看详情'}
+                                    ${tr('ai.error.viewDetails', 'View details')}
                                 </button>
                             ` : ''}
                         </div>

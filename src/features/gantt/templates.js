@@ -30,7 +30,7 @@ export function renderPriorityBadge(value) {
     if (!value) return '';
     const badgeClass = PRIORITY_COLORS[value] || '';
     const displayValue = getLocalizedEnumValue('priority', value);
-    return `<span class="priority-badge-gantt ${badgeClass}">${displayValue}</span>`;
+    return `<span class="priority-badge-gantt ${badgeClass}" title="${displayValue}">${displayValue}</span>`;
 }
 
 /**
@@ -53,7 +53,7 @@ export function renderStatusBadge(value) {
     const config = statusConfig[value] || statusConfig['pending'];
     const displayValue = getLocalizedEnumValue('status', value);
     
-    return `<span class="status-badge-gantt ${badgeClass}"><span class="status-dot-gantt" style="background-color: ${config.dotColor};"></span>${displayValue}</span>`;
+    return `<span class="status-badge-gantt ${badgeClass}" title="${displayValue}"><span class="status-dot-gantt" style="background-color: ${config.dotColor};"></span>${displayValue}</span>`;
 }
 
 /**
@@ -63,7 +63,7 @@ export function renderStatusBadge(value) {
 export function renderAssignee(value) {
     if (!value) return '';
     const initial = value.charAt(0);
-    return `<span class="assignee-cell-gantt"><span class="assignee-avatar-gantt">${initial}</span><span class="assignee-name-gantt">${value}</span></span>`;
+    return `<span class="assignee-cell-gantt" title="${value}"><span class="assignee-avatar-gantt">${initial}</span><span class="assignee-name-gantt">${value}</span></span>`;
 }
 
 /**
@@ -75,5 +75,5 @@ export function renderProgressBar(task) {
     let progressClass = 'low';
     if (progress > 70) progressClass = 'high';
     else if (progress > 30) progressClass = 'medium';
-    return `<div class="progress-cell-gantt"><div class="progress-bar-gantt"><div class="progress-bar-fill-gantt ${progressClass}" style="width: ${progress}%"></div></div><span class="progress-text-gantt">${progress}%</span></div>`;
+    return `<div class="progress-cell-gantt" title="${progress}%"><div class="progress-bar-gantt"><div class="progress-bar-fill-gantt ${progressClass}" style="width: ${progress}%"></div></div><span class="progress-text-gantt">${progress}%</span></div>`;
 }

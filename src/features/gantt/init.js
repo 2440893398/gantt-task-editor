@@ -2,7 +2,7 @@
  * 甘特图初始化
  */
 
-import { state } from '../../core/store.js';
+import { state, persistCustomFields } from '../../core/store.js';
 import { showToast } from '../../utils/toast.js';
 import { defaultTasks } from '../../data/tasks.js';
 import { updateGanttColumns } from './columns.js';
@@ -19,15 +19,106 @@ import { initCriticalPath } from './critical-path.js';
 import { i18n } from '../../utils/i18n.js';
 import { formatDuration } from '../../utils/time-formatter.js';
 import undoManager from '../ai/services/undoManager.js';
+import { loadColumnWidthPrefs, saveColumnWidthPref } from './column-widths.js';
 
 import { showSummaryPopover, hideSummaryPopover } from '../../utils/dom.js';
 import { initBaseline, handleSaveBaseline, handleToggleBaseline } from './baseline.js';
 import { detectResourceConflicts } from './resource-conflict.js';
-import { exportToExcel } from './export.js';
 import { exportCurrentView, exportFullGantt } from './export-image.js';
+import { exportToExcel } from '../config/configIO.js';
 import { initSnapping } from './snapping.js';
+import { computeFieldOrderFromGridColumns, hasFieldOrderChanged } from './column-reorder-sync.js';
 
-console.log('INIT JS LOADED CLEARED');
+function hasHtmlMarkup(value) {
+    return /<\s*\/?\s*[a-z][^>]*>/i.test(String(value || ''));
+}
+
+function getTaskByAnyId(taskId) {
+    if (taskId == null || taskId === '') return null;
+
+    if (gantt.isTaskExists(taskId)) {
+        return gantt.getTask(taskId);
+    }
+
+    const numericId = Number(taskId);
+    if (!Number.isNaN(numericId) && gantt.isTaskExists(numericId)) {
+        return gantt.getTask(numericId);
+    }
+
+    return null;
+}
+
+function richContentScore(value) {
+    const content = String(value || '');
+    if (!content.trim()) return -1;
+
+    let score = 0;
+    if (hasHtmlMarkup(content)) score += 100;
+    if (/<\s*(p|div|ul|ol|li|blockquote|pre|h[1-6]|br)\b/i.test(content)) score += 400;
+    if (/<\s*(strong|b|em|i|u|s|code|span)\b/i.test(content)) score += 120;
+    if (/&lt;\s*\/?\s*(p|div|ul|ol|li|blockquote|pre|h[1-6]|br)\b/i.test(content)) score += 300;
+    if (/\n/.test(content)) score += 20;
+
+    score += Math.min(content.length, 2000) / 2000;
+    return score;
+}
+
+function pickBestRichContent(task, preferredField = 'summary') {
+    if (!task) return { field: preferredField, html: '' };
+
+    const candidates = Array.from(new Set([
+        preferredField,
+        'summary',
+        'description'
+    ]));
+
+    let bestField = preferredField;
+    let bestHtml = String(task?.[preferredField] || '');
+    let bestScore = richContentScore(bestHtml);
+
+    candidates.forEach((field) => {
+        const value = String(task?.[field] || '');
+        const score = richContentScore(value);
+        if (score > bestScore) {
+            bestScore = score;
+            bestField = field;
+            bestHtml = value;
+        }
+    });
+
+    return { field: bestField, html: bestHtml };
+}
+
+function syncFieldOrderFromColumns(columns) {
+    const previousOrder = Array.isArray(state.fieldOrder) ? state.fieldOrder : [];
+    if (previousOrder.length === 0) return;
+
+    const nextOrder = computeFieldOrderFromGridColumns(previousOrder, columns);
+    if (!hasFieldOrderChanged(previousOrder, nextOrder)) {
+        return;
+    }
+
+    state.fieldOrder = nextOrder;
+    persistCustomFields();
+
+    document.dispatchEvent(new CustomEvent('fieldOrderChanged', {
+        detail: {
+            source: 'gantt-grid-reorder',
+            fieldOrder: [...nextOrder]
+        }
+    }));
+}
+
+function bindGridColumnReorderSync() {
+    const gridView = gantt?.$ui?.getView?.('grid');
+    if (!gridView || gridView.__fieldOrderSyncBound) return;
+
+    gridView.__fieldOrderSyncBound = true;
+    gridView.attachEvent('onAfterColumnReorder', function () {
+        syncFieldOrderFromColumns(gantt.config.columns || []);
+        return true;
+    });
+}
 
 // Conflict state
 let conflictTaskIds = new Set();
@@ -138,8 +229,9 @@ export function initGantt() {
         // 构建tooltip内容
         const lines = [];
 
-        // 任务名称
-        lines.push(`<div class="gantt-tooltip-title">📋 ${i18n.t('tooltip.task')} #${task.id}</div>`);
+        // 任务名称（优先显示任务名，避免只显示 ID）
+        const taskTitle = String(task.text || '').trim() || `#${task.id}`;
+        lines.push(`<div class="gantt-tooltip-title">📋 ${i18n.t('tooltip.task')}: ${taskTitle}</div>`);
 
         // 开始日期
         lines.push(`<div class="gantt-tooltip-row">📅 <span class="gantt-tooltip-label">${i18n.t('tooltip.start')}:</span> ${formatDate(task.start_date)}</div>`);
@@ -261,6 +353,11 @@ export function initGantt() {
         return "";
     };
 
+    // 树形缩进模板 — 每层 20px，保证层级清晰可辨
+    gantt.templates.grid_indent = function (item) {
+        return "<div style='width:20px; flex:none; display:inline-block;'></div>";
+    };
+
     // 任务样式模板
     gantt.templates.task_class = function (start, end, task) {
         let classes = [];
@@ -321,6 +418,7 @@ export function initGantt() {
     gantt.config.bar_height = 24;
     gantt.config.scale_height = 40;
     gantt.config.reorder_grid_columns = true;
+    gantt.config.keep_grid_width = true;
 
     // Layout 配置
     gantt.config.layout = {
@@ -330,7 +428,7 @@ export function initGantt() {
                 width: savedGridWidth,
                 min_width: 200,
                 rows: [
-                    { view: "grid", scrollX: "gridScroll", scrollY: "scrollVer" },
+                    { view: "grid", scrollX: "gridScroll", scrollY: "scrollVer", scrollable: true },
                     { view: "scrollbar", id: "gridScroll", group: "horizontal" }
                 ]
             },
@@ -351,6 +449,33 @@ export function initGantt() {
     // 保存网格宽度
     gantt.attachEvent("onGridResizeEnd", function (old_width, new_width) {
         localStorage.setItem('gantt_grid_width', new_width);
+        return true;
+    });
+
+    gantt.attachEvent("onColumnResizeEnd", function (...args) {
+        let column = null;
+        let width = null;
+
+        for (let i = args.length - 1; i >= 0; i--) {
+            const arg = args[i];
+            if (width === null && typeof arg === 'number' && Number.isFinite(arg) && arg > 0) {
+                width = arg;
+                continue;
+            }
+            if (!column && arg && typeof arg === 'object' && typeof arg.name === 'string') {
+                column = arg;
+            }
+        }
+
+        if (!column || !column.name || width === null) {
+            return true;
+        }
+
+        const currentPrefs = loadColumnWidthPrefs();
+        saveColumnWidthPref(currentPrefs, column.name, width, {
+            minWidth: column.min_width,
+            maxWidth: column.max_width
+        });
         return true;
     });
 
@@ -478,35 +603,115 @@ export function initGantt() {
 
     gantt.attachEvent("onLayoutResize", updateLegendPosition);
     gantt.attachEvent("onGanttReady", updateLegendPosition);
+    gantt.attachEvent("onGanttReady", bindGridColumnReorderSync);
     setTimeout(updateLegendPosition, 500);
 
     // 初始化甘特图
     gantt.init("gantt_here");
     gantt.parse(defaultTasks);
 
-    // 摘要字段弹窗事件监听
-    gantt.attachEvent("onGanttReady", function () {
-        const gridData = gantt.$grid_data;
+    // 描述字段富文本 Tooltip 事件绑定
+    // 说明：gantt 在 render/update 时可能重建 .gantt_grid_data，
+    // 若监听器绑定在 gridData 上会丢失，因此统一委托到 document。
+    (function initRichTextTooltip() {
+        if (window.__ganttRichTooltipBound) return;
+        window.__ganttRichTooltipBound = true;
 
-        // 鼠标进入事件（使用事件委托）
-        gridData.addEventListener('mouseenter', function (e) {
-            const cell = e.target.closest('.gantt-summary-cell');
+        let hideTimer = null;
+        let currentHoveredCell = null;
+
+        const clearHideTimer = () => {
+            if (hideTimer) {
+                clearTimeout(hideTimer);
+                hideTimer = null;
+            }
+        };
+
+        const scheduleHide = () => {
+            clearHideTimer();
+            hideTimer = setTimeout(() => {
+                hideSummaryPopover();
+            }, 80);
+        };
+
+        const resolveRichTextCell = (target) => {
+            if (!target || !target.closest) return null;
+            const cell = target.closest('.gantt-richtext-cell');
+            if (!cell) return null;
+
+            const gridData = gantt.$grid_data;
+            if (!gridData || !gridData.contains(cell)) return null;
+
+            return cell;
+        };
+
+        document.addEventListener('mouseover', function (e) {
+            const popover = e.target.closest && e.target.closest('#summary-popover');
+            if (popover) {
+                clearHideTimer();
+                return;
+            }
+
+            const cell = resolveRichTextCell(e.target);
+
+            if (cell && cell === currentHoveredCell) return;
+
+            if (currentHoveredCell && currentHoveredCell !== cell) {
+                const related = e.relatedTarget;
+                if (!related || !related.closest || !related.closest('#summary-popover')) {
+                    scheduleHide();
+                }
+                currentHoveredCell = null;
+            }
+
             if (!cell) return;
 
-            const fullHtml = cell.getAttribute('data-full-html');
+            currentHoveredCell = cell;
+            clearHideTimer();
+
+            const taskId = cell.getAttribute('data-task-id');
+            const richField = cell.getAttribute('data-rich-field') || 'description';
+            let fullHtml = '';
+            let taskTitle = '';
+
+            const task = getTaskByAnyId(taskId);
+            if (task) {
+                const picked = pickBestRichContent(task, richField);
+                fullHtml = picked.html || '';
+                taskTitle = task.text || '';
+            }
+
+            if (!fullHtml) {
+                fullHtml = cell.getAttribute('data-full-html') || '';
+            }
             if (!fullHtml) return;
 
-            showSummaryPopover(cell, fullHtml);
-        }, true); // 使用捕获阶段确保事件正确触发
+            showSummaryPopover(cell, fullHtml, { title: taskTitle });
+        });
 
-        // 鼠标离开事件
-        gridData.addEventListener('mouseleave', function (e) {
-            const cell = e.target.closest('.gantt-summary-cell');
-            if (cell) {
-                hideSummaryPopover();
+        document.addEventListener('mouseout', function (e) {
+            const popover = e.target.closest && e.target.closest('#summary-popover');
+            if (popover) {
+                const relatedTarget = e.relatedTarget;
+                if (relatedTarget && popover.contains(relatedTarget)) return;
+                if (resolveRichTextCell(relatedTarget)) return;
+                scheduleHide();
+                return;
             }
-        }, true);
-    });
+
+            const cell = resolveRichTextCell(e.target);
+            if (!cell) return;
+
+            const relatedTarget = e.relatedTarget;
+            if (relatedTarget && cell.contains(relatedTarget)) return;
+            if (relatedTarget && relatedTarget.closest && relatedTarget.closest('#summary-popover')) {
+                return;
+            }
+
+            currentHoveredCell = null;
+            scheduleHide();
+        });
+    })();
 
     // 初始化导航模块（拖拽平移、回到今天）
     initNavigation();
@@ -545,6 +750,7 @@ export function initGantt() {
 
     // 甘特图渲染后重新应用选中样式
     gantt.attachEvent("onGanttRender", function () {
+        bindGridColumnReorderSync();
         if (state.selectedTasks.size > 0) {
             setTimeout(updateSelectedTasksUI, 50);
         }

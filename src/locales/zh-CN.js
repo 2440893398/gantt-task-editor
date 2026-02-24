@@ -31,7 +31,9 @@ export default {
         quarter: '季度视图',
         year: '年视图',
         zoomOut: '缩小时间跨度',
-        zoomIn: '扩大时间跨度'
+        zoomIn: '扩大时间跨度',
+        tablePanel: '任务表',
+        ganttPanel: '甘特图'
     },
 
     // 列名称（表格标题）
@@ -44,7 +46,8 @@ export default {
         priority: '优先级',
         assignee: '负责人',
         status: '状态',
-        summary: '概述'  // F-112
+        summary: '概述',
+        description: '描述'
     },
 
     // 枚举值 (内部值 → 本地化显示值)
@@ -204,7 +207,15 @@ export default {
         customTag: '自定义',
         enableField: '启用',
         disableField: '禁用',
-        linkedFieldsHint: '关联字段将一起{{action}}'
+        linkedFieldsHint: '关联字段将一起{{action}}',
+        searchPlaceholder: '搜索字段...',
+        filterAll: '全部',
+        filterSystem: '系统字段',
+        filterCustom: '自定义字段',
+        filterEnabled: '已启用',
+        filterDisabled: '已禁用',
+        fieldCount: '{{count}} 个字段',
+        editField: '编辑'
     },
 
     // Field types
@@ -385,13 +396,34 @@ export default {
             recommended: '推荐',
             noMatch: '无匹配结果',
             willUseInput: '将使用输入值',
-            modelsAvailable: '个可用',
+            modelsAvailable: '{{count}} 个可用模型',
             // F-103 Refresh
             refresh: '刷新',
             refreshing: '刷新中...',
             refreshed: '已更新',
             refreshFailed: '刷新失败',
-            modelsUpdated: '模型列表已更新'
+            modelsUpdated: '已获取 {{count}} 个模型',
+            skillsTitle: 'Skills',
+            skillsDesc: '只加载当前任务需要的能力，减少提示词开销',
+            skillTaskQueryName: 'Task Query',
+            skillTaskQueryDesc: '查询任务/进度等数据（支持工具调用）',
+            skillProgressAnalysisName: 'Progress Analysis',
+            skillProgressAnalysisDesc: '基于任务数据生成进度报告或瓶颈提示',
+            compatibilityNotSupportedTitle: '⚠️ 不支持函数调用',
+            compatibilityNotSupportedMessage: '该 API/模型不支持函数调用，AI 将无法获取实时任务数据',
+            compatibilityUnknownTitle: 'ℹ️ 函数调用支持未知',
+            compatibilityUnknownMessage: '无法确定是否支持函数调用，保存后如遇错误请切换其他模型',
+            savedWithCompatibilityWarning: '配置已保存 - ⚠️ 该配置不支持函数调用',
+            savedWithCompatibilityUnknown: '配置已保存 - ℹ️ 请先测试连接以确认函数调用支持',
+            reasoningNoToolCall: '推理模型通常不支持函数调用',
+            toolTestTimeout: '工具调用测试超时，无法确定支持情况',
+            toolChoiceRequiredNoCall: '即使强制 toolChoice，模型仍未调用工具',
+            connectionSuccess: '连接成功',
+            connectionSuccessNoToolCall: '✓ 连接成功，但不支持函数调用',
+            connectionSuccessWithToolCall: '✓ 连接成功，支持函数调用',
+            connectionSuccessUnknownToolCall: '✓ 连接成功，函数调用支持未知',
+            connection404Details: '连接失败 (404): 端点路径错误\n\nbaseURL: {{baseUrl}}\nmodel: {{model}}\n\n可能原因：\n1. baseURL 路径不正确（需要确认是否包含 /v1）\n2. 模型名称触发了错误的端点选择\n3. API 不支持该端点',
+            connectionFailed: '连接失败，请检查配置'
         },
         // 抽屉 (F-105, F-106)
         drawer: {
@@ -416,17 +448,25 @@ export default {
             session: '本次会话',
             // F-111 Token 统计
             tokens: 'Tokens',
+            tokensUnit: 'tokens',
             tokenUsage: '令牌使用',
             chatPlaceholder: '输入消息继续对话，提问...',
+            inputLabel: '消息输入',
             chatHint: 'Enter 发送, Shift+Enter 换行',
             send: '发送',
-            attach: '附件'
+            attach: '附件',
+            callingTool: '调用 {{name}}',
+            taskNotFound: '未找到对应任务，可能已被删除或层级编号已变化',
+            taskPanelUnavailable: '任务详情面板不可用'
         },
         // 快捷建议
         suggestions: {
             todayTasks: '查询今日任务',
             overdueTasks: '查看逾期任务',
-            progressOverview: '获取进度概览'
+            progressOverview: '获取进度概览',
+            todayTasksPrompt: '今天有什么任务？',
+            overdueTasksPrompt: '哪些任务逾期了？',
+            progressOverviewPrompt: '项目整体进度如何？'
         },
         // 智能体
         agents: {
@@ -460,6 +500,7 @@ export default {
             notConfigured: '请先配置 AI 设置',
             agentNotFound: '未找到该智能体',
             noContext: '请先选择任务或输入内容',
+            noAgent: '对话已失效，请重新开始',
             // F-104 智能错误提示
             quotaExceeded: '额度已用尽',
             quotaExceededMsg: '当前模型免费额度已用完',

@@ -29,6 +29,7 @@ let sortableInstance = null;
 const DEFAULT_FIELD_ICON = '📝';
 let fieldConfigEscHandler = null;
 let fieldDrawerEscHandler = null;
+let suppressFieldItemClickUntil = 0;
 
 function closeFieldConfigModal() {
     const modal = document.getElementById('field-config-modal');
@@ -250,7 +251,7 @@ export function renderFieldList() {
     // 更新字段计数显示
     const fieldCountEl = document.getElementById('field-count');
     if (fieldCountEl) {
-        fieldCountEl.textContent = `${allFields.length} 个字段`;
+        fieldCountEl.textContent = i18n.t('fieldManagement.fieldCount', { count: allFields.length });
     }
 
     sortedFields.forEach((fieldName) => {
@@ -288,7 +289,7 @@ export function renderFieldList() {
                  data-field-label="${escapeAttr(fieldLabel)}"
                  data-is-system="${isSystem}"
                  data-enabled="${enabled}"
-                 role="button" tabindex="0">
+                 role="button" tabindex="0" draggable="true">
                 <div class="field-drag-handle cursor-move flex items-center justify-center w-5 shrink-0 text-base-content/30 hover:text-base-content/60 transition-colors">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24"
                         stroke="currentColor" stroke-width="2">
@@ -333,7 +334,7 @@ export function renderFieldList() {
 
                     ${!isSystem ? `
                         <button class="field-action-btn w-8 h-8 inline-flex items-center justify-center rounded-lg bg-base-100 border border-base-300 text-base-content/60 hover:text-primary hover:border-primary/30 transition-colors"
-                            data-action="edit" data-field="${fieldName}" title="编辑">
+                            data-action="edit" data-field="${fieldName}" title="${i18n.t('fieldManagement.editField')}">
                             <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                                 <path stroke-linecap="round" stroke-linejoin="round"
                                     d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
@@ -357,6 +358,7 @@ export function renderFieldList() {
     // Click item to edit (system/custom)
     container.querySelectorAll('[data-field-name]').forEach(item => {
         item.addEventListener('click', (e) => {
+            if (Date.now() < suppressFieldItemClickUntil) return;
             const actionBtn = e.target.closest('.field-action-btn');
             const toggle = e.target.closest('.toggle-field-enabled');
             if (actionBtn || toggle) return;
@@ -397,6 +399,85 @@ export function renderFieldList() {
         });
     });
 
+    const applyOrderFromDom = () => {
+        const items = container.querySelectorAll('[data-field-name]');
+        const enabledFields = [];
+
+        items.forEach(item => {
+            const checkbox = item.querySelector('.toggle-field-enabled');
+            if (checkbox) {
+                if (checkbox.checked) {
+                    enabledFields.push(item.dataset.fieldName);
+                }
+            } else {
+                enabledFields.push(item.dataset.fieldName);
+            }
+        });
+
+        const internalFieldsPreserved = state.fieldOrder.filter(f => INTERNAL_FIELDS.includes(f));
+        const uniqueNewOrder = [...new Set([...enabledFields, ...internalFieldsPreserved])];
+
+        console.log('[Debug] New field order:', uniqueNewOrder);
+        state.fieldOrder = uniqueNewOrder;
+
+        updateGanttColumns();
+        refreshLightbox();
+        persistCustomFields();
+    };
+
+    // Native HTML5 drag fallback (works even if Sortable callback chain is blocked)
+    let nativeDragFromHandle = false;
+    let nativeDraggingField = null;
+
+    container.addEventListener('mousedown', (e) => {
+        nativeDragFromHandle = !!e.target.closest('.field-drag-handle');
+    }, true);
+
+    container.querySelectorAll('.field-item').forEach(item => {
+        item.addEventListener('dragstart', (e) => {
+            if (!nativeDragFromHandle) {
+                e.preventDefault();
+                return;
+            }
+
+            nativeDraggingField = item.dataset.fieldName;
+            suppressFieldItemClickUntil = Date.now() + 300;
+
+            if (e.dataTransfer) {
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', nativeDraggingField);
+            }
+        });
+
+        item.addEventListener('dragover', (e) => {
+            if (!nativeDraggingField) return;
+            e.preventDefault();
+        });
+
+        item.addEventListener('drop', (e) => {
+            if (!nativeDraggingField) return;
+            e.preventDefault();
+
+            const targetItem = e.currentTarget;
+            if (!targetItem || targetItem.dataset.fieldName === nativeDraggingField) return;
+
+            const draggedItem = container.querySelector(`[data-field-name="${nativeDraggingField}"]`);
+            if (!draggedItem) return;
+
+            const rect = targetItem.getBoundingClientRect();
+            const insertBefore = e.clientY < rect.top + rect.height / 2;
+            container.insertBefore(draggedItem, insertBefore ? targetItem : targetItem.nextSibling);
+
+            applyOrderFromDom();
+        });
+
+        item.addEventListener('dragend', () => {
+            nativeDraggingField = null;
+            nativeDragFromHandle = false;
+            suppressFieldItemClickUntil = Date.now() + 300;
+        });
+    });
+
     // Initialize drag-and-drop sorting
     if (sortableInstance) {
         sortableInstance.destroy();
@@ -415,47 +496,23 @@ export function renderFieldList() {
             sortableInstance = new SortableClass(container, {
                 animation: 200,
                 easing: "cubic-bezier(0.4, 0, 0.2, 1)",
-                // handle: '.field-drag-handle',
+                handle: '.field-drag-handle',
                 draggable: '.field-item',
+                forceFallback: true,
+                fallbackOnBody: true,
+                fallbackTolerance: 3,
                 ghostClass: 'opacity-40 bg-base-200',
                 dragClass: 'opacity-100 shadow-xl rotate-2',
                 onStart: function (evt) {
+                    suppressFieldItemClickUntil = Date.now() + 300;
                     const msg = '[Debug] Sortable onStart';
                     console.log(msg, evt);
                     window.__debugLogs.push(msg);
                 },
                 onEnd: function (evt) {
+                    suppressFieldItemClickUntil = Date.now() + 300;
                     console.log('[Debug] Sortable onEnd', evt.oldIndex, '->', evt.newIndex);
-                    // Update fieldOrder based on new positions
-                    const items = container.querySelectorAll('[data-field-name]');
-                    const newOrderFromDOM = Array.from(items).map(item => item.dataset.fieldName);
-
-                    const enabledFields = [];
-                    items.forEach(item => {
-                        const checkbox = item.querySelector('.toggle-field-enabled');
-
-                        if (checkbox) {
-                            if (checkbox.checked) {
-                                enabledFields.push(item.dataset.fieldName);
-                            }
-                        } else {
-                            // Not togglable, means mandatory enabled
-                            enabledFields.push(item.dataset.fieldName);
-                        }
-                    });
-
-                    // Preserve internal fields that are not in the valid "manageable" list
-                    const internalFieldsPreserved = state.fieldOrder.filter(f => INTERNAL_FIELDS.includes(f));
-
-                    // Combine
-                    const uniqueNewOrder = [...new Set([...enabledFields, ...internalFieldsPreserved])];
-
-                    console.log('[Debug] New field order:', uniqueNewOrder);
-                    state.fieldOrder = uniqueNewOrder;
-
-                    updateGanttColumns();
-                    refreshLightbox();
-                    persistCustomFields();
+                    applyOrderFromDom();
                 }
             });
         } catch (e) {
@@ -1098,15 +1155,17 @@ export function initCustomFieldsUI() {
         openAddFieldModal();
     });
 
-    // 设置按钮（预留功能）
-    document.getElementById('field-settings-btn')?.addEventListener('click', function () {
-        showToast(i18n.t('message.comingSoon') || '功能开发中', 'info');
-    });
-
     // 筛选下拉菜单功能
     const filterLabelEl = document.getElementById('field-filter-label');
     const filterBtn = document.getElementById('field-filter-btn');
     let currentFilter = 'all';
+    const filterI18nKeyMap = {
+        all: 'fieldManagement.filterAll',
+        system: 'fieldManagement.filterSystem',
+        custom: 'fieldManagement.filterCustom',
+        enabled: 'fieldManagement.filterEnabled',
+        disabled: 'fieldManagement.filterDisabled'
+    };
 
     document.querySelectorAll('#field-filter-btn + ul a').forEach(item => {
         item.addEventListener('click', function (e) {
@@ -1116,7 +1175,9 @@ export function initCustomFieldsUI() {
 
             // 更新按钮文字
             if (filterLabelEl) {
-                filterLabelEl.textContent = this.textContent;
+                const labelKey = filterI18nKeyMap[filter] || filterI18nKeyMap.all;
+                filterLabelEl.setAttribute('data-i18n', labelKey);
+                filterLabelEl.textContent = i18n.t(labelKey);
             }
 
             // 应用筛选
