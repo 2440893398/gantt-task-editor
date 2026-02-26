@@ -701,7 +701,7 @@
             // 工作日历
             document.getElementById('open-work-calendar')?.addEventListener('click', () => {
                 dropdown.classList.remove('active');
-                import('./src/features/calendar/panel.js').then(m => m.openCalendarPanel());
+                window.openCalendarPanel?.();
             });
         });
     </script>

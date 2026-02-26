@@ -44,6 +44,10 @@ window.exportConfig = exportConfig;
 // 挂载任务详情面板函数到 window（供新建任务按钮使用）
 window.openTaskDetailsPanel = openTaskDetailsPanel;
 
+// 挂载工作日历面板（动态 import 必须在 Vite 模块图内才能正确打包）
+window.openCalendarPanel = () =>
+    import('./features/calendar/panel.js').then(m => m.openCalendarPanel());
+
 // 挂载缓存管理函数到 window（供清除缓存按钮使用）
 window.clearGanttCache = async () => {
     if (confirm(i18n.t('message.confirmClearCache') || '确定清除所有缓存数据吗？这将删除所有保存的任务和配置。')) {
