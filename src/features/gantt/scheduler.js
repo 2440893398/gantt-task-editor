@@ -3,16 +3,23 @@
  * 
  * 实现 PRD-竞品改进-v1.0 中的智能调度功能：
  * - 级联更新 (Cascade Update)
- * - 工作日历 (Work Calendar)
+ * - 工作日历 (Work Calendar) — 异步四层优先级判断
  * - 父任务自动聚合 (WBS Calculation)
  * - SS 依赖支持
  * - 循环检测 (Cycle Detection)
- * - Buffer/Lag 支持 (通过 DHTMLX auto_scheduling 实现)
+ * - Buffer/Lag 支持（手动异步调度实现）
  * 
  * Buffer/Lag 使用方式：
  * 在创建连线时设置 link.lag 属性（工作日数）
  * 例如：{ source: 1, target: 2, type: '0', lag: 2 } 表示任务2在任务1结束后2个工作日开始
  */
+
+import {
+    getCalendarSettings,
+    getCustomDay,
+    getHolidayDayByCountry,
+    isPersonOnLeave,
+} from '../../core/storage.js';
 
 /**
  * 初始化调度引擎
@@ -37,49 +44,76 @@ export function initScheduler() {
 // ========================================
 
 /**
- * 判断日期是否为工作日
- * @param {Date} date - 日期
- * @returns {boolean} 是否为工作日
+ * 将 Date 转为 YYYY-MM-DD 字符串
  */
-export function isWorkDay(date) {
-    const day = date.getDay();
-    // 周六(6)和周日(0)为非工作日
-    return day !== 0 && day !== 6;
+function toDateStr(date) {
+    const d = date instanceof Date ? date : new Date(date);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
 }
 
 /**
- * 获取下一个工作日
- * @param {Date} date - 起始日期
- * @returns {Date} 下一个工作日
+ * 判断日期是否为工作日（异步四层优先级）
+ * @param {Date} date
+ * @param {string|null} assignee - 任务负责人，用于请假判断
+ * @returns {Promise<boolean>}
  */
-export function getNextWorkDay(date) {
-    const result = new Date(date);
-    result.setDate(result.getDate() + 1);
+export async function isWorkDay(date, assignee = null) {
+    const dateStr = toDateStr(date);
 
-    while (!isWorkDay(result)) {
-        result.setDate(result.getDate() + 1);
+    // 第1层：用户自定义特殊日（最高优先级）
+    const custom = await getCustomDay(dateStr);
+    if (custom) return !custom.isOffDay;
+
+    const settings = await getCalendarSettings();
+
+    // 第2层：法定节假日缓存
+    const holiday = await getHolidayDayByCountry(dateStr, settings.countryCode);
+    if (holiday) return !holiday.isOffDay;
+
+    // 第3层：人员请假（仅当有负责人时）
+    if (assignee) {
+        const onLeave = await isPersonOnLeave(assignee, dateStr);
+        if (onLeave) return false;
     }
 
+    // 第4层：标准工作日设置（兜底）
+    return settings.workdaysOfWeek.includes(date.getDay());
+}
+
+/**
+ * 获取下一个工作日（异步）
+ * @param {Date} date
+ * @param {string|null} assignee
+ * @returns {Promise<Date>}
+ */
+export async function getNextWorkDay(date, assignee = null) {
+    const result = new Date(date);
+    result.setDate(result.getDate() + 1);
+    while (!(await isWorkDay(result, assignee))) {
+        result.setDate(result.getDate() + 1);
+    }
     return result;
 }
 
 /**
- * 添加工作日
- * @param {Date} date - 起始日期
- * @param {number} days - 要添加的工作日数
- * @returns {Date} 结果日期
+ * 添加 N 个工作日（异步）
+ * @param {Date} date
+ * @param {number} days
+ * @param {string|null} assignee
+ * @returns {Promise<Date>}
  */
-export function addWorkDays(date, days) {
+export async function addWorkDays(date, days, assignee = null) {
     const result = new Date(date);
-    let addedDays = 0;
-
-    while (addedDays < days) {
+    let added = 0;
+    while (added < days) {
         result.setDate(result.getDate() + 1);
-        if (isWorkDay(result)) {
-            addedDays++;
+        if (await isWorkDay(result, assignee)) {
+            added++;
         }
     }
-
     return result;
 }
 
@@ -227,15 +261,15 @@ function bindTaskChangeEvents() {
     gantt.attachEvent("onAfterTaskDrag", function (id, mode, e) {
         console.log('📅 任务拖拽完成，触发调度:', id);
         updateParentDates(id);
-        if (gantt.autoSchedule) {
-            gantt.autoSchedule(id);
-        }
+        // 异步重新调度依赖任务（不调用 gantt.autoSchedule）
+        scheduleAsyncReschedule(id);
         return true;
     });
 
     // 任务更新后更新父任务
     gantt.attachEvent("onAfterTaskUpdate", function (id, task) {
         updateParentDates(id);
+        scheduleAsyncReschedule(id);
         return true;
     });
 }
@@ -258,12 +292,10 @@ function bindLinkEvents() {
         return true;
     });
 
-    // 依赖创建后触发自动调度
+    // 依赖创建后触发异步调度
     gantt.attachEvent("onAfterLinkAdd", function (id, link) {
         console.log('🔗 依赖创建，触发调度:', link.source, '->', link.target);
-        if (gantt.autoSchedule) {
-            gantt.autoSchedule(link.target);
-        }
+        scheduleAsyncReschedule(link.source);
         return true;
     });
 }
@@ -291,8 +323,44 @@ function bindWBSEvents() {
  * @param {number} taskId - 起始任务 ID
  */
 export function cascadeUpdate(taskId) {
-    if (gantt.autoSchedule) {
-        gantt.autoSchedule(taskId);
-    }
+    scheduleAsyncReschedule(taskId);
     updateParentDates(taskId);
+}
+
+/**
+ * 异步重新调度：遍历以 taskId 为前置的所有后继任务，更新开始日期
+ * 注意：这是简化版实现，仅处理直接后继（FS 依赖）
+ */
+async function scheduleAsyncReschedule(taskId) {
+    try {
+        const task = gantt.getTask(taskId);
+        const links = gantt.getLinks().filter(l => l.source == taskId && l.type === '0'); // FS
+
+        for (const link of links) {
+            const successor = gantt.getTask(link.target);
+            if (!successor) continue;
+
+            // 计算前置任务结束后的第一个工作日
+            let newStart = new Date(task.end_date);
+            if (link.lag && link.lag > 0) {
+                newStart = await addWorkDays(newStart, link.lag, successor.assignee);
+            }
+            // 确保是工作日
+            while (!(await isWorkDay(newStart, successor.assignee))) {
+                newStart.setDate(newStart.getDate() + 1);
+            }
+
+            const duration = successor.duration || 1;
+            const newEnd = await addWorkDays(newStart, duration, successor.assignee);
+
+            gantt.getTask(link.target).start_date = newStart;
+            gantt.getTask(link.target).end_date = newEnd;
+            gantt.updateTask(link.target);
+
+            // 递归处理下游
+            await scheduleAsyncReschedule(link.target);
+        }
+    } catch (e) {
+        console.warn('[Scheduler] async reschedule error:', e);
+    }
 }

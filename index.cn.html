@@ -44,16 +44,15 @@
     <link rel="manifest" href="/manifest.json">
     <meta name="theme-color" content="#0EA5E9">
 
-    <!-- Google Fonts -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700&display=swap"
-        rel="stylesheet">
+    <!-- 字体降级为系统字体（国内无法访问 Google Fonts） -->
+    <style>
+        body { font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif; }
+    </style>
 
-    <!-- DHTMLX Gantt -->
-    <link href="https://cdn.dhtmlx.com/gantt/edge/dhtmlxgantt.css" rel="stylesheet">
-    <script src="https://cdn.dhtmlx.com/gantt/edge/dhtmlxgantt.js"></script>
-    <!-- DHTMLX Export API (for PNG/PDF export) -->
+    <!-- DHTMLX Gantt（本地化，避免国内 CDN 访问不稳定） -->
+    <link href="/lib/dhtmlxgantt.css" rel="stylesheet">
+    <script src="/lib/dhtmlxgantt.js"></script>
+    <!-- DHTMLX Export API：依赖 dhtmlx 服务端，国内可能较慢，仅影响 PNG/PDF 导出 -->
     <script src="https://export.dhtmlx.com/gantt/api.js"></script>
     <script>
         // Shim for potential capitalization issues or missing reference in locale files
@@ -72,7 +71,7 @@
             };
         }
     </script>
-    <script src="https://docs.dhtmlx.com/gantt/codebase/locale/locale_cn.js"></script>
+    <script src="/lib/locale_cn.js"></script>
 
     <!-- SortableJS -->
     <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>

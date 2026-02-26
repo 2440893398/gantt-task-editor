@@ -28,6 +28,16 @@ import { exportCurrentView, exportFullGantt } from './export-image.js';
 import { exportToExcel } from '../config/configIO.js';
 import { initSnapping } from './snapping.js';
 import { computeFieldOrderFromGridColumns, hasFieldOrderChanged } from './column-reorder-sync.js';
+import { prefetchHolidays } from '../calendar/holidayFetcher.js';
+import { getAllCustomDays, getCalendarSettings, db } from '../../core/storage.js';
+
+function toLocalDateStr(date) {
+    const d = date instanceof Date ? date : new Date(date);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+}
 
 function hasHtmlMarkup(value) {
     return /<\s*\/?\s*[a-z][^>]*>/i.test(String(value || ''));
@@ -146,7 +156,7 @@ export function initGantt() {
         tooltip: true,   // 启用悬浮详情 (通过事件控制仅在时间轴显示)
         marker: true,
         drag_timeline: true,
-        auto_scheduling: true,  // 启用自动调度引擎
+        auto_scheduling: false,  // 已改为手动异步调度，禁用原生 auto_scheduling
         undo: true       // F-201: 启用撤回功能
     });
 
@@ -167,10 +177,8 @@ export function initGantt() {
     // 启用工作日历 - 跳过周末进行排程计算
     gantt.config.work_time = true;
 
-    // 启用自动调度 - 依赖变动时自动级联更新
-    gantt.config.auto_scheduling = true;
-    gantt.config.auto_scheduling_strict = true;  // 严格模式：后继任务不能早于前置任务结束
-    gantt.config.auto_scheduling_compatibility = false;  // 使用新版调度算法
+    // 手动异步调度替代原生 auto_scheduling（见 scheduler.js scheduleAsyncReschedule）
+    // gantt.config.auto_scheduling = false;  // 已在 plugins 中禁用
 
     // 设置工作时间 (周一至周五)
     gantt.setWorkTime({ day: 0, hours: false }); // 周日非工作日
@@ -337,10 +345,17 @@ export function initGantt() {
                 return (date.getMonth() + 1) + "月" + date.getDate() + "日";
             },
             css: function (date) {
-                if (date.getDay() === 0 || date.getDay() === 6) {
-                    return "weekend";
-                }
-                return "";
+                const classes = [];
+                const day = date.getDay();
+                if (day === 0 || day === 6) classes.push('weekend');
+                // 节假日背景色通过全局缓存 Map 查询（由 initCalendarHighlightCache 填充）
+                const dateStr = toLocalDateStr(date);
+                const hlType = window.__calendarHighlightCache?.get(dateStr);
+                if (hlType === 'holiday')    classes.push('gantt-day-holiday');
+                if (hlType === 'makeupday') classes.push('gantt-day-makeupday');
+                if (hlType === 'overtime')  classes.push('gantt-day-overtime');
+                if (hlType === 'companyday') classes.push('gantt-day-companyday');
+                return classes.join(' ');
             }
         }
     ];
@@ -748,6 +763,9 @@ export function initGantt() {
     // Init Smart Snapping (Phase 5)
     initSnapping();
 
+    // 初始化工作日历高亮缓存（后台异步，不阻塞渲染）
+    initCalendarHighlightCache();
+
     // 甘特图渲染后重新应用选中样式
     gantt.attachEvent("onGanttRender", function () {
         bindGridColumnReorderSync();
@@ -873,4 +891,60 @@ export function setupGlobalEvents() {
     } catch (e) {
         console.warn('Failed to restore baseline toggle state:', e);
     }
+}
+
+// ========================================
+// 工作日历高亮缓存
+// ========================================
+
+/**
+ * 构建当前可见时间范围内的日期高亮缓存（Map<dateStr, type>）
+ * type: 'holiday' | 'makeupday' | 'overtime' | 'companyday'
+ */
+async function initCalendarHighlightCache() {
+    // 后台预拉取节假日
+    await prefetchHolidays();
+
+    const cache = new Map();
+    window.__calendarHighlightCache = cache;
+
+    // 加载自定义特殊日
+    const customs = await getAllCustomDays();
+    for (const c of customs) {
+        cache.set(c.date, c.isOffDay ? 'companyday' : 'overtime');
+    }
+
+    // 加载法定假日（当年 + 次年）
+    await refreshHolidayHighlightCache();
+
+    console.log('[Calendar] highlight cache initialized, entries:', cache.size);
+}
+
+/**
+ * 从 IndexedDB 读取节假日并刷新高亮缓存
+ * 在用户修改日历设置后调用
+ */
+export async function refreshHolidayHighlightCache() {
+    const cache = window.__calendarHighlightCache;
+    if (!cache) return;
+
+    for (const [dateStr, type] of cache.entries()) {
+        if (type === 'holiday' || type === 'makeupday') {
+            cache.delete(dateStr);
+        }
+    }
+
+    const thisYear = new Date().getFullYear();
+    const { countryCode } = await getCalendarSettings();
+    const holidays = await db.calendar_holidays
+        .where('year').anyOf([thisYear, thisYear + 1])
+        .filter(h => h.countryCode === countryCode)
+        .toArray();
+
+    for (const h of holidays) {
+        if (!cache.has(h.date)) { // 自定义日优先级更高，不覆盖
+            cache.set(h.date, h.isOffDay ? 'holiday' : 'makeupday');
+        }
+    }
+    gantt.render();
 }

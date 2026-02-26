@@ -22,6 +22,19 @@ db.version(2).stores({
     baselines: 'id'
 });
 
+db.version(3).stores({
+    tasks: '++id, priority, status, start_date, parent',
+    links: '++id, source, target, type',
+    history: '++id, timestamp, action',
+    baselines: 'id',
+    // 工作日历新增表
+    calendar_settings: '++id',
+    calendar_holidays: 'date, year, countryCode',
+    calendar_custom: 'id, date',
+    person_leaves: 'id, assignee, startDate, endDate',
+    calendar_meta: 'year'
+});
+
 // ========================================
 // localStorage 键名常量
 // ========================================
@@ -522,3 +535,99 @@ export function isAiConfigured() {
 
 // 导出数据库实例（供调试使用）
 export { db };
+
+// ========================================
+// 工作日历 CRUD (IndexedDB)
+// ========================================
+
+/** 获取/保存全局日历设置 */
+export async function getCalendarSettings() {
+    const row = await db.calendar_settings.toCollection().first();
+    return row ?? { countryCode: 'CN', workdaysOfWeek: [1,2,3,4,5], hoursPerDay: 8 };
+}
+
+export async function saveCalendarSettings(settings) {
+    const existing = await db.calendar_settings.toCollection().first();
+    if (existing) {
+        await db.calendar_settings.update(existing.id, settings);
+    } else {
+        await db.calendar_settings.add(settings);
+    }
+}
+
+/** 节假日缓存 */
+export async function getHolidayDay(dateStr) {
+    return db.calendar_holidays.get(dateStr);
+}
+
+export async function getHolidayDayByCountry(dateStr, countryCode) {
+    const row = await db.calendar_holidays.get(dateStr);
+    if (!row) return undefined;
+    return row.countryCode === countryCode ? row : undefined;
+}
+
+export async function bulkSaveHolidays(holidays) {
+    await db.calendar_holidays.bulkPut(holidays);
+}
+
+export async function clearHolidaysByYear(year, countryCode) {
+    await db.calendar_holidays
+        .where('year')
+        .equals(year)
+        .delete();
+}
+
+/** 缓存元数据 */
+export async function getCalendarMeta(year) {
+    return db.calendar_meta.get(year);
+}
+
+export async function saveCalendarMeta(meta) {
+    await db.calendar_meta.put(meta);
+}
+
+/** 自定义特殊日 */
+export async function getCustomDay(dateStr) {
+    const day = dateStr.substring(0, 10);
+    return db.calendar_custom.where('date').equals(day).first();
+}
+
+export async function getAllCustomDays() {
+    return db.calendar_custom.orderBy('date').toArray();
+}
+
+export async function saveCustomDay(record) {
+    // record: { id, date, isOffDay, name, note, color }
+    const sameDate = await db.calendar_custom.where('date').equals(record.date).toArray();
+    for (const row of sameDate) {
+        if (row.id !== record.id) {
+            await db.calendar_custom.delete(row.id);
+        }
+    }
+    await db.calendar_custom.put(record);
+}
+
+export async function deleteCustomDay(id) {
+    await db.calendar_custom.delete(id);
+}
+
+/** 人员请假 */
+export async function isPersonOnLeave(assignee, dateStr) {
+    const leaves = await db.person_leaves
+        .where('assignee').equals(assignee)
+        .toArray();
+    return leaves.some(l => l.startDate <= dateStr && dateStr <= l.endDate);
+}
+
+export async function getAllLeaves() {
+    return db.person_leaves.toArray();
+}
+
+export async function saveLeave(record) {
+    // record: { id, assignee, startDate, endDate, type, note }
+    await db.person_leaves.put(record);
+}
+
+export async function deleteLeave(id) {
+    await db.person_leaves.delete(id);
+}

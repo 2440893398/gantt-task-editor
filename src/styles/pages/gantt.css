@@ -2067,3 +2067,23 @@
 .summary-rich-preview-host .ql-editor em {
     color: #334155;
 }
+
+/* ========================================
+   工作日历 — 甘特图列背景色
+   ======================================== */
+.gantt_task_cell.gantt-day-holiday,
+.gantt_scale_cell.gantt-day-holiday {
+    background-color: #FEE2E2;
+}
+.gantt_task_cell.gantt-day-makeupday,
+.gantt_scale_cell.gantt-day-makeupday {
+    background-color: #DBEAFE;
+}
+.gantt_task_cell.gantt-day-overtime,
+.gantt_scale_cell.gantt-day-overtime {
+    background-color: #FFEDD5;
+}
+.gantt_task_cell.gantt-day-companyday,
+.gantt_scale_cell.gantt-day-companyday {
+    background-color: rgba(254, 226, 226, 0.7);
+}

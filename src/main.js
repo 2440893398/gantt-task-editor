@@ -32,6 +32,7 @@ import {
     getSavedLocale
 } from './core/store.js';
 import { checkStorageAvailability } from './core/storage.js';
+import { prefetchHolidays } from './features/calendar/holidayFetcher.js';
 // 任务详情面板
 import { openTaskDetailsPanel } from './features/task-details/index.js';
 // 视图切换
@@ -90,6 +91,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // 初始化甘特图（传入缓存恢复函数）
     await initGanttWithCache();
+
+    // 后台静默预拉取节假日（当年 + 次年），不阻塞 UI
+    prefetchHolidays();
 
     // 设置全局事件监听
     setupGlobalEvents();

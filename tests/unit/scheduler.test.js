@@ -8,8 +8,12 @@
  * - SCHED-004 ~ SCHED-009: 工作日历
  * - SCHED-020 ~ SCHED-024: 循环检测
  * - SCHED-010 ~ SCHED-015: 父任务自动聚合 (WBS)
+ *
+ * NOTE: isWorkDay / getNextWorkDay / addWorkDays are async (IndexedDB lookups).
+ * All work-calendar tests must use async/await.
  */
 
+import 'fake-indexeddb/auto';
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 import {
     isWorkDay,
@@ -21,61 +25,54 @@ import {
 
 // ========================================
 // 2.2 工作日历测试 (SCHED-004 ~ SCHED-009)
+// These tests use the default calendar settings (no custom overrides in DB).
+// Default: workdaysOfWeek = [1,2,3,4,5] (Mon-Fri), countryCode = 'CN'
 // ========================================
 describe('工作日历模块 (Work Calendar)', () => {
 
     // SCHED-007: 验证周六被正确识别为非工作日
-    test('SCHED-007: 周六应被识别为非工作日', () => {
+    test('SCHED-007: 周六应被识别为非工作日', async () => {
         // 2026-01-17 是周六
-        const saturday = new Date('2026-01-17');
-        expect(isWorkDay(saturday)).toBe(false);
+        const saturday = new Date(2026, 0, 17);
+        expect(await isWorkDay(saturday)).toBe(false);
     });
 
     // SCHED-008: 验证周日被正确识别为非工作日
-    test('SCHED-008: 周日应被识别为非工作日', () => {
+    test('SCHED-008: 周日应被识别为非工作日', async () => {
         // 2026-01-18 是周日
-        const sunday = new Date('2026-01-18');
-        expect(isWorkDay(sunday)).toBe(false);
+        const sunday = new Date(2026, 0, 18);
+        expect(await isWorkDay(sunday)).toBe(false);
     });
 
     // SCHED-009: 验证工作日被正确识别
-    test('SCHED-009: 周一至周五应被识别为工作日', () => {
+    test('SCHED-009: 周一至周五应被识别为工作日', async () => {
         // 2026-01-19 是周一
-        const monday = new Date('2026-01-19');
-        expect(isWorkDay(monday)).toBe(true);
-
+        expect(await isWorkDay(new Date(2026, 0, 19))).toBe(true);
         // 2026-01-20 是周二
-        const tuesday = new Date('2026-01-20');
-        expect(isWorkDay(tuesday)).toBe(true);
-
+        expect(await isWorkDay(new Date(2026, 0, 20))).toBe(true);
         // 2026-01-21 是周三
-        const wednesday = new Date('2026-01-21');
-        expect(isWorkDay(wednesday)).toBe(true);
-
+        expect(await isWorkDay(new Date(2026, 0, 21))).toBe(true);
         // 2026-01-22 是周四
-        const thursday = new Date('2026-01-22');
-        expect(isWorkDay(thursday)).toBe(true);
-
+        expect(await isWorkDay(new Date(2026, 0, 22))).toBe(true);
         // 2026-01-23 是周五
-        const friday = new Date('2026-01-23');
-        expect(isWorkDay(friday)).toBe(true);
+        expect(await isWorkDay(new Date(2026, 0, 23))).toBe(true);
     });
 
     // 测试获取下一个工作日
-    test('getNextWorkDay: 周五的下一个工作日应为周一', () => {
+    test('getNextWorkDay: 周五的下一个工作日应为周一', async () => {
         // 2026-01-23 是周五
-        const friday = new Date('2026-01-23');
-        const nextWorkDay = getNextWorkDay(friday);
+        const friday = new Date(2026, 0, 23);
+        const nextWorkDay = await getNextWorkDay(friday);
 
         // 应该是 2026-01-26 周一
         expect(nextWorkDay.getDay()).toBe(1); // 周一
         expect(nextWorkDay.getDate()).toBe(26);
     });
 
-    test('getNextWorkDay: 周六的下一个工作日应为周一', () => {
+    test('getNextWorkDay: 周六的下一个工作日应为周一', async () => {
         // 2026-01-17 是周六
-        const saturday = new Date('2026-01-17');
-        const nextWorkDay = getNextWorkDay(saturday);
+        const saturday = new Date(2026, 0, 17);
+        const nextWorkDay = await getNextWorkDay(saturday);
 
         // 应该是 2026-01-19 周一
         expect(nextWorkDay.getDay()).toBe(1);
@@ -83,10 +80,10 @@ describe('工作日历模块 (Work Calendar)', () => {
     });
 
     // SCHED-006: 验证工期计算跳过周末
-    test('SCHED-006: 添加3个工作日应跳过周末', () => {
+    test('SCHED-006: 添加3个工作日应跳过周末', async () => {
         // 2026-01-22 是周四
-        const thursday = new Date('2026-01-22');
-        const result = addWorkDays(thursday, 3);
+        const thursday = new Date(2026, 0, 22);
+        const result = await addWorkDays(thursday, 3);
 
         // 周四 + 3个工作日 = 周五、下周一、下周二
         // 结果应该是 2026-01-27 周二
@@ -94,10 +91,10 @@ describe('工作日历模块 (Work Calendar)', () => {
         expect(result.getDate()).toBe(27);
     });
 
-    test('addWorkDays: 从周一添加5个工作日应到下周一', () => {
+    test('addWorkDays: 从周一添加5个工作日应到下周一', async () => {
         // 2026-01-19 是周一
-        const monday = new Date('2026-01-19');
-        const result = addWorkDays(monday, 5);
+        const monday = new Date(2026, 0, 19);
+        const result = await addWorkDays(monday, 5);
 
         // 周一 + 5个工作日 = 周二、周三、周四、周五、下周一
         // 结果应该是 2026-01-26 周一
@@ -268,21 +265,21 @@ describe('父任务自动聚合模块 (WBS Calculation)', () => {
 // ========================================
 describe('边界条件测试', () => {
 
-    test('isWorkDay 应正确处理跨年日期', () => {
+    test('isWorkDay 应正确处理跨年日期', async () => {
         // 2025-12-31 是周三
-        const dec31 = new Date('2025-12-31');
-        expect(isWorkDay(dec31)).toBe(true);
+        const dec31 = new Date(2025, 11, 31);
+        expect(await isWorkDay(dec31)).toBe(true);
 
         // 2026-01-01 是周四
-        const jan1 = new Date('2026-01-01');
-        expect(isWorkDay(jan1)).toBe(true);
+        const jan1 = new Date(2026, 0, 1);
+        expect(await isWorkDay(jan1)).toBe(true);
     });
 
-    test('addWorkDays 添加 0 天应返回下一个工作日', () => {
-        const monday = new Date('2026-01-19');
-        const result = addWorkDays(monday, 0);
+    test('addWorkDays 添加 0 天应返回原日期（不移动）', async () => {
+        const monday = new Date(2026, 0, 19);
+        const result = await addWorkDays(monday, 0);
 
-        // 添加 0 天，实际返回原日期
+        // 添加 0 天，while loop 不执行，返回原日期
         expect(result.getDate()).toBe(19);
     });
 });
