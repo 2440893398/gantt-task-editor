@@ -1,0 +1,9 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gantt-task-editor",
+  "compatibility_date": "2025-09-27",
+  "assets": {
+    "directory": "./dist-cn",
+    "not_found_handling": "single-page-application"
+  }
+}
