@@ -1,5 +1,7 @@
 // src/features/gantt/resource-conflict.js
 import { state } from '../../core/store.js';
+import { exclusiveToInclusive, isDayPrecision } from '../../utils/time-formatter.js';
+import { getCalendarSettings, db } from '../../core/storage.js';
 
 /**
  * Get the assignee field key from custom fields config
@@ -16,13 +18,101 @@ function getAssigneeFieldKey() {
     return assigneeField?.key || 'assignee';
 }
 
+function toDateStr(date) {
+    const d = date instanceof Date ? date : new Date(date);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+}
+
+function normalizeAssignee(value) {
+    return String(value || '').trim();
+}
+
+function isOnLeave(leaveRanges, dateStr) {
+    if (!leaveRanges || leaveRanges.length === 0) return false;
+    return leaveRanges.some(item => item.startDate <= dateStr && dateStr <= item.endDate);
+}
+
+async function buildCalendarContext(tasks) {
+    const settings = await getCalendarSettings();
+    const workdaysOfWeek = new Set(settings.workdaysOfWeek || [1, 2, 3, 4, 5]);
+
+    const years = new Set();
+    tasks.forEach(task => {
+        const s = task?.start_date instanceof Date ? task.start_date : new Date(task?.start_date);
+        const e = task?.end_date instanceof Date ? task.end_date : new Date(task?.end_date);
+        if (!isNaN(s.getTime())) years.add(s.getFullYear());
+        if (!isNaN(e.getTime())) years.add(e.getFullYear());
+    });
+    if (years.size === 0) {
+        const y = new Date().getFullYear();
+        years.add(y);
+        years.add(y + 1);
+    }
+
+    const [customDays, holidayRows, leaves] = await Promise.all([
+        db.calendar_custom.toArray(),
+        db.calendar_holidays.where('year').anyOf([...years]).toArray(),
+        db.person_leaves.toArray()
+    ]);
+
+    const customMap = new Map(); // dateStr -> isOffDay
+    customDays.forEach(item => {
+        if (!item?.date) return;
+        customMap.set(item.date, !!item.isOffDay);
+    });
+
+    const holidayMap = new Map(); // dateStr -> isOffDay
+    holidayRows
+        .filter(item => item?.countryCode === settings.countryCode)
+        .forEach(item => {
+            if (!item?.date) return;
+            holidayMap.set(item.date, !!item.isOffDay);
+        });
+
+    const leaveMap = new Map(); // assignee -> [{startDate,endDate}]
+    leaves.forEach(item => {
+        const assignee = normalizeAssignee(item?.assignee);
+        if (!assignee || !item?.startDate || !item?.endDate) return;
+        if (!leaveMap.has(assignee)) leaveMap.set(assignee, []);
+        leaveMap.get(assignee).push({ startDate: item.startDate, endDate: item.endDate });
+    });
+
+    return { workdaysOfWeek, customMap, holidayMap, leaveMap };
+}
+
+function isWorkDayForAssignee(date, assignee, calendarCtx) {
+    const dateStr = toDateStr(date);
+
+    // 第1层：自定义特殊日
+    if (calendarCtx.customMap.has(dateStr)) {
+        return !calendarCtx.customMap.get(dateStr);
+    }
+
+    // 第2层：法定节假日
+    if (calendarCtx.holidayMap.has(dateStr)) {
+        return !calendarCtx.holidayMap.get(dateStr);
+    }
+
+    // 第3层：人员请假
+    if (assignee) {
+        const leaveRanges = calendarCtx.leaveMap.get(assignee);
+        if (isOnLeave(leaveRanges, dateStr)) return false;
+    }
+
+    // 第4层：周工作日设置
+    return calendarCtx.workdaysOfWeek.has(date.getDay());
+}
+
 /**
  * Get all work days in a date range
  * @param {Date} startDate
  * @param {Date} endDate
  * @returns {Date[]} Array of work days
  */
-function getWorkDays(startDate, endDate) {
+function getWorkDays(startDate, endDate, assignee, calendarCtx) {
     const days = [];
     let current = new Date(startDate);
 
@@ -34,7 +124,7 @@ function getWorkDays(startDate, endDate) {
     const end = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
 
     while (current <= end) {
-        if (gantt.isWorkTime(current)) {
+        if (isWorkDayForAssignee(current, assignee, calendarCtx)) {
             days.push(new Date(current));
         }
         current.setDate(current.getDate() + 1);
@@ -47,26 +137,38 @@ function getWorkDays(startDate, endDate) {
  * Detect resource conflicts based on workload
  * @returns {Object} { conflictTaskIds: Set, conflictDetails: Object }
  */
-export function detectResourceConflicts() {
+export async function detectResourceConflicts() {
     if (!gantt) return { conflictTaskIds: new Set(), conflictDetails: {} };
 
     const assigneeKey = getAssigneeFieldKey();
     const tasks = gantt.getTaskByTime(); // Get all tasks in time order
+    const calendarCtx = await buildCalendarContext(tasks);
 
     // Date -> Assignee -> Workload info
     const dailyWorkload = {};
 
     tasks.forEach(task => {
-        if (task.type === 'project') return;
+        // 跳过父任务（有子任务的任务）：父任务的工期是子任务的聚合，
+        // 如果同时计入父任务和子任务的工时，会造成双重统计
+        if (task.type === 'project' || gantt.hasChild(task.id)) return;
 
-        const assignee = task[assigneeKey] || task.assignee; // Fallback to direct property
+        const assignee = normalizeAssignee(task[assigneeKey] || task.assignee); // Fallback to direct property
         if (!assignee) return;
 
         // Handle string dates if necessary (though gantt usually provides Date objects)
         const startDate = task.start_date instanceof Date ? task.start_date : new Date(task.start_date);
-        const endDate = task.end_date instanceof Date ? task.end_date : new Date(task.end_date);
+        const rawEndDate = task.end_date instanceof Date ? task.end_date : new Date(task.end_date);
 
-        const workDays = getWorkDays(startDate, endDate);
+        if (isNaN(startDate.getTime()) || isNaN(rawEndDate.getTime())) return;
+
+        // DHTMLX 的 day-precision end_date 是 exclusive（下一天 00:00）。
+        // 资源负载按“实际工作日”分摊时，需要先转回 inclusive 结束日，
+        // 否则相邻不重叠任务会在边界日被错误地同时计入，触发误报。
+        const endDate = isDayPrecision(rawEndDate)
+            ? exclusiveToInclusive(rawEndDate)
+            : rawEndDate;
+
+        const workDays = getWorkDays(startDate, endDate, assignee, calendarCtx);
         if (workDays.length === 0) return;
 
         const duration = task.duration;

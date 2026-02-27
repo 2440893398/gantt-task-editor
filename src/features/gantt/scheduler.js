@@ -20,6 +20,7 @@ import {
     getHolidayDayByCountry,
     isPersonOnLeave,
 } from '../../core/storage.js';
+import { rollupStatus, rollupAssignee, sumNumberField } from './parent-rollup.js';
 
 /**
  * 初始化调度引擎
@@ -230,6 +231,11 @@ export function updateParentDates(taskId) {
     if (wbs) {
         let changed = false;
 
+        const childIds = gantt.getChildren(parentId) || [];
+        const childTasks = childIds
+            .map((id) => gantt.getTask(id))
+            .filter(Boolean);
+
         if (parent.start_date.getTime() !== wbs.start_date.getTime()) {
             parent.start_date = wbs.start_date;
             changed = true;
@@ -237,7 +243,41 @@ export function updateParentDates(taskId) {
 
         if (parent.end_date.getTime() !== wbs.end_date.getTime()) {
             parent.end_date = wbs.end_date;
-            parent.duration = gantt.calculateDuration(parent.start_date, parent.end_date);
+            changed = true;
+        }
+
+        const nextDuration = gantt.calculateDuration(parent.start_date, parent.end_date);
+        if ((parent.duration || 0) !== nextDuration) {
+            parent.duration = nextDuration;
+            changed = true;
+        }
+
+        const nextStatus = rollupStatus(childTasks.map((c) => c.status));
+        if (nextStatus && parent.status !== nextStatus) {
+            parent.status = nextStatus;
+            changed = true;
+        }
+
+        const nextEstimatedHours = sumNumberField(childTasks.map((c) => c.estimated_hours));
+        if ((parent.estimated_hours || 0) !== nextEstimatedHours) {
+            parent.estimated_hours = nextEstimatedHours;
+            changed = true;
+        }
+
+        const nextActualHours = sumNumberField(childTasks.map((c) => c.actual_hours));
+        if ((parent.actual_hours || 0) !== nextActualHours) {
+            parent.actual_hours = nextActualHours;
+            changed = true;
+        }
+
+        const lockAssignee = !!parent.parent_assignee_locked;
+        const nextAssignee = rollupAssignee(
+            childTasks.map((c) => c.assignee),
+            lockAssignee,
+            parent.assignee || ''
+        );
+        if ((parent.assignee || '') !== (nextAssignee || '')) {
+            parent.assignee = nextAssignee;
             changed = true;
         }
 

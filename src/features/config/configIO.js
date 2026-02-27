@@ -11,6 +11,71 @@ import { updateGanttColumns } from '../gantt/columns.js';
 import { refreshLightbox } from '../lightbox/customization.js';
 import { i18n } from '../../utils/i18n.js';
 import { INTERNAL_PRIORITY_VALUES, INTERNAL_STATUS_VALUES } from '../../config/constants.js';
+import { inclusiveToExclusive } from '../../utils/time-formatter.js';
+
+/**
+ * 当前备份文件的 Schema 版本号。
+ * 当导出格式发生不兼容变更时，需要递增主版本号（major）。
+ * 兼容性规则：
+ *   - major 相同：向后兼容，可安全导入
+ *   - major 不同：不兼容，拒绝导入
+ */
+const BACKUP_SCHEMA_VERSION = '2.0.0';
+
+/**
+ * 将版本字符串解析为 { major, minor, patch } 对象
+ * @param {string} version
+ * @returns {{ major: number, minor: number, patch: number } | null}
+ */
+function parseVersion(version) {
+    if (typeof version !== 'string') return null;
+    const parts = version.split('.').map(Number);
+    if (parts.length < 1 || parts.some(isNaN)) return null;
+    return { major: parts[0] ?? 0, minor: parts[1] ?? 0, patch: parts[2] ?? 0 };
+}
+
+/**
+ * 判断备份文件的版本是否与当前版本兼容
+ * @param {string} fileVersion - 备份文件中的版本号
+ * @returns {{ compatible: boolean, warn: boolean, message: string }}
+ *   compatible: 是否允许导入
+ *   warn: 是否需要向用户展示警告
+ *   message: 说明文字
+ */
+function checkVersionCompatibility(fileVersion) {
+    const file = parseVersion(fileVersion);
+    const current = parseVersion(BACKUP_SCHEMA_VERSION);
+
+    // 无法解析版本号（极旧版本或损坏），按旧格式处理
+    if (!file || !current) {
+        return {
+            compatible: false,
+            warn: true,
+            message: `无法识别的版本号: "${fileVersion}"，请确认文件来源`
+        };
+    }
+
+    // 主版本号不一致 → 破坏性变更，拒绝导入
+    if (file.major !== current.major) {
+        return {
+            compatible: false,
+            warn: true,
+            message: `备份文件版本 (${fileVersion}) 与当前版本 (${BACKUP_SCHEMA_VERSION}) 不兼容，请使用匹配版本的应用导入`
+        };
+    }
+
+    // 备份来自更新的次版本 → 可能包含当前不认识的字段，给出提示
+    if (file.minor > current.minor) {
+        return {
+            compatible: true,
+            warn: true,
+            message: `备份文件版本 (${fileVersion}) 高于当前版本 (${BACKUP_SCHEMA_VERSION})，部分新功能数据可能丢失`
+        };
+    }
+
+    // 完全兼容
+    return { compatible: true, warn: false, message: '' };
+}
 
 /**
  * 导出配置（仅字段定义）
@@ -74,12 +139,12 @@ export async function exportFullBackup() {
 
         // 构建单一备份数据结构
         const backup = {
-            version: "1.0.0",
+            version: BACKUP_SCHEMA_VERSION,
             exportTime: new Date().toISOString(),
             metadata: {
                 taskCount: ganttData.data.length,
                 linkCount: ganttData.links.length,
-                appVersion: "1.0.0"
+                appVersion: BACKUP_SCHEMA_VERSION
             },
             data: {
                 tasks: ganttData.data,
@@ -130,34 +195,41 @@ export async function exportFullBackup() {
 /**
  * 验证备份文件格式
  * @param {Object} backup - 备份数据对象
- * @returns {Object} { valid: boolean, error: string }
+ * @returns {Object} { valid: boolean, error: string, versionWarn: string }
+ *   valid: 是否允许继续导入
+ *   error: 拒绝导入时的错误说明
+ *   versionWarn: 版本兼容性警告（仍可导入，但需提示用户）
  */
 function validateBackup(backup) {
     if (!backup || typeof backup !== 'object') {
         return { valid: false, error: '备份文件格式不正确' };
     }
 
-    // 检查版本
+    // 检查版本兼容性
     if (!backup.version) {
-        return { valid: false, error: '缺少版本信息' };
+        // 旧格式（仅含字段配置，无 version 字段）由调用方单独处理
+        return { valid: false, error: '缺少版本信息，如为旧格式字段配置文件请使用"导入配置"功能' };
     }
 
-    // 检查必要数据
+    const compat = checkVersionCompatibility(backup.version);
+    if (!compat.compatible) {
+        return { valid: false, error: compat.message };
+    }
+
+    // 检查必要数据结构
     if (!backup.data) {
         return { valid: false, error: '缺少数据部分' };
     }
 
-    // 验证任务数据
     if (!Array.isArray(backup.data.tasks)) {
         return { valid: false, error: '任务数据格式不正确' };
     }
 
-    // 验证链接数据
     if (!Array.isArray(backup.data.links)) {
         return { valid: false, error: '链接数据格式不正确' };
     }
 
-    return { valid: true };
+    return { valid: true, versionWarn: compat.warn ? compat.message : '' };
 }
 
 /**
@@ -180,16 +252,9 @@ export async function importFullBackup(file) {
         }
         const backup = JSON.parse(text);
 
-        // 验证备份格式
-        const validation = validateBackup(backup);
-        if (!validation.valid) {
-            showToast(validation.error, 'error', 3000);
-            return;
-        }
-
-        // 兼容旧格式（只有字段配置）
-        const isOldFormat = !backup.version && backup.customFields;
-        if (isOldFormat) {
+        // 兼容旧格式（只有字段配置，无 version 字段）
+        // 注意：此检测必须在 validateBackup 之前，因 validateBackup 对无 version 字段会返回错误
+        if (!backup.version && backup.customFields) {
             showToast('检测到旧格式配置文件，仅恢复字段设置', 'warning', 3000);
             state.customFields = backup.customFields || [];
             state.fieldOrder = backup.fieldOrder || [];
@@ -199,12 +264,25 @@ export async function importFullBackup(file) {
             return;
         }
 
+        // 验证备份格式（含版本兼容性检查）
+        const validation = validateBackup(backup);
+        if (!validation.valid) {
+            showToast(validation.error, 'error', 5000);
+            return;
+        }
+
+        // 版本兼容性警告（仍可导入，但给用户提示）
+        if (validation.versionWarn) {
+            showToast(`版本提示: ${validation.versionWarn}`, 'warning', 4000);
+        }
+
         // 确认操作（会清除现有数据）
         const confirmed = confirm(
-            `即将从备份还原数据:\n` +
+            `即将从备份还原数据 (v${backup.version}):\n` +
             `- 任务: ${backup.metadata?.taskCount || backup.data.tasks.length} 个\n` +
             `- 链接: ${backup.metadata?.linkCount || backup.data.links.length} 个\n` +
-            `- 自定义字段: ${backup.data.customFields?.length || 0} 个\n\n` +
+            `- 自定义字段: ${backup.data.customFields?.length || 0} 个\n` +
+            `- 导出时间: ${backup.exportTime ? new Date(backup.exportTime).toLocaleString() : '未知'}\n\n` +
             `警告: 这将覆盖当前所有数据，是否继续？`
         );
 
@@ -390,8 +468,8 @@ function getAllColumnNameMappings() {
     const mapping = {};
     const allLocales = i18n.getAllLocales();
 
-    // 内置字段
-    const builtinFields = ['text', 'start_date', 'duration', 'progress', 'priority', 'assignee', 'status', 'hierarchy'];
+        // 内置字段（含 end_date、estimated_hours 以支持按工时反推计划时间）
+        const builtinFields = ['text', 'start_date', 'end_date', 'duration', 'estimated_hours', 'progress', 'priority', 'assignee', 'status', 'hierarchy'];
 
     // 遍历每种语言
     Object.values(allLocales).forEach(lang => {
@@ -922,28 +1000,129 @@ export async function importFromExcel(file) {
 
                 if (rowData.every(v => v === null || v === undefined || v === '')) return;
 
-                // 解析日期
-                let startDate = new Date();
-                if (fieldIndexMap['start_date'] !== undefined) {
-                    const dateValue = rowData[fieldIndexMap['start_date']];
-                    if (dateValue) {
-                        if (dateValue instanceof Date) {
-                            startDate = dateValue;
-                        } else if (typeof dateValue === 'string') {
-                            startDate = gantt.date.str_to_date('%Y-%m-%d')(dateValue);
-                        } else if (typeof dateValue === 'number') {
-                            // Excel 日期序列号
-                            startDate = new Date((dateValue - 25569) * 86400 * 1000);
-                        }
+                // ── 日期解析辅助函数 ──────────────────────────────────────────
+                const parseExcelDate = (dateValue) => {
+                    if (dateValue === null || dateValue === undefined || dateValue === '') return null;
+
+                    const parseDateOnlyString = (text) => {
+                        const str = String(text).trim();
+                        let m = str.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
+                        if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+
+                        m = str.match(/^(\d{4})年(\d{1,2})月(\d{1,2})日?$/);
+                        if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+
+                        m = str.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+                        if (m) return new Date(Number(m[3]), Number(m[1]) - 1, Number(m[2]));
+
+                        return null;
+                    };
+
+                    if (dateValue instanceof Date) {
+                        return new Date(dateValue);
+                    }
+
+                    if (typeof dateValue === 'number') {
+                        // Excel 日期序列号 -> 使用 UTC 组件重建本地时间，避免 08:00 时区偏移
+                        const wholeDays = Math.floor(dateValue);
+                        const fraction = dateValue - wholeDays;
+                        const millisInDay = 24 * 60 * 60 * 1000;
+                        const utcMillis = Date.UTC(1899, 11, 30) + (wholeDays * millisInDay) + Math.round(fraction * millisInDay);
+                        const utcDate = new Date(utcMillis);
+                        const parsed = new Date(
+                            utcDate.getUTCFullYear(),
+                            utcDate.getUTCMonth(),
+                            utcDate.getUTCDate(),
+                            utcDate.getUTCHours(),
+                            utcDate.getUTCMinutes(),
+                            utcDate.getUTCSeconds(),
+                            utcDate.getUTCMilliseconds()
+                        );
+                        return isNaN(parsed.getTime()) ? null : parsed;
+                    }
+
+                    if (typeof dateValue === 'string') {
+                        // 先按“日期字符串”解析为本地 00:00，避免 YYYY-MM-DD 被当成 UTC 造成 +8 小时偏移
+                        const dateOnly = parseDateOnlyString(dateValue);
+                        if (dateOnly && !isNaN(dateOnly.getTime())) return dateOnly;
+
+                        const parsed = new Date(dateValue);
+                        return isNaN(parsed?.getTime()) ? null : parsed;
+                    }
+
+                    return null;
+                };
+
+                // 解析计划开始时间
+                let startDate = fieldIndexMap['start_date'] !== undefined
+                    ? parseExcelDate(rowData[fieldIndexMap['start_date']]) : null;
+
+                // 解析计划结束时间（用于无开始时间时反推，或直接保留）
+                let endDate = fieldIndexMap['end_date'] !== undefined
+                    ? parseExcelDate(rowData[fieldIndexMap['end_date']]) : null;
+
+                // 解析工期（天）
+                let duration = fieldIndexMap['duration'] !== undefined
+                    ? (parseFloat(rowData[fieldIndexMap['duration']]) || 0) : 0;
+
+                // 解析预计工时（小时）并换算为工期（天，按 8h/天）
+                if (!duration && fieldIndexMap['estimated_hours'] !== undefined) {
+                    const hours = parseFloat(rowData[fieldIndexMap['estimated_hours']]);
+                    if (hours > 0) duration = Math.ceil(hours / 8);
+                }
+
+                // 若同时具有开始和结束日期，始终从日期重新计算工作日数（日期优先于工期列）。
+                // Excel 中的 end_date 是"包含"的最后一天，需转为 DHTMLX 的"排除"边界。
+                // 这样可以正确处理 work_time=true 的工作日模式，避免 Excel 里填错工期的问题。
+                if (startDate && endDate && startDate < endDate) {
+                    const exclusiveEnd = inclusiveToExclusive(endDate);
+                    try {
+                        const computedDuration = gantt.calculateDuration(startDate, exclusiveEnd);
+                        if (computedDuration > 0) duration = computedDuration;
+                    } catch (e) {
+                        // gantt 未初始化时的兜底：按自然天计算（+1 因为是 inclusive 结束）
+                        const fallback = Math.ceil((exclusiveEnd - startDate) / (1000 * 60 * 60 * 24));
+                        if (fallback > 0) duration = fallback;
                     }
                 }
+
+                if (duration <= 0) duration = 1;
+
+                // 如果有结束时间但无开始时间，用结束时间反推开始时间（倒排计划）
+                // endDate 是 inclusive（Excel 传入），所以 exclusiveEnd = endDate+1
+                // gantt.calculateEndDate(start, duration) 返回 exclusive end，
+                // 反推公式：start = exclusiveEnd - duration（工作日）
+                if (!startDate && endDate) {
+                    const exclusiveEnd = inclusiveToExclusive(endDate);
+                    try {
+                        // 用 DHTMLX 反推：先算出 exclusiveEnd 往前 duration 个工作日
+                        startDate = gantt.calculateEndDate(exclusiveEnd, -duration);
+                    } catch (e) {
+                        startDate = new Date(exclusiveEnd);
+                        startDate.setDate(startDate.getDate() - duration);
+                    }
+                }
+                // 最终兜底：用今天作为开始
+                if (!startDate) startDate = new Date();
 
                 const task = {
                     text: rowData[fieldIndexMap['text']] || '新任务',
                     start_date: startDate,
-                    duration: fieldIndexMap['duration'] !== undefined ? (parseInt(rowData[fieldIndexMap['duration']]) || 1) : 1,
-                    progress: fieldIndexMap['progress'] !== undefined ? ((parseInt(rowData[fieldIndexMap['progress']]) || 0) / 100) : 0
+                    duration: duration,
+                    progress: fieldIndexMap['progress'] !== undefined ? ((parseFloat(rowData[fieldIndexMap['progress']]) || 0) / 100) : 0
                 };
+
+                // 若 Excel 提供了结束日期，将其转为 DHTMLX exclusive 边界后显式存入 end_date，
+                // 避免 DHTMLX 从 start_date+duration 重新计算（work_time 模式下会跳过周末导致偏移）。
+                if (endDate) {
+                    task.end_date = inclusiveToExclusive(endDate);
+                }
+
+                // 如果 Excel 提供了预计工时，同步写入 estimated_hours 字段
+                if (fieldIndexMap['estimated_hours'] !== undefined) {
+                    const hours = parseFloat(rowData[fieldIndexMap['estimated_hours']]);
+                    if (hours > 0) task.estimated_hours = hours;
+                }
 
                 if (hasHierarchy) {
                     const hierarchy = String(rowData[fieldIndexMap['hierarchy']] || '');
@@ -1000,6 +1179,16 @@ export async function importFromExcel(file) {
                     }
                 });
 
+                // 状态与进度双向一致性：
+                // Excel 中 status=completed 但 progress 为 0 时，自动补全 progress=1
+                if (task.status === 'completed' && task.progress < 1) {
+                    task.progress = 1;
+                }
+                // Excel 中 progress=1 但未指定 status 时，补全 status=completed
+                if (task.progress >= 1 && !task.status) {
+                    task.status = 'completed';
+                }
+
                 tasks.push(task);
             } catch (error) {
                 console.warn(`解析第 ${rowNumber} 行失败:`, error);
@@ -1016,6 +1205,30 @@ export async function importFromExcel(file) {
             gantt.clearAll();
             gantt.parse({ data: tasks });
         });
+
+        // 导入后，从叶子任务向上重新推算父任务时间
+        // （gantt.parse 时父子关系尚未建立，onAfterTaskUpdate 不能正确聚合父级时间）
+        try {
+            const { updateParentDates } = await import('../gantt/scheduler.js');
+            // 找出所有叶子任务（无子任务的任务），从它们开始向上更新
+            const leafTasks = [];
+            gantt.eachTask(task => {
+                if (!gantt.hasChild(task.id)) {
+                    leafTasks.push(task.id);
+                }
+            });
+            // 去重后逐一触发父级时间聚合（updateParentDates 会递归向上）
+            const triggeredParents = new Set();
+            leafTasks.forEach(id => {
+                const task = gantt.getTask(id);
+                if (task.parent && task.parent !== 0 && !triggeredParents.has(task.parent)) {
+                    updateParentDates(id);
+                    triggeredParents.add(task.parent);
+                }
+            });
+        } catch (e) {
+            console.warn('[Import] 父任务时间聚合失败:', e);
+        }
 
         showToast(`成功导入 ${tasks.length} 个任务`, 'success');
     } catch (error) {

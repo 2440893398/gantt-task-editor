@@ -7,7 +7,7 @@ import { INTERNAL_FIELDS, SYSTEM_FIELD_CONFIG } from '../../data/fields.js';
 
 import { renderPriorityBadge, renderStatusBadge, renderAssignee, renderProgressBar } from './templates.js';
 import { extractPlainText, escapeAttr } from '../../utils/dom.js';
-import { formatDuration } from '../../utils/time-formatter.js';
+import { formatDuration, exclusiveToInclusive, isDayPrecision } from '../../utils/time-formatter.js';
 import { applySavedColumnWidths, loadColumnWidthPrefs } from './column-widths.js';
 
 /**
@@ -310,9 +310,12 @@ export function updateGanttColumns() {
 
                 if (systemFieldConfig.type === 'date') {
                     // Date fields
+                    // end_date is stored as DHTMLX exclusive boundary; convert to inclusive for display
+                    const isExclusiveEnd = fieldName === 'end_date';
                     templateFn = function (task) {
-                        const value = task[fieldName];
+                        let value = task[fieldName];
                         if (!value) return '<span class="text-base-content/40">—</span>';
+                        if (isExclusiveEnd) value = exclusiveToInclusive(value instanceof Date ? value : new Date(value));
                         const formatted = formatGridDate(value);
                         if (!formatted) return '<span class="text-base-content/40">—</span>';
                         return `<span title="${formatted}">${formatted}</span>`;

@@ -17,7 +17,7 @@ import { initResponsive } from './responsive.js';
 import { initInlineEdit, addInlineEditStyles } from './inline-edit.js';
 import { initCriticalPath } from './critical-path.js';
 import { i18n } from '../../utils/i18n.js';
-import { formatDuration } from '../../utils/time-formatter.js';
+import { formatDuration, exclusiveToInclusive, isDayPrecision } from '../../utils/time-formatter.js';
 import undoManager from '../ai/services/undoManager.js';
 import { loadColumnWidthPrefs, saveColumnWidthPref } from './column-widths.js';
 
@@ -134,11 +134,14 @@ function bindGridColumnReorderSync() {
 let conflictTaskIds = new Set();
 let conflictDetails = {};
 let detectTimer = null;
+let detectRunId = 0;
 
 function scheduleConflictDetection() {
     clearTimeout(detectTimer);
-    detectTimer = setTimeout(() => {
-        const result = detectResourceConflicts();
+    detectTimer = setTimeout(async () => {
+        const runId = ++detectRunId;
+        const result = await detectResourceConflicts();
+        if (runId !== detectRunId) return;
         conflictTaskIds = result.conflictTaskIds;
         conflictDetails = result.conflictDetails;
         gantt.render();
@@ -244,8 +247,9 @@ export function initGantt() {
         // 开始日期
         lines.push(`<div class="gantt-tooltip-row">📅 <span class="gantt-tooltip-label">${i18n.t('tooltip.start')}:</span> ${formatDate(task.start_date)}</div>`);
 
-        // 结束日期
-        lines.push(`<div class="gantt-tooltip-row">📅 <span class="gantt-tooltip-label">${i18n.t('tooltip.end')}:</span> ${formatDate(end)}</div>`);
+        // 结束日期（DHTMLX 的 end 是 exclusive，需转为 inclusive 展示给用户）
+        const displayEnd = isDayPrecision(end) ? exclusiveToInclusive(end) : end;
+        lines.push(`<div class="gantt-tooltip-row">📅 <span class="gantt-tooltip-label">${i18n.t('tooltip.end')}:</span> ${formatDate(displayEnd)}</div>`);
 
         // 负责人
         if (task.assignee) {
@@ -256,8 +260,15 @@ export function initGantt() {
         const progressPercent = Math.round((task.progress || 0) * 100);
         lines.push(`<div class="gantt-tooltip-row">📊 <span class="gantt-tooltip-label">${i18n.t('tooltip.progress')}:</span> ${progressPercent}%</div>`);
 
-        // 工期 (v1.5)
-        const durationText = formatDuration(task.duration || 0);
+        // 工期：优先从 start/end_date 实时计算（避免读取 task.duration 过时值）
+        let displayDuration = task.duration || 0;
+        if (task.start_date && task.end_date) {
+            try {
+                const live = gantt.calculateDuration(task.start_date, task.end_date);
+                if (live > 0) displayDuration = live;
+            } catch (e) { /* 保留 task.duration */ }
+        }
+        const durationText = formatDuration(displayDuration);
         lines.push(`<div class="gantt-tooltip-row">⏱️ <span class="gantt-tooltip-label">${i18n.t('tooltip.duration')}:</span> ${durationText}</div>`);
 
         // Baseline deviation
@@ -928,10 +939,17 @@ export async function refreshHolidayHighlightCache() {
     const cache = window.__calendarHighlightCache;
     if (!cache) return;
 
+    // 重新构建高亮缓存，避免新增/删除公司假、加班日后缓存残留
     for (const [dateStr, type] of cache.entries()) {
-        if (type === 'holiday' || type === 'makeupday') {
+        if (type === 'holiday' || type === 'makeupday' || type === 'companyday' || type === 'overtime') {
             cache.delete(dateStr);
         }
+    }
+
+    // 先加载自定义特殊日（优先级高于法定节假日）
+    const customs = await getAllCustomDays();
+    for (const c of customs) {
+        cache.set(c.date, c.isOffDay ? 'companyday' : 'overtime');
     }
 
     const thisYear = new Date().getFullYear();

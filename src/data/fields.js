@@ -11,8 +11,9 @@ export const defaultCustomFields = [
 /**
  * 字段显示顺序
  * description 列直接展示富文本摘要（悬浮 tooltip 预览完整内容）
+ * end_date 紧跟 start_date（canDisable:false，始终展示）
  */
-export const defaultFieldOrder = ["text", "priority", "assignee", "status", "description", "start_date", "duration", "progress"];
+export const defaultFieldOrder = ["text", "priority", "assignee", "status", "description", "start_date", "end_date", "duration", "progress"];
 
 /**
  * System field configuration

@@ -20,7 +20,8 @@ import {
     getNextWorkDay,
     addWorkDays,
     detectCycle,
-    calculateWBS
+    calculateWBS,
+    updateParentDates
 } from '../../src/features/gantt/scheduler.js';
 
 // ========================================
@@ -281,5 +282,96 @@ describe('边界条件测试', () => {
 
         // 添加 0 天，while loop 不执行，返回原日期
         expect(result.getDate()).toBe(19);
+    });
+});
+
+describe('父任务字段联动 (Parent Field Rollup)', () => {
+    test('updateParentDates should roll up status assignee and hours', () => {
+        const parent = {
+            id: 100,
+            parent: 0,
+            start_date: new Date('2026-02-01'),
+            end_date: new Date('2026-02-02'),
+            duration: 1,
+            status: 'pending',
+            assignee: '',
+            estimated_hours: 0,
+            actual_hours: 0
+        };
+
+        const child1 = {
+            id: 1,
+            parent: 100,
+            start_date: new Date('2026-02-02'),
+            end_date: new Date('2026-02-04'),
+            status: 'completed',
+            assignee: '张三',
+            estimated_hours: 8,
+            actual_hours: 6
+        };
+
+        const child2 = {
+            id: 2,
+            parent: 100,
+            start_date: new Date('2026-02-04'),
+            end_date: new Date('2026-02-06'),
+            status: 'completed',
+            assignee: '张三',
+            estimated_hours: 4,
+            actual_hours: 3
+        };
+
+        global.gantt = {
+            getTask: vi.fn((id) => ({ 1: child1, 2: child2, 100: parent }[id])),
+            getChildren: vi.fn((id) => (id === 100 ? [1, 2] : [])),
+            calculateDuration: vi.fn(() => 4),
+            updateTask: vi.fn()
+        };
+
+        updateParentDates(1);
+
+        expect(parent.status).toBe('completed');
+        expect(parent.assignee).toBe('张三');
+        expect(parent.estimated_hours).toBe(12);
+        expect(parent.actual_hours).toBe(9);
+        expect(parent.duration).toBe(4);
+        expect(global.gantt.updateTask).toHaveBeenCalledWith(100);
+    });
+
+    test('updateParentDates keeps parent assignee when locked', () => {
+        const parent = {
+            id: 200,
+            parent: 0,
+            parent_assignee_locked: true,
+            start_date: new Date('2026-02-01'),
+            end_date: new Date('2026-02-02'),
+            duration: 1,
+            status: 'pending',
+            assignee: '项目经理',
+            estimated_hours: 0,
+            actual_hours: 0
+        };
+
+        const child = {
+            id: 3,
+            parent: 200,
+            start_date: new Date('2026-02-02'),
+            end_date: new Date('2026-02-03'),
+            status: 'in_progress',
+            assignee: '张三',
+            estimated_hours: 2,
+            actual_hours: 1
+        };
+
+        global.gantt = {
+            getTask: vi.fn((id) => ({ 3: child, 200: parent }[id])),
+            getChildren: vi.fn((id) => (id === 200 ? [3] : [])),
+            calculateDuration: vi.fn(() => 1),
+            updateTask: vi.fn()
+        };
+
+        updateParentDates(3);
+        expect(parent.assignee).toBe('项目经理');
+        expect(parent.status).toBe('in_progress');
     });
 });

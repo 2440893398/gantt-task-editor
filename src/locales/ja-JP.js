@@ -42,7 +42,9 @@ export default {
         hierarchy: '階層',
         text: 'タスク名',
         start_date: '開始日',
+        end_date: '終了日',
         duration: '期間(日)',
+        estimated_hours: '予定工数',
         progress: '進捗(%)',
         priority: '優先度',
         assignee: '担当者',
@@ -321,6 +323,7 @@ export default {
         quickDate: '今日',
         dateRangeError: '実際の開始日は実際の終了日より後にできません',
         fieldDisabled: 'このフィールドは無効です',
+        parentAssigneeLock: '親担当者をロック',
         // サブタスク削除機能
         deleteSubtask: 'サブタスク削除',
         deleteSubtaskTitle: 'サブタスク削除',

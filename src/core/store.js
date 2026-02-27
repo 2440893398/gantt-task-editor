@@ -95,6 +95,32 @@ export async function restoreStateFromCache() {
                 }
                 console.log('[Store] Added missing description field to fieldOrder');
             }
+
+            // 确保所有 canDisable:false 的系统字段都在 fieldOrder 中
+            // （它们在字段管理界面始终显示为"启用"，但旧缓存可能未包含）
+            Object.entries(SYSTEM_FIELD_CONFIG).forEach(([fieldName, config]) => {
+                if (
+                    !config.canDisable &&
+                    !INTERNAL_FIELDS.includes(fieldName) &&
+                    !cachedFieldOrder.includes(fieldName)
+                ) {
+                    // 插入到合理位置：end_date 紧跟 start_date 之后
+                    const anchorField = fieldName === 'end_date' ? 'start_date'
+                        : fieldName === 'description' ? 'start_date' : null;
+                    if (anchorField) {
+                        const anchorIdx = cachedFieldOrder.indexOf(anchorField);
+                        if (anchorIdx >= 0) {
+                            cachedFieldOrder.splice(anchorIdx + 1, 0, fieldName);
+                        } else {
+                            cachedFieldOrder.push(fieldName);
+                        }
+                    } else {
+                        cachedFieldOrder.push(fieldName);
+                    }
+                    console.log(`[Store] Added missing system field "${fieldName}" to fieldOrder`);
+                }
+            });
+
             state.fieldOrder = cachedFieldOrder;
             console.log('[Store] Restored field order from cache');
         }

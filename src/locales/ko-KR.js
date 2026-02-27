@@ -41,7 +41,9 @@ export default {
         hierarchy: '계층',
         text: '작업 이름',
         start_date: '시작일',
+        end_date: '종료일',
         duration: '기간(일)',
+        estimated_hours: '예상 시간',
         progress: '진행률(%)',
         priority: '우선순위',
         assignee: '담당자',
@@ -319,6 +321,7 @@ export default {
         quickDate: '오늘',
         dateRangeError: '실제 시작일은 실제 종료일보다 늦을 수 없습니다',
         fieldDisabled: '이 필드는 비활성화되었습니다',
+        parentAssigneeLock: '상위 담당자 잠금',
         // 하위 작업 삭제 기능
         deleteSubtask: '하위 작업 삭제',
         deleteSubtaskTitle: '하위 작업 삭제',

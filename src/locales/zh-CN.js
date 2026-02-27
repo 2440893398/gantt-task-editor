@@ -41,7 +41,9 @@ export default {
         hierarchy: '层级',
         text: '任务名称',
         start_date: '计划开始',
+        end_date: '计划截止',
         duration: '预计工期',
+        estimated_hours: '预计工时',
         progress: '进度(%)',
         priority: '优先级',
         assignee: '负责人',
@@ -294,6 +296,7 @@ export default {
         quickDate: '今天',
         dateRangeError: '实际开始时间不能晚于实际结束时间',
         fieldDisabled: '此字段已禁用',
+        parentAssigneeLock: '锁定上级负责人',
         // 子任务删除功能
         deleteSubtask: '删除子任务',
         deleteSubtaskTitle: '删除子任务',

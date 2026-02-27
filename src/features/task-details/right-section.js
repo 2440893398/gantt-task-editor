@@ -4,7 +4,7 @@
  */
 
 import { i18n } from '../../utils/i18n.js';
-import { formatDuration, parseDurationInput } from '../../utils/time-formatter.js';
+import { formatDuration, parseDurationInput, exclusiveToInclusive, inclusiveToExclusive, isDayPrecision } from '../../utils/time-formatter.js';
 import { state, isFieldEnabled, getFieldType, getSystemFieldOptions } from '../../core/store.js';
 
 import { showToast } from '../../utils/toast.js';
@@ -64,7 +64,7 @@ export function renderRightSection(task) {
 
         <!-- 基本属性 -->
         <div class="space-y-2">
-            ${renderAssigneeRow(task.assignee)}
+            ${renderAssigneeRow(task)}
             ${renderPriorityRow(task.priority)}
             ${showProgress ? renderProgressRow(task.progress) : ''}
         </div>
@@ -77,7 +77,7 @@ export function renderRightSection(task) {
             </h4>
             <div class="space-y-2">
                 ${renderDateRow('start-date', i18n.t('taskDetails.planStart') || '开始', formatDateValue(task.start_date), 'calendar')}
-                ${renderDateRow('end-date', i18n.t('taskDetails.planEnd') || '截止', formatDateValue(getEndDate(task)), 'calendar-check')}
+                ${renderDateRow('end-date', i18n.t('taskDetails.planEnd') || '截止', formatDateValue(exclusiveToInclusive(getEndDate(task))), 'calendar-check')}
             </div>
             ${showActualDates ? `
             <div class="mt-2 pt-2 border-t border-base-200/30 space-y-2">
@@ -131,8 +131,28 @@ export function bindRightSectionEvents(panel, task) {
     // 状态选择 (自定义下拉)
     bindDropdown(panel, 'task-status', (value) => {
         task.status = value;
+
+        // 状态 → 进度 双向同步：
+        // 标记为"已完成"时，进度自动设为 100%
+        // 从"已完成"改为其他状态时，若进度是 100%，重置为 0%（避免状态与进度矛盾）
+        let progressChanged = false;
+        if (value === 'completed' && task.progress < 1) {
+            task.progress = 1;
+            progressChanged = true;
+        } else if (value !== 'completed' && task.progress >= 1) {
+            task.progress = 0;
+            progressChanged = true;
+        }
+
         gantt.updateTask(task.id);
         showToast(i18n.t('message.saveSuccess') || '保存成功', 'success');
+
+        // 进度发生变化时刷新面板（进度条 UI 同步）
+        if (progressChanged) {
+            import('./panel.js').then(({ refreshTaskDetailsPanel }) => {
+                refreshTaskDetailsPanel();
+            });
+        }
     });
 
     // 负责人 (支持文本或下拉)
@@ -140,12 +160,14 @@ export function bindRightSectionEvents(panel, task) {
     const assigneeOptions = getSystemFieldOptions('assignee');
 
     if ((assigneeType === 'select' || assigneeType === 'multiselect') && assigneeOptions && assigneeOptions.length > 0) {
-        // Dropdown mode
-        bindDropdown(panel, 'task-assignee', (value) => {
+        // Portal 下拉模式 - 选项多时不会被父容器裁切
+        const isMulti = assigneeType === 'multiselect';
+        const normalizedOptions = assigneeOptions.map(opt => ({ value: opt, label: opt }));
+        setupSelect('task-assignee', normalizedOptions, task.assignee, (value) => {
             task.assignee = value;
             gantt.updateTask(task.id);
             showToast(i18n.t('message.saveSuccess') || '保存成功', 'success');
-        });
+        }, { isMulti });
     } else {
         // Text input mode
         const assigneeInput = panel.querySelector('#task-assignee-input');
@@ -157,6 +179,15 @@ export function bindRightSectionEvents(panel, task) {
                 }
             });
         }
+    }
+
+    const assigneeLock = panel.querySelector('#task-parent-assignee-lock');
+    if (assigneeLock) {
+        assigneeLock.addEventListener('change', () => {
+            task.parent_assignee_locked = !!assigneeLock.checked;
+            gantt.updateTask(task.id);
+            showToast(i18n.t('message.saveSuccess') || '保存成功', 'success');
+        });
     }
 
 
@@ -319,22 +350,22 @@ function renderPropertyRow(id, label, value, iconType) {
 /**
  * 渲染负责人行（支持动态类型）
  */
-function renderAssigneeRow(currentValue) {
+function renderAssigneeRow(task) {
+    const currentValue = task?.assignee;
     const label = i18n.t('taskDetails.assignee') || '负责人';
     const iconSvg = getPropertyIcon('user');
+    const isParentTask = !!(task?.id && gantt?.hasChild?.(task.id));
+    const lockChecked = task?.parent_assignee_locked ? 'checked' : '';
+    const lockLabel = i18n.t('taskDetails.parentAssigneeLock') || '锁定上级负责人';
 
     // Check if assignee field has a type override
     const effectiveType = getFieldType('assignee');
     const systemOptions = getSystemFieldOptions('assignee');
 
     if ((effectiveType === 'select' || effectiveType === 'multiselect') && systemOptions && systemOptions.length > 0) {
-        // Render as dropdown
-        const options = systemOptions.map(opt => ({
-            value: opt,
-            label: opt
-        }));
-
-        const renderLabel = (opt) => `<span>${opt.label}</span>`;
+        // 使用 portal 渲染的下拉，避免选项过多时被父容器裁切
+        const isMulti = effectiveType === 'multiselect';
+        const options = systemOptions.map(opt => ({ value: opt, label: opt }));
 
         return `
             <div class="flex items-center justify-between py-2.5">
@@ -342,10 +373,18 @@ function renderAssigneeRow(currentValue) {
                     ${iconSvg}
                     <span>${label}</span>
                 </div>
-                <div class="w-28">
-                    ${renderDropdownHTML('task-assignee', options, currentValue, renderLabel, '-', true)}
+                <div class="w-32">
+                    ${renderSelectHTML('task-assignee', currentValue, options, { placeholder: '-', isMulti, width: 'w-full' })}
                 </div>
             </div>
+            ${isParentTask ? `
+            <div class="flex items-center justify-end -mt-1">
+                <label class="label cursor-pointer gap-2 py-0">
+                    <span class="label-text text-xs text-base-content/60">${lockLabel}</span>
+                    <input id="task-parent-assignee-lock" type="checkbox" class="checkbox checkbox-xs" ${lockChecked}>
+                </label>
+            </div>
+            ` : ''}
         `;
     } else {
         // Render as text input (default)
@@ -361,6 +400,14 @@ function renderAssigneeRow(currentValue) {
                        value="${escapeHtml(currentValue || '')}" 
                        placeholder="-" />
             </div>
+            ${isParentTask ? `
+            <div class="flex items-center justify-end -mt-1">
+                <label class="label cursor-pointer gap-2 py-0">
+                    <span class="label-text text-xs text-base-content/60">${lockLabel}</span>
+                    <input id="task-parent-assignee-lock" type="checkbox" class="checkbox checkbox-xs" ${lockChecked}>
+                </label>
+            </div>
+            ` : ''}
         `;
     }
 }
@@ -647,20 +694,31 @@ function bindDateInput(panel, selector, task, fieldName, isEndDate = false) {
     if (!input) return;
 
     input.addEventListener('change', () => {
-        const dateValue = new Date(input.value);
+        // <input type="date"> 返回 "YYYY-MM-DD"，用本地时区解析避免时区偏移
+        const parts = input.value.split('-').map(Number);
+        if (parts.length !== 3 || parts.some(isNaN)) return;
+        const dateValue = new Date(parts[0], parts[1] - 1, parts[2]);
         if (isNaN(dateValue.getTime())) return;
 
         if (isEndDate) {
-            // 计算工期
+            // 用户从 <input type="date"> 选择的日期是"包含"的最后一天（inclusive）
+            // DHTMLX 需要"排除"边界（exclusive），即 +1 天
+            const exclusiveEnd = inclusiveToExclusive(dateValue);
+            task.end_date = exclusiveEnd;
             const startDate = task.start_date;
             if (startDate) {
-                const duration = Math.ceil((dateValue - startDate) / (1000 * 60 * 60 * 24));
-                if (duration > 0) {
-                    task.duration = duration;
+                // 用 DHTMLX 内部日历计算工作日数，与甘特条渲染保持一致
+                const workDuration = gantt.calculateDuration(startDate, exclusiveEnd);
+                if (workDuration > 0) {
+                    task.duration = workDuration;
                 }
             }
         } else {
             task[fieldName] = dateValue;
+            // 若调整的是开始时间，同步更新 end_date（保持工期不变）
+            if (fieldName === 'start_date' && task.duration) {
+                task.end_date = gantt.calculateEndDate(dateValue, task.duration);
+            }
         }
 
         gantt.updateTask(task.id);

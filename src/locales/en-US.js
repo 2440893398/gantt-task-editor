@@ -41,7 +41,9 @@ export default {
         hierarchy: 'Hierarchy',
         text: 'Task Name',
         start_date: 'Start Date',
+        end_date: 'End Date',
         duration: 'Duration (days)',
+        estimated_hours: 'Estimated Hours',
         progress: 'Progress (%)',
         priority: 'Priority',
         assignee: 'Assignee',
@@ -295,6 +297,7 @@ export default {
         quickDate: 'Today',
         dateRangeError: 'Actual start date cannot be later than actual end date',
         fieldDisabled: 'This field is disabled',
+        parentAssigneeLock: 'Lock parent assignee',
         // Subtask deletion
         deleteSubtask: 'Delete Subtask',
         deleteSubtaskTitle: 'Delete Subtask',
