@@ -72,7 +72,8 @@ vi.mock('../src/features/selection/selectionManager.js', () => ({
 }));
 
 vi.mock('../src/features/gantt/navigation.js', () => ({
-  initNavigation: vi.fn()
+  initNavigation: vi.fn(),
+  refreshUndoRedoButtons: vi.fn()
 }));
 
 vi.mock('../src/features/gantt/markers.js', () => ({

@@ -9,7 +9,7 @@ import { updateGanttColumns } from './columns.js';
 import { initResizer } from './resizer.js';
 import { registerCustomFieldsBlock, configureLightbox, registerNameInput } from '../lightbox/customization.js';
 import { updateSelectedTasksUI, applySelectionStyles } from '../selection/selectionManager.js';
-import { initNavigation } from './navigation.js';
+import { initNavigation, refreshUndoRedoButtons } from './navigation.js';
 import { initMarkers } from './markers.js';
 import { initZoom, refreshZoomBindings } from './zoom.js';
 import { initScheduler } from './scheduler.js';
@@ -822,6 +822,7 @@ export function setupGlobalEvents() {
                     gantt.undo();
                     console.log('[Gantt] Gantt undo executed');
                 }
+                refreshUndoRedoButtons();
             }
         }
 
@@ -845,6 +846,7 @@ export function setupGlobalEvents() {
                     gantt.redo();
                     console.log('[Gantt] Gantt redo executed');
                 }
+                refreshUndoRedoButtons();
             }
         }
     });

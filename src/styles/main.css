@@ -204,6 +204,12 @@
     background: var(--color-secondary);
 }
 
+.toolbar-icon-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
 .toolbar-sep {
     width: 1px;
     height: 16px;
