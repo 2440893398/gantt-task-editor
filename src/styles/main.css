@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @import './responsive/mobile.css';
 @import '../features/ai/styles/ai-theme.css';
+@import '../features/ai/styles/diff-confirm-modal.css';
 
 @plugin "daisyui" {
     themes: light --default;
@@ -322,4 +323,3 @@
     border: 2px solid #f59e0b;
     box-shadow: 0 0 8px rgba(245, 158, 11, 0.4);
 }
-

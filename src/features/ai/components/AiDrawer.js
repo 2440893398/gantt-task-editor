@@ -16,6 +16,7 @@ import { renderTaskInputBubble } from '../renderers/task-input-bubble.js';
 import { createMentionComposer } from './mention-composer.js';
 import { getAllTasksWithHierarchy } from '../utils/hierarchy-id.js';
 import { parseAiAttachmentFile } from '../utils/attachment-parser.js';
+import { openDiffConfirmModal, renderTaskDiffSummaryCard } from './DiffConfirmModal.js';
 
 // 配置 marked
 marked.setOptions({
@@ -1043,7 +1044,14 @@ export function finishStreaming(usage = {}) {
 
             if (jsonText.startsWith('{')) {
                 const data = JSON.parse(jsonText);
-                if (isRegisteredResultType(data?.type)) {
+                if (data?.type === 'task_diff') {
+                    renderHTML = renderTaskDiffSummaryCard(data);
+
+                    lastMsg.isStructured = true;
+                    lastMsg.structuredData = data;
+
+                    if (footerEl) footerEl.style.display = 'none';
+                } else if (isRegisteredResultType(data?.type)) {
                     // 渲染结构化结果
                     renderHTML = renderResult(data, {
                         // 传递操作回调
@@ -1424,7 +1432,7 @@ function handleApply(content, messageId) {
  * 处理结构化结果的操作按钮
  */
 function handleResultAction(event) {
-    const button = event.target.closest('.ai-result-apply, .ai-result-undo, .ai-result-apply-subtasks');
+    const button = event.target.closest('.ai-result-apply, .ai-result-undo, .ai-result-apply-subtasks, .ai-result-open-diff');
     if (!button) return;
 
     const messageEl = button.closest('[data-message-id]');
@@ -1454,6 +1462,23 @@ function handleResultAction(event) {
             onApplyCallback(data);
         }
         markResultApplied(messageEl, button);
+        return;
+    }
+
+    if (button.classList.contains('ai-result-open-diff')) {
+        const data = message?.structuredData || tryParseStructuredData(message?.content || '');
+        if (!data || data.type !== 'task_diff') {
+            showToast('未找到有效的任务变更数据', 'warning');
+            return;
+        }
+
+        openDiffConfirmModal(data, {
+            onApplied: (result) => {
+                if (result?.ok !== false) {
+                    markResultApplied(messageEl, button);
+                }
+            }
+        });
     }
 }
 
