@@ -126,20 +126,28 @@ function formatReferencedTasksBlock(referencedTasks = []) {
     return `[Selected Task Context]\n${lines.join('\n')}`;
 }
 
-function enrichMessageWithReferences(message, referencedTasks = []) {
+function formatAttachmentContextBlock(attachmentContext) {
+    const promptBlock = String(attachmentContext?.promptBlock || '').trim();
+    if (!promptBlock) return '';
+    return `[Attachment Context]\n${promptBlock}`;
+}
+
+function enrichMessageWithReferences(message, referencedTasks = [], attachmentContext = null) {
     const baseMessage = (message || '').trim();
     const referencesBlock = formatReferencedTasksBlock(referencedTasks);
+    const attachmentBlock = formatAttachmentContextBlock(attachmentContext);
 
-    if (!referencesBlock) return baseMessage;
-    if (!baseMessage) return referencesBlock;
+    const contextBlocks = [referencesBlock, attachmentBlock].filter(Boolean);
+    if (!contextBlocks.length) return baseMessage;
+    if (!baseMessage) return contextBlocks.join('\n\n');
 
-    return `${referencesBlock}\n\n[User Question]\n${baseMessage}`;
+    return `${contextBlocks.join('\n\n')}\n\n[User Question]\n${baseMessage}`;
 }
 
 function toModelMessage(msg) {
     return {
         role: msg.role,
-        content: enrichMessageWithReferences(msg.content, msg.referencedTasks)
+        content: enrichMessageWithReferences(msg.content, msg.referencedTasks, msg.attachmentContext)
     };
 }
 
@@ -307,8 +315,8 @@ if (typeof document !== 'undefined') {
     });
 
     document.addEventListener('aiSend', (e) => {
-        const { message, referencedTasks = [] } = e.detail || {};
-        continueConversation(message, null, { referencedTasks });
+        const { message, referencedTasks = [], attachmentContext = null } = e.detail || {};
+        continueConversation(message, null, { referencedTasks, attachmentContext });
     });
 }
 
@@ -347,7 +355,8 @@ export async function continueConversation(userMessage, messageId = null, option
     const messages = history.map(toModelMessage);
 
     const referencedTasks = Array.isArray(options.referencedTasks) ? options.referencedTasks : [];
-    const enrichedUserMessage = enrichMessageWithReferences(userMessage, referencedTasks);
+    const attachmentContext = options.attachmentContext || null;
+    const enrichedUserMessage = enrichMessageWithReferences(userMessage, referencedTasks, attachmentContext);
 
     // 如果是新消息（非重试），添加到历史
     if (userMessage) {
@@ -356,7 +365,7 @@ export async function continueConversation(userMessage, messageId = null, option
             content: enrichedUserMessage
         });
         // UI 上显示用户消息
-        AiDrawer.addMessage('user', userMessage, { referencedTasks });
+        AiDrawer.addMessage('user', userMessage, { referencedTasks, attachmentContext });
     }
 
     // F-109: 如果有附加指令且是第一轮（或者作为 System 补充），需要处理
@@ -380,12 +389,14 @@ export async function continueConversation(userMessage, messageId = null, option
         // Retry: 没有新输入时，复用最后一条 user 消息（避免追加空 user 消息）
         let effectiveMessage = userMessage;
         let effectiveReferencedTasks = referencedTasks;
+        let effectiveAttachmentContext = attachmentContext;
         let effectiveHistory = history;
         if (!effectiveMessage) {
             const lastUserIndex = [...history].map(m => m.role).lastIndexOf('user');
             if (lastUserIndex >= 0) {
                 effectiveMessage = history[lastUserIndex].content || '';
                 effectiveReferencedTasks = history[lastUserIndex].referencedTasks || [];
+                effectiveAttachmentContext = history[lastUserIndex].attachmentContext || null;
                 effectiveHistory = history.slice(0, lastUserIndex);
             } else {
                 effectiveMessage = '';
@@ -394,7 +405,7 @@ export async function continueConversation(userMessage, messageId = null, option
         }
 
         const modelHistory = effectiveHistory.map(toModelMessage);
-        const modelMessage = enrichMessageWithReferences(effectiveMessage, effectiveReferencedTasks);
+        const modelMessage = enrichMessageWithReferences(effectiveMessage, effectiveReferencedTasks, effectiveAttachmentContext);
 
         await runSmartChat(modelMessage, modelHistory, {
             onToolCall: (toolCalls = []) => {

@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../../../src/utils/i18n.js', () => ({
-    i18n: { t: vi.fn(() => null) }
+    i18n: {
+        t: vi.fn(() => null),
+        refresh: vi.fn(),
+        getLanguage: vi.fn(() => 'en-US')
+    }
 }));
 
 vi.mock('../../../../src/utils/toast.js', () => ({
@@ -81,9 +85,14 @@ describe('AiDrawer apply button visibility', () => {
 
         const inputContainer = document.getElementById('ai_chat_input_container');
         const inputEl = document.getElementById('ai_chat_input');
+        const attachBtn = document.getElementById('ai_attach_btn');
+        const attachmentInput = document.getElementById('ai_attachment_input');
 
         expect(inputContainer).not.toBeNull();
         expect(inputEl).not.toBeNull();
+        expect(attachBtn).not.toBeNull();
+        expect(attachmentInput).not.toBeNull();
+        expect(attachmentInput?.getAttribute('type')).toBe('file');
         expect(inputContainer?.contains(inputEl)).toBe(true);
         expect(inputEl?.getAttribute('contenteditable')).toBe('true');
     });
@@ -173,7 +182,7 @@ describe('AiDrawer apply button visibility', () => {
         AiDrawer.initAiDrawer();
 
         expect(document.getElementById('ai_drawer_resize_handle')).not.toBeNull();
-        expect(document.getElementById('ai_drawer_input_resize_handle')).not.toBeNull();
+        expect(document.getElementById('ai_chat_input_resize_handle')).not.toBeNull();
         expect(document.getElementById('ai_drawer_input_panel')).not.toBeNull();
     });
 
@@ -199,17 +208,17 @@ describe('AiDrawer apply button visibility', () => {
         expect(drawer.style.width).toMatch(/\d+px/);
     });
 
-    it('supports dragging input panel height and persists it', async () => {
+    it('supports dragging chat input height and persists it', async () => {
         const AiDrawer = await import('../../../../src/features/ai/components/AiDrawer.js');
 
         AiDrawer.initAiDrawer();
-        const panel = document.getElementById('ai_drawer_input_panel');
-        const resizeHandle = document.getElementById('ai_drawer_input_resize_handle');
+        const input = document.getElementById('ai_chat_input');
+        const resizeHandle = document.getElementById('ai_chat_input_resize_handle');
 
-        expect(panel).not.toBeNull();
+        expect(input).not.toBeNull();
         expect(resizeHandle).not.toBeNull();
 
-        const initialHeight = parseInt(panel.style.height || '0', 10);
+        const initialHeight = parseInt(input.style.height || '0', 10);
 
         const down = new MouseEvent('mousedown', { clientY: 700, bubbles: true });
         resizeHandle.dispatchEvent(down);
@@ -220,7 +229,7 @@ describe('AiDrawer apply button visibility', () => {
         const up = new MouseEvent('mouseup', { bubbles: true });
         document.dispatchEvent(up);
 
-        const nextHeight = parseInt(panel.style.height || '0', 10);
+        const nextHeight = parseInt(input.style.height || '0', 10);
         expect(nextHeight).toBeGreaterThan(initialHeight);
     });
 

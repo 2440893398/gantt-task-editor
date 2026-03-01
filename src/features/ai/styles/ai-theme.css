@@ -895,7 +895,7 @@ button:not(:disabled) {
 .ai-chat-editor {
     min-height: 46px;
     max-height: 220px;
-    padding: 10px 60px 10px 12px;
+    padding: 10px 110px 10px 12px;
     border: 1px solid hsl(var(--b3));
     background: hsl(var(--b1));
     border-radius: 10px;
@@ -963,6 +963,13 @@ button:not(:disabled) {
     bottom: 8px;
     z-index: 2;
     box-shadow: 0 6px 14px hsl(var(--p) / 0.35);
+}
+
+#ai_drawer .ai-attach-inside {
+    position: absolute;
+    right: 56px;
+    bottom: 8px;
+    z-index: 2;
 }
 
 #ai_drawer .ai-chat-meta-row {
