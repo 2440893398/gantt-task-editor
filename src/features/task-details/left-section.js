@@ -7,6 +7,7 @@ import { i18n } from '../../utils/i18n.js';
 import { showToast } from '../../utils/toast.js';
 import { initRichTextEditor, getEditorInstance, getEditorText, onContentChange, setEditorContent, markdownToHtml } from '../../components/rich-text-editor.js';
 import AiService from '../ai/services/aiService.js';
+import undoManager from '../ai/services/undoManager.js';
 
 /**
  * 渲染左侧编辑区域
@@ -105,6 +106,11 @@ export function renderLeftSection(task) {
  * @param {Object} task - 任务对象
  */
 export function bindLeftSectionEvents(panel, task) {
+    const saveTaskState = () => {
+        if (undoManager.isApplyingHistoryOperation()) return;
+        undoManager.saveState(task.id);
+    };
+
     // 任务标题
     const titleInput = panel.querySelector('#task-title-input');
     if (titleInput) {
@@ -115,6 +121,7 @@ export function bindLeftSectionEvents(panel, task) {
             const newValue = titleInput.value.trim();
             // 只要有值且与原始值不同就保存
             if (newValue !== originalText) {
+                saveTaskState();
                 task.text = newValue || i18n.t('taskDetails.newTask') || '新任务';
                 gantt.updateTask(task.id);
                 // 更新面板头部标题
@@ -159,6 +166,10 @@ export function bindLeftSectionEvents(panel, task) {
                 onContentChange((htmlContent, textContent) => {
                     clearTimeout(saveTimeout);
                     saveTimeout = setTimeout(() => {
+                        if (task.summary === htmlContent && task.description === htmlContent) {
+                            return;
+                        }
+                        saveTaskState();
                         task.summary = htmlContent;
                         task.description = htmlContent;
                         gantt.updateTask(task.id);
@@ -544,6 +555,14 @@ function applyDescriptionResult(task, optimizedText) {
         editor.clipboard.dangerouslyPasteHTML(html);
     } else {
         setEditorContent(html);
+    }
+    if (task.summary === html && task.description === html) {
+        showToast(i18n.t('ai.result.applied') || '已应用', 'success');
+        return;
+    }
+
+    if (!undoManager.isApplyingHistoryOperation()) {
+        undoManager.saveState(task.id);
     }
     task.summary = html;
     task.description = html;

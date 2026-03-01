@@ -6,6 +6,7 @@
 import { i18n } from '../../utils/i18n.js';
 import { formatDuration, parseDurationInput, exclusiveToInclusive, inclusiveToExclusive, isDayPrecision } from '../../utils/time-formatter.js';
 import { state, isFieldEnabled, getFieldType, getSystemFieldOptions } from '../../core/store.js';
+import undoManager from '../ai/services/undoManager.js';
 
 import { showToast } from '../../utils/toast.js';
 import { escapeAttr } from '../../utils/dom.js';
@@ -128,22 +129,31 @@ export function renderRightSection(task) {
  * @param {Object} task - 任务对象
  */
 export function bindRightSectionEvents(panel, task) {
+    const saveTaskState = () => {
+        if (undoManager.isApplyingHistoryOperation()) return;
+        undoManager.saveState(task.id);
+    };
+
     // 状态选择 (自定义下拉)
     bindDropdown(panel, 'task-status', (value) => {
-        task.status = value;
+        const nextStatus = value;
+        let nextProgress = task.progress;
 
         // 状态 → 进度 双向同步：
         // 标记为"已完成"时，进度自动设为 100%
         // 从"已完成"改为其他状态时，若进度是 100%，重置为 0%（避免状态与进度矛盾）
-        let progressChanged = false;
         if (value === 'completed' && task.progress < 1) {
-            task.progress = 1;
-            progressChanged = true;
+            nextProgress = 1;
         } else if (value !== 'completed' && task.progress >= 1) {
-            task.progress = 0;
-            progressChanged = true;
+            nextProgress = 0;
         }
 
+        const progressChanged = (task.progress || 0) !== (nextProgress || 0);
+        if (task.status === nextStatus && !progressChanged) return;
+
+        saveTaskState();
+        task.status = nextStatus;
+        task.progress = nextProgress;
         gantt.updateTask(task.id);
         showToast(i18n.t('message.saveSuccess') || '保存成功', 'success');
 
@@ -164,6 +174,8 @@ export function bindRightSectionEvents(panel, task) {
         const isMulti = assigneeType === 'multiselect';
         const normalizedOptions = assigneeOptions.map(opt => ({ value: opt, label: opt }));
         setupSelect('task-assignee', normalizedOptions, task.assignee, (value) => {
+            if (task.assignee === value) return;
+            saveTaskState();
             task.assignee = value;
             gantt.updateTask(task.id);
             showToast(i18n.t('message.saveSuccess') || '保存成功', 'success');
@@ -174,6 +186,7 @@ export function bindRightSectionEvents(panel, task) {
         if (assigneeInput) {
             assigneeInput.addEventListener('blur', () => {
                 if (task.assignee !== assigneeInput.value) {
+                    saveTaskState();
                     task.assignee = assigneeInput.value;
                     gantt.updateTask(task.id);
                 }
@@ -184,7 +197,10 @@ export function bindRightSectionEvents(panel, task) {
     const assigneeLock = panel.querySelector('#task-parent-assignee-lock');
     if (assigneeLock) {
         assigneeLock.addEventListener('change', () => {
-            task.parent_assignee_locked = !!assigneeLock.checked;
+            const nextLocked = !!assigneeLock.checked;
+            if (!!task.parent_assignee_locked === nextLocked) return;
+            saveTaskState();
+            task.parent_assignee_locked = nextLocked;
             gantt.updateTask(task.id);
             showToast(i18n.t('message.saveSuccess') || '保存成功', 'success');
         });
@@ -193,6 +209,8 @@ export function bindRightSectionEvents(panel, task) {
 
     // 优先级 (自定义下拉)
     bindDropdown(panel, 'task-priority', (value) => {
+        if (task.priority === value) return;
+        saveTaskState();
         task.priority = value;
         gantt.updateTask(task.id);
         showToast(i18n.t('message.saveSuccess') || '保存成功', 'success');
@@ -214,7 +232,16 @@ export function bindRightSectionEvents(panel, task) {
             if (val < 0) val = 0;
             if (val > 100) val = 100;
 
-            task.progress = val / 100;
+            const nextProgress = val / 100;
+            const nextStatus = val === 100
+                ? 'completed'
+                : (task.status === 'completed' ? 'in_progress' : task.status);
+            if ((task.progress || 0) === nextProgress && task.status === nextStatus) {
+                return;
+            }
+
+            saveTaskState();
+            task.progress = nextProgress;
             gantt.updateTask(task.id);
 
             // Sync inputs
@@ -262,6 +289,10 @@ export function bindRightSectionEvents(panel, task) {
             }
 
             if (!isNaN(value) && value > 0) {
+                if ((task.duration || 0) === value && (task.estimated_hours || 0) === value) {
+                    return;
+                }
+                saveTaskState();
                 task.duration = value;
                 task.estimated_hours = value;
                 durationInput.value = value; // 标准化显示
@@ -278,6 +309,8 @@ export function bindRightSectionEvents(panel, task) {
         actualHoursInput.addEventListener('blur', () => {
             const value = parseFloat(actualHoursInput.value);
             if (!isNaN(value) && value >= 0) {
+                if ((task.actual_hours || 0) === value) return;
+                saveTaskState();
                 task.actual_hours = value;
                 gantt.updateTask(task.id);
             }
@@ -694,6 +727,12 @@ function bindDateInput(panel, selector, task, fieldName, isEndDate = false) {
     if (!input) return;
 
     input.addEventListener('change', () => {
+        const nextTask = {
+            start_date: task.start_date,
+            end_date: task.end_date,
+            duration: task.duration || 0
+        };
+
         // <input type="date"> 返回 "YYYY-MM-DD"，用本地时区解析避免时区偏移
         const parts = input.value.split('-').map(Number);
         if (parts.length !== 3 || parts.some(isNaN)) return;
@@ -704,23 +743,39 @@ function bindDateInput(panel, selector, task, fieldName, isEndDate = false) {
             // 用户从 <input type="date"> 选择的日期是"包含"的最后一天（inclusive）
             // DHTMLX 需要"排除"边界（exclusive），即 +1 天
             const exclusiveEnd = inclusiveToExclusive(dateValue);
-            task.end_date = exclusiveEnd;
-            const startDate = task.start_date;
+            nextTask.end_date = exclusiveEnd;
+            const startDate = nextTask.start_date;
             if (startDate) {
                 // 用 DHTMLX 内部日历计算工作日数，与甘特条渲染保持一致
                 const workDuration = gantt.calculateDuration(startDate, exclusiveEnd);
                 if (workDuration > 0) {
-                    task.duration = workDuration;
+                    nextTask.duration = workDuration;
                 }
             }
         } else {
-            task[fieldName] = dateValue;
+            nextTask[fieldName] = dateValue;
             // 若调整的是开始时间，同步更新 end_date（保持工期不变）
-            if (fieldName === 'start_date' && task.duration) {
-                task.end_date = gantt.calculateEndDate(dateValue, task.duration);
+            if (fieldName === 'start_date' && nextTask.duration) {
+                nextTask.end_date = gantt.calculateEndDate(dateValue, nextTask.duration);
             }
         }
 
+        const prevStart = task.start_date ? new Date(task.start_date).getTime() : null;
+        const prevEnd = task.end_date ? new Date(task.end_date).getTime() : null;
+        const prevDuration = task.duration || 0;
+        const nextStart = nextTask.start_date ? new Date(nextTask.start_date).getTime() : null;
+        const nextEnd = nextTask.end_date ? new Date(nextTask.end_date).getTime() : null;
+        const nextDuration = nextTask.duration || 0;
+        if (prevStart === nextStart && prevEnd === nextEnd && prevDuration === nextDuration) {
+            return;
+        }
+
+        if (!undoManager.isApplyingHistoryOperation()) {
+            undoManager.saveState(task.id);
+        }
+        task.start_date = nextTask.start_date;
+        task.end_date = nextTask.end_date;
+        task.duration = nextTask.duration;
         gantt.updateTask(task.id);
     });
 }
@@ -740,6 +795,10 @@ function bindCustomFieldEvents(panel, task) {
 
         if (field.type === 'select') {
             setupSelect(fieldId, field.options || [], task[field.name], (val) => {
+                if (task[field.name] === val) return;
+                if (!undoManager.isApplyingHistoryOperation()) {
+                    undoManager.saveState(task.id);
+                }
                 task[field.name] = val;
                 gantt.updateTask(task.id);
                 showToast(i18n.t('message.saveSuccess'), 'success');
@@ -762,11 +821,18 @@ function bindCustomFieldEvents(panel, task) {
                 // 检查 renderSelectHTML 逻辑 -> 它接受数组。
                 // 检查 bindSelect -> 它传递数组。
                 // 我们在 task 上存储数组是最佳实践，但在 display template 中可能需要处理。
-                task[field.name] = val; // Store as array
+                const currentVal = Array.isArray(task[field.name]) ? task[field.name] : [];
+                const nextVal = Array.isArray(val) ? val : [];
+                const isSame = currentVal.length === nextVal.length && currentVal.every((item, index) => item === nextVal[index]);
+                if (isSame) return;
 
                 // 注意：DHTMLX Gantt 默认序列化可能不支持数组，
                 // 如果导出到 Excel/JSON 可能需要处理。
                 // 但此处我们先只更新状态。
+                if (!undoManager.isApplyingHistoryOperation()) {
+                    undoManager.saveState(task.id);
+                }
+                task[field.name] = nextVal; // Store as array
                 gantt.updateTask(task.id);
                 showToast(i18n.t('message.saveSuccess'), 'success');
             }, { isMulti: true, placeholder: i18n.t('form.selectPlaceholder') || '请选择' });
@@ -786,6 +852,9 @@ function bindCustomFieldEvents(panel, task) {
                 }
 
                 if (task[field.name] !== newValue) {
+                    if (!undoManager.isApplyingHistoryOperation()) {
+                        undoManager.saveState(task.id);
+                    }
                     task[field.name] = newValue;
                     gantt.updateTask(task.id);
                     showToast(i18n.t('message.saveSuccess'), 'success');
