@@ -1506,6 +1506,9 @@ function tryParseStructuredData(text) {
     if (!raw.startsWith('{')) return null;
     try {
         const data = JSON.parse(raw);
+        if (data?.type === 'task_diff') {
+            return data;
+        }
         if (!isRegisteredResultType(data?.type)) {
             return null;
         }

@@ -162,6 +162,30 @@ describe('AI Service', () => {
             expect(message).toContain('#1.1');
             expect(message).toContain('确认需求与验收标准');
         });
+
+        it('prepends import guidance when attachment context exists', async () => {
+            await invokeAgent('chat', { text: '' });
+
+            document.dispatchEvent(new CustomEvent('aiSend', {
+                detail: {
+                    message: '请根据附件分析任务差异',
+                    attachmentContext: {
+                        fileName: 'import.xlsx',
+                        promptBlock: 'Sheet: Tasks\nRows: 10'
+                    }
+                }
+            }));
+
+            await Promise.resolve();
+
+            expect(runSmartChat).toHaveBeenCalledTimes(1);
+            const [message] = runSmartChat.mock.calls[0];
+            expect(message).toContain('IMPORT_ANALYSIS_GUIDANCE');
+            expect(message).toContain('[Attachment Context]');
+            expect(message).toContain('Sheet: Tasks');
+            expect(message).toContain('task_diff');
+            expect(message).toContain('请根据附件分析任务差异');
+        });
     });
 
     describe('getSmartContext', () => {

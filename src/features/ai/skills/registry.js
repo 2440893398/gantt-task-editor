@@ -52,6 +52,11 @@ const skillDescriptions = [
         name: 'calendar-query',
         description: '查询工作日历信息与负责人工作量汇总',
         allowedTools: ['get_calendar_info', 'get_assignee_workload']
+    },
+    {
+        name: 'import-analysis',
+        description: '分析附件中的任务内容并生成新增/修改/删除的结构化建议',
+        allowedTools: ['get_task_detail', 'get_subtasks', 'get_tasks_by_status']
     }
 ];
 
@@ -68,7 +73,8 @@ const skillLoaders = {
     'task-detail-query': () => import('./task-detail-query/SKILL.md?raw'),
     'project-summary': () => import('./project-summary/SKILL.md?raw'),
     'field-info': () => import('./field-info/SKILL.md?raw'),
-    'calendar-query': () => import('./calendar-query/SKILL.md?raw')
+    'calendar-query': () => import('./calendar-query/SKILL.md?raw'),
+    'import-analysis': () => import('./import-analysis/SKILL.md?raw')
 };
 
 /**

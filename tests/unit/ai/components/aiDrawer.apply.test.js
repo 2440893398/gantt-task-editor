@@ -133,6 +133,10 @@ describe('AiDrawer apply button visibility', () => {
             type: 'task_split',
             subtasks: []
         });
+        expect(parser('{"type":"task_diff","changes":[]}')).toEqual({
+            type: 'task_diff',
+            changes: []
+        });
         expect(parser('{"type":"unknown_type","foo":"bar"}')).toBeNull();
     });
 

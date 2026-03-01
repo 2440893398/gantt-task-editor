@@ -82,6 +82,17 @@ const KEYWORD_PATTERNS = {
         /支持.*字段/,
         /字段.*支持/,
         /field/i
+    ],
+    'import-analysis': [
+        /导入/,
+        /导出/,
+        /附件/,
+        /上传/,
+        /excel/i,
+        /xlsx/i,
+        /xls/i,
+        /task.?diff/i,
+        /import/i
     ]
 };
 

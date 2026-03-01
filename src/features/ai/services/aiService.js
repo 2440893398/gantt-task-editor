@@ -8,6 +8,7 @@ import { showToast } from '../../../utils/toast.js';
 import { checkAiConfigured } from '../../../core/store.js';
 import { runAgentStream, runSmartChat } from '../api/client.js';
 import { getAgent, getAgentName } from '../prompts/agentRegistry.js';
+import { DIFF_JSON_SCHEMA, IMPORT_SYSTEM_PROMPT } from '../prompts/importPrompt.js';
 import { openAiConfigModal } from '../components/AiConfigModal.js';
 import AiDrawer from '../components/AiDrawer.js';
 import { handleAiError } from './errorHandler.js';
@@ -151,6 +152,24 @@ function toModelMessage(msg) {
     };
 }
 
+function buildImportGuidanceBlock() {
+    return [
+        '[IMPORT_ANALYSIS_GUIDANCE]',
+        IMPORT_SYSTEM_PROMPT,
+        '',
+        '[DIFF_JSON_SCHEMA]',
+        JSON.stringify(DIFF_JSON_SCHEMA, null, 2)
+    ].join('\n');
+}
+
+function prependImportGuidanceForAttachment(content, attachmentContext = null) {
+    if (!attachmentContext?.promptBlock) {
+        return content;
+    }
+
+    return `${buildImportGuidanceBlock()}\n\n${content}`;
+}
+
 // 当前调用上下文
 let currentContext = {
     agentId: null,
@@ -225,7 +244,9 @@ export async function invokeAgent(agentId, context = {}) {
             let hasStartedAssistant = true;
             const toolStatusById = new Map();
 
-            await runSmartChat(context.text, [], {
+            const modelMessage = prependImportGuidanceForAttachment(context.text, context.attachmentContext);
+
+            await runSmartChat(modelMessage, [], {
                 onToolCall: (toolCalls = []) => {
                     toolCalls.forEach(tc => {
                         const el = AiDrawer.showToolCall(tc);
@@ -404,8 +425,18 @@ export async function continueConversation(userMessage, messageId = null, option
             }
         }
 
-        const modelHistory = effectiveHistory.map(toModelMessage);
-        const modelMessage = enrichMessageWithReferences(effectiveMessage, effectiveReferencedTasks, effectiveAttachmentContext);
+        const modelHistory = effectiveHistory.map((msg) => {
+            const modelMsg = toModelMessage(msg);
+            if (modelMsg.role !== 'user') {
+                return modelMsg;
+            }
+            return {
+                ...modelMsg,
+                content: prependImportGuidanceForAttachment(modelMsg.content, msg.attachmentContext)
+            };
+        });
+        const baseModelMessage = enrichMessageWithReferences(effectiveMessage, effectiveReferencedTasks, effectiveAttachmentContext);
+        const modelMessage = prependImportGuidanceForAttachment(baseModelMessage, effectiveAttachmentContext);
 
         await runSmartChat(modelMessage, modelHistory, {
             onToolCall: (toolCalls = []) => {
