@@ -65,6 +65,17 @@ function _restoreDates(taskData) {
 }
 
 /**
+ * 将快照压入 undo 栈，限制栈大小，清空 redo 栈并分发变更事件
+ * @param {Object} snapshot - 快照对象
+ */
+function _pushSnapshot(snapshot) {
+    undoStack.push(snapshot);
+    if (undoStack.length > MAX_HISTORY_SIZE) undoStack.shift();
+    redoStack = [];
+    _dispatchChange();
+}
+
+/**
  * 保存任务状态快照（update 操作）
  * @param {string|number} taskId - 任务 ID
  * @returns {boolean} 是否保存成功
@@ -89,19 +100,9 @@ export function saveState(taskId) {
             taskData: _cloneTask(task)
         };
 
-        // 添加到 undo 栈
-        undoStack.push(snapshot);
-
-        // 限制栈大小
-        if (undoStack.length > MAX_HISTORY_SIZE) {
-            undoStack.shift();
-        }
-
-        // 新的修改会清空 redo 栈
-        redoStack = [];
+        _pushSnapshot(snapshot);
 
         console.log('[UndoManager] State saved for task', taskId, 'Stack size:', undoStack.length);
-        _dispatchChange();
         return true;
     } catch (e) {
         console.error('[UndoManager] Failed to save state:', e);
@@ -135,16 +136,9 @@ export function saveAddState(taskId) {
             taskData: _cloneTask(task)
         };
 
-        undoStack.push(snapshot);
-
-        if (undoStack.length > MAX_HISTORY_SIZE) {
-            undoStack.shift();
-        }
-
-        redoStack = [];
+        _pushSnapshot(snapshot);
 
         console.log('[UndoManager] Add state saved for task', taskId, 'Stack size:', undoStack.length);
-        _dispatchChange();
         return true;
     } catch (e) {
         console.error('[UndoManager] Failed to save add state:', e);
@@ -178,16 +172,9 @@ export function saveDeleteState(taskId) {
             taskData: _cloneTask(task)
         };
 
-        undoStack.push(snapshot);
-
-        if (undoStack.length > MAX_HISTORY_SIZE) {
-            undoStack.shift();
-        }
-
-        redoStack = [];
+        _pushSnapshot(snapshot);
 
         console.log('[UndoManager] Delete state saved for task', taskId, 'Stack size:', undoStack.length);
-        _dispatchChange();
         return true;
     } catch (e) {
         console.error('[UndoManager] Failed to save delete state:', e);
@@ -216,8 +203,8 @@ export function undo() {
 
         if (op === 'add') {
             // 撤回"新增"操作 → 删除该任务
-            redoStack.push(snapshot);
             gantt.deleteTask(taskId);
+            redoStack.push(snapshot);
             console.log('[UndoManager] Undo add: deleted task', taskId);
             _dispatchChange();
             return true;
@@ -225,10 +212,10 @@ export function undo() {
 
         if (op === 'delete') {
             // 撤回"删除"操作 → 重新添加该任务
-            redoStack.push(snapshot);
             const restored = _restoreDates(taskData);
             const parent = taskData.parent ?? 0;
             gantt.addTask(restored, parent);
+            redoStack.push(snapshot);
             console.log('[UndoManager] Undo delete: re-added task', taskId);
             _dispatchChange();
             return true;
@@ -292,10 +279,10 @@ export function redo() {
                 timestamp: Date.now(),
                 taskData: taskData
             };
-            undoStack.push(addSnapshot);
             const restored = _restoreDates(taskData);
             const parent = taskData.parent ?? 0;
             gantt.addTask(restored, parent);
+            undoStack.push(addSnapshot);
             console.log('[UndoManager] Redo add: re-added task', taskId);
             _dispatchChange();
             return true;
@@ -309,8 +296,8 @@ export function redo() {
                 timestamp: Date.now(),
                 taskData: taskData
             };
-            undoStack.push(deleteSnapshot);
             gantt.deleteTask(taskId);
+            undoStack.push(deleteSnapshot);
             console.log('[UndoManager] Redo delete: deleted task', taskId);
             _dispatchChange();
             return true;
@@ -353,24 +340,15 @@ export function redo() {
  * @param {Object} taskData - 保存的任务数据
  */
 function restoreTaskState(task, taskData) {
-    // 恢复各个字段
-    if (taskData.text !== undefined) task.text = taskData.text;
-    if (taskData.duration !== undefined) task.duration = taskData.duration;
-    if (taskData.progress !== undefined) task.progress = taskData.progress;
-    if (taskData.priority !== undefined) task.priority = taskData.priority;
-    if (taskData.status !== undefined) task.status = taskData.status;
-    if (taskData.assignee !== undefined) task.assignee = taskData.assignee;
-    if (taskData.summary !== undefined) task.summary = taskData.summary;
-    if (taskData.parent !== undefined) task.parent = taskData.parent;
-    if (taskData.open !== undefined) task.open = taskData.open;
+    // 恢复所有字段（跳过日期，单独处理以确保转换为 Date 对象）
+    Object.keys(taskData).forEach(key => {
+        if (key === 'start_date' || key === 'end_date') return;
+        task[key] = taskData[key];
+    });
 
     // 恢复日期（需要转换为 Date 对象）
-    if (taskData.start_date) {
-        task.start_date = new Date(taskData.start_date);
-    }
-    if (taskData.end_date) {
-        task.end_date = new Date(taskData.end_date);
-    }
+    if (taskData.start_date) task.start_date = new Date(taskData.start_date);
+    if (taskData.end_date)   task.end_date   = new Date(taskData.end_date);
 }
 
 /**
