@@ -65,7 +65,7 @@ describe('router skill expansion', () => {
     });
 
     describe('skill registry expansion', () => {
-        it('has all 8 skills registered', () => {
+        it('has all 9 skills registered', () => {
             const skills = getSkillDescriptions();
             const names = skills.map(s => s.name);
             expect(names).toContain('task-query');
@@ -76,14 +76,15 @@ describe('router skill expansion', () => {
             expect(names).toContain('task-detail-query');
             expect(names).toContain('project-summary');
             expect(names).toContain('field-info');
-            expect(skills).toHaveLength(8);
+            expect(names).toContain('calendar-query');
+            expect(skills).toHaveLength(9);
         });
 
         it('each new skill has allowedTools defined', () => {
             const skills = getSkillDescriptions();
             const newSkills = skills.filter(s =>
-                ['dependency-analysis', 'resource-analysis', 'timeline-analysis',
-                 'task-detail-query', 'project-summary', 'field-info'].includes(s.name)
+                 ['dependency-analysis', 'resource-analysis', 'timeline-analysis',
+                 'task-detail-query', 'project-summary', 'field-info', 'calendar-query'].includes(s.name)
             );
             newSkills.forEach(skill => {
                 expect(skill.allowedTools).toBeDefined();
@@ -94,7 +95,7 @@ describe('router skill expansion', () => {
         it('can lazy-load each new skill', async () => {
             const newSkillNames = [
                 'dependency-analysis', 'resource-analysis', 'timeline-analysis',
-                'task-detail-query', 'project-summary', 'field-info'
+                'task-detail-query', 'project-summary', 'field-info', 'calendar-query'
             ];
             for (const name of newSkillNames) {
                 const skill = await loadSkill(name);

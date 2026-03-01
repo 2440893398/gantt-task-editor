@@ -47,6 +47,11 @@ const skillDescriptions = [
         name: 'field-info',
         description: '查询字段配置、自定义字段值和字段统计',
         allowedTools: ['get_field_config', 'get_custom_fields', 'get_field_statistics']
+    },
+    {
+        name: 'calendar-query',
+        description: '查询工作日历信息与负责人工作量汇总',
+        allowedTools: ['get_calendar_info', 'get_assignee_workload']
     }
 ];
 
@@ -62,7 +67,8 @@ const skillLoaders = {
     'timeline-analysis': () => import('./timeline-analysis/SKILL.md?raw'),
     'task-detail-query': () => import('./task-detail-query/SKILL.md?raw'),
     'project-summary': () => import('./project-summary/SKILL.md?raw'),
-    'field-info': () => import('./field-info/SKILL.md?raw')
+    'field-info': () => import('./field-info/SKILL.md?raw'),
+    'calendar-query': () => import('./calendar-query/SKILL.md?raw')
 };
 
 /**

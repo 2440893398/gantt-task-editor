@@ -1,10 +1,12 @@
 // src/features/ai/tools/registry.js
 import { taskTools } from './taskTools.js';
 import { analysisTools } from './analysisTools.js';
+import { calendarTools } from './calendarTools.js';
 
 const allTools = {
   ...taskTools,
-  ...analysisTools
+  ...analysisTools,
+  ...calendarTools
 };
 
 /**
