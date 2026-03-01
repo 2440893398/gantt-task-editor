@@ -8,6 +8,7 @@
  * - 维护 undo/redo 历史栈
  * - 在 AI 应用修改前保存任务状态快照
  * - 支持撤回/重做操作
+ * - 支持 add/delete 操作快照 (扩展)
  */
 
 // 撤回栈最大保存条数
@@ -20,7 +21,51 @@ let undoStack = [];
 let redoStack = [];
 
 /**
- * 保存任务状态快照
+ * 分发 undoStackChange 事件
+ */
+function _dispatchChange() {
+    if (typeof document !== 'undefined') {
+        document.dispatchEvent(new CustomEvent('undoStackChange'));
+    }
+}
+
+/**
+ * 深拷贝任务对象，序列化日期，排除 $ / _ 前缀内部属性
+ * @param {Object} task - gantt 任务对象
+ * @returns {Object} 克隆后的纯数据对象
+ */
+function _cloneTask(task) {
+    const cloned = {};
+    for (const key of Object.keys(task)) {
+        if (key.startsWith('$') || key.startsWith('_')) continue;
+        const val = task[key];
+        if (val instanceof Date) {
+            cloned[key] = val.toISOString();
+        } else {
+            cloned[key] = val;
+        }
+    }
+    return JSON.parse(JSON.stringify(cloned));
+}
+
+/**
+ * 将 taskData 中的 ISO 日期字符串还原为 Date 对象
+ * @param {Object} taskData - 快照数据
+ * @returns {Object} 还原后的对象
+ */
+function _restoreDates(taskData) {
+    const restored = { ...taskData };
+    if (restored.start_date && typeof restored.start_date === 'string') {
+        restored.start_date = new Date(restored.start_date);
+    }
+    if (restored.end_date && typeof restored.end_date === 'string') {
+        restored.end_date = new Date(restored.end_date);
+    }
+    return restored;
+}
+
+/**
+ * 保存任务状态快照（update 操作）
  * @param {string|number} taskId - 任务 ID
  * @returns {boolean} 是否保存成功
  */
@@ -37,42 +82,12 @@ export function saveState(taskId) {
             return false;
         }
 
-        // 深拷贝任务状态（保存完整任务数据，不只是 text 字段）
         const snapshot = {
+            op: 'update',
             taskId: taskId,
             timestamp: Date.now(),
-            // 深拷贝任务对象，排除内部属性
-            taskData: JSON.parse(JSON.stringify({
-                text: task.text,
-                start_date: task.start_date,
-                end_date: task.end_date,
-                duration: task.duration,
-                progress: task.progress,
-                priority: task.priority,
-                status: task.status,
-                assignee: task.assignee,
-                summary: task.summary,
-                parent: task.parent,
-                open: task.open,
-                // 包含任何其他自定义字段
-                ...Object.keys(task).reduce((acc, key) => {
-                    // 排除以 $ 或 _ 开头的内部属性
-                    if (!key.startsWith('$') && !key.startsWith('_') &&
-                        !['id', 'start_date', 'end_date'].includes(key)) {
-                        acc[key] = task[key];
-                    }
-                    return acc;
-                }, {})
-            }))
+            taskData: _cloneTask(task)
         };
-
-        // 处理日期序列化
-        if (task.start_date instanceof Date) {
-            snapshot.taskData.start_date = task.start_date.toISOString();
-        }
-        if (task.end_date instanceof Date) {
-            snapshot.taskData.end_date = task.end_date.toISOString();
-        }
 
         // 添加到 undo 栈
         undoStack.push(snapshot);
@@ -86,9 +101,96 @@ export function saveState(taskId) {
         redoStack = [];
 
         console.log('[UndoManager] State saved for task', taskId, 'Stack size:', undoStack.length);
+        _dispatchChange();
         return true;
     } catch (e) {
         console.error('[UndoManager] Failed to save state:', e);
+        return false;
+    }
+}
+
+/**
+ * 保存任务新增快照（add 操作）
+ * 在调用 gantt.addTask() 之后立即调用此函数，以便撤回时能删除该任务
+ * @param {string|number} taskId - 任务 ID
+ * @returns {boolean} 是否保存成功
+ */
+export function saveAddState(taskId) {
+    if (typeof gantt === 'undefined' || !taskId) {
+        console.warn('[UndoManager] Cannot save add state: gantt not available or taskId missing');
+        return false;
+    }
+
+    try {
+        const task = gantt.getTask(taskId);
+        if (!task) {
+            console.warn('[UndoManager] Cannot save add state: task not found', taskId);
+            return false;
+        }
+
+        const snapshot = {
+            op: 'add',
+            taskId: taskId,
+            timestamp: Date.now(),
+            taskData: _cloneTask(task)
+        };
+
+        undoStack.push(snapshot);
+
+        if (undoStack.length > MAX_HISTORY_SIZE) {
+            undoStack.shift();
+        }
+
+        redoStack = [];
+
+        console.log('[UndoManager] Add state saved for task', taskId, 'Stack size:', undoStack.length);
+        _dispatchChange();
+        return true;
+    } catch (e) {
+        console.error('[UndoManager] Failed to save add state:', e);
+        return false;
+    }
+}
+
+/**
+ * 保存任务删除快照（delete 操作）
+ * 在调用 gantt.deleteTask() 之前调用此函数，以便撤回时能重新添加该任务
+ * @param {string|number} taskId - 任务 ID
+ * @returns {boolean} 是否保存成功
+ */
+export function saveDeleteState(taskId) {
+    if (typeof gantt === 'undefined' || !taskId) {
+        console.warn('[UndoManager] Cannot save delete state: gantt not available or taskId missing');
+        return false;
+    }
+
+    try {
+        const task = gantt.getTask(taskId);
+        if (!task) {
+            console.warn('[UndoManager] Cannot save delete state: task not found', taskId);
+            return false;
+        }
+
+        const snapshot = {
+            op: 'delete',
+            taskId: taskId,
+            timestamp: Date.now(),
+            taskData: _cloneTask(task)
+        };
+
+        undoStack.push(snapshot);
+
+        if (undoStack.length > MAX_HISTORY_SIZE) {
+            undoStack.shift();
+        }
+
+        redoStack = [];
+
+        console.log('[UndoManager] Delete state saved for task', taskId, 'Stack size:', undoStack.length);
+        _dispatchChange();
+        return true;
+    } catch (e) {
+        console.error('[UndoManager] Failed to save delete state:', e);
         return false;
     }
 }
@@ -109,11 +211,30 @@ export function undo() {
     }
 
     try {
-        // 弹出最近的快照
         const snapshot = undoStack.pop();
-        const { taskId, taskData } = snapshot;
+        const { op, taskId, taskData } = snapshot;
 
-        // 获取当前任务状态（用于 redo）
+        if (op === 'add') {
+            // 撤回"新增"操作 → 删除该任务
+            redoStack.push(snapshot);
+            gantt.deleteTask(taskId);
+            console.log('[UndoManager] Undo add: deleted task', taskId);
+            _dispatchChange();
+            return true;
+        }
+
+        if (op === 'delete') {
+            // 撤回"删除"操作 → 重新添加该任务
+            redoStack.push(snapshot);
+            const restored = _restoreDates(taskData);
+            const parent = taskData.parent ?? 0;
+            gantt.addTask(restored, parent);
+            console.log('[UndoManager] Undo delete: re-added task', taskId);
+            _dispatchChange();
+            return true;
+        }
+
+        // op === 'update' 或旧格式快照（无 op 字段）
         const currentTask = gantt.getTask(taskId);
         if (!currentTask) {
             console.warn('[UndoManager] Cannot undo: task not found', taskId);
@@ -122,25 +243,10 @@ export function undo() {
 
         // 保存当前状态到 redo 栈
         const currentSnapshot = {
+            op: 'update',
             taskId: taskId,
             timestamp: Date.now(),
-            taskData: JSON.parse(JSON.stringify({
-                text: currentTask.text,
-                start_date: currentTask.start_date instanceof Date
-                    ? currentTask.start_date.toISOString()
-                    : currentTask.start_date,
-                end_date: currentTask.end_date instanceof Date
-                    ? currentTask.end_date.toISOString()
-                    : currentTask.end_date,
-                duration: currentTask.duration,
-                progress: currentTask.progress,
-                priority: currentTask.priority,
-                status: currentTask.status,
-                assignee: currentTask.assignee,
-                summary: currentTask.summary,
-                parent: currentTask.parent,
-                open: currentTask.open
-            }))
+            taskData: _cloneTask(currentTask)
         };
         redoStack.push(currentSnapshot);
 
@@ -151,6 +257,7 @@ export function undo() {
         gantt.updateTask(taskId);
 
         console.log('[UndoManager] Undo executed for task', taskId);
+        _dispatchChange();
         return true;
     } catch (e) {
         console.error('[UndoManager] Undo failed:', e);
@@ -174,11 +281,42 @@ export function redo() {
     }
 
     try {
-        // 弹出最近的 redo 快照
         const snapshot = redoStack.pop();
-        const { taskId, taskData } = snapshot;
+        const { op, taskId, taskData } = snapshot;
 
-        // 获取当前任务状态（用于 undo）
+        if (op === 'add') {
+            // 重做"新增"操作 → 重新添加任务，同时把当前删除状态压入 undoStack
+            const addSnapshot = {
+                op: 'add',
+                taskId: taskId,
+                timestamp: Date.now(),
+                taskData: taskData
+            };
+            undoStack.push(addSnapshot);
+            const restored = _restoreDates(taskData);
+            const parent = taskData.parent ?? 0;
+            gantt.addTask(restored, parent);
+            console.log('[UndoManager] Redo add: re-added task', taskId);
+            _dispatchChange();
+            return true;
+        }
+
+        if (op === 'delete') {
+            // 重做"删除"操作 → 再次删除任务，同时把当前添加状态压入 undoStack
+            const deleteSnapshot = {
+                op: 'delete',
+                taskId: taskId,
+                timestamp: Date.now(),
+                taskData: taskData
+            };
+            undoStack.push(deleteSnapshot);
+            gantt.deleteTask(taskId);
+            console.log('[UndoManager] Redo delete: deleted task', taskId);
+            _dispatchChange();
+            return true;
+        }
+
+        // op === 'update' 或旧格式快照
         const currentTask = gantt.getTask(taskId);
         if (!currentTask) {
             console.warn('[UndoManager] Cannot redo: task not found', taskId);
@@ -187,25 +325,10 @@ export function redo() {
 
         // 保存当前状态到 undo 栈
         const currentSnapshot = {
+            op: 'update',
             taskId: taskId,
             timestamp: Date.now(),
-            taskData: JSON.parse(JSON.stringify({
-                text: currentTask.text,
-                start_date: currentTask.start_date instanceof Date
-                    ? currentTask.start_date.toISOString()
-                    : currentTask.start_date,
-                end_date: currentTask.end_date instanceof Date
-                    ? currentTask.end_date.toISOString()
-                    : currentTask.end_date,
-                duration: currentTask.duration,
-                progress: currentTask.progress,
-                priority: currentTask.priority,
-                status: currentTask.status,
-                assignee: currentTask.assignee,
-                summary: currentTask.summary,
-                parent: currentTask.parent,
-                open: currentTask.open
-            }))
+            taskData: _cloneTask(currentTask)
         };
         undoStack.push(currentSnapshot);
 
@@ -216,6 +339,7 @@ export function redo() {
         gantt.updateTask(taskId);
 
         console.log('[UndoManager] Redo executed for task', taskId);
+        _dispatchChange();
         return true;
     } catch (e) {
         console.error('[UndoManager] Redo failed:', e);
@@ -293,6 +417,8 @@ export function clearHistory() {
 // 导出默认对象
 export default {
     saveState,
+    saveAddState,
+    saveDeleteState,
     undo,
     redo,
     canUndo,
