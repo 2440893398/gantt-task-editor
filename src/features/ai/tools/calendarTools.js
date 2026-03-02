@@ -48,9 +48,15 @@ const assigneeWorkloadSchema = jsonSchema({
 
 function normalizeDateString(value) {
     if (!value) return null;
+    if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+        return value;
+    }
     const date = value instanceof Date ? value : new Date(value);
     if (Number.isNaN(date.getTime())) return null;
-    return date.toISOString().split('T')[0];
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
 }
 
 function normalizeRangeBoundary(value, isEnd = false) {
@@ -189,7 +195,10 @@ export const calendarTools = {
         description: '按负责人汇总任务工作量，支持按负责人/状态过滤',
         inputSchema: assigneeWorkloadSchema,
         execute: async ({ assignee, status } = {}) => {
-            if (typeof gantt === 'undefined') {
+            if (
+                typeof gantt === 'undefined' ||
+                typeof gantt.eachTask !== 'function'
+            ) {
                 return {
                     error: 'Gantt 未初始化',
                     query: { assignee: assignee || null, status: status || null },

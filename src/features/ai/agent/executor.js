@@ -8,6 +8,13 @@ import { streamText, stepCountIs } from 'ai';
 import { loadSkill } from '../skills/registry.js';
 import { getToolsForSkill } from '../tools/registry.js';
 import { i18n } from '../../../utils/i18n.js';
+import { IMPORT_SYSTEM_PROMPT, DIFF_JSON_SCHEMA } from '../prompts/importPrompt.js';
+
+function hasAttachmentContext(messages = []) {
+    return Array.isArray(messages) && messages.some((m) =>
+        m?.role === 'user' && typeof m?.content === 'string' && m.content.includes('[Attachment Context]')
+    );
+}
 
 function getLanguageInstruction() {
     const currentLanguage = i18n.getLanguage();
@@ -132,13 +139,17 @@ export async function executeSkill(skillId, messages, model, callbacks = {}) {
     });
     const todayDate = now.toISOString().split('T')[0]; // YYYY-MM-DD 格式
     
+    const importGuidance = skillId === 'import-analysis' || hasAttachmentContext(messages)
+        ? `\n\n## Attachment Import Guidance\n${IMPORT_SYSTEM_PROMPT}\n\nDIFF_JSON_SCHEMA:\n${JSON.stringify(DIFF_JSON_SCHEMA, null, 2)}`
+        : '';
+
     const systemPrompt = `You are a professional Gantt project management assistant.
 
 ## Current Time
 - Current time: ${currentDateTime}
 - Today's date: ${todayDate}
 
-${skill.content}
+${skill.content}${importGuidance}
 
 ## Critical Rules
 - ${hasTools ? 'Use the provided tools for factual task data. Do not fabricate task data.' : 'You can answer generally, but clearly state you cannot access realtime task data without tool calls.'}
@@ -218,11 +229,14 @@ ${skill.content}
  */
 export async function executeGeneralChat(messages, model, callbacks = {}) {
     const { language, languageName } = getLanguageInstruction();
+    const importGuidance = hasAttachmentContext(messages)
+        ? `\n\nAttachment detected. Prefer import-analysis style output with structured task diff JSON.`
+        : '';
     return streamText({
         model: model,
         system: `You are a helpful project management assistant for Gantt workflows.
 Response language must follow the current UI locale: ${languageName} (${language}).
-If users ask for specific realtime task data, suggest they ask focused questions like "today's tasks" or "overdue tasks" so tool-enabled flows can provide precise results.`,
+If users ask for specific realtime task data, suggest they ask focused questions like "today's tasks" or "overdue tasks" so tool-enabled flows can provide precise results.${importGuidance}`,
         messages,
         maxSteps: 1
     });

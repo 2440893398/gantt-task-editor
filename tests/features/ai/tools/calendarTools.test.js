@@ -106,5 +106,22 @@ describe('calendarTools', () => {
             expect(filtered.workload[0].tasks).toHaveLength(1);
             expect(filtered.workload[0].tasks[0].text).toBe('Build');
         });
+
+        it('normalizes Date objects using local calendar date', async () => {
+            const start = new Date(2026, 5, 1, 0, 0, 0, 0);
+            const end = new Date(2026, 5, 2, 0, 0, 0, 0);
+            setupGantt([
+                { id: 7, text: 'Date Task', assignee: 'Alice', status: 'pending', progress: 0, duration: 1, start_date: start, end_date: end }
+            ]);
+
+            const result = await calendarTools.get_assignee_workload.execute({ assignee: 'Alice' });
+            const task = result.workload[0].tasks[0];
+
+            const expectedStart = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(2, '0')}`;
+            const expectedEnd = `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, '0')}-${String(end.getDate()).padStart(2, '0')}`;
+
+            expect(task.start_date).toBe(expectedStart);
+            expect(task.end_date).toBe(expectedEnd);
+        });
     });
 });

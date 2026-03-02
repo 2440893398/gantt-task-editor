@@ -274,8 +274,15 @@ export async function runSmartChat(userMessage, history, callbacks = {}) {
 
         // Phase 1: route
         let skillId = null;
+        const hasAttachmentContext = typeof userMessage === 'string' && userMessage.includes('[Attachment Context]');
+
+        // Prefer import-analysis when attachment context is present
+        if (hasAttachmentContext) {
+            skillId = 'import-analysis';
+        }
+
         const quickResult = quickRoute(userMessage);
-        if (quickResult) {
+        if (!skillId && quickResult) {
             skillId = quickResult.skill;
         }
 
