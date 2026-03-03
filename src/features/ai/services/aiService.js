@@ -110,6 +110,85 @@ function resolveInputBubbleMode(agentId) {
     return 'mention';
 }
 
+const TASK_SNAPSHOT_LIMITS = {
+    maxTasks: 120,
+    maxChars: 6000,
+    maxTextLength: 80
+};
+
+function sanitizeSnapshotValue(value, fallback = '-') {
+    const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+    return text || fallback;
+}
+
+function normalizeSnapshotDate(value) {
+    if (!value) return '-';
+    if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value.trim())) {
+        return value.trim();
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+        return sanitizeSnapshotValue(value, '-');
+    }
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+}
+
+function buildCurrentTaskSnapshotBlock() {
+    if (typeof gantt === 'undefined' || !gantt || typeof gantt.eachTask !== 'function') {
+        return '';
+    }
+
+    const tasks = [];
+    try {
+        gantt.eachTask((task) => {
+            if (!task || task.id === undefined || task.id === null) return;
+            const text = sanitizeSnapshotValue(task.text || task.name || '-', '-')
+                .slice(0, TASK_SNAPSHOT_LIMITS.maxTextLength);
+            const parent = task.parent ?? (typeof gantt.getParent === 'function' ? gantt.getParent(task.id) : 0);
+
+            tasks.push({
+                id: String(task.id),
+                text,
+                start_date: normalizeSnapshotDate(task.start_date),
+                end_date: normalizeSnapshotDate(task.end_date),
+                assignee: sanitizeSnapshotValue(task.assignee, '-'),
+                status: sanitizeSnapshotValue(task.status, '-'),
+                priority: sanitizeSnapshotValue(task.priority, '-'),
+                parent: sanitizeSnapshotValue(parent, '0')
+            });
+        });
+    } catch {
+        return '';
+    }
+
+    if (!tasks.length) return '';
+
+    tasks.sort((a, b) => {
+        if (a.start_date !== b.start_date) return a.start_date.localeCompare(b.start_date);
+        return a.id.localeCompare(b.id);
+    });
+
+    const sampled = tasks.slice(0, TASK_SNAPSHOT_LIMITS.maxTasks);
+    const lines = sampled.map((task) => (
+        `- id=${task.id}; text=${task.text}; start=${task.start_date}; end=${task.end_date}; assignee=${task.assignee}; status=${task.status}; priority=${task.priority}; parent=${task.parent}`
+    ));
+
+    let block = [
+        '[Current Task Snapshot]',
+        `total=${tasks.length}, sampled=${sampled.length}`,
+        ...lines
+    ].join('\n');
+
+    if (block.length > TASK_SNAPSHOT_LIMITS.maxChars) {
+        block = `${block.slice(0, TASK_SNAPSHOT_LIMITS.maxChars - 3)}...`;
+    }
+
+    return block;
+}
+
 function formatReferencedTasksBlock(referencedTasks = []) {
     if (!Array.isArray(referencedTasks) || referencedTasks.length === 0) {
         return '';
@@ -129,8 +208,17 @@ function formatReferencedTasksBlock(referencedTasks = []) {
 
 function formatAttachmentContextBlock(attachmentContext) {
     const promptBlock = String(attachmentContext?.promptBlock || '').trim();
-    if (!promptBlock) return '';
-    return `[Attachment Context]\n${promptBlock}`;
+    const currentTasksBlock = buildCurrentTaskSnapshotBlock();
+
+    const blocks = [];
+    if (promptBlock) {
+        blocks.push(`[Attachment Context]\n${promptBlock}`);
+    }
+    if (currentTasksBlock) {
+        blocks.push(currentTasksBlock);
+    }
+
+    return blocks.join('\n\n');
 }
 
 function enrichMessageWithReferences(message, referencedTasks = [], attachmentContext = null) {

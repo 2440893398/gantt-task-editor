@@ -1,11 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+    renderTaskDiffSummaryCard,
     __test__
 } from '../../../../src/features/ai/components/DiffConfirmModal.js';
 
 const {
     normalizeDiffPayload,
+    reconcileRowsWithExistingTasks,
     setNodeInclude,
     countIncludedRows,
     applySelectedChanges
@@ -130,5 +132,119 @@ describe('DiffConfirmModal helpers', () => {
         expect(undoManagerMock.saveDeleteState).toHaveBeenNthCalledWith(2, 'd1');
         expect(ganttMock.deleteTask).toHaveBeenNthCalledWith(1, 'd2');
         expect(ganttMock.deleteTask).toHaveBeenNthCalledWith(2, 'd1');
+    });
+
+    it('reconciles add rows to update when matching task already exists', () => {
+        const normalized = normalizeDiffPayload({
+            type: 'task_diff',
+            changes: [
+                {
+                    op: 'add',
+                    data: {
+                        text: '已有任务',
+                        start_date: '2026-03-02',
+                        end_date: '2026-03-04',
+                        assignee: '张三'
+                    }
+                }
+            ]
+        });
+
+        const ganttMock = {
+            eachTask: vi.fn((cb) => {
+                cb({
+                    id: 101,
+                    text: '已有任务',
+                    start_date: '2026-03-02',
+                    end_date: '2026-03-04',
+                    assignee: '张三'
+                });
+            }),
+            isTaskExists: vi.fn(() => true)
+        };
+
+        const reconciled = reconcileRowsWithExistingTasks(normalized, { ganttApi: ganttMock });
+
+        expect(reconciled.counts).toEqual({ add: 0, update: 1, delete: 0 });
+        expect(reconciled.flatRows[0].op).toBe('update');
+        expect(reconciled.flatRows[0].reconciledFromAdd).toBe(true);
+    });
+
+    it('renders summary counts after reconciling existing tasks', () => {
+        const ganttMock = {
+            eachTask: vi.fn((cb) => {
+                cb({
+                    id: '1001',
+                    text: '陈龙龙的工时',
+                    start_date: '2026-02-02',
+                    end_date: '2026-02-13',
+                    assignee: '张三'
+                });
+            }),
+            isTaskExists: vi.fn(() => false)
+        };
+
+        const html = renderTaskDiffSummaryCard({
+            type: 'task_diff',
+            source: 'gantt-tasks-2026-03-02.xlsx',
+            changes: [
+                {
+                    op: 'add',
+                    data: {
+                        text: '陈龙龙的工时',
+                        start_date: '2026-02-02',
+                        end_date: '2026-02-13',
+                        assignee: '张三'
+                    }
+                }
+            ]
+        }, { ganttApi: ganttMock });
+
+        expect(html).toMatch(/新增\s*0/);
+        expect(html).toMatch(/修改\s*1/);
+    });
+
+    it('upserts when add row target already exists', () => {
+        const taskStore = {
+            existing: { id: 'existing', text: '旧值', priority: 'low' }
+        };
+
+        const ganttMock = {
+            getTask: vi.fn((id) => taskStore[id] || null),
+            isTaskExists: vi.fn((id) => Boolean(taskStore[id])),
+            eachTask: vi.fn((cb) => cb(taskStore.existing)),
+            addTask: vi.fn(() => 'new-task-id'),
+            updateTask: vi.fn((id) => id),
+            deleteTask: vi.fn()
+        };
+
+        const undoManagerMock = {
+            saveAddState: vi.fn(),
+            saveState: vi.fn(),
+            saveDeleteState: vi.fn()
+        };
+
+        const normalized = normalizeDiffPayload({
+            type: 'task_diff',
+            changes: [
+                {
+                    op: 'add',
+                    taskId: 'existing',
+                    data: { id: 'existing', text: '新值', priority: 'high' }
+                }
+            ]
+        });
+
+        const result = applySelectedChanges(normalized.flatRows, {
+            ganttApi: ganttMock,
+            undoApi: undoManagerMock
+        });
+
+        expect(result.ok).toBe(true);
+        expect(result.applied).toEqual({ add: 0, update: 1, delete: 0, skipped: 0, failed: 0 });
+        expect(ganttMock.addTask).not.toHaveBeenCalled();
+        expect(undoManagerMock.saveState).toHaveBeenCalledWith('existing');
+        expect(ganttMock.updateTask).toHaveBeenCalledWith('existing');
+        expect(taskStore.existing.text).toBe('新值');
     });
 });

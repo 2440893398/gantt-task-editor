@@ -33,6 +33,78 @@ function isValidOp(op) {
     return op === 'add' || op === 'update' || op === 'delete';
 }
 
+function normalizeDateKey(value) {
+    if (!value) return '';
+    const asString = String(value).trim();
+    if (!asString) return '';
+    const date = new Date(asString);
+    if (Number.isNaN(date.getTime())) {
+        return asString;
+    }
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+}
+
+function normalizeTextKey(value) {
+    return ensureString(value).trim().toLowerCase();
+}
+
+function buildNaturalTaskKey(taskLike = {}) {
+    const text = normalizeTextKey(taskLike.text || taskLike.name || '');
+    if (!text) return '';
+    const start = normalizeDateKey(taskLike.start_date);
+    const end = normalizeDateKey(taskLike.end_date);
+    const assignee = normalizeTextKey(taskLike.assignee || '');
+    return `${text}|${start}|${end}|${assignee}`;
+}
+
+function buildExistingTaskLookup(ganttApi) {
+    const byId = new Map();
+    const byNaturalKey = new Map();
+
+    if (!ganttApi || typeof ganttApi.eachTask !== 'function') {
+        return { byId, byNaturalKey };
+    }
+
+    ganttApi.eachTask((task) => {
+        const taskId = task?.id;
+        if (taskId !== null && taskId !== undefined) {
+            byId.set(String(taskId), taskId);
+        }
+
+        const naturalKey = buildNaturalTaskKey(task);
+        if (naturalKey && !byNaturalKey.has(naturalKey)) {
+            byNaturalKey.set(naturalKey, taskId);
+        }
+    });
+
+    return { byId, byNaturalKey };
+}
+
+function findExistingTaskIdForAdd(row, lookup, ganttApi) {
+    const idCandidates = [row.taskId, row.data?.id]
+        .filter((value) => value !== null && value !== undefined)
+        .map((value) => String(value));
+
+    for (const candidate of idCandidates) {
+        if (lookup.byId.has(candidate)) {
+            return lookup.byId.get(candidate);
+        }
+        if (getTaskExists(ganttApi, candidate)) {
+            return candidate;
+        }
+    }
+
+    const naturalKey = buildNaturalTaskKey(row.data || {});
+    if (naturalKey && lookup.byNaturalKey.has(naturalKey)) {
+        return lookup.byNaturalKey.get(naturalKey);
+    }
+
+    return null;
+}
+
 function normalizeRow(change, index) {
     const safe = change && typeof change === 'object' ? change : {};
     const op = isValidOp(safe.op) ? safe.op : 'update';
@@ -128,6 +200,42 @@ export function normalizeDiffPayload(payload) {
         counts,
         flatRows
     };
+}
+
+export function reconcileRowsWithExistingTasks(normalized, options = {}) {
+    if (!normalized || !Array.isArray(normalized.flatRows) || normalized.flatRows.length === 0) {
+        return normalized;
+    }
+
+    const ganttApi = options.ganttApi || globalThis.gantt;
+    const lookup = buildExistingTaskLookup(ganttApi);
+
+    normalized.flatRows.forEach((row) => {
+        if (row.op !== 'add') return;
+        const existingId = findExistingTaskIdForAdd(row, lookup, ganttApi);
+        if (existingId === null || existingId === undefined) return;
+
+        row.op = 'update';
+        row.label = OP_LABELS.update;
+        row.reconciledFromAdd = true;
+        if (row.taskId === null || row.taskId === undefined) {
+            row.taskId = existingId;
+        }
+        if (!row.data || typeof row.data !== 'object') {
+            row.data = {};
+        }
+        if (row.data.id === null || row.data.id === undefined) {
+            row.data.id = existingId;
+        }
+    });
+
+    const counts = { add: 0, update: 0, delete: 0 };
+    normalized.flatRows.forEach((row) => {
+        counts[row.op] += 1;
+    });
+    normalized.counts = counts;
+
+    return normalized;
 }
 
 function getDescendantNodeIds(rows, parentNodeId) {
@@ -243,12 +351,29 @@ export function applySelectedChanges(rows, options = {}) {
     const order = normalizeApplyOrder(rows);
     const nodeIdToAddedId = new Map();
     const createdTaskMap = new Map();
+    const existingLookup = buildExistingTaskLookup(ganttApi);
     const applied = { add: 0, update: 0, delete: 0, skipped: 0, failed: 0 };
     const errors = [];
 
     order.forEach((row) => {
         try {
             if (row.op === 'add') {
+                const existingTaskId = findExistingTaskIdForAdd(row, existingLookup, ganttApi);
+                if (existingTaskId !== null && existingTaskId !== undefined) {
+                    const existingTask = ganttApi.getTask(existingTaskId);
+                    if (!existingTask) {
+                        applied.skipped += 1;
+                        return;
+                    }
+                    if (typeof undoApi?.saveState === 'function') {
+                        undoApi.saveState(existingTaskId);
+                    }
+                    Object.assign(existingTask, row.data || {});
+                    ganttApi.updateTask(existingTaskId);
+                    applied.update += 1;
+                    return;
+                }
+
                 const parent = resolveAddParent(row, createdTaskMap, nodeIdToAddedId);
                 const payload = row.data && typeof row.data === 'object' ? { ...row.data } : {};
                 const newTaskId = ganttApi.addTask(payload, parent ?? 0);
@@ -314,18 +439,21 @@ export function applySelectedChanges(rows, options = {}) {
     };
 }
 
-export function renderTaskDiffSummaryCard(payload) {
-    const normalized = normalizeDiffPayload(payload);
+export function renderTaskDiffSummaryCard(payload, options = {}) {
+    const normalized = reconcileRowsWithExistingTasks(normalizeDiffPayload(payload), {
+        ganttApi: options.ganttApi || globalThis.gantt
+    });
     const sourceText = normalized.source || '导入结果';
 
     return `
-        <div class="card bg-base-200 shadow-sm ai-result-card" data-type="task_diff">
+        <div class="card bg-base-100 border border-base-300 shadow-sm ai-result-card task-diff-summary-card" data-type="task_diff">
             <div class="card-body p-4 gap-3">
                 <div class="flex items-center justify-between gap-2">
                     <div class="text-sm font-semibold text-base-content">AI 任务变更建议</div>
-                    <span class="badge badge-outline">${escapeHtml(sourceText)}</span>
+                    <span class="badge badge-outline badge-sm">任务列表</span>
                 </div>
-                <div class="flex flex-wrap gap-2 text-xs">
+                <div class="task-diff-source-pill" title="${escapeHtml(sourceText)}">${escapeHtml(sourceText)}</div>
+                <div class="flex flex-wrap gap-2 text-xs task-diff-summary-counts">
                     <span class="badge badge-success badge-outline">新增 ${normalized.counts.add}</span>
                     <span class="badge badge-info badge-outline">修改 ${normalized.counts.update}</span>
                     <span class="badge badge-error badge-outline">删除 ${normalized.counts.delete}</span>
@@ -378,11 +506,11 @@ function renderLeftPanel(state) {
     }).join('');
 }
 
-function renderField(label, key, value) {
+function renderDetailRow(label, key, value, icon) {
     return `
-        <label class="diff-field">
-            <span>${label}</span>
-            <input type="text" data-field="${key}" value="${escapeHtml(value)}" />
+        <label class="diff-detail-row" title="${escapeHtml(label)}">
+            <span class="diff-detail-label">${icon} ${label}</span>
+            <input type="text" data-field="${key}" value="${escapeHtml(value)}" class="input input-ghost input-xs diff-detail-input" />
         </label>
     `;
 }
@@ -416,13 +544,15 @@ function renderRightPanel(state) {
             </div>
         ` : ''}
         <div class="diff-fields">
-            ${renderField('任务名称', 'text', data.text || '')}
-            ${renderField('开始日期', 'start_date', data.start_date || '')}
-            ${renderField('结束日期', 'end_date', data.end_date || '')}
-            ${renderField('工期', 'duration', data.duration ?? '')}
-            ${renderField('负责人', 'assignee', data.assignee || '')}
-            ${renderField('优先级', 'priority', data.priority || '')}
-            ${renderField('状态', 'status', data.status || '')}
+            <div class="diff-detail-block-title">基本信息</div>
+            ${renderDetailRow('任务名称', 'text', data.text || '', '📝')}
+            ${renderDetailRow('负责人', 'assignee', data.assignee || '', '👤')}
+            ${renderDetailRow('优先级', 'priority', data.priority || '', '🚩')}
+            ${renderDetailRow('状态', 'status', data.status || '', '●')}
+            <div class="diff-detail-block-title">排期与工时</div>
+            ${renderDetailRow('开始日期', 'start_date', data.start_date || '', '📅')}
+            ${renderDetailRow('结束日期', 'end_date', data.end_date || '', '📅')}
+            ${renderDetailRow('工期', 'duration', data.duration ?? '', '⏱')}
         </div>
     `;
 }
@@ -473,7 +603,9 @@ function closeModal() {
 }
 
 export function openDiffConfirmModal(payload, options = {}) {
-    const normalized = normalizeDiffPayload(payload);
+    const normalized = reconcileRowsWithExistingTasks(normalizeDiffPayload(payload), {
+        ganttApi: options.ganttApi
+    });
     if (!normalized.isValid || normalized.flatRows.length === 0) {
         showToast('未检测到可执行的任务变更', 'warning');
         return null;
@@ -574,6 +706,7 @@ export function openDiffConfirmModal(payload, options = {}) {
 
 export const __test__ = {
     normalizeDiffPayload,
+    reconcileRowsWithExistingTasks,
     setNodeInclude,
     countIncludedRows,
     applySelectedChanges

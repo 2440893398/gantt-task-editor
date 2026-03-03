@@ -76,6 +76,25 @@
     background: #fee2e2;
 }
 
+.task-diff-summary-card .task-diff-source-pill {
+    display: block;
+    max-width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--color-border, #dbe1ea);
+    background: color-mix(in srgb, var(--color-surface, #f8fafc) 88%, transparent);
+    color: var(--color-muted-foreground, #64748b);
+    font-size: 12px;
+}
+
+.task-diff-summary-card .task-diff-summary-counts .badge {
+    font-weight: 600;
+    background: transparent;
+}
+
 .diff-modal-body {
     display: grid;
     grid-template-columns: minmax(300px, 1fr) minmax(360px, 1.25fr);
@@ -211,30 +230,47 @@
 
 .diff-fields {
     margin-top: 14px;
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-}
-
-.diff-field {
     display: flex;
     flex-direction: column;
     gap: 6px;
 }
 
-.diff-field span {
-    font-size: 12px;
-    font-weight: 600;
+.diff-detail-block-title {
+    margin-top: 8px;
+    margin-bottom: 2px;
+    font-size: 11px;
+    font-weight: 700;
     color: var(--color-muted-foreground, #64748b);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
 }
 
-.diff-field input {
-    height: 34px;
-    border-radius: 9px;
-    border: 1px solid var(--color-border, #e2e8f0);
-    padding: 0 10px;
+.diff-detail-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 0;
+}
+
+.diff-detail-label {
+    font-size: 12px;
+    color: var(--color-foreground, #0f172a);
+    opacity: 0.72;
+}
+
+.diff-detail-input {
+    width: 180px;
+    text-align: right;
+    border-radius: 8px;
+    border: 1px solid transparent;
+    background: transparent;
     font-size: 13px;
-    background: #fff;
+}
+
+.diff-detail-input:hover {
+    border-color: var(--color-border, #e2e8f0);
+    background: var(--color-surface, #f8fafc);
 }
 
 .diff-empty {
@@ -277,7 +313,5 @@
         max-height: 40vh;
     }
 
-    .diff-fields {
-        grid-template-columns: 1fr;
-    }
+    .diff-detail-input { width: 54%; }
 }

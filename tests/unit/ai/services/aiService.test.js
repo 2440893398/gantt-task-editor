@@ -53,7 +53,8 @@ vi.mock('../../../../src/features/ai/services/errorHandler.js', () => ({
 global.gantt = {
     getSelectedId: vi.fn(),
     getTask: vi.fn(),
-    updateTask: vi.fn()
+    updateTask: vi.fn(),
+    eachTask: vi.fn()
 };
 
 describe('AI Service', () => {
@@ -185,6 +186,40 @@ describe('AI Service', () => {
             expect(message).toContain('Sheet: Tasks');
             expect(message).toContain('task_diff');
             expect(message).toContain('请根据附件分析任务差异');
+        });
+
+        it('includes current gantt task snapshot for attachment diff', async () => {
+            gantt.eachTask.mockImplementation((cb) => {
+                cb({
+                    id: 101,
+                    text: '陈龙龙的工时',
+                    start_date: '2026-02-02',
+                    end_date: '2026-02-13',
+                    assignee: '张三',
+                    status: 'completed',
+                    priority: 'high'
+                });
+            });
+
+            await invokeAgent('chat', { text: '' });
+
+            document.dispatchEvent(new CustomEvent('aiSend', {
+                detail: {
+                    message: '继续',
+                    attachmentContext: {
+                        fileName: 'gantt-tasks-2026-03-02.xlsx',
+                        promptBlock: 'Sheet: 任务列表\nRows: 5'
+                    }
+                }
+            }));
+
+            await Promise.resolve();
+
+            expect(runSmartChat).toHaveBeenCalledTimes(1);
+            const [message] = runSmartChat.mock.calls[0];
+            expect(message).toContain('[Current Task Snapshot]');
+            expect(message).toContain('陈龙龙的工时');
+            expect(message).toContain('id=101');
         });
     });
 
