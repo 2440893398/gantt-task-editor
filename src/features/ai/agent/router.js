@@ -125,7 +125,10 @@ const routerSchema = z.object({
  * @param {LanguageModel} model - 已创建的模型实例
  * @returns {Promise<{skill: string|null, confidence: number, reasoning: string}>}
  */
-export async function routeToSkill(userMessage, model) {
+export async function routeToSkill(userMessage, modelOrProvider, modelId) {
+    const model = (typeof modelOrProvider === 'function' && modelId)
+        ? modelOrProvider(modelId)
+        : modelOrProvider;
     const skills = getSkillDescriptions();
 
     const systemPrompt = `你是一个意图路由器。根据用户消息判断应该使用哪个 Skill。

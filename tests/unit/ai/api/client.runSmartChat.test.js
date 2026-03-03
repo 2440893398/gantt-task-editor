@@ -263,7 +263,7 @@ describe('runSmartChat', () => {
             expect(createOpenAI).toHaveBeenCalledWith({
                 apiKey: 'test-key',
                 baseURL: 'https://api.test.com',
-                compatibility: 'strict'
+                compatibility: 'compatible'
             });
         });
 

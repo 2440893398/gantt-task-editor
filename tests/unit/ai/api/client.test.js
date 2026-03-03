@@ -17,7 +17,8 @@ vi.mock('@ai-sdk/openai', () => ({
 
 vi.mock('ai', () => ({
     streamText: vi.fn(),
-    tool: vi.fn((definition) => definition)
+    tool: vi.fn((definition) => definition),
+    jsonSchema: vi.fn((schema) => schema)
 }));
 
 describe('AI Client', () => {
@@ -92,7 +93,7 @@ describe('AI Client', () => {
             expect(createOpenAI).toHaveBeenCalledWith({
                 apiKey: mockConfig.apiKey,
                 baseURL: mockConfig.baseUrl,
-                compatibility: 'strict'
+                compatibility: 'compatible'
             });
             expect(streamText).toHaveBeenCalled();
             expect(setAiStatus).toHaveBeenCalledWith('loading');
@@ -156,7 +157,9 @@ describe('AI Client', () => {
 
             const result = await testConnection();
 
-            expect(result).toEqual({ success: true, message: '连接成功' });
+            expect(result.success).toBe(true);
+            expect(result.message).toBe('ai.config.connectionSuccessUnknownToolCall');
+            expect(result.toolCallSupported).toBeNull();
         });
 
         it('should return failure when API key is missing', async () => {
@@ -165,7 +168,7 @@ describe('AI Client', () => {
             const result = await testConnection();
 
             expect(result.success).toBe(false);
-            expect(result.message).toContain('API Key');
+            expect(result.message).toBe('ai.config.apiKeyRequired');
         });
 
         it('should return failure on exception', async () => {

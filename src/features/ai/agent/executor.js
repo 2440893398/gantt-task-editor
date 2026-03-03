@@ -16,6 +16,29 @@ function hasAttachmentContext(messages = []) {
     );
 }
 
+function shouldUseChatEndpoint(baseUrl = '') {
+    const normalizedUrl = baseUrl
+        .toLowerCase()
+        .replace(/^https?:\/\//, '')
+        .replace(/\/.*$/, '')
+        .replace(/\/$/, '');
+    return normalizedUrl !== 'api.openai.com' && !normalizedUrl.endsWith('.api.openai.com');
+}
+
+function resolveModel(modelOrProvider, modelId) {
+    if (typeof modelOrProvider !== 'function') {
+        return modelOrProvider;
+    }
+
+    const config = JSON.parse(localStorage.getItem('gantt_ai_config') || '{}');
+    const id = modelId || config.model || 'gpt-3.5-turbo';
+
+    if (shouldUseChatEndpoint(config.baseUrl) && typeof modelOrProvider.chat === 'function') {
+        return modelOrProvider.chat(id);
+    }
+    return modelOrProvider(id);
+}
+
 function getLanguageInstruction() {
     const currentLanguage = i18n.getLanguage();
     const localeNameMap = {
@@ -75,7 +98,9 @@ function isToolCallingSupportedByAPI(baseUrl, model) {
  * @param {LanguageModel} model - 已创建的模型实例
  * @param {Object} callbacks - 回调函数
  */
-export async function executeSkill(skillId, messages, model, callbacks = {}) {
+export async function executeSkill(skillId, messages, modelOrProvider, modelIdOrCallbacks = {}, maybeCallbacks = {}) {
+    const model = resolveModel(modelOrProvider, typeof modelIdOrCallbacks === 'string' ? modelIdOrCallbacks : undefined);
+    const callbacks = typeof modelIdOrCallbacks === 'string' ? maybeCallbacks : modelIdOrCallbacks;
     // 1. 加载完整 Skill 内容（按需加载）
     const skill = await loadSkill(skillId);
     if (!skill) {
@@ -227,7 +252,9 @@ ${skill.content}${importGuidance}
  * @param {LanguageModel} model - 已创建的模型实例
  * @param {Object} callbacks - 回调函数
  */
-export async function executeGeneralChat(messages, model, callbacks = {}) {
+export async function executeGeneralChat(messages, modelOrProvider, modelIdOrCallbacks = {}, maybeCallbacks = {}) {
+    const model = resolveModel(modelOrProvider, typeof modelIdOrCallbacks === 'string' ? modelIdOrCallbacks : undefined);
+    const callbacks = typeof modelIdOrCallbacks === 'string' ? maybeCallbacks : modelIdOrCallbacks;
     const { language, languageName } = getLanguageInstruction();
     const importGuidance = hasAttachmentContext(messages)
         ? `\n\nAttachment detected. Prefer import-analysis style output with structured task diff JSON.`

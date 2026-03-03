@@ -37,7 +37,7 @@ describe('executeSkill markdown formatting rules', () => {
 
         expect(streamTextMock).toHaveBeenCalledTimes(1);
         const args = streamTextMock.mock.calls[0][0];
-        expect(args.system).toContain('支持 Markdown 格式输出');
-        expect(args.system).not.toContain('不使用 Markdown 表格');
+        expect(args.system).toContain('Use clean Markdown for structured output');
+        expect(args.system).toContain('not pseudo-table text');
     });
 });

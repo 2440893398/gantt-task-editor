@@ -305,6 +305,7 @@ describe('父任务字段联动 (Parent Field Rollup)', () => {
             start_date: new Date('2026-02-02'),
             end_date: new Date('2026-02-04'),
             status: 'completed',
+            progress: 1,
             assignee: '张三',
             estimated_hours: 8,
             actual_hours: 6
@@ -316,6 +317,7 @@ describe('父任务字段联动 (Parent Field Rollup)', () => {
             start_date: new Date('2026-02-04'),
             end_date: new Date('2026-02-06'),
             status: 'completed',
+            progress: 0.5,
             assignee: '张三',
             estimated_hours: 4,
             actual_hours: 3
@@ -335,6 +337,8 @@ describe('父任务字段联动 (Parent Field Rollup)', () => {
         expect(parent.estimated_hours).toBe(12);
         expect(parent.actual_hours).toBe(9);
         expect(parent.duration).toBe(4);
+        // duration-weighted: (1*2 + 0.5*2) / (2+2) = 0.75
+        expect(parent.progress).toBeCloseTo(0.75, 5);
         expect(global.gantt.updateTask).toHaveBeenCalledWith(100);
     });
 

@@ -54,3 +54,24 @@ export function sumNumberField(values = []) {
         return Number.isFinite(n) ? acc + n : acc;
     }, 0);
 }
+
+export function rollupProgress(children = []) {
+    if (!children.length) return 0;
+
+    let weighted = 0;
+    let totalWeight = 0;
+
+    children.forEach((child) => {
+        const progressRaw = Number(child?.progress);
+        const progress = Number.isFinite(progressRaw) ? Math.min(1, Math.max(0, progressRaw)) : 0;
+
+        const durationRaw = Number(child?.duration);
+        const weight = Number.isFinite(durationRaw) && durationRaw > 0 ? durationRaw : 1;
+
+        weighted += progress * weight;
+        totalWeight += weight;
+    });
+
+    if (totalWeight <= 0) return 0;
+    return weighted / totalWeight;
+}

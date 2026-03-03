@@ -1,5 +1,5 @@
 import { describe, test, expect, vi, afterEach } from 'vitest';
-import { rollupStatus, rollupAssignee, sumNumberField, getStatusRollupMode, STATUS_ROLLUP_MODE } from '../../../src/features/gantt/parent-rollup.js';
+import { rollupStatus, rollupAssignee, sumNumberField, getStatusRollupMode, STATUS_ROLLUP_MODE, rollupProgress } from '../../../src/features/gantt/parent-rollup.js';
 
 describe('parent-rollup helpers', () => {
     afterEach(() => {
@@ -43,6 +43,22 @@ describe('parent-rollup helpers', () => {
 
     test('sumNumberField sums numeric values and ignores invalid', () => {
         expect(sumNumberField([1, '2', null, undefined, 'x', 0.5])).toBe(3.5);
+    });
+
+    test('rollupProgress uses duration-weighted average', () => {
+        const p = rollupProgress([
+            { progress: 1, duration: 2 },
+            { progress: 0.5, duration: 1 }
+        ]);
+        expect(p).toBeCloseTo((1 * 2 + 0.5 * 1) / 3, 5);
+    });
+
+    test('rollupProgress falls back to equal weights when duration invalid', () => {
+        const p = rollupProgress([
+            { progress: 1, duration: null },
+            { progress: 0, duration: undefined }
+        ]);
+        expect(p).toBeCloseTo(0.5, 5);
     });
 
     test('getStatusRollupMode: default progress_first', () => {

@@ -161,7 +161,11 @@ function shouldUseChatEndpoint(baseUrl) {
 function createModel(openaiProvider, modelId, baseUrl) {
     if (shouldUseChatEndpoint(baseUrl)) {
         // 第三方 API：使用 .chat() 强制走 /chat/completions
-        return openaiProvider.chat(modelId);
+        if (typeof openaiProvider?.chat === 'function') {
+            return openaiProvider.chat(modelId);
+        }
+        // 兼容旧版 provider mock（函数本身即模型工厂）
+        return openaiProvider(modelId);
     } else {
         // OpenAI 官方：使用默认（/responses）
         return openaiProvider(modelId);
@@ -263,10 +267,6 @@ export async function runSmartChat(userMessage, history, callbacks = {}) {
             baseURL: baseUrl,
             compatibility: getCompatibilityMode(baseUrl)
         });
-        
-        // 创建正确端点的模型实例
-        const modelInstance = createModel(openai, resolvedModel, baseUrl);
-
         const messages = [
             ...(Array.isArray(history) ? history.map(m => ({ role: m.role, content: m.content })) : []),
             { role: 'user', content: userMessage }
@@ -288,7 +288,7 @@ export async function runSmartChat(userMessage, history, callbacks = {}) {
 
         if (!skillId) {
             try {
-                const route = await routeToSkill(userMessage, modelInstance);
+                const route = await routeToSkill(userMessage, openai, resolvedModel);
                 if (route.skill && route.confidence > 0.7) {
                     skillId = route.skill;
                 }
@@ -300,22 +300,35 @@ export async function runSmartChat(userMessage, history, callbacks = {}) {
         // Phase 2: execute
         let result;
         if (skillId) {
-            result = await executeSkill(skillId, messages, modelInstance, {
+            result = await executeSkill(skillId, messages, openai, resolvedModel, {
                 onToolCall,
                 onToolResult,
                 onSkillStart
             });
         } else {
-            result = await executeGeneralChat(messages, modelInstance);
+            result = await executeGeneralChat(messages, openai, resolvedModel);
         }
 
         // 使用 fullStream 来正确处理多步骤流（包括工具调用后的继续生成）
-        // textStream 在某些情况下可能不会等待所有 steps 完成
+        // 向后兼容仅提供 textStream 的实现
         let stepCount = 0;
         let streamError = null;
         console.log('[SmartChat] Starting to consume fullStream...');
-        
-        for await (const part of result.fullStream) {
+        const stream = result?.fullStream ?? result?.textStream;
+
+        if (!stream) {
+            throw new Error('AI stream result missing fullStream/textStream');
+        }
+
+        const isLegacyTextStream = !result?.fullStream && !!result?.textStream;
+
+        for await (const part of stream) {
+            if (isLegacyTextStream) {
+                if (typeof part === 'string' && part.length > 0) {
+                    onChunk?.(part);
+                }
+                continue;
+            }
             // console.log('[SmartChat] Stream part:', part.type, part);
             
             if (part.type === 'text-delta') {

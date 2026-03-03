@@ -6,7 +6,11 @@ import { initAiDrawer } from '../../../src/features/ai/components/AiDrawer.js';
 
 // Mock dependencies
 vi.mock('../../../src/utils/i18n.js', () => ({
-    i18n: { t: (k) => k }
+    i18n: {
+        t: (k) => k,
+        refresh: vi.fn(),
+        getLanguage: vi.fn(() => 'zh-CN')
+    }
 }));
 vi.mock('../../../src/utils/toast.js', () => ({
     showToast: vi.fn()
