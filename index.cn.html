@@ -611,6 +611,20 @@
                 });
             });
 
+            function openTaskDetailsWithRetry(taskId, retries = 20) {
+                if (typeof window.openTaskDetailsPanel === 'function') {
+                    window.openTaskDetailsPanel(taskId);
+                    return;
+                }
+
+                if (retries <= 0) {
+                    console.warn('[new-task] openTaskDetailsPanel not ready for task:', taskId);
+                    return;
+                }
+
+                setTimeout(() => openTaskDetailsWithRetry(taskId, retries - 1), 50);
+            }
+
             // 新建任务按钮 - 打开模态框
             document.getElementById('new-task-btn')?.addEventListener('click', () => {
                 // 打开模态框而非直接创建任务
@@ -652,10 +666,8 @@
                 document.getElementById('new-task-form').reset();
                 document.getElementById('name-error').classList.add('hidden');
 
-                // 打开任务详情面板
-                if (window.openTaskDetailsPanel) {
-                    window.openTaskDetailsPanel(taskId);
-                }
+                // 打开任务详情面板（带重试，避免模块未完成挂载导致丢失跳转）
+                openTaskDetailsWithRetry(taskId);
             });
 
             // 任务名称输入时隐藏错误提示

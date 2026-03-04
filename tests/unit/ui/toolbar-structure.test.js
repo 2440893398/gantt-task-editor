@@ -21,4 +21,9 @@ describe('toolbar structure in index.html', () => {
     expect(html).toContain('data-tip="Undo (Ctrl+Z)"');
     expect(html).toContain('data-tip="Redo (Ctrl+Y)"');
   });
+
+  it('includes new task button in toolbar action area', () => {
+    const html = fs.readFileSync(path.resolve(process.cwd(), 'index.html'), 'utf8');
+    expect(html).toContain('id="new-task-btn"');
+  });
 });

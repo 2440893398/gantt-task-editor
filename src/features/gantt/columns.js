@@ -9,6 +9,11 @@ import { renderPriorityBadge, renderStatusBadge, renderAssignee, renderProgressB
 import { extractPlainText, escapeAttr } from '../../utils/dom.js';
 import { formatDuration, exclusiveToInclusive, isDayPrecision } from '../../utils/time-formatter.js';
 import { applySavedColumnWidths, loadColumnWidthPrefs } from './column-widths.js';
+import { i18n } from '../../utils/i18n.js';
+import { showConfirmDialog } from '../../components/common/confirm-dialog.js';
+import { showToast } from '../../utils/toast.js';
+
+let taskActionHandlersBound = false;
 
 /**
  * 获取本地化的列名称
@@ -146,6 +151,59 @@ function formatGridDate(value) {
     const m = String(date.getMonth() + 1).padStart(2, '0');
     const d = String(date.getDate()).padStart(2, '0');
     return `${y}-${m}-${d}`;
+}
+
+function ensureTaskActionHandlersBound() {
+    if (taskActionHandlersBound) return;
+
+    document.addEventListener('click', (event) => {
+        const actionBtn = event.target.closest('.gantt-task-action-btn');
+        if (!actionBtn) return;
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        const taskId = actionBtn.dataset.taskId;
+        const action = actionBtn.dataset.action;
+        if (!taskId || !action) return;
+
+        if (action === 'edit') {
+            if (typeof window.openTaskDetailsPanel === 'function') {
+                window.openTaskDetailsPanel(taskId);
+            }
+            return;
+        }
+
+        if (action === 'delete') {
+            const task = gantt.getTask(taskId);
+            if (!task) return;
+
+            showConfirmDialog({
+                icon: 'trash-2',
+                variant: 'danger',
+                title: i18n.t('message.confirmDeleteTitle') || '删除任务',
+                message: i18n.t('message.confirmDelete') || '确定要删除此任务吗？此操作无法撤销。',
+                confirmText: i18n.t('form.delete') || '删除',
+                cancelText: i18n.t('form.cancel') || '取消',
+                onConfirm: () => {
+                    gantt.deleteTask(taskId);
+                    showToast(i18n.t('message.deleteSuccess') || '删除成功', 'success');
+                }
+            });
+        }
+    });
+
+    taskActionHandlersBound = true;
+}
+
+function renderTaskActionsCell(task) {
+    const editLabel = i18n.t('shortcuts.editTask') || '编辑';
+    const deleteLabel = i18n.t('form.delete') || '删除';
+    const taskId = escapeAttr(task.id);
+    return `<div class="gantt-task-actions-cell" role="group" aria-label="${editLabel}/${deleteLabel}">
+        <button type="button" class="gantt-task-action-btn gantt-task-action-edit" data-action="edit" data-task-id="${taskId}" title="${editLabel}" aria-label="${editLabel}">✎</button>
+        <button type="button" class="gantt-task-action-btn gantt-task-action-delete" data-action="delete" data-task-id="${taskId}" title="${deleteLabel}" aria-label="${deleteLabel}">🗑</button>
+    </div>`;
 }
 
 /**
@@ -356,9 +414,22 @@ export function updateGanttColumns() {
     // 添加列 - 宽度44px匹配设计稿
     columns.push({ name: "add", label: "", width: 44, min_width: 44 });
 
+    columns.push({
+        name: 'actions',
+        label: i18n.t('shortcuts.taskOperations') || '操作',
+        align: 'center',
+        width: 96,
+        min_width: 96,
+        resize: false,
+        template: function (task) {
+            return renderTaskActionsCell(task);
+        }
+    });
+
     gantt.config.columns = applySavedColumnWidths(columns, loadColumnWidthPrefs());
 
     if (gantt.$container) {
+        ensureTaskActionHandlersBound();
         gantt.render();
     }
 }
@@ -385,12 +456,24 @@ export function setGanttOnlyColumns() {
                 html += `<span title="${task.text || ''}">${escapeHtml(text)}</span>`;
                 return html;
             }
+        },
+        {
+            name: 'actions',
+            label: i18n.t('shortcuts.taskOperations') || '操作',
+            align: 'center',
+            width: 96,
+            min_width: 96,
+            resize: false,
+            template: function (task) {
+                return renderTaskActionsCell(task);
+            }
         }
     ];
 
     gantt.config.columns = applySavedColumnWidths(gantt.config.columns, loadColumnWidthPrefs());
 
     if (gantt.$container) {
+        ensureTaskActionHandlersBound();
         gantt.render();
     }
 }
