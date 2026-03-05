@@ -15,6 +15,8 @@ import { renderTaskCitationChip, renderInlineReferencedTasks } from '../renderer
 import { renderTaskInputBubble } from '../renderers/task-input-bubble.js';
 import { createMentionComposer } from './mention-composer.js';
 import { getAllTasksWithHierarchy } from '../utils/hierarchy-id.js';
+import { parseAiAttachmentFile } from '../utils/attachment-parser.js';
+import { openDiffConfirmModal, renderTaskDiffSummaryCard } from './DiffConfirmModal.js';
 
 // 配置 marked
 marked.setOptions({
@@ -47,6 +49,7 @@ const toolStatusElById = new Map();
 
 // @ Mention composer 实例
 let mentionComposer = null;
+let pendingAttachmentContext = null;
 
 // Token 统计 (F-111)
 let tokenStats = {
@@ -161,6 +164,14 @@ function createDrawerHTML() {
                             aria-multiline="true"
                             data-placeholder="${i18n.t('ai.drawer.chatPlaceholder')}"
                         ></div>
+                        <button class="btn btn-ghost w-11 h-11 min-h-[44px] p-0 rounded-full ai-attach-inside"
+                                id="ai_attach_btn"
+                                type="button"
+                                aria-label="${i18n.t('ai.drawer.attach')}">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M21.44 11.05l-8.49 8.49a6 6 0 11-8.49-8.49l8.49-8.49a4 4 0 115.66 5.66l-8.49 8.49a2 2 0 11-2.83-2.83l7.78-7.78" />
+                            </svg>
+                        </button>
                         <button class="btn btn-primary w-11 h-11 min-h-[44px] p-0 rounded-full ai-send-inside"
                                 id="ai_send_btn"
                                 type="button"
@@ -171,9 +182,13 @@ function createDrawerHTML() {
                         </button>
                     </div>
                 </div>
+                <input id="ai_attachment_input" class="hidden" type="file" accept=".xlsx,.xls,.docx" />
                 <div class="text-xs text-base-content/60 mt-2 px-1 ai-chat-meta-row">
                     <span>${i18n.t('ai.drawer.chatHint')}</span>
-                    <span id="ai_chat_char_count" class="font-semibold">0/2000</span>
+                    <span class="flex items-center gap-2">
+                        <span id="ai_attachment_badge" class="badge badge-outline badge-sm hidden"></span>
+                        <span id="ai_chat_char_count" class="font-semibold">0/2000</span>
+                    </span>
                 </div>
             </div>
         </div>
@@ -286,6 +301,11 @@ function bindEvents() {
 
     // F-106: 发送消息按钮
     document.getElementById('ai_send_btn')?.addEventListener('click', handleSendMessage);
+    document.getElementById('ai_attach_btn')?.addEventListener('click', () => {
+        const fileInput = document.getElementById('ai_attachment_input');
+        fileInput?.click();
+    });
+    document.getElementById('ai_attachment_input')?.addEventListener('change', handleAttachmentChange);
 
     // F-106: 聊天输入框回车发送 + @ mention 支持
     const chatInput = document.getElementById('ai_chat_input');
@@ -1024,7 +1044,14 @@ export function finishStreaming(usage = {}) {
 
             if (jsonText.startsWith('{')) {
                 const data = JSON.parse(jsonText);
-                if (isRegisteredResultType(data?.type)) {
+                if (data?.type === 'task_diff') {
+                    renderHTML = renderTaskDiffSummaryCard(data);
+
+                    lastMsg.isStructured = true;
+                    lastMsg.structuredData = data;
+
+                    if (footerEl) footerEl.style.display = 'none';
+                } else if (isRegisteredResultType(data?.type)) {
                     // 渲染结构化结果
                     renderHTML = renderResult(data, {
                         // 传递操作回调
@@ -1210,6 +1237,7 @@ export function clearConversation() {
     conversationHistory = [];
     tokenStats = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
     toolStatusElById.clear();
+    pendingAttachmentContext = null;
 
     // 清空 mention 选择
     if (mentionComposer) {
@@ -1222,6 +1250,7 @@ export function clearConversation() {
 
     // 隐藏 Token 统计
     document.getElementById('ai_token_stats')?.classList.add('hidden');
+    clearAttachmentBadge();
 
     hideError();
     showToast(i18n.t('ai.drawer.cleared'), 'success', 1500);
@@ -1245,6 +1274,11 @@ function handleSendMessage() {
     if (!text) return;
 
     detail.message = text;
+    if (pendingAttachmentContext) {
+        detail.attachmentContext = pendingAttachmentContext;
+        pendingAttachmentContext = null;
+        clearAttachmentBadge();
+    }
 
     // 清空输入框
     clearChatInput(inputEl);
@@ -1255,6 +1289,46 @@ function handleSendMessage() {
 
     // 触发发送事件，由 Service 层处理
     document.dispatchEvent(new CustomEvent('aiSend', { detail }));
+}
+
+async function handleAttachmentChange(event) {
+    const inputEl = event?.target;
+    const file = inputEl?.files?.[0];
+    if (!file) return;
+
+    if (inputEl) {
+        inputEl.value = '';
+    }
+
+    const parseResult = await parseAiAttachmentFile(file);
+
+    if (!parseResult?.ok) {
+        if (parseResult?.warning) {
+            showToast(parseResult.warning, 'warning');
+        }
+        return;
+    }
+
+    pendingAttachmentContext = parseResult.attachmentContext;
+    setAttachmentBadge(`📎 ${parseResult.attachmentContext.fileName}`);
+
+    const uploadMessage = parseResult.userMessage || `Uploaded ${file.name}`;
+    addMessage('user', `📎 ${uploadMessage}`);
+    showToast('Attachment parsed and ready for next send.', 'success', 1800);
+}
+
+function setAttachmentBadge(text) {
+    const badgeEl = document.getElementById('ai_attachment_badge');
+    if (!badgeEl) return;
+    badgeEl.textContent = text;
+    badgeEl.classList.remove('hidden');
+}
+
+function clearAttachmentBadge() {
+    const badgeEl = document.getElementById('ai_attachment_badge');
+    if (!badgeEl) return;
+    badgeEl.textContent = '';
+    badgeEl.classList.add('hidden');
 }
 
 function getChatInputText(inputEl) {
@@ -1358,7 +1432,7 @@ function handleApply(content, messageId) {
  * 处理结构化结果的操作按钮
  */
 function handleResultAction(event) {
-    const button = event.target.closest('.ai-result-apply, .ai-result-undo, .ai-result-apply-subtasks');
+    const button = event.target.closest('.ai-result-apply, .ai-result-undo, .ai-result-apply-subtasks, .ai-result-open-diff');
     if (!button) return;
 
     const messageEl = button.closest('[data-message-id]');
@@ -1388,6 +1462,23 @@ function handleResultAction(event) {
             onApplyCallback(data);
         }
         markResultApplied(messageEl, button);
+        return;
+    }
+
+    if (button.classList.contains('ai-result-open-diff')) {
+        const data = message?.structuredData || tryParseStructuredData(message?.content || '');
+        if (!data || data.type !== 'task_diff') {
+            showToast('未找到有效的任务变更数据', 'warning');
+            return;
+        }
+
+        openDiffConfirmModal(data, {
+            onApplied: (result) => {
+                if (result?.ok !== false) {
+                    markResultApplied(messageEl, button);
+                }
+            }
+        });
     }
 }
 
@@ -1415,6 +1506,9 @@ function tryParseStructuredData(text) {
     if (!raw.startsWith('{')) return null;
     try {
         const data = JSON.parse(raw);
+        if (data?.type === 'task_diff') {
+            return data;
+        }
         if (!isRegisteredResultType(data?.type)) {
             return null;
         }

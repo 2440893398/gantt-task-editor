@@ -7731,6 +7731,86 @@
               "children": [
                 {
                   "type": "frame",
+                  "id": "P61vl",
+                  "name": "Undo Redo Group",
+                  "width": 68,
+                  "height": 32,
+                  "fill": "$--card",
+                  "cornerRadius": 8,
+                  "layout": "none",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "cIlvz",
+                      "x": 0,
+                      "y": 0,
+                      "name": "Btn Undo",
+                      "width": 32,
+                      "height": 32,
+                      "fill": "#00000000",
+                      "cornerRadius": 8,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon_font",
+                          "id": "tIPVL",
+                          "name": "undoIcon",
+                          "width": 16,
+                          "height": 16,
+                          "iconFontName": "undo-2",
+                          "iconFontFamily": "lucide",
+                          "fill": "$--muted-foreground"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "rectangle",
+                      "id": "DXdNz",
+                      "x": 32,
+                      "y": 8,
+                      "name": "Sep",
+                      "fill": "$--border",
+                      "width": 1,
+                      "height": 16
+                    },
+                    {
+                      "type": "frame",
+                      "id": "Spect",
+                      "x": 34,
+                      "y": 0,
+                      "name": "Btn Redo",
+                      "width": 32,
+                      "height": 32,
+                      "fill": "#00000000",
+                      "cornerRadius": 8,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon_font",
+                          "id": "rgYi3",
+                          "name": "redoIcon",
+                          "width": 16,
+                          "height": 16,
+                          "iconFontName": "redo-2",
+                          "iconFontFamily": "lucide",
+                          "fill": "$--muted-foreground"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "rectangle",
+                  "id": "Dn0dw",
+                  "name": "Sep",
+                  "fill": "$--border",
+                  "width": 1,
+                  "height": 20
+                },
+                {
+                  "type": "frame",
                   "id": "t3xgg",
                   "name": "Btn Today",
                   "height": 32,

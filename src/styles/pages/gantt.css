@@ -1140,6 +1140,50 @@
     opacity: 1;
 }
 
+.gantt_grid_head_cell.gantt_actions,
+.gantt_cell.gantt_actions {
+    position: sticky;
+    right: 0;
+    z-index: 4;
+    background: var(--background-white);
+    box-shadow: -1px 0 0 var(--border-color);
+}
+
+.gantt_grid_head_cell.gantt_actions {
+    z-index: 5;
+}
+
+.gantt-task-actions-cell {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+}
+
+.gantt-task-action-btn {
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: #64748b;
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1;
+}
+
+.gantt-task-action-btn:hover {
+    background: #f1f5f9;
+    border-color: #dbe3ea;
+    color: #0f172a;
+}
+
+.gantt-task-action-delete:hover {
+    color: #dc2626;
+    border-color: #fecaca;
+    background: #fef2f2;
+}
+
 /* 时间轴区域行样式同步 */
 .gantt_task_row {
     border-bottom: 1px solid var(--border-color) !important;

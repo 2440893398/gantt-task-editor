@@ -152,29 +152,28 @@ describe('confirm-dialog', () => {
             showConfirmDialog({ variant: 'danger' });
 
             const confirmBtn = document.getElementById('confirm-dialog-ok');
-            expect(confirmBtn.style.background).toContain('--color-danger');
+            expect(confirmBtn.className).toContain('btn-error');
         });
 
         it('works with primary variant', () => {
             showConfirmDialog({ variant: 'primary' });
 
             const confirmBtn = document.getElementById('confirm-dialog-ok');
-            expect(confirmBtn.style.background).toContain('--color-primary');
+            expect(confirmBtn.className).toContain('btn-primary');
         });
 
         it('works with warning variant', () => {
             showConfirmDialog({ variant: 'warning' });
 
             const confirmBtn = document.getElementById('confirm-dialog-ok');
-            // Browser converts #D97706 to rgb(217, 119, 6)
-            expect(confirmBtn.style.background).toMatch(/rgb\(217,\s*119,\s*6\)|#D97706/);
+            expect(confirmBtn.className).toContain('btn-warning');
         });
 
         it('falls back to danger colors for unknown variant', () => {
             showConfirmDialog({ variant: 'unknown-variant' });
 
             const confirmBtn = document.getElementById('confirm-dialog-ok');
-            expect(confirmBtn.style.background).toContain('--color-danger');
+            expect(confirmBtn.className).toContain('btn-error');
         });
 
         it('uses trash-2 icon by default', () => {

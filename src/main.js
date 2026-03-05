@@ -37,6 +37,7 @@ import { prefetchHolidays } from './features/calendar/holidayFetcher.js';
 import { openTaskDetailsPanel } from './features/task-details/index.js';
 // 视图切换
 import { initViewToggle } from './features/gantt/view-toggle.js';
+import undoManager from './features/ai/services/undoManager.js';
 
 // 挂载 exportConfig 到 window 以便 HTML 中调用
 window.exportConfig = exportConfig;
@@ -191,7 +192,20 @@ function setupAutoSave() {
     };
 
     // 监听任务变化事件
-    gantt.attachEvent("onAfterTaskAdd", debouncedSave);
+    gantt.attachEvent('onAfterTaskAdd', (id) => {
+        if (!undoManager.isApplyingHistoryOperation()) {
+            undoManager.saveAddState(id);
+        }
+        debouncedSave();
+    });
+
+    gantt.attachEvent('onBeforeTaskDelete', (id) => {
+        if (!undoManager.isApplyingHistoryOperation()) {
+            undoManager.saveDeleteState(id);
+        }
+        return true;
+    });
+
     gantt.attachEvent("onAfterTaskUpdate", debouncedSave);
     gantt.attachEvent("onAfterTaskDelete", debouncedSave);
     gantt.attachEvent("onAfterLinkAdd", debouncedSave);

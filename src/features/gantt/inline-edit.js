@@ -10,6 +10,7 @@
 import { state, getFieldType, getSystemFieldOptions } from '../../core/store.js';
 
 import { i18n } from '../../utils/i18n.js';
+import undoManager from '../ai/services/undoManager.js';
 // F-112: 任务详情面板
 import { openTaskDetailsPanel } from '../task-details/index.js';
 
@@ -456,6 +457,7 @@ function saveAndCloseEditor() {
 
     // 更新任务
     if (newValue !== originalValue) {
+        undoManager.saveState(taskId);
         task[columnName] = newValue;
         gantt.updateTask(taskId);
         console.log('💾 内联编辑保存:', columnName, '=', newValue);

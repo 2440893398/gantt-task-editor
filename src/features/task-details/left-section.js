@@ -7,6 +7,7 @@ import { i18n } from '../../utils/i18n.js';
 import { showToast } from '../../utils/toast.js';
 import { initRichTextEditor, getEditorInstance, getEditorText, onContentChange, setEditorContent, markdownToHtml } from '../../components/rich-text-editor.js';
 import AiService from '../ai/services/aiService.js';
+import undoManager from '../ai/services/undoManager.js';
 
 /**
  * 渲染左侧编辑区域
@@ -104,24 +105,47 @@ export function renderLeftSection(task) {
  * @param {HTMLElement} panel - 面板元素
  * @param {Object} task - 任务对象
  */
-export function bindLeftSectionEvents(panel, task) {
+export function bindLeftSectionEvents(panel, task, context = {}) {
+    const draftTask = context.draftTask || task;
+    const isDraftMode = !!context.isDraftMode;
+    const mutateDraft = (mutator) => {
+        if (typeof context.onDraftMutated === 'function') {
+            context.onDraftMutated(mutator);
+            return;
+        }
+        if (typeof mutator === 'function') {
+            mutator(draftTask);
+        }
+    };
+
+    const saveTaskState = () => {
+        if (isDraftMode) return;
+        if (undoManager.isApplyingHistoryOperation()) return;
+        undoManager.saveState(task.id);
+    };
+
     // 任务标题
     const titleInput = panel.querySelector('#task-title-input');
     if (titleInput) {
         // 保存原始值用于比较
-        const originalText = task.text || '';
-
         titleInput.addEventListener('blur', () => {
             const newValue = titleInput.value.trim();
-            // 只要有值且与原始值不同就保存
-            if (newValue !== originalText) {
-                task.text = newValue || i18n.t('taskDetails.newTask') || '新任务';
+            const nextTitle = newValue || i18n.t('taskDetails.newTask') || '新任务';
+            if (nextTitle !== (draftTask.text || '')) {
+                mutateDraft((target) => {
+                    target.text = nextTitle;
+                });
+            }
+
+            if (!isDraftMode && nextTitle !== (task.text || '')) {
+                saveTaskState();
+                task.text = nextTitle;
                 gantt.updateTask(task.id);
-                // 更新面板头部标题
-                const panelTitle = panel.querySelector('#panel-task-title');
-                if (panelTitle) panelTitle.textContent = task.text;
                 showToast(i18n.t('message.saveSuccess') || '保存成功', 'success');
             }
+
+            const panelTitle = panel.querySelector('#panel-task-title');
+            if (panelTitle) panelTitle.textContent = nextTitle;
         });
 
         // 输入时实时更新标题
@@ -140,7 +164,7 @@ export function bindLeftSectionEvents(panel, task) {
         });
 
         // 自动聚焦到标题输入框（对于新任务）
-        if (!task.text) {
+        if (!draftTask.text) {
             setTimeout(() => titleInput.focus(), 100);
         }
     }
@@ -159,9 +183,20 @@ export function bindLeftSectionEvents(panel, task) {
                 onContentChange((htmlContent, textContent) => {
                     clearTimeout(saveTimeout);
                     saveTimeout = setTimeout(() => {
-                        task.summary = htmlContent;
-                        task.description = htmlContent;
-                        gantt.updateTask(task.id);
+                        if (draftTask.summary === htmlContent && draftTask.description === htmlContent) {
+                            return;
+                        }
+                        mutateDraft((target) => {
+                            target.summary = htmlContent;
+                            target.description = htmlContent;
+                        });
+
+                        if (!isDraftMode) {
+                            saveTaskState();
+                            task.summary = htmlContent;
+                            task.description = htmlContent;
+                            gantt.updateTask(task.id);
+                        }
                     }, 500);
                 });
             }
@@ -174,7 +209,7 @@ export function bindLeftSectionEvents(panel, task) {
     const refineBtn = panel.querySelector('#ai-refine-desc-btn');
     if (refineBtn) {
         refineBtn.addEventListener('click', async () => {
-            const title = (task.text || '').trim();
+            const title = (draftTask.text || '').trim();
             const descText = (getEditorText() || '').trim();
             const contextParts = [];
             if (title) contextParts.push(`任务标题：${title}`);
@@ -186,7 +221,7 @@ export function bindLeftSectionEvents(panel, task) {
             }
 
             // 构建完整任务数据（用于抽屉中展示富卡片）
-            const taskData = buildTaskDataForAI(task);
+            const taskData = buildTaskDataForAI(draftTask);
 
             const restore = setButtonLoading(refineBtn, true);
             await AiService.invokeAgent('task_refine', {
@@ -196,7 +231,7 @@ export function bindLeftSectionEvents(panel, task) {
                 onApply: (result) => {
                     const optimized = extractOptimizedText(result);
                     if (!optimized) return;
-                    applyDescriptionResult(task, optimized);
+                    applyDescriptionResult(task, optimized, context);
                 }
             });
             restore();
@@ -226,14 +261,14 @@ export function bindLeftSectionEvents(panel, task) {
     const breakdownBtn = panel.querySelector('#ai-breakdown-btn');
     if (breakdownBtn) {
         breakdownBtn.addEventListener('click', async () => {
-            const title = (task.text || '').trim();
+            const title = (draftTask.text || '').trim();
             if (!title) {
                 showToast(i18n.t('ai.error.noContext') || '请先选择任务或输入内容', 'warning');
                 return;
             }
 
             // 构建完整任务数据（包含子任务）
-            const taskData = buildTaskDataForAI(task);
+            const taskData = buildTaskDataForAI(draftTask);
 
             const restore = setButtonLoading(breakdownBtn, true);
             await AiService.invokeAgent('task_breakdown', {
@@ -537,13 +572,43 @@ function extractOptimizedText(result) {
 /**
  * 应用描述润色结果
  */
-function applyDescriptionResult(task, optimizedText) {
+function applyDescriptionResult(task, optimizedText, context = {}) {
+    const draftTask = context.draftTask || task;
+    const isDraftMode = !!context.isDraftMode;
+    const mutateDraft = (mutator) => {
+        if (typeof context.onDraftMutated === 'function') {
+            context.onDraftMutated(mutator);
+            return;
+        }
+        if (typeof mutator === 'function') {
+            mutator(draftTask);
+        }
+    };
+
     const html = markdownToHtml(optimizedText);
     const editor = getEditorInstance();
     if (editor?.clipboard?.dangerouslyPasteHTML) {
         editor.clipboard.dangerouslyPasteHTML(html);
     } else {
         setEditorContent(html);
+    }
+    if (draftTask.summary === html && draftTask.description === html) {
+        showToast(i18n.t('ai.result.applied') || '已应用', 'success');
+        return;
+    }
+
+    mutateDraft((target) => {
+        target.summary = html;
+        target.description = html;
+    });
+
+    if (isDraftMode) {
+        showToast(i18n.t('ai.result.applied') || '已应用', 'success');
+        return;
+    }
+
+    if (!undoManager.isApplyingHistoryOperation()) {
+        undoManager.saveState(task.id);
     }
     task.summary = html;
     task.description = html;

@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @import './responsive/mobile.css';
 @import '../features/ai/styles/ai-theme.css';
+@import '../features/ai/styles/diff-confirm-modal.css';
 
 @plugin "daisyui" {
     themes: light --default;
@@ -203,6 +204,12 @@
     background: var(--color-secondary);
 }
 
+.toolbar-icon-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
 .toolbar-sep {
     width: 1px;
     height: 16px;
@@ -322,4 +329,3 @@
     border: 2px solid #f59e0b;
     box-shadow: 0 0 8px rgba(245, 158, 11, 0.4);
 }
-

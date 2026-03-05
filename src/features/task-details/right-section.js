@@ -6,6 +6,7 @@
 import { i18n } from '../../utils/i18n.js';
 import { formatDuration, parseDurationInput, exclusiveToInclusive, inclusiveToExclusive, isDayPrecision } from '../../utils/time-formatter.js';
 import { state, isFieldEnabled, getFieldType, getSystemFieldOptions } from '../../core/store.js';
+import undoManager from '../ai/services/undoManager.js';
 
 import { showToast } from '../../utils/toast.js';
 import { escapeAttr } from '../../utils/dom.js';
@@ -127,28 +128,61 @@ export function renderRightSection(task) {
  * @param {HTMLElement} panel - 面板元素
  * @param {Object} task - 任务对象
  */
-export function bindRightSectionEvents(panel, task) {
+export function bindRightSectionEvents(panel, task, context = {}) {
+    const draftTask = context.draftTask || task;
+    const isDraftMode = !!context.isDraftMode;
+    const mutateDraft = (mutator) => {
+        if (typeof context.onDraftMutated === 'function') {
+            context.onDraftMutated(mutator);
+            return;
+        }
+        if (typeof mutator === 'function') {
+            mutator(draftTask);
+        }
+    };
+
+    const persistIfNeeded = () => {
+        if (isDraftMode) return;
+        gantt.updateTask(task.id);
+        showToast(i18n.t('message.saveSuccess') || '保存成功', 'success');
+    };
+
+    const saveTaskState = () => {
+        if (isDraftMode) return;
+        if (undoManager.isApplyingHistoryOperation()) return;
+        undoManager.saveState(task.id);
+    };
+
     // 状态选择 (自定义下拉)
     bindDropdown(panel, 'task-status', (value) => {
-        task.status = value;
+        const nextStatus = value;
+        let nextProgress = draftTask.progress;
 
         // 状态 → 进度 双向同步：
         // 标记为"已完成"时，进度自动设为 100%
         // 从"已完成"改为其他状态时，若进度是 100%，重置为 0%（避免状态与进度矛盾）
-        let progressChanged = false;
-        if (value === 'completed' && task.progress < 1) {
-            task.progress = 1;
-            progressChanged = true;
-        } else if (value !== 'completed' && task.progress >= 1) {
-            task.progress = 0;
-            progressChanged = true;
+        if (value === 'completed' && draftTask.progress < 1) {
+            nextProgress = 1;
+        } else if (value !== 'completed' && draftTask.progress >= 1) {
+            nextProgress = 0;
         }
 
-        gantt.updateTask(task.id);
-        showToast(i18n.t('message.saveSuccess') || '保存成功', 'success');
+        const progressChanged = (draftTask.progress || 0) !== (nextProgress || 0);
+        if (draftTask.status === nextStatus && !progressChanged) return;
+
+        saveTaskState();
+        mutateDraft((target) => {
+            target.status = nextStatus;
+            target.progress = nextProgress;
+        });
+        if (!isDraftMode) {
+            task.status = nextStatus;
+            task.progress = nextProgress;
+        }
+        persistIfNeeded();
 
         // 进度发生变化时刷新面板（进度条 UI 同步）
-        if (progressChanged) {
+        if (progressChanged && !isDraftMode) {
             import('./panel.js').then(({ refreshTaskDetailsPanel }) => {
                 refreshTaskDetailsPanel();
             });
@@ -163,19 +197,31 @@ export function bindRightSectionEvents(panel, task) {
         // Portal 下拉模式 - 选项多时不会被父容器裁切
         const isMulti = assigneeType === 'multiselect';
         const normalizedOptions = assigneeOptions.map(opt => ({ value: opt, label: opt }));
-        setupSelect('task-assignee', normalizedOptions, task.assignee, (value) => {
-            task.assignee = value;
-            gantt.updateTask(task.id);
-            showToast(i18n.t('message.saveSuccess') || '保存成功', 'success');
+        setupSelect('task-assignee', normalizedOptions, draftTask.assignee, (value) => {
+            if (draftTask.assignee === value) return;
+            saveTaskState();
+            mutateDraft((target) => {
+                target.assignee = value;
+            });
+            if (!isDraftMode) {
+                task.assignee = value;
+            }
+            persistIfNeeded();
         }, { isMulti });
     } else {
         // Text input mode
         const assigneeInput = panel.querySelector('#task-assignee-input');
         if (assigneeInput) {
             assigneeInput.addEventListener('blur', () => {
-                if (task.assignee !== assigneeInput.value) {
-                    task.assignee = assigneeInput.value;
-                    gantt.updateTask(task.id);
+                if (draftTask.assignee !== assigneeInput.value) {
+                    saveTaskState();
+                    mutateDraft((target) => {
+                        target.assignee = assigneeInput.value;
+                    });
+                    if (!isDraftMode) {
+                        task.assignee = assigneeInput.value;
+                    }
+                    persistIfNeeded();
                 }
             });
         }
@@ -184,25 +230,38 @@ export function bindRightSectionEvents(panel, task) {
     const assigneeLock = panel.querySelector('#task-parent-assignee-lock');
     if (assigneeLock) {
         assigneeLock.addEventListener('change', () => {
-            task.parent_assignee_locked = !!assigneeLock.checked;
-            gantt.updateTask(task.id);
-            showToast(i18n.t('message.saveSuccess') || '保存成功', 'success');
+            const nextLocked = !!assigneeLock.checked;
+            if (!!draftTask.parent_assignee_locked === nextLocked) return;
+            saveTaskState();
+            mutateDraft((target) => {
+                target.parent_assignee_locked = nextLocked;
+            });
+            if (!isDraftMode) {
+                task.parent_assignee_locked = nextLocked;
+            }
+            persistIfNeeded();
         });
     }
 
 
     // 优先级 (自定义下拉)
     bindDropdown(panel, 'task-priority', (value) => {
-        task.priority = value;
-        gantt.updateTask(task.id);
-        showToast(i18n.t('message.saveSuccess') || '保存成功', 'success');
+        if (draftTask.priority === value) return;
+        saveTaskState();
+        mutateDraft((target) => {
+            target.priority = value;
+        });
+        if (!isDraftMode) {
+            task.priority = value;
+        }
+        persistIfNeeded();
     });
 
     // 日期字段
-    bindDateInput(panel, '#task-start-date', task, 'start_date');
-    bindDateInput(panel, '#task-end-date', task, 'end_date', true);
-    bindDateInput(panel, '#task-actual-start', task, 'actual_start');
-    bindDateInput(panel, '#task-actual-end', task, 'actual_end');
+    bindDateInput(panel, '#task-start-date', draftTask, 'start_date', false, { task, isDraftMode, saveTaskState, mutateDraft });
+    bindDateInput(panel, '#task-end-date', draftTask, 'end_date', true, { task, isDraftMode, saveTaskState, mutateDraft });
+    bindDateInput(panel, '#task-actual-start', draftTask, 'actual_start', false, { task, isDraftMode, saveTaskState, mutateDraft });
+    bindDateInput(panel, '#task-actual-end', draftTask, 'actual_end', false, { task, isDraftMode, saveTaskState, mutateDraft });
 
     // 进度字段
     const progressInput = panel.querySelector('#task-progress-input');
@@ -214,22 +273,46 @@ export function bindRightSectionEvents(panel, task) {
             if (val < 0) val = 0;
             if (val > 100) val = 100;
 
-            task.progress = val / 100;
-            gantt.updateTask(task.id);
+            const nextProgress = val / 100;
+            const nextStatus = val === 100
+                ? 'completed'
+                : (draftTask.status === 'completed' ? 'in_progress' : draftTask.status);
+            if ((draftTask.progress || 0) === nextProgress && draftTask.status === nextStatus) {
+                return;
+            }
+
+            saveTaskState();
+            mutateDraft((target) => {
+                target.progress = nextProgress;
+            });
+            if (!isDraftMode) {
+                task.progress = nextProgress;
+            }
+            persistIfNeeded();
 
             // Sync inputs
             progressInput.value = val;
             progressSlider.value = val;
 
             // Auto-update status if 100%
-            if (val === 100 && task.status !== 'completed') {
-                task.status = 'completed';
-                gantt.updateTask(task.id);
-                refreshTaskDetailsPanel();
-            } else if (val < 100 && task.status === 'completed') {
-                task.status = 'in_progress';
-                gantt.updateTask(task.id);
-                refreshTaskDetailsPanel();
+            if (val === 100 && draftTask.status !== 'completed') {
+                mutateDraft((target) => {
+                    target.status = 'completed';
+                });
+                if (!isDraftMode) {
+                    task.status = 'completed';
+                    gantt.updateTask(task.id);
+                    refreshTaskDetailsPanel();
+                }
+            } else if (val < 100 && draftTask.status === 'completed') {
+                mutateDraft((target) => {
+                    target.status = 'in_progress';
+                });
+                if (!isDraftMode) {
+                    task.status = 'in_progress';
+                    gantt.updateTask(task.id);
+                    refreshTaskDetailsPanel();
+                }
             }
         };
 
@@ -262,13 +345,23 @@ export function bindRightSectionEvents(panel, task) {
             }
 
             if (!isNaN(value) && value > 0) {
-                task.duration = value;
-                task.estimated_hours = value;
+                if ((draftTask.duration || 0) === value && (draftTask.estimated_hours || 0) === value) {
+                    return;
+                }
+                saveTaskState();
+                mutateDraft((target) => {
+                    target.duration = value;
+                    target.estimated_hours = value;
+                });
+                if (!isDraftMode) {
+                    task.duration = value;
+                    task.estimated_hours = value;
+                }
                 durationInput.value = value; // 标准化显示
                 if (durationHint) {
                     durationHint.textContent = formatDuration(value);
                 }
-                gantt.updateTask(task.id);
+                persistIfNeeded();
             }
         });
     }
@@ -278,8 +371,15 @@ export function bindRightSectionEvents(panel, task) {
         actualHoursInput.addEventListener('blur', () => {
             const value = parseFloat(actualHoursInput.value);
             if (!isNaN(value) && value >= 0) {
-                task.actual_hours = value;
-                gantt.updateTask(task.id);
+                if ((draftTask.actual_hours || 0) === value) return;
+                saveTaskState();
+                mutateDraft((target) => {
+                    target.actual_hours = value;
+                });
+                if (!isDraftMode) {
+                    task.actual_hours = value;
+                }
+                persistIfNeeded();
             }
         });
     }
@@ -298,7 +398,7 @@ export function bindRightSectionEvents(panel, task) {
     }
 
     // 绑定自定义字段事件
-    bindCustomFieldEvents(panel, task);
+    bindCustomFieldEvents(panel, draftTask, { task, isDraftMode });
 
     // 绑定前置任务事件
     bindDependencyEvents(panel, task);
@@ -689,11 +789,28 @@ function renderCustomFieldInput(field, value, fieldId) {
 /**
  * 绑定日期输入事件
  */
-function bindDateInput(panel, selector, task, fieldName, isEndDate = false) {
+function bindDateInput(panel, selector, task, fieldName, isEndDate = false, options = {}) {
+    const sourceTask = options.task || task;
+    const isDraftMode = !!options.isDraftMode;
+    const saveTaskState = typeof options.saveTaskState === 'function' ? options.saveTaskState : () => {};
+    const mutateDraft = typeof options.mutateDraft === 'function'
+        ? options.mutateDraft
+        : (mutator) => {
+            if (typeof mutator === 'function') {
+                mutator(task);
+            }
+        };
+
     const input = panel.querySelector(selector);
     if (!input) return;
 
     input.addEventListener('change', () => {
+        const nextTask = {
+            start_date: task.start_date,
+            end_date: task.end_date,
+            duration: task.duration || 0
+        };
+
         // <input type="date"> 返回 "YYYY-MM-DD"，用本地时区解析避免时区偏移
         const parts = input.value.split('-').map(Number);
         if (parts.length !== 3 || parts.some(isNaN)) return;
@@ -704,31 +821,68 @@ function bindDateInput(panel, selector, task, fieldName, isEndDate = false) {
             // 用户从 <input type="date"> 选择的日期是"包含"的最后一天（inclusive）
             // DHTMLX 需要"排除"边界（exclusive），即 +1 天
             const exclusiveEnd = inclusiveToExclusive(dateValue);
-            task.end_date = exclusiveEnd;
-            const startDate = task.start_date;
+            nextTask.end_date = exclusiveEnd;
+            const startDate = nextTask.start_date;
             if (startDate) {
                 // 用 DHTMLX 内部日历计算工作日数，与甘特条渲染保持一致
                 const workDuration = gantt.calculateDuration(startDate, exclusiveEnd);
                 if (workDuration > 0) {
-                    task.duration = workDuration;
+                    nextTask.duration = workDuration;
                 }
             }
         } else {
-            task[fieldName] = dateValue;
+            nextTask[fieldName] = dateValue;
             // 若调整的是开始时间，同步更新 end_date（保持工期不变）
-            if (fieldName === 'start_date' && task.duration) {
-                task.end_date = gantt.calculateEndDate(dateValue, task.duration);
+            if (fieldName === 'start_date' && nextTask.duration) {
+                nextTask.end_date = gantt.calculateEndDate(dateValue, nextTask.duration);
             }
         }
 
-        gantt.updateTask(task.id);
+        const prevStart = task.start_date ? new Date(task.start_date).getTime() : null;
+        const prevEnd = task.end_date ? new Date(task.end_date).getTime() : null;
+        const prevDuration = task.duration || 0;
+        const nextStart = nextTask.start_date ? new Date(nextTask.start_date).getTime() : null;
+        const nextEnd = nextTask.end_date ? new Date(nextTask.end_date).getTime() : null;
+        const nextDuration = nextTask.duration || 0;
+        if (prevStart === nextStart && prevEnd === nextEnd && prevDuration === nextDuration) {
+            return;
+        }
+
+        saveTaskState();
+
+        mutateDraft((target) => {
+            target.start_date = nextTask.start_date;
+            target.end_date = nextTask.end_date;
+            target.duration = nextTask.duration;
+        });
+
+        if (!isDraftMode) {
+            sourceTask.start_date = nextTask.start_date;
+            sourceTask.end_date = nextTask.end_date;
+            sourceTask.duration = nextTask.duration;
+            gantt.updateTask(sourceTask.id);
+        }
     });
 }
 
 /**
  * 绑定自定义字段事件
  */
-function bindCustomFieldEvents(panel, task) {
+function bindCustomFieldEvents(panel, task, options = {}) {
+    const sourceTask = options.task || task;
+    const isDraftMode = !!options.isDraftMode;
+
+    const saveTaskState = () => {
+        if (isDraftMode || undoManager.isApplyingHistoryOperation()) return;
+        undoManager.saveState(sourceTask.id);
+    };
+
+    const persistIfNeeded = () => {
+        if (isDraftMode) return;
+        gantt.updateTask(sourceTask.id);
+        showToast(i18n.t('message.saveSuccess'), 'success');
+    };
+
     if (!state.customFields || state.customFields.length === 0) return;
 
     const userCustomFields = state.customFields.filter(
@@ -740,9 +894,13 @@ function bindCustomFieldEvents(panel, task) {
 
         if (field.type === 'select') {
             setupSelect(fieldId, field.options || [], task[field.name], (val) => {
+                if (task[field.name] === val) return;
+                saveTaskState();
                 task[field.name] = val;
-                gantt.updateTask(task.id);
-                showToast(i18n.t('message.saveSuccess'), 'success');
+                if (!isDraftMode) {
+                    sourceTask[field.name] = val;
+                }
+                persistIfNeeded();
             }, { isMulti: false });
 
         } else if (field.type === 'multiselect') {
@@ -762,13 +920,20 @@ function bindCustomFieldEvents(panel, task) {
                 // 检查 renderSelectHTML 逻辑 -> 它接受数组。
                 // 检查 bindSelect -> 它传递数组。
                 // 我们在 task 上存储数组是最佳实践，但在 display template 中可能需要处理。
-                task[field.name] = val; // Store as array
+                const currentVal = Array.isArray(task[field.name]) ? task[field.name] : [];
+                const nextVal = Array.isArray(val) ? val : [];
+                const isSame = currentVal.length === nextVal.length && currentVal.every((item, index) => item === nextVal[index]);
+                if (isSame) return;
 
                 // 注意：DHTMLX Gantt 默认序列化可能不支持数组，
                 // 如果导出到 Excel/JSON 可能需要处理。
                 // 但此处我们先只更新状态。
-                gantt.updateTask(task.id);
-                showToast(i18n.t('message.saveSuccess'), 'success');
+                saveTaskState();
+                task[field.name] = nextVal; // Store as array
+                if (!isDraftMode) {
+                    sourceTask[field.name] = nextVal;
+                }
+                persistIfNeeded();
             }, { isMulti: true, placeholder: i18n.t('form.selectPlaceholder') || '请选择' });
 
         } else {
@@ -786,9 +951,12 @@ function bindCustomFieldEvents(panel, task) {
                 }
 
                 if (task[field.name] !== newValue) {
+                    saveTaskState();
                     task[field.name] = newValue;
-                    gantt.updateTask(task.id);
-                    showToast(i18n.t('message.saveSuccess'), 'success');
+                    if (!isDraftMode) {
+                        sourceTask[field.name] = newValue;
+                    }
+                    persistIfNeeded();
                 }
             });
         }

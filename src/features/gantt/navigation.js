@@ -4,6 +4,8 @@
  * 实现拖拽平移和"回到今天"功能
  */
 
+import undoManager from '../ai/services/undoManager.js';
+
 /**
  * 初始化导航功能
  */
@@ -16,7 +18,64 @@ export function initNavigation() {
     // 绑定"回到今天"按钮事件
     bindTodayButton();
 
+    // 绑定撤回/重做按钮事件
+    bindUndoRedoButtons();
+    bindUndoStackChangeListener();
+    refreshUndoRedoButtons();
+
     console.log('✅ 甘特图导航模块初始化完成');
+}
+
+let undoStackChangeBound = false;
+
+export function refreshUndoRedoButtons() {
+    const undoBtn = document.getElementById('undo-btn');
+    const redoBtn = document.getElementById('redo-btn');
+
+    if (undoBtn) {
+        const canUndo = typeof undoManager?.canUndo === 'function' ? undoManager.canUndo() : false;
+        undoBtn.disabled = !canUndo;
+        undoBtn.setAttribute('aria-disabled', String(!canUndo));
+    }
+
+    if (redoBtn) {
+        const canRedo = typeof undoManager?.canRedo === 'function' ? undoManager.canRedo() : false;
+        redoBtn.disabled = !canRedo;
+        redoBtn.setAttribute('aria-disabled', String(!canRedo));
+    }
+}
+
+function bindUndoStackChangeListener() {
+    if (undoStackChangeBound) return;
+    document.addEventListener('undoStackChange', refreshUndoRedoButtons);
+    undoStackChangeBound = true;
+}
+
+function bindUndoRedoButtons() {
+    const undoBtn = document.getElementById('undo-btn');
+    const redoBtn = document.getElementById('redo-btn');
+
+    if (undoBtn && !undoBtn.dataset.boundUndo) {
+        undoBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            if (typeof undoManager?.undo === 'function' && undoManager.canUndo()) {
+                undoManager.undo();
+            }
+            refreshUndoRedoButtons();
+        });
+        undoBtn.dataset.boundUndo = 'true';
+    }
+
+    if (redoBtn && !redoBtn.dataset.boundRedo) {
+        redoBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            if (typeof undoManager?.redo === 'function' && undoManager.canRedo()) {
+                undoManager.redo();
+            }
+            refreshUndoRedoButtons();
+        });
+        redoBtn.dataset.boundRedo = 'true';
+    }
 }
 
 /**
@@ -159,4 +218,6 @@ function bindTodayButton() {
  */
 export function refreshTodayButtonBinding() {
     bindTodayButton();
+    bindUndoRedoButtons();
+    refreshUndoRedoButtons();
 }

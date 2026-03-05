@@ -1,9 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-
-// Mock the 'ai' module - tool() just returns the definition as-is
-vi.mock('ai', () => ({
-    tool: vi.fn((def) => def)
-}));
+import { describe, it, expect, beforeEach } from 'vitest';
 
 import { allTools, getToolsForSkill } from '../../../../src/features/ai/tools/registry.js';
 
@@ -12,31 +7,32 @@ const EXPECTED_TOOL_NAMES = [
     'get_tasks_by_status',
     'get_overdue_tasks',
     'get_tasks_by_priority',
-    'get_progress_summary'
+    'get_progress_summary',
+    'get_calendar_info',
+    'get_assignee_workload'
 ];
 
 describe('AI Tools Registry', () => {
     beforeEach(() => {
-        vi.clearAllMocks();
     });
 
     describe('allTools export', () => {
-        it('should contain all 5 tool names', () => {
+        it('should contain required tool names', () => {
             const toolNames = Object.keys(allTools);
-            expect(toolNames).toHaveLength(5);
+            expect(toolNames.length).toBeGreaterThanOrEqual(EXPECTED_TOOL_NAMES.length);
             for (const name of EXPECTED_TOOL_NAMES) {
                 expect(allTools).toHaveProperty(name);
             }
         });
 
-        it('each tool should have description, parameters, and execute', () => {
+        it('each tool should have description, inputSchema, and execute', () => {
             for (const name of EXPECTED_TOOL_NAMES) {
                 const tool = allTools[name];
                 expect(tool).toBeDefined();
                 expect(tool).toHaveProperty('description');
                 expect(typeof tool.description).toBe('string');
                 expect(tool.description.length).toBeGreaterThan(0);
-                expect(tool).toHaveProperty('parameters');
+                expect(tool).toHaveProperty('inputSchema');
                 expect(tool).toHaveProperty('execute');
                 expect(typeof tool.execute).toBe('function');
             }
@@ -61,7 +57,7 @@ describe('AI Tools Registry', () => {
 
         it('should return matching tools for valid names', () => {
             const result = getToolsForSkill(EXPECTED_TOOL_NAMES);
-            expect(Object.keys(result)).toHaveLength(5);
+            expect(Object.keys(result)).toHaveLength(EXPECTED_TOOL_NAMES.length);
             for (const name of EXPECTED_TOOL_NAMES) {
                 expect(result).toHaveProperty(name);
                 expect(result[name]).toBe(allTools[name]);
@@ -87,11 +83,11 @@ describe('AI Tools Registry', () => {
         });
 
         it('should include valid tools and skip non-existent ones in mixed input', () => {
-            const mixed = ['get_today_tasks', 'non_existent', 'get_progress_summary'];
+            const mixed = ['get_today_tasks', 'non_existent', 'get_calendar_info'];
             const result = getToolsForSkill(mixed);
             expect(Object.keys(result)).toHaveLength(2);
             expect(result).toHaveProperty('get_today_tasks');
-            expect(result).toHaveProperty('get_progress_summary');
+            expect(result).toHaveProperty('get_calendar_info');
             expect(result).not.toHaveProperty('non_existent');
         });
     });

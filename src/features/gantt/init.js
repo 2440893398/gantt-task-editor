@@ -9,7 +9,7 @@ import { updateGanttColumns } from './columns.js';
 import { initResizer } from './resizer.js';
 import { registerCustomFieldsBlock, configureLightbox, registerNameInput } from '../lightbox/customization.js';
 import { updateSelectedTasksUI, applySelectionStyles } from '../selection/selectionManager.js';
-import { initNavigation } from './navigation.js';
+import { initNavigation, refreshUndoRedoButtons } from './navigation.js';
 import { initMarkers } from './markers.js';
 import { initZoom, refreshZoomBindings } from './zoom.js';
 import { initScheduler } from './scheduler.js';
@@ -775,7 +775,9 @@ export function initGantt() {
     initSnapping();
 
     // 初始化工作日历高亮缓存（后台异步，不阻塞渲染）
-    initCalendarHighlightCache();
+    initCalendarHighlightCache().catch((error) => {
+        console.warn('[Calendar] failed to initialize highlight cache:', error);
+    });
 
     // 甘特图渲染后重新应用选中样式
     gantt.attachEvent("onGanttRender", function () {
@@ -822,6 +824,7 @@ export function setupGlobalEvents() {
                     gantt.undo();
                     console.log('[Gantt] Gantt undo executed');
                 }
+                refreshUndoRedoButtons();
             }
         }
 
@@ -845,6 +848,7 @@ export function setupGlobalEvents() {
                     gantt.redo();
                     console.log('[Gantt] Gantt redo executed');
                 }
+                refreshUndoRedoButtons();
             }
         }
     });
@@ -913,6 +917,8 @@ export function setupGlobalEvents() {
  * type: 'holiday' | 'makeupday' | 'overtime' | 'companyday'
  */
 async function initCalendarHighlightCache() {
+    if (typeof window === 'undefined') return;
+
     // 后台预拉取节假日
     await prefetchHolidays();
 
@@ -936,6 +942,8 @@ async function initCalendarHighlightCache() {
  * 在用户修改日历设置后调用
  */
 export async function refreshHolidayHighlightCache() {
+    if (typeof window === 'undefined') return;
+
     const cache = window.__calendarHighlightCache;
     if (!cache) return;
 

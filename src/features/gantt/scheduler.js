@@ -20,7 +20,10 @@ import {
     getHolidayDayByCountry,
     isPersonOnLeave,
 } from '../../core/storage.js';
-import { rollupStatus, rollupAssignee, sumNumberField } from './parent-rollup.js';
+import { rollupStatus, rollupAssignee, sumNumberField, rollupProgress } from './parent-rollup.js';
+import undoManager from '../ai/services/undoManager.js';
+
+const dragSnapshotTaskIds = new Set();
 
 /**
  * 初始化调度引擎
@@ -270,6 +273,12 @@ export function updateParentDates(taskId) {
             changed = true;
         }
 
+        const nextProgress = rollupProgress(childTasks);
+        if ((parent.progress || 0) !== nextProgress) {
+            parent.progress = nextProgress;
+            changed = true;
+        }
+
         const lockAssignee = !!parent.parent_assignee_locked;
         const nextAssignee = rollupAssignee(
             childTasks.map((c) => c.assignee),
@@ -299,6 +308,7 @@ export function updateParentDates(taskId) {
 function bindTaskChangeEvents() {
     // 任务拖拽完成后触发调度
     gantt.attachEvent("onAfterTaskDrag", function (id, mode, e) {
+        dragSnapshotTaskIds.delete(id);
         console.log('📅 任务拖拽完成，触发调度:', id);
         updateParentDates(id);
         // 异步重新调度依赖任务（不调用 gantt.autoSchedule）
@@ -353,6 +363,11 @@ function bindWBSEvents() {
         if (children.length > 0 && (mode === 'resize' || mode === 'move')) {
             console.log('🚫 父任务时间由子任务决定，禁止拖拽');
             return false;
+        }
+
+        if (!dragSnapshotTaskIds.has(id)) {
+            undoManager.saveState(id);
+            dragSnapshotTaskIds.add(id);
         }
         return true;
     });

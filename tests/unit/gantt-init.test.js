@@ -46,7 +46,7 @@ describe('甘特图初始化', () => {
   it('应该设置正确的行高和刻度高度', () => {
     initGantt();
 
-    expect(gantt.config.row_height).toBe(50);
+    expect(gantt.config.row_height).toBe(40);
     expect(gantt.config.scale_height).toBe(40);
     expect(gantt.config.reorder_grid_columns).toBe(true);
   });
@@ -137,13 +137,13 @@ describe('任务样式渲染', () => {
     initGantt();
   });
 
-  it('应该为逾期未完成任务添加 overdue 样式', () => {
+  it('应该不再为逾期未完成任务添加 overdue 样式', () => {
     const pastDate = new Date('2020-01-01');
     const task = { progress: 0.5 };
 
     const className = gantt.templates.task_class(new Date(), pastDate, task);
 
-    expect(className).toContain('task_overdue');
+    expect(className).not.toContain('task_overdue');
   });
 
   it('应该为已完成任务添加 completed 样式', () => {

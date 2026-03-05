@@ -8,6 +8,7 @@ import { showToast } from '../../../utils/toast.js';
 import { checkAiConfigured } from '../../../core/store.js';
 import { runAgentStream, runSmartChat } from '../api/client.js';
 import { getAgent, getAgentName } from '../prompts/agentRegistry.js';
+import { DIFF_JSON_SCHEMA, IMPORT_SYSTEM_PROMPT } from '../prompts/importPrompt.js';
 import { openAiConfigModal } from '../components/AiConfigModal.js';
 import AiDrawer from '../components/AiDrawer.js';
 import { handleAiError } from './errorHandler.js';
@@ -109,6 +110,85 @@ function resolveInputBubbleMode(agentId) {
     return 'mention';
 }
 
+const TASK_SNAPSHOT_LIMITS = {
+    maxTasks: 120,
+    maxChars: 6000,
+    maxTextLength: 80
+};
+
+function sanitizeSnapshotValue(value, fallback = '-') {
+    const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+    return text || fallback;
+}
+
+function normalizeSnapshotDate(value) {
+    if (!value) return '-';
+    if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value.trim())) {
+        return value.trim();
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+        return sanitizeSnapshotValue(value, '-');
+    }
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+}
+
+function buildCurrentTaskSnapshotBlock() {
+    if (typeof gantt === 'undefined' || !gantt || typeof gantt.eachTask !== 'function') {
+        return '';
+    }
+
+    const tasks = [];
+    try {
+        gantt.eachTask((task) => {
+            if (!task || task.id === undefined || task.id === null) return;
+            const text = sanitizeSnapshotValue(task.text || task.name || '-', '-')
+                .slice(0, TASK_SNAPSHOT_LIMITS.maxTextLength);
+            const parent = task.parent ?? (typeof gantt.getParent === 'function' ? gantt.getParent(task.id) : 0);
+
+            tasks.push({
+                id: String(task.id),
+                text,
+                start_date: normalizeSnapshotDate(task.start_date),
+                end_date: normalizeSnapshotDate(task.end_date),
+                assignee: sanitizeSnapshotValue(task.assignee, '-'),
+                status: sanitizeSnapshotValue(task.status, '-'),
+                priority: sanitizeSnapshotValue(task.priority, '-'),
+                parent: sanitizeSnapshotValue(parent, '0')
+            });
+        });
+    } catch {
+        return '';
+    }
+
+    if (!tasks.length) return '';
+
+    tasks.sort((a, b) => {
+        if (a.start_date !== b.start_date) return a.start_date.localeCompare(b.start_date);
+        return a.id.localeCompare(b.id);
+    });
+
+    const sampled = tasks.slice(0, TASK_SNAPSHOT_LIMITS.maxTasks);
+    const lines = sampled.map((task) => (
+        `- id=${task.id}; text=${task.text}; start=${task.start_date}; end=${task.end_date}; assignee=${task.assignee}; status=${task.status}; priority=${task.priority}; parent=${task.parent}`
+    ));
+
+    let block = [
+        '[Current Task Snapshot]',
+        `total=${tasks.length}, sampled=${sampled.length}`,
+        ...lines
+    ].join('\n');
+
+    if (block.length > TASK_SNAPSHOT_LIMITS.maxChars) {
+        block = `${block.slice(0, TASK_SNAPSHOT_LIMITS.maxChars - 3)}...`;
+    }
+
+    return block;
+}
+
 function formatReferencedTasksBlock(referencedTasks = []) {
     if (!Array.isArray(referencedTasks) || referencedTasks.length === 0) {
         return '';
@@ -126,21 +206,56 @@ function formatReferencedTasksBlock(referencedTasks = []) {
     return `[Selected Task Context]\n${lines.join('\n')}`;
 }
 
-function enrichMessageWithReferences(message, referencedTasks = []) {
+function formatAttachmentContextBlock(attachmentContext) {
+    const promptBlock = String(attachmentContext?.promptBlock || '').trim();
+    const currentTasksBlock = buildCurrentTaskSnapshotBlock();
+
+    const blocks = [];
+    if (promptBlock) {
+        blocks.push(`[Attachment Context]\n${promptBlock}`);
+    }
+    if (currentTasksBlock) {
+        blocks.push(currentTasksBlock);
+    }
+
+    return blocks.join('\n\n');
+}
+
+function enrichMessageWithReferences(message, referencedTasks = [], attachmentContext = null) {
     const baseMessage = (message || '').trim();
     const referencesBlock = formatReferencedTasksBlock(referencedTasks);
+    const attachmentBlock = formatAttachmentContextBlock(attachmentContext);
 
-    if (!referencesBlock) return baseMessage;
-    if (!baseMessage) return referencesBlock;
+    const contextBlocks = [referencesBlock, attachmentBlock].filter(Boolean);
+    if (!contextBlocks.length) return baseMessage;
+    if (!baseMessage) return contextBlocks.join('\n\n');
 
-    return `${referencesBlock}\n\n[User Question]\n${baseMessage}`;
+    return `${contextBlocks.join('\n\n')}\n\n[User Question]\n${baseMessage}`;
 }
 
 function toModelMessage(msg) {
     return {
         role: msg.role,
-        content: enrichMessageWithReferences(msg.content, msg.referencedTasks)
+        content: enrichMessageWithReferences(msg.content, msg.referencedTasks, msg.attachmentContext)
     };
+}
+
+function buildImportGuidanceBlock() {
+    return [
+        '[IMPORT_ANALYSIS_GUIDANCE]',
+        IMPORT_SYSTEM_PROMPT,
+        '',
+        '[DIFF_JSON_SCHEMA]',
+        JSON.stringify(DIFF_JSON_SCHEMA, null, 2)
+    ].join('\n');
+}
+
+function prependImportGuidanceForAttachment(content, attachmentContext = null) {
+    if (!attachmentContext?.promptBlock) {
+        return content;
+    }
+
+    return `${buildImportGuidanceBlock()}\n\n${content}`;
 }
 
 // 当前调用上下文
@@ -217,7 +332,9 @@ export async function invokeAgent(agentId, context = {}) {
             let hasStartedAssistant = true;
             const toolStatusById = new Map();
 
-            await runSmartChat(context.text, [], {
+            const modelMessage = prependImportGuidanceForAttachment(context.text, context.attachmentContext);
+
+            await runSmartChat(modelMessage, [], {
                 onToolCall: (toolCalls = []) => {
                     toolCalls.forEach(tc => {
                         const el = AiDrawer.showToolCall(tc);
@@ -307,8 +424,8 @@ if (typeof document !== 'undefined') {
     });
 
     document.addEventListener('aiSend', (e) => {
-        const { message, referencedTasks = [] } = e.detail || {};
-        continueConversation(message, null, { referencedTasks });
+        const { message, referencedTasks = [], attachmentContext = null } = e.detail || {};
+        continueConversation(message, null, { referencedTasks, attachmentContext });
     });
 }
 
@@ -347,7 +464,8 @@ export async function continueConversation(userMessage, messageId = null, option
     const messages = history.map(toModelMessage);
 
     const referencedTasks = Array.isArray(options.referencedTasks) ? options.referencedTasks : [];
-    const enrichedUserMessage = enrichMessageWithReferences(userMessage, referencedTasks);
+    const attachmentContext = options.attachmentContext || null;
+    const enrichedUserMessage = enrichMessageWithReferences(userMessage, referencedTasks, attachmentContext);
 
     // 如果是新消息（非重试），添加到历史
     if (userMessage) {
@@ -356,7 +474,7 @@ export async function continueConversation(userMessage, messageId = null, option
             content: enrichedUserMessage
         });
         // UI 上显示用户消息
-        AiDrawer.addMessage('user', userMessage, { referencedTasks });
+        AiDrawer.addMessage('user', userMessage, { referencedTasks, attachmentContext });
     }
 
     // F-109: 如果有附加指令且是第一轮（或者作为 System 补充），需要处理
@@ -380,12 +498,14 @@ export async function continueConversation(userMessage, messageId = null, option
         // Retry: 没有新输入时，复用最后一条 user 消息（避免追加空 user 消息）
         let effectiveMessage = userMessage;
         let effectiveReferencedTasks = referencedTasks;
+        let effectiveAttachmentContext = attachmentContext;
         let effectiveHistory = history;
         if (!effectiveMessage) {
             const lastUserIndex = [...history].map(m => m.role).lastIndexOf('user');
             if (lastUserIndex >= 0) {
                 effectiveMessage = history[lastUserIndex].content || '';
                 effectiveReferencedTasks = history[lastUserIndex].referencedTasks || [];
+                effectiveAttachmentContext = history[lastUserIndex].attachmentContext || null;
                 effectiveHistory = history.slice(0, lastUserIndex);
             } else {
                 effectiveMessage = '';
@@ -393,8 +513,18 @@ export async function continueConversation(userMessage, messageId = null, option
             }
         }
 
-        const modelHistory = effectiveHistory.map(toModelMessage);
-        const modelMessage = enrichMessageWithReferences(effectiveMessage, effectiveReferencedTasks);
+        const modelHistory = effectiveHistory.map((msg) => {
+            const modelMsg = toModelMessage(msg);
+            if (modelMsg.role !== 'user') {
+                return modelMsg;
+            }
+            return {
+                ...modelMsg,
+                content: prependImportGuidanceForAttachment(modelMsg.content, msg.attachmentContext)
+            };
+        });
+        const baseModelMessage = enrichMessageWithReferences(effectiveMessage, effectiveReferencedTasks, effectiveAttachmentContext);
+        const modelMessage = prependImportGuidanceForAttachment(baseModelMessage, effectiveAttachmentContext);
 
         await runSmartChat(modelMessage, modelHistory, {
             onToolCall: (toolCalls = []) => {

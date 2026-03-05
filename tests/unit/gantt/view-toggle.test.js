@@ -13,7 +13,8 @@ vi.mock('../../../src/core/store.js', () => ({
 }));
 
 vi.mock('../../../src/features/gantt/columns.js', () => ({
-    updateGanttColumns: vi.fn()
+    updateGanttColumns: vi.fn(),
+    setGanttOnlyColumns: vi.fn()
 }));
 
 vi.mock('../../../src/utils/i18n.js', () => ({
@@ -24,7 +25,7 @@ vi.mock('../../../src/utils/i18n.js', () => ({
 
 import { initViewToggle } from '../../../src/features/gantt/view-toggle.js';
 import { getViewMode, setViewMode } from '../../../src/core/store.js';
-import { updateGanttColumns } from '../../../src/features/gantt/columns.js';
+import { updateGanttColumns, setGanttOnlyColumns } from '../../../src/features/gantt/columns.js';
 import { i18n } from '../../../src/utils/i18n.js';
 
 // --- Helpers ---
@@ -55,6 +56,7 @@ describe('initViewToggle', () => {
                 show_chart: false,
                 columns: []
             },
+            resetLayout: vi.fn(),
             render: vi.fn()
         };
 
@@ -128,8 +130,8 @@ describe('initViewToggle', () => {
         const ganttBtn = document.querySelector('[data-view="gantt"]');
         expect(ganttBtn.classList.contains('active')).toBe(true);
 
-        // applyViewMode was invoked: gantt.render was called
-        expect(gantt.render).toHaveBeenCalled();
+        // applyViewMode was invoked: gantt.resetLayout was called
+        expect(gantt.resetLayout).toHaveBeenCalled();
     });
 
     it('should ignore clicks that are not on a [data-view] element', () => {
@@ -141,7 +143,7 @@ describe('initViewToggle', () => {
         segmented.click();
 
         expect(setViewMode).not.toHaveBeenCalled();
-        expect(gantt.render).not.toHaveBeenCalled();
+        expect(gantt.resetLayout).not.toHaveBeenCalled();
     });
 });
 
@@ -161,6 +163,7 @@ describe('applyViewMode (via initViewToggle)', () => {
                 show_chart: false,
                 columns: []
             },
+            resetLayout: vi.fn(),
             render: vi.fn()
         };
 
@@ -198,34 +201,32 @@ describe('applyViewMode (via initViewToggle)', () => {
 
         expect(gantt.config.show_grid).toBe(true);
         expect(gantt.config.show_chart).toBe(true);
-        expect(gantt.config.columns).toEqual([
-            { name: 'text', label: 'columns.text', tree: true, width: '*', min_width: 240 }
-        ]);
+        expect(setGanttOnlyColumns).toHaveBeenCalled();
         // updateGanttColumns should NOT be called for gantt mode
         expect(updateGanttColumns).not.toHaveBeenCalled();
     });
 
-    // ---- All modes call gantt.render ----
+    // ---- All modes call gantt.resetLayout ----
 
-    it('split mode should call gantt.render()', () => {
+    it('split mode should call gantt.resetLayout()', () => {
         getViewMode.mockReturnValue('split');
         initViewToggle();
 
-        expect(gantt.render).toHaveBeenCalled();
+        expect(gantt.resetLayout).toHaveBeenCalled();
     });
 
-    it('table mode should call gantt.render()', () => {
+    it('table mode should call gantt.resetLayout()', () => {
         getViewMode.mockReturnValue('table');
         initViewToggle();
 
-        expect(gantt.render).toHaveBeenCalled();
+        expect(gantt.resetLayout).toHaveBeenCalled();
     });
 
-    it('gantt mode should call gantt.render()', () => {
+    it('gantt mode should call gantt.resetLayout()', () => {
         getViewMode.mockReturnValue('gantt');
         initViewToggle();
 
-        expect(gantt.render).toHaveBeenCalled();
+        expect(gantt.resetLayout).toHaveBeenCalled();
     });
 
     // ---- Switching modes via click ----
@@ -239,7 +240,7 @@ describe('applyViewMode (via initViewToggle)', () => {
         expect(gantt.config.show_grid).toBe(true);
         expect(gantt.config.show_chart).toBe(false);
         expect(updateGanttColumns).toHaveBeenCalled();
-        expect(gantt.render).toHaveBeenCalled();
+        expect(gantt.resetLayout).toHaveBeenCalled();
     });
 
     it('should apply correct config when switching from split to gantt via click', () => {
@@ -250,10 +251,8 @@ describe('applyViewMode (via initViewToggle)', () => {
 
         expect(gantt.config.show_grid).toBe(true);
         expect(gantt.config.show_chart).toBe(true);
-        expect(gantt.config.columns).toEqual([
-            { name: 'text', label: 'columns.text', tree: true, width: '*', min_width: 240 }
-        ]);
-        expect(gantt.render).toHaveBeenCalled();
+        expect(setGanttOnlyColumns).toHaveBeenCalled();
+        expect(gantt.resetLayout).toHaveBeenCalled();
     });
 });
 
@@ -273,6 +272,7 @@ describe('updateViewToggleUI (via initViewToggle)', () => {
                 show_chart: false,
                 columns: []
             },
+            resetLayout: vi.fn(),
             render: vi.fn()
         };
 

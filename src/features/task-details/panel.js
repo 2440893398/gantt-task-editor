@@ -9,11 +9,115 @@ import { renderLeftSection, bindLeftSectionEvents } from './left-section.js';
 import { renderRightSection, bindRightSectionEvents } from './right-section.js';
 import { destroyRichTextEditor } from '../../components/rich-text-editor.js';
 import { showConfirmDialog } from '../../components/common/confirm-dialog.js';
+import undoManager from '../ai/services/undoManager.js';
 
 let currentPanel = null;
 let currentTaskId = null;
+let currentDraftTask = null;
 let isFullscreen = false;
 let parentTaskStack = [];
+
+function cloneValue(value) {
+    if (typeof structuredClone === 'function') {
+        return structuredClone(value);
+    }
+    return JSON.parse(JSON.stringify(value));
+}
+
+function isDateValue(value) {
+    return value instanceof Date;
+}
+
+function deepEqual(a, b) {
+    if (a === b) return true;
+    if (isDateValue(a) && isDateValue(b)) {
+        return a.getTime() === b.getTime();
+    }
+    if (typeof a !== typeof b) return false;
+    if (a == null || b == null) return a === b;
+    if (typeof a !== 'object') return a === b;
+
+    if (Array.isArray(a) || Array.isArray(b)) {
+        if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+        for (let i = 0; i < a.length; i += 1) {
+            if (!deepEqual(a[i], b[i])) return false;
+        }
+        return true;
+    }
+
+    const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+    for (const key of keys) {
+        if (!deepEqual(a[key], b[key])) return false;
+    }
+    return true;
+}
+
+function getCurrentSourceTask() {
+    if (currentTaskId == null || !gantt || typeof gantt.getTask !== 'function') {
+        return null;
+    }
+    try {
+        return gantt.getTask(currentTaskId);
+    } catch {
+        return null;
+    }
+}
+
+function hasDraftChanges(sourceTask, draftTask) {
+    if (!sourceTask || !draftTask) return false;
+    const keys = new Set([...Object.keys(sourceTask), ...Object.keys(draftTask)]);
+    for (const key of keys) {
+        if (key === 'id') continue;
+        if (!deepEqual(sourceTask[key], draftTask[key])) return true;
+    }
+    return false;
+}
+
+function applyDraftChanges(sourceTask, draftTask) {
+    if (!sourceTask || !draftTask) return false;
+
+    let changed = false;
+    const keys = new Set([...Object.keys(sourceTask), ...Object.keys(draftTask)]);
+    for (const key of keys) {
+        if (key === 'id') continue;
+
+        const nextValue = draftTask[key];
+        if (!deepEqual(sourceTask[key], nextValue)) {
+            sourceTask[key] = cloneValue(nextValue);
+            changed = true;
+        }
+    }
+
+    return changed;
+}
+
+function isDraftDirty() {
+    return hasDraftChanges(getCurrentSourceTask(), currentDraftTask);
+}
+
+function resetDraftFromSource() {
+    const sourceTask = getCurrentSourceTask();
+    currentDraftTask = sourceTask ? cloneValue(sourceTask) : null;
+}
+
+function updateCurrentDraft(mutator) {
+    if (!currentDraftTask || typeof mutator !== 'function') return;
+    mutator(currentDraftTask);
+}
+
+function getBindingContext(panel) {
+    return {
+        draftTask: currentDraftTask,
+        isDraftMode: true,
+        onDraftMutated: (mutator) => {
+            updateCurrentDraft(mutator);
+            const panelTitle = panel.querySelector('#panel-task-title');
+            if (panelTitle && currentDraftTask) {
+                panelTitle.textContent = currentDraftTask.text || i18n.t('taskDetails.newTask');
+            }
+        }
+    };
+}
 
 /**
  * 检查面板是否打开
@@ -34,9 +138,7 @@ export function getCurrentTaskId() {
  * @param {string|number} taskId - 任务ID
  */
 export function openTaskDetailsPanel(taskId) {
-    // 如果已有面板打开，先立即清理
     if (currentPanel) {
-        // 立即清理，不等待动画
         const overlay = document.getElementById('task-details-overlay');
         destroyRichTextEditor();
         if (overlay) overlay.remove();
@@ -51,20 +153,18 @@ export function openTaskDetailsPanel(taskId) {
     }
 
     currentTaskId = taskId;
+    currentDraftTask = cloneValue(task);
 
-    // 创建遮罩层
     const overlay = document.createElement('div');
     overlay.id = 'task-details-overlay';
     overlay.className = 'fixed inset-0 bg-black/50 z-[5999] transition-opacity duration-300 opacity-0 flex items-center justify-center';
     overlay.addEventListener('click', (e) => {
-        // 只有点击遮罩层本身才关闭，点击面板内部不关闭
         if (e.target === overlay) {
             closeTaskDetailsPanel();
         }
     });
     document.body.appendChild(overlay);
 
-    // 创建面板容器 - 居中弹窗样式
     const panel = document.createElement('div');
     panel.id = 'task-details-panel';
     panel.className = `
@@ -75,27 +175,20 @@ export function openTaskDetailsPanel(taskId) {
         scale-95 opacity-0
     `;
 
-    // 构建面板内容
-    panel.innerHTML = buildPanelHTML(task);
+    panel.innerHTML = buildPanelHTML(currentDraftTask);
 
-    // 将面板添加到遮罩层中（居中显示）
     overlay.appendChild(panel);
     currentPanel = panel;
 
-    // 绑定事件
     bindPanelEvents(panel, task);
 
-    // 触发弹出动画
     requestAnimationFrame(() => {
         overlay.classList.remove('opacity-0');
         panel.classList.remove('scale-95', 'opacity-0');
         panel.classList.add('scale-100', 'opacity-100');
     });
 
-    // ESC 键关闭
     document.addEventListener('keydown', handleEscKey);
-
-    // 禁止背景滚动
     document.body.style.overflow = 'hidden';
 }
 
@@ -116,9 +209,7 @@ export function openChildTaskPanel(childTaskId) {
 function buildPanelHTML(task) {
     const isNewTask = !task.text;
     return `
-        <!-- 头部 - 简洁风格 -->
         <div class="flex items-center justify-between px-5 py-3 border-b border-base-200/50 shrink-0 bg-base-100">
-            <!-- 左侧：任务标识 -->
             <div class="flex items-center gap-3">
                 <div class="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
                     <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -131,7 +222,6 @@ function buildPanelHTML(task) {
                 ${isNewTask ? '<span class="badge badge-sm badge-primary badge-outline">新建</span>' : ''}
             </div>
 
-            <!-- 右侧：工具按钮 -->
             <div class="flex items-center gap-0.5">
                 <button id="btn-fullscreen" class="btn btn-ghost btn-sm btn-square opacity-60 hover:opacity-100"
                         title="${i18n.t('taskDetails.fullscreen') || '全屏'}">
@@ -165,17 +255,23 @@ function buildPanelHTML(task) {
             </div>
         </div>
 
-        <!-- 主体内容 - 双栏布局 -->
         <div class="flex flex-1 overflow-hidden">
-            <!-- 左侧编辑区 -->
             <div id="task-details-left" class="flex-1 p-5 overflow-y-auto min-w-0">
                 ${renderLeftSection(task)}
             </div>
 
-            <!-- 右侧属性面板 -->
             <div id="task-details-right" class="w-[260px] shrink-0 p-5 overflow-y-auto bg-base-200/30 border-l border-base-200/50">
                 ${renderRightSection(task)}
             </div>
+        </div>
+
+        <div class="flex items-center justify-end gap-2 px-5 py-3 border-t border-base-200/50 shrink-0 bg-base-100">
+            <button id="btn-cancel-edit" type="button" class="btn btn-ghost btn-sm">
+                ${i18n.t('form.cancel') || '取消'}
+            </button>
+            <button id="btn-confirm-save" type="button" class="btn btn-primary btn-sm">
+                ${i18n.t('form.save') || '确认保存'}
+            </button>
         </div>
     `;
 }
@@ -184,22 +280,42 @@ function buildPanelHTML(task) {
  * 绑定面板事件
  */
 function bindPanelEvents(panel, task) {
-    // 关闭按钮
-    panel.querySelector('#btn-close-panel')?.addEventListener('click', closeTaskDetailsPanel);
-
-    // 全屏按钮
+    panel.querySelector('#btn-close-panel')?.addEventListener('click', () => closeTaskDetailsPanel());
     panel.querySelector('#btn-fullscreen')?.addEventListener('click', toggleFullscreen);
-
-    // 删除任务
     panel.querySelector('#btn-delete-task')?.addEventListener('click', () => {
         showDeleteConfirmModal(task);
     });
+    panel.querySelector('#btn-confirm-save')?.addEventListener('click', handleConfirmSave);
+    panel.querySelector('#btn-cancel-edit')?.addEventListener('click', () => closeTaskDetailsPanel());
 
-    // 绑定左侧区域事件
-    bindLeftSectionEvents(panel, task);
+    const context = getBindingContext(panel);
+    bindLeftSectionEvents(panel, task, context);
+    bindRightSectionEvents(panel, task, context);
+}
 
-    // 绑定右侧区域事件
-    bindRightSectionEvents(panel, task);
+function handleConfirmSave() {
+    const sourceTask = getCurrentSourceTask();
+    if (!sourceTask || !currentDraftTask) {
+        showToast(i18n.t('message.error') || '保存失败', 'error');
+        return;
+    }
+
+    if (!hasDraftChanges(sourceTask, currentDraftTask)) {
+        showToast(i18n.t('message.noChanges') || '没有可保存的变更', 'info');
+        return;
+    }
+
+    if (!undoManager.isApplyingHistoryOperation()) {
+        undoManager.saveState(sourceTask.id);
+    }
+
+    const changed = applyDraftChanges(sourceTask, currentDraftTask);
+    if (changed) {
+        gantt.updateTask(sourceTask.id);
+        showToast(i18n.t('message.saveSuccess') || '保存成功', 'success');
+        resetDraftFromSource();
+        refreshTaskDetailsPanel();
+    }
 }
 
 /**
@@ -222,38 +338,45 @@ function toggleFullscreen() {
 /**
  * 关闭任务详情面板
  */
-export function closeTaskDetailsPanel() {
+export function closeTaskDetailsPanel(options = {}) {
     if (!currentPanel) return;
+
+    if (!options.force && isDraftDirty()) {
+        showConfirmDialog({
+            icon: 'alert-triangle',
+            variant: 'warning',
+            title: i18n.t('taskDetails.unsavedTitle') || '放弃未保存修改？',
+            message: i18n.t('taskDetails.unsavedMessage') || '你有未保存的修改，确定要关闭吗？',
+            confirmText: i18n.t('form.confirm') || '放弃修改',
+            cancelText: i18n.t('form.cancel') || '继续编辑',
+            onConfirm: () => closeTaskDetailsPanel({ force: true })
+        });
+        return;
+    }
 
     const overlay = document.getElementById('task-details-overlay');
     const panel = currentPanel;
 
-    // 销毁富文本编辑器实例
     destroyRichTextEditor();
 
-    // 触发关闭动画
     panel.classList.remove('scale-100', 'opacity-100');
     panel.classList.add('scale-95', 'opacity-0');
     if (overlay) overlay.classList.add('opacity-0');
 
-    // 动画结束后移除元素
     setTimeout(() => {
         if (overlay) overlay.remove();
         currentPanel = null;
         currentTaskId = null;
+        currentDraftTask = null;
         isFullscreen = false;
 
-        // 如果有父任务，自动回到父任务
         if (parentTaskStack.length > 0) {
             const parentId = parentTaskStack.pop();
             openTaskDetailsPanel(parentId);
-            return;
         }
     }, 300);
 
     document.removeEventListener('keydown', handleEscKey);
-
-    // 恢复背景滚动
     document.body.style.overflow = '';
 }
 
@@ -263,30 +386,33 @@ export function closeTaskDetailsPanel() {
 export function refreshTaskDetailsPanel() {
     if (!currentPanel || !currentTaskId) return;
 
-    const task = gantt.getTask(currentTaskId);
-    if (!task) {
-        closeTaskDetailsPanel();
+    if (isDraftDirty()) {
         return;
     }
 
-    // 更新标题
+    const task = gantt.getTask(currentTaskId);
+    if (!task) {
+        closeTaskDetailsPanel({ force: true });
+        return;
+    }
+
     const titleEl = currentPanel.querySelector('#panel-task-title');
     if (titleEl) {
         titleEl.textContent = task.text || i18n.t('taskDetails.newTask');
     }
 
-    // 更新左侧内容
+    resetDraftFromSource();
+
     const leftSection = currentPanel.querySelector('#task-details-left');
     if (leftSection) {
-        leftSection.innerHTML = renderLeftSection(task);
-        bindLeftSectionEvents(currentPanel, task);
+        leftSection.innerHTML = renderLeftSection(currentDraftTask);
+        bindLeftSectionEvents(currentPanel, task, getBindingContext(currentPanel));
     }
 
-    // 更新右侧内容
     const rightSection = currentPanel.querySelector('#task-details-right');
     if (rightSection) {
-        rightSection.innerHTML = renderRightSection(task);
-        bindRightSectionEvents(currentPanel, task);
+        rightSection.innerHTML = renderRightSection(currentDraftTask);
+        bindRightSectionEvents(currentPanel, task, getBindingContext(currentPanel));
     }
 }
 
@@ -312,21 +438,20 @@ function showDeleteConfirmModal(task) {
         cancelText: i18n.t('form.cancel') || '取消',
         onConfirm: () => {
             gantt.deleteTask(task.id);
-            closeTaskDetailsPanel();
+            closeTaskDetailsPanel({ force: true });
             showToast(i18n.t('message.deleteSuccess') || '删除成功', 'success');
         }
     });
 }
 
-/**
- * HTML 转义
- */
-function escapeHtml(str) {
-    if (!str) return '';
-    return String(str)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-}
+export const __test__ = {
+    hasDraftChanges,
+    applyDraftChanges,
+    isDraftDirty,
+    resetDraftFromSource,
+    updateCurrentDraft,
+    getDraftTask: () => currentDraftTask,
+    setDraftTask: (value) => {
+        currentDraftTask = value;
+    }
+};

@@ -8,6 +8,36 @@ import { streamText, stepCountIs } from 'ai';
 import { loadSkill } from '../skills/registry.js';
 import { getToolsForSkill } from '../tools/registry.js';
 import { i18n } from '../../../utils/i18n.js';
+import { IMPORT_SYSTEM_PROMPT, DIFF_JSON_SCHEMA } from '../prompts/importPrompt.js';
+
+function hasAttachmentContext(messages = []) {
+    return Array.isArray(messages) && messages.some((m) =>
+        m?.role === 'user' && typeof m?.content === 'string' && m.content.includes('[Attachment Context]')
+    );
+}
+
+function shouldUseChatEndpoint(baseUrl = '') {
+    const normalizedUrl = baseUrl
+        .toLowerCase()
+        .replace(/^https?:\/\//, '')
+        .replace(/\/.*$/, '')
+        .replace(/\/$/, '');
+    return normalizedUrl !== 'api.openai.com' && !normalizedUrl.endsWith('.api.openai.com');
+}
+
+function resolveModel(modelOrProvider, modelId) {
+    if (typeof modelOrProvider !== 'function') {
+        return modelOrProvider;
+    }
+
+    const config = JSON.parse(localStorage.getItem('gantt_ai_config') || '{}');
+    const id = modelId || config.model || 'gpt-3.5-turbo';
+
+    if (shouldUseChatEndpoint(config.baseUrl) && typeof modelOrProvider.chat === 'function') {
+        return modelOrProvider.chat(id);
+    }
+    return modelOrProvider(id);
+}
 
 function getLanguageInstruction() {
     const currentLanguage = i18n.getLanguage();
@@ -68,7 +98,9 @@ function isToolCallingSupportedByAPI(baseUrl, model) {
  * @param {LanguageModel} model - 已创建的模型实例
  * @param {Object} callbacks - 回调函数
  */
-export async function executeSkill(skillId, messages, model, callbacks = {}) {
+export async function executeSkill(skillId, messages, modelOrProvider, modelIdOrCallbacks = {}, maybeCallbacks = {}) {
+    const model = resolveModel(modelOrProvider, typeof modelIdOrCallbacks === 'string' ? modelIdOrCallbacks : undefined);
+    const callbacks = typeof modelIdOrCallbacks === 'string' ? maybeCallbacks : modelIdOrCallbacks;
     // 1. 加载完整 Skill 内容（按需加载）
     const skill = await loadSkill(skillId);
     if (!skill) {
@@ -132,13 +164,17 @@ export async function executeSkill(skillId, messages, model, callbacks = {}) {
     });
     const todayDate = now.toISOString().split('T')[0]; // YYYY-MM-DD 格式
     
+    const importGuidance = skillId === 'import-analysis' || hasAttachmentContext(messages)
+        ? `\n\n## Attachment Import Guidance\n${IMPORT_SYSTEM_PROMPT}\n\nDIFF_JSON_SCHEMA:\n${JSON.stringify(DIFF_JSON_SCHEMA, null, 2)}`
+        : '';
+
     const systemPrompt = `You are a professional Gantt project management assistant.
 
 ## Current Time
 - Current time: ${currentDateTime}
 - Today's date: ${todayDate}
 
-${skill.content}
+${skill.content}${importGuidance}
 
 ## Critical Rules
 - ${hasTools ? 'Use the provided tools for factual task data. Do not fabricate task data.' : 'You can answer generally, but clearly state you cannot access realtime task data without tool calls.'}
@@ -216,13 +252,18 @@ ${skill.content}
  * @param {LanguageModel} model - 已创建的模型实例
  * @param {Object} callbacks - 回调函数
  */
-export async function executeGeneralChat(messages, model, callbacks = {}) {
+export async function executeGeneralChat(messages, modelOrProvider, modelIdOrCallbacks = {}, maybeCallbacks = {}) {
+    const model = resolveModel(modelOrProvider, typeof modelIdOrCallbacks === 'string' ? modelIdOrCallbacks : undefined);
+    const callbacks = typeof modelIdOrCallbacks === 'string' ? maybeCallbacks : modelIdOrCallbacks;
     const { language, languageName } = getLanguageInstruction();
+    const importGuidance = hasAttachmentContext(messages)
+        ? `\n\nAttachment detected. Prefer import-analysis style output with structured task diff JSON.`
+        : '';
     return streamText({
         model: model,
         system: `You are a helpful project management assistant for Gantt workflows.
 Response language must follow the current UI locale: ${languageName} (${language}).
-If users ask for specific realtime task data, suggest they ask focused questions like "today's tasks" or "overdue tasks" so tool-enabled flows can provide precise results.`,
+If users ask for specific realtime task data, suggest they ask focused questions like "today's tasks" or "overdue tasks" so tool-enabled flows can provide precise results.${importGuidance}`,
         messages,
         maxSteps: 1
     });
