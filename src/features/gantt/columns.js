@@ -243,6 +243,9 @@ export function updateGanttColumns() {
                     const text = task.text || '';
                     let html = '';
 
+                    // 拖拽排序手柄（悬停时显示）
+                    html += `<span class="gantt-drag-handle" title="${i18n.t('gantt.dragToReorder') || '拖动调整顺序'}">⠿</span>`;
+
                     // 如果是项目（父任务），添加项目编号徽章
                     if (task.type === 'project' || (task.parent === 0 && gantt.hasChild(task.id))) {
                         const projectNum = task.project_number || task.id;

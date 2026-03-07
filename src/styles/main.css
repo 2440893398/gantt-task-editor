@@ -329,3 +329,27 @@
     border: 2px solid #f59e0b;
     box-shadow: 0 0 8px rgba(245, 158, 11, 0.4);
 }
+
+/* Drag handle for row reorder */
+.gantt-drag-handle {
+    cursor: grab;
+    color: #9ca3af;
+    padding: 0 4px 0 0;
+    user-select: none;
+    font-size: 14px;
+    vertical-align: middle;
+    opacity: 0;
+    transition: opacity 0.15s;
+}
+.gantt_row:hover .gantt-drag-handle {
+    opacity: 1;
+}
+.gantt_row.row-dragging {
+    opacity: 0.4;
+}
+.gantt_row.row-drag-ghost {
+    background: transparent !important;
+    border-top: 2px solid #3b82f6 !important;
+    height: 2px !important;
+    overflow: hidden;
+}
