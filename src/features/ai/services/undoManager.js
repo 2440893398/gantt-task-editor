@@ -227,6 +227,15 @@ export function undo() {
                 return true;
             }
 
+            if (op === 'reorder') {
+                // 撤回排序 → 恢复 before 状态，将 snapshot 推入 redo 栈
+                _applyReorderSnapshot(snapshot.before);
+                redoStack.push(snapshot);
+                console.log('[UndoManager] Undo reorder: restored before state');
+                _dispatchChange();
+                return true;
+            }
+
             // op === 'update' 或旧格式快照（无 op 字段）
             const currentTask = gantt.getTask(taskId);
             if (!currentTask) {
@@ -311,6 +320,15 @@ export function redo() {
                 gantt.deleteTask(taskId);
                 undoStack.push(deleteSnapshot);
                 console.log('[UndoManager] Redo delete: deleted task', taskId);
+                _dispatchChange();
+                return true;
+            }
+
+            if (op === 'reorder') {
+                // 重做排序 → 恢复 after 状态，将 snapshot 推回 undo 栈
+                _applyReorderSnapshot(snapshot.after);
+                undoStack.push(snapshot);
+                console.log('[UndoManager] Redo reorder: restored after state');
                 _dispatchChange();
                 return true;
             }
@@ -415,11 +433,63 @@ export function isApplyingHistoryOperation() {
     return applyingHistoryOperation;
 }
 
+/**
+ * 保存排序操作快照（reorder 操作）
+ * 在拖拽完成后调用，传入操作前后的任务顺序快照
+ * @param {Array<{id, parent, sortorder}>} before - 拖拽前所有可见任务的顺序状态
+ * @param {Array<{id, parent, sortorder}>} after  - 拖拽后所有可见任务的顺序状态
+ * @returns {boolean} 是否保存成功
+ */
+export function saveReorderState(before, after) {
+    if (!Array.isArray(before) || !Array.isArray(after)) {
+        console.warn('[UndoManager] saveReorderState: invalid arguments');
+        return false;
+    }
+
+    try {
+        const snapshot = {
+            op: 'reorder',
+            timestamp: Date.now(),
+            before: before.map(t => ({ id: t.id, parent: t.parent, sortorder: t.sortorder })),
+            after:  after.map(t => ({ id: t.id, parent: t.parent, sortorder: t.sortorder })),
+        };
+
+        _pushSnapshot(snapshot);
+        console.log('[UndoManager] Reorder state saved. Stack size:', undoStack.length);
+        return true;
+    } catch (e) {
+        console.error('[UndoManager] Failed to save reorder state:', e);
+        return false;
+    }
+}
+
+/**
+ * 应用排序快照（内部辅助函数，供 undo/redo 使用）
+ * @param {Array<{id, parent, sortorder}>} items - 要应用的顺序快照
+ */
+function _applyReorderSnapshot(items) {
+    // 按 sortorder 从小到大排序，确保顺序正确
+    const sorted = [...items].sort((a, b) => a.sortorder - b.sortorder);
+    sorted.forEach(({ id, parent, sortorder }) => {
+        try {
+            const task = gantt.getTask(id);
+            if (!task) return;
+            task.parent = parent ?? 0;
+            task.sortorder = sortorder;
+            gantt.moveTask(id, sortorder, parent ?? 0);
+        } catch (e) {
+            console.warn('[UndoManager] _applyReorderSnapshot: failed for task', id, e);
+        }
+    });
+    gantt.render();
+}
+
 // 导出默认对象
 export default {
     saveState,
     saveAddState,
     saveDeleteState,
+    saveReorderState,
     undo,
     redo,
     canUndo,
