@@ -28,6 +28,7 @@ import { exportCurrentView, exportFullGantt } from './export-image.js';
 import { exportToExcel } from '../config/configIO.js';
 import { initSnapping } from './snapping.js';
 import { computeFieldOrderFromGridColumns, hasFieldOrderChanged } from './column-reorder-sync.js';
+import { initRowSortable } from './row-reorder.js';
 import { prefetchHolidays } from '../calendar/holidayFetcher.js';
 import { getAllCustomDays, getCalendarSettings, db } from '../../core/storage.js';
 
@@ -790,6 +791,8 @@ export function initGantt() {
         if (state.selectedTasks.size > 0) {
             setTimeout(updateSelectedTasksUI, 50);
         }
+        // 重新挂载行排序（每次渲染后 DOM 行被重建）
+        setTimeout(initRowSortable, 0);
     });
 
     // Export Events
