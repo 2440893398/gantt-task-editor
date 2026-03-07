@@ -608,6 +608,11 @@ export function initGantt() {
             updateSelectedTasksUI();
             return false;
         }
+
+        // 普通单击：清空已选，高亮当前任务
+        state.selectedTasks.clear();
+        state.selectedTasks.add(id);
+        updateSelectedTasksUI();
         return true;
     });
 
