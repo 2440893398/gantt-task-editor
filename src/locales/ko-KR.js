@@ -114,7 +114,7 @@ export default {
         deleteLink: '이 종속성을 삭제하시겠습니까?',
         deleteTask: '이 작업을 삭제하시겠습니까?',
         confirmDeleteTitle: '작업 삭제',
-        confirmDelete: '이 작업을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.',
+        confirmDelete: '이 작업을 삭제하시겠습니까? Ctrl+Z로 되돌릴 수 있습니다.',
         confirmClearCache: '모든 캐시를 삭제하시겠습니까? 저장된 모든 작업과 설정이 삭제됩니다.',
         cacheCleared: '캐시가 삭제되었습니다',
         dataRestored: '{{count}}개의 작업이 복원되었습니다',

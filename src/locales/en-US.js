@@ -116,7 +116,7 @@ export default {
         deleteLink: 'Delete this link?',
         deleteTask: 'Delete this task?',
         confirmDeleteTitle: 'Delete Task',
-        confirmDelete: 'Are you sure you want to delete this task? This action cannot be undone.',
+        confirmDelete: 'Are you sure you want to delete this task? You can undo this with Ctrl+Z.',
         confirmClearCache: 'Clear all cached data? This will delete all saved tasks and configurations.',
         cacheCleared: 'Cache cleared',
         dataRestored: 'Restored {{count}} tasks',

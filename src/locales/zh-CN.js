@@ -115,7 +115,7 @@ export default {
         deleteLink: '确定删除依赖关系吗？',
         deleteTask: '确定删除任务吗？',
         confirmDeleteTitle: '删除任务',
-        confirmDelete: '确定要删除此任务吗？此操作无法撤销。',
+        confirmDelete: '确定要删除此任务吗？可通过撤销（Ctrl+Z）恢复。',
         confirmClearCache: '确定清除所有缓存数据吗？这将删除所有保存的任务和配置。',
         cacheCleared: '缓存已清除',
         dataRestored: '已恢复 {{count}} 个任务',
