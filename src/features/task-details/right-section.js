@@ -7,10 +7,12 @@ import { i18n } from '../../utils/i18n.js';
 import { formatDuration, parseDurationInput, exclusiveToInclusive, inclusiveToExclusive, isDayPrecision } from '../../utils/time-formatter.js';
 import { state, isFieldEnabled, getFieldType, getSystemFieldOptions } from '../../core/store.js';
 import undoManager from '../ai/services/undoManager.js';
+import { normalizeScheduleMode } from './schedule-mode.js';
 
 import { showToast } from '../../utils/toast.js';
 import { escapeAttr } from '../../utils/dom.js';
 import { renderSelectHTML, setupSelect } from '../../components/common/dropdown.js';
+import { openTaskDatePickerPopover } from './date-picker-popover.js';
 
 // 系统默认字段 - 这些字段在面板中有固定展示位置，不应在自定义字段区域重复显示
 const SYSTEM_FIELDS = [
@@ -34,6 +36,54 @@ const PRIORITY_CONFIG = {
     medium: { color: 'warning', label: 'Medium' },
     low: { color: 'info', label: 'Low' }
 };
+
+const dropdownWrappers = new Set();
+let hasDropdownOutsideClickListener = false;
+
+function closeDropdownMenu(menu) {
+    menu.classList.add('hidden');
+    menu.classList.remove('block');
+}
+
+function cleanupDropdownWrappers() {
+    for (const wrapper of Array.from(dropdownWrappers)) {
+        if (!wrapper.isConnected) {
+            dropdownWrappers.delete(wrapper);
+        }
+    }
+
+    if (dropdownWrappers.size === 0 && hasDropdownOutsideClickListener) {
+        document.removeEventListener('click', onDropdownOutsideClick);
+        hasDropdownOutsideClickListener = false;
+    }
+}
+
+function onDropdownOutsideClick(event) {
+    for (const wrapper of Array.from(dropdownWrappers)) {
+        if (!wrapper.isConnected) {
+            dropdownWrappers.delete(wrapper);
+            continue;
+        }
+        if (wrapper.contains(event.target)) continue;
+        const menu = wrapper.querySelector('[id$="-menu"]');
+        if (menu) closeDropdownMenu(menu);
+    }
+
+    if (dropdownWrappers.size === 0 && hasDropdownOutsideClickListener) {
+        document.removeEventListener('click', onDropdownOutsideClick);
+        hasDropdownOutsideClickListener = false;
+    }
+}
+
+function registerDropdownWrapper(wrapper) {
+    cleanupDropdownWrappers();
+    dropdownWrappers.add(wrapper);
+
+    if (!hasDropdownOutsideClickListener) {
+        document.addEventListener('click', onDropdownOutsideClick);
+        hasDropdownOutsideClickListener = true;
+    }
+}
 
 /**
  * 渲染右侧属性面板
@@ -77,6 +127,7 @@ export function renderRightSection(task) {
                 ${i18n.t('taskDetails.schedule') || '排期'}
             </h4>
             <div class="space-y-2">
+                ${renderScheduleModeRow(task)}
                 ${renderDateRow('start-date', i18n.t('taskDetails.planStart') || '开始', formatDateValue(task.start_date), 'calendar')}
                 ${renderDateRow('end-date', i18n.t('taskDetails.planEnd') || '截止', formatDateValue(exclusiveToInclusive(getEndDate(task))), 'calendar-check')}
             </div>
@@ -257,11 +308,36 @@ export function bindRightSectionEvents(panel, task, context = {}) {
         persistIfNeeded();
     });
 
+    const scheduleModeOptions = [
+        {
+            value: 'start_duration',
+            label: i18n.t('taskDetails.scheduleModeStartDuration') || '开始 + 工期'
+        },
+        {
+            value: 'start_end',
+            label: i18n.t('taskDetails.scheduleModeStartEnd') || '开始 + 截止'
+        }
+    ];
+
+    setupSelect('task-schedule-mode', scheduleModeOptions, normalizeScheduleMode(draftTask.schedule_mode), (value) => {
+        const nextMode = normalizeScheduleMode(value);
+        const currentMode = normalizeScheduleMode(draftTask.schedule_mode);
+        if (currentMode === nextMode) return;
+        saveTaskState();
+        mutateDraft((target) => {
+            target.schedule_mode = nextMode;
+        });
+        if (!isDraftMode) {
+            task.schedule_mode = nextMode;
+        }
+        persistIfNeeded();
+    }, { isMulti: false });
+
     // 日期字段
-    bindDateInput(panel, '#task-start-date', draftTask, 'start_date', false, { task, isDraftMode, saveTaskState, mutateDraft });
-    bindDateInput(panel, '#task-end-date', draftTask, 'end_date', true, { task, isDraftMode, saveTaskState, mutateDraft });
-    bindDateInput(panel, '#task-actual-start', draftTask, 'actual_start', false, { task, isDraftMode, saveTaskState, mutateDraft });
-    bindDateInput(panel, '#task-actual-end', draftTask, 'actual_end', false, { task, isDraftMode, saveTaskState, mutateDraft });
+    bindDateInput(panel, '#task-start-date', draftTask, 'start_date', false, { task, isDraftMode, saveTaskState, mutateDraft, isOptional: false });
+    bindDateInput(panel, '#task-end-date', draftTask, 'end_date', true, { task, isDraftMode, saveTaskState, mutateDraft, isOptional: false });
+    bindDateInput(panel, '#task-actual-start', draftTask, 'actual_start', false, { task, isDraftMode, saveTaskState, mutateDraft, isOptional: true });
+    bindDateInput(panel, '#task-actual-end', draftTask, 'actual_end', false, { task, isDraftMode, saveTaskState, mutateDraft, isOptional: true });
 
     // 进度字段
     const progressInput = panel.querySelector('#task-progress-input');
@@ -545,6 +621,36 @@ function renderPriorityRow(currentPriority) {
     `;
 }
 
+function renderScheduleModeRow(task) {
+    const currentMode = normalizeScheduleMode(task?.schedule_mode);
+    const label = i18n.t('taskDetails.scheduleMode') || '模式';
+    const options = [
+        {
+            value: 'start_duration',
+            label: i18n.t('taskDetails.scheduleModeStartDuration') || '开始 + 工期'
+        },
+        {
+            value: 'start_end',
+            label: i18n.t('taskDetails.scheduleModeStartEnd') || '开始 + 截止'
+        }
+    ];
+
+    return `
+        <div class="flex items-center justify-between py-2.5">
+            <div class="flex items-center gap-2 text-sm text-base-content/70">
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path d="M8 7h8M8 12h8M8 17h5" />
+                    <rect x="3" y="4" width="18" height="16" rx="2" />
+                </svg>
+                <span>${label}</span>
+            </div>
+            <div class="w-32">
+                ${renderSelectHTML('task-schedule-mode', currentMode, options, { placeholder: '-', width: 'w-32' })}
+            </div>
+        </div>
+    `;
+}
+
 function getPriorityColorClass(priority) {
     const priorityColors = {
         high: 'bg-error/15 text-error border border-error/20',
@@ -599,12 +705,12 @@ function renderDateRow(id, label, value, iconType, isOptional = false) {
                 ${iconSvg}
                 <span>${label}</span>
             </div>
-            <div class="text-sm ${valueClass}">
-                ${value ?
-            `<input type="date" id="task-${id}" class="input input-ghost input-xs p-0 w-28 text-right" value="${value}" />` :
-            `<span class="cursor-pointer hover:text-primary" data-date-field="${id}">${displayText}</span>`
-        }
-            </div>
+            <button type="button"
+                    id="task-${id}"
+                    class="btn btn-ghost btn-xs h-auto min-h-0 px-1 py-0 normal-case font-normal text-sm ${valueClass} hover:text-primary"
+                    data-date-optional="${isOptional ? '1' : '0'}">
+                ${displayText}
+            </button>
         </div>
     `;
 }
@@ -804,65 +910,111 @@ function bindDateInput(panel, selector, task, fieldName, isEndDate = false, opti
     const input = panel.querySelector(selector);
     if (!input) return;
 
-    input.addEventListener('change', () => {
-        const nextTask = {
-            start_date: task.start_date,
-            end_date: task.end_date,
-            duration: task.duration || 0
-        };
-
-        // <input type="date"> 返回 "YYYY-MM-DD"，用本地时区解析避免时区偏移
-        const parts = input.value.split('-').map(Number);
+    const applyDateChange = (dateText) => {
+        const parts = String(dateText || '').split('-').map(Number);
         if (parts.length !== 3 || parts.some(isNaN)) return;
         const dateValue = new Date(parts[0], parts[1] - 1, parts[2]);
         if (isNaN(dateValue.getTime())) return;
 
-        if (isEndDate) {
+        const nextTask = {
+            start_date: task.start_date,
+            end_date: task.end_date,
+            duration: task.duration || 0,
+            [fieldName]: task[fieldName]
+        };
+
+        // Resolve the current schedule mode from the task object (may have been mutated by the
+        // mode selector before this date change fires).
+        const scheduleMode = normalizeScheduleMode(task.schedule_mode);
+
+        if (isEndDate && fieldName === 'end_date') {
             // 用户从 <input type="date"> 选择的日期是"包含"的最后一天（inclusive）
             // DHTMLX 需要"排除"边界（exclusive），即 +1 天
             const exclusiveEnd = inclusiveToExclusive(dateValue);
             nextTask.end_date = exclusiveEnd;
             const startDate = nextTask.start_date;
-            if (startDate) {
+            if (scheduleMode === 'start_end' && startDate) {
                 // 用 DHTMLX 内部日历计算工作日数，与甘特条渲染保持一致
                 const workDuration = gantt.calculateDuration(startDate, exclusiveEnd);
                 if (workDuration > 0) {
                     nextTask.duration = workDuration;
                 }
             }
-        } else {
+        } else if (fieldName === 'start_date') {
             nextTask[fieldName] = dateValue;
-            // 若调整的是开始时间，同步更新 end_date（保持工期不变）
-            if (fieldName === 'start_date' && nextTask.duration) {
+            if (scheduleMode === 'start_duration' && nextTask.duration) {
+                // start_duration mode (default): keep duration fixed, recalculate end_date
                 nextTask.end_date = gantt.calculateEndDate(dateValue, nextTask.duration);
             }
+        } else {
+            nextTask[fieldName] = dateValue;
         }
 
-        const prevStart = task.start_date ? new Date(task.start_date).getTime() : null;
-        const prevEnd = task.end_date ? new Date(task.end_date).getTime() : null;
-        const prevDuration = task.duration || 0;
-        const nextStart = nextTask.start_date ? new Date(nextTask.start_date).getTime() : null;
-        const nextEnd = nextTask.end_date ? new Date(nextTask.end_date).getTime() : null;
-        const nextDuration = nextTask.duration || 0;
-        if (prevStart === nextStart && prevEnd === nextEnd && prevDuration === nextDuration) {
-            return;
+        if (fieldName === 'start_date' || fieldName === 'end_date') {
+            const prevStart = task.start_date ? new Date(task.start_date).getTime() : null;
+            const prevEnd = task.end_date ? new Date(task.end_date).getTime() : null;
+            const prevDuration = task.duration || 0;
+            const nextStart = nextTask.start_date ? new Date(nextTask.start_date).getTime() : null;
+            const nextEnd = nextTask.end_date ? new Date(nextTask.end_date).getTime() : null;
+            const nextDuration = nextTask.duration || 0;
+            if (prevStart === nextStart && prevEnd === nextEnd && prevDuration === nextDuration) {
+                return;
+            }
+        } else {
+            const prevDate = task[fieldName] ? new Date(task[fieldName]).getTime() : null;
+            const nextDate = nextTask[fieldName] ? new Date(nextTask[fieldName]).getTime() : null;
+            if (prevDate === nextDate) {
+                return;
+            }
         }
 
         saveTaskState();
 
         mutateDraft((target) => {
-            target.start_date = nextTask.start_date;
-            target.end_date = nextTask.end_date;
-            target.duration = nextTask.duration;
+            if (fieldName === 'start_date' || fieldName === 'end_date') {
+                target.start_date = nextTask.start_date;
+                target.end_date = nextTask.end_date;
+                target.duration = nextTask.duration;
+                return;
+            }
+            target[fieldName] = nextTask[fieldName];
         });
 
         if (!isDraftMode) {
-            sourceTask.start_date = nextTask.start_date;
-            sourceTask.end_date = nextTask.end_date;
-            sourceTask.duration = nextTask.duration;
+            if (fieldName === 'start_date' || fieldName === 'end_date') {
+                sourceTask.start_date = nextTask.start_date;
+                sourceTask.end_date = nextTask.end_date;
+                sourceTask.duration = nextTask.duration;
+            } else {
+                sourceTask[fieldName] = nextTask[fieldName];
+            }
             gantt.updateTask(sourceTask.id);
         }
+
+        const nextDisplayDate = fieldName === 'end_date'
+            ? exclusiveToInclusive(nextTask.end_date)
+            : nextTask[fieldName];
+        updateDateTriggerDisplay(input, formatDateValue(nextDisplayDate), !!options.isOptional);
+    };
+
+    input.addEventListener('click', async (event) => {
+        event.preventDefault();
+        const selectedDate = fieldName === 'end_date'
+            ? formatDateValue(exclusiveToInclusive(task.end_date))
+            : formatDateValue(task[fieldName]);
+        await openTaskDatePickerPopover({
+            anchorEl: input,
+            selectedDate,
+            onSelect: applyDateChange
+        });
     });
+}
+
+function updateDateTriggerDisplay(trigger, value, isOptional = false) {
+    const text = value || (isOptional ? (i18n.t('taskDetails.notStarted') || '未开始') : '-');
+    trigger.textContent = text;
+    trigger.classList.toggle('text-base-content', !!value);
+    trigger.classList.toggle('text-base-content/40', !value);
 }
 
 /**
@@ -1058,6 +1210,8 @@ function bindDropdown(panel, id, onSelect) {
 
     if (!wrapper || !trigger || !menu) return;
 
+    registerDropdownWrapper(wrapper);
+
     // Toggle
     const toggle = (e) => {
         if (e) e.stopPropagation();
@@ -1088,8 +1242,7 @@ function bindDropdown(panel, id, onSelect) {
             e.stopPropagation();
             const value = item.dataset.value;
             onSelect(value);
-            menu.classList.add('hidden');
-            menu.classList.remove('block');
+            closeDropdownMenu(menu);
 
             // Update Trigger UI
             const selectedContent = item.innerHTML;
@@ -1106,26 +1259,6 @@ function bindDropdown(panel, id, onSelect) {
         });
     });
 
-    // Close on click outside (document level)
-    const closeHandler = (e) => {
-        if (!wrapper.contains(e.target)) {
-            menu.classList.add('hidden');
-            menu.classList.remove('block');
-        }
-    };
-
-    // Check if we already attach a global listener to document?
-    // It's safer to attach it once. But here we might attach multiple times if we open multiple panels?
-    // Panel is modal, so we can attach to document. But we need to remove it when panel closes?
-    // Since we don't have a destroy hook here effortlessly, we can just let it be or attach to panel click?
-    // Panel click works if overlay covers everything.
-    // Ideally, `closeHandler` should be removed.
-    // For now, we rely on the fact that `bindDropdown` is called when panel opens.
-    // We can attach `click` to document body.
-    // To avoid leaks, we can check if the element still exists.
-    setTimeout(() => {
-        document.addEventListener('click', closeHandler);
-    }, 0);
 }
 
 /**

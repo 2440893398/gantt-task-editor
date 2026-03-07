@@ -116,7 +116,7 @@ export default {
         deleteLink: 'この依存関係を削除しますか？',
         deleteTask: 'このタスクを削除しますか？',
         confirmDeleteTitle: 'タスク削除',
-        confirmDelete: 'このタスクを削除しますか？この操作は取り消せません。',
+        confirmDelete: 'このタスクを削除しますか？Ctrl+Zで元に戻せます。',
         confirmClearCache: 'すべてのキャッシュを削除しますか？保存されたタスクと設定がすべて削除されます。',
         cacheCleared: 'キャッシュを削除しました',
         dataRestored: '{{count}}件のタスクを復元しました',

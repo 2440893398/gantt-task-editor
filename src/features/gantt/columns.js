@@ -2,13 +2,14 @@
  * 甘特图列配置
  */
 
-import { state, isFieldEnabled } from '../../core/store.js';
+import { state, isFieldEnabled, getViewMode } from '../../core/store.js';
 import { INTERNAL_FIELDS, SYSTEM_FIELD_CONFIG } from '../../data/fields.js';
 
 import { renderPriorityBadge, renderStatusBadge, renderAssignee, renderProgressBar } from './templates.js';
 import { extractPlainText, escapeAttr } from '../../utils/dom.js';
 import { formatDuration, exclusiveToInclusive, isDayPrecision } from '../../utils/time-formatter.js';
 import { applySavedColumnWidths, loadColumnWidthPrefs } from './column-widths.js';
+import { buildNewTaskPayload, getTaskByAnyId } from './new-task-payload.js';
 import { i18n } from '../../utils/i18n.js';
 import { showConfirmDialog } from '../../components/common/confirm-dialog.js';
 import { showToast } from '../../utils/toast.js';
@@ -168,14 +169,45 @@ function ensureTaskActionHandlersBound() {
         if (!taskId || !action) return;
 
         if (action === 'edit') {
+            const task = getTaskByAnyId(gantt, taskId);
+            const resolvedTaskId = task?.id ?? taskId;
             if (typeof window.openTaskDetailsPanel === 'function') {
-                window.openTaskDetailsPanel(taskId);
+                window.openTaskDetailsPanel(resolvedTaskId);
+            }
+            return;
+        }
+
+        if (action === 'add-child') {
+            const parentTask = getTaskByAnyId(gantt, taskId);
+            if (!parentTask) return;
+
+            const payload = buildNewTaskPayload({
+                source: 'grid-action-add-child',
+                parentTaskId: parentTask.id,
+                parentTask,
+                parentId: parentTask.id,
+                startDate: parentTask.start_date,
+                text: '',
+                duration: 1,
+                progress: 0
+            });
+
+            if (typeof window.openNewTaskDetailsPanel === 'function') {
+                window.openNewTaskDetailsPanel(payload);
+                return;
+            }
+
+            if (typeof gantt.addTask === 'function') {
+                const createdTaskId = gantt.addTask(payload.defaults, payload.defaults.parent);
+                if (typeof window.openTaskDetailsPanel === 'function') {
+                    window.openTaskDetailsPanel(createdTaskId);
+                }
             }
             return;
         }
 
         if (action === 'delete') {
-            const task = gantt.getTask(taskId);
+            const task = getTaskByAnyId(gantt, taskId);
             if (!task) return;
 
             showConfirmDialog({
@@ -186,7 +218,7 @@ function ensureTaskActionHandlersBound() {
                 confirmText: i18n.t('form.delete') || '删除',
                 cancelText: i18n.t('form.cancel') || '取消',
                 onConfirm: () => {
-                    gantt.deleteTask(taskId);
+                    gantt.deleteTask(task.id);
                     showToast(i18n.t('message.deleteSuccess') || '删除成功', 'success');
                 }
             });
@@ -198,12 +230,24 @@ function ensureTaskActionHandlersBound() {
 
 function renderTaskActionsCell(task) {
     const editLabel = i18n.t('shortcuts.editTask') || '编辑';
+    const addChildLabel = i18n.t('taskDetails.addSubtask') || '添加子任务';
     const deleteLabel = i18n.t('form.delete') || '删除';
     const taskId = escapeAttr(task.id);
-    return `<div class="gantt-task-actions-cell" role="group" aria-label="${editLabel}/${deleteLabel}">
+    const shouldShowAddChild = shouldRenderAddChildAction();
+    const labels = shouldShowAddChild ? `${addChildLabel}/${editLabel}/${deleteLabel}` : `${editLabel}/${deleteLabel}`;
+    return `<div class="gantt-task-actions-cell" role="group" aria-label="${labels}">
+        ${shouldShowAddChild
+        ? `<button type="button" class="gantt-task-action-btn gantt-task-action-add-child" data-action="add-child" data-task-id="${taskId}" title="${addChildLabel}" aria-label="${addChildLabel}">＋</button>`
+        : ''}
         <button type="button" class="gantt-task-action-btn gantt-task-action-edit" data-action="edit" data-task-id="${taskId}" title="${editLabel}" aria-label="${editLabel}">✎</button>
         <button type="button" class="gantt-task-action-btn gantt-task-action-delete" data-action="delete" data-task-id="${taskId}" title="${deleteLabel}" aria-label="${deleteLabel}">🗑</button>
     </div>`;
+}
+
+function shouldRenderAddChildAction() {
+    if (typeof getViewMode !== 'function') return false;
+    const mode = getViewMode();
+    return mode === 'table' || mode === 'gantt';
 }
 
 /**
@@ -250,7 +294,7 @@ export function updateGanttColumns() {
                     }
 
                     // Add title attribute for tooltip on hover
-                    html += `<span title="${escapeHtml(text)}">${escapeHtml(text)}</span>`;
+                    html += `<span title="${escapeAttr(text)}">${escapeHtml(text)}</span>`;
                     return html;
                 }
             });
@@ -453,7 +497,7 @@ export function setGanttOnlyColumns() {
                     const projectNum = task.project_number || task.id;
                     html += `<span class="project-id-badge-gantt">#${projectNum}</span>`;
                 }
-                html += `<span title="${task.text || ''}">${escapeHtml(text)}</span>`;
+                html += `<span title="${escapeAttr(text)}">${escapeHtml(text)}</span>`;
                 return html;
             }
         },

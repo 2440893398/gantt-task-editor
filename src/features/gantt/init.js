@@ -28,6 +28,7 @@ import { exportCurrentView, exportFullGantt } from './export-image.js';
 import { exportToExcel } from '../config/configIO.js';
 import { initSnapping } from './snapping.js';
 import { computeFieldOrderFromGridColumns, hasFieldOrderChanged } from './column-reorder-sync.js';
+import { buildNewTaskPayload, getTaskByAnyId, normalizeToDayStart } from './new-task-payload.js';
 import { prefetchHolidays } from '../calendar/holidayFetcher.js';
 import { getAllCustomDays, getCalendarSettings, db } from '../../core/storage.js';
 
@@ -39,23 +40,65 @@ function toLocalDateStr(date) {
     return `${y}-${m}-${day}`;
 }
 
-function hasHtmlMarkup(value) {
-    return /<\s*\/?\s*[a-z][^>]*>/i.test(String(value || ''));
+function openNewTaskFlow(payload) {
+    if (!payload || !payload.defaults) return;
+
+    if (typeof window.openNewTaskDetailsPanel === 'function') {
+        window.openNewTaskDetailsPanel(payload);
+        return;
+    }
+
+    if (typeof gantt.addTask === 'function') {
+        const createdTaskId = gantt.addTask(payload.defaults, payload.defaults.parent || 0);
+        if (typeof window.openTaskDetailsPanel === 'function') {
+            window.openTaskDetailsPanel(createdTaskId);
+        }
+    }
 }
 
-function getTaskByAnyId(taskId) {
-    if (taskId == null || taskId === '') return null;
+function resolveDateFromTimelineEvent(event) {
+    if (!event || !event.target) return null;
+    if (event.target.closest && event.target.closest('.gantt_grid')) return null;
 
-    if (gantt.isTaskExists(taskId)) {
-        return gantt.getTask(taskId);
-    }
+    const taskData = gantt.$task_data;
+    if (!taskData || !taskData.contains(event.target)) return null;
+    if (typeof gantt.dateFromPos !== 'function') return null;
 
-    const numericId = Number(taskId);
-    if (!Number.isNaN(numericId) && gantt.isTaskExists(numericId)) {
-        return gantt.getTask(numericId);
-    }
+    const rect = taskData.getBoundingClientRect();
+    const scrollLeft = taskData.scrollLeft || 0;
+    const x = (event.clientX - rect.left) + scrollLeft;
+    if (!Number.isFinite(x)) return null;
 
-    return null;
+    const date = gantt.dateFromPos(x);
+    if (!date) return null;
+    return normalizeToDayStart(date);
+}
+
+export function bindTimelineEmptyAreaCreateAction() {
+    if (typeof gantt === 'undefined' || typeof gantt.attachEvent !== 'function') return;
+    if (gantt.__timelineEmptyAreaCreateActionBound) return;
+    gantt.__timelineEmptyAreaCreateActionBound = true;
+
+    gantt.attachEvent('onContextMenu', function (taskId, linkId, event) {
+        if (taskId || linkId) return true;
+        const clickedDate = resolveDateFromTimelineEvent(event);
+        if (!clickedDate) return true;
+
+        openNewTaskFlow(buildNewTaskPayload({
+            source: 'timeline-empty-area',
+            parentId: 0,
+            startDate: clickedDate,
+            text: '',
+            duration: 1,
+            progress: 0
+        }));
+        if (event?.preventDefault) event.preventDefault();
+        return false;
+    });
+}
+
+function hasHtmlMarkup(value) {
+    return /<\s*\/?\s*[a-z][^>]*>/i.test(String(value || ''));
 }
 
 function richContentScore(value) {
@@ -611,6 +654,8 @@ export function initGantt() {
         return true;
     });
 
+    bindTimelineEmptyAreaCreateAction();
+
     // 注册自定义字段表单块
     registerCustomFieldsBlock();
     configureLightbox();
@@ -700,7 +745,7 @@ export function initGantt() {
             let fullHtml = '';
             let taskTitle = '';
 
-            const task = getTaskByAnyId(taskId);
+            const task = getTaskByAnyId(gantt, taskId);
             if (task) {
                 const picked = pickBestRichContent(task, richField);
                 fullHtml = picked.html || '';
