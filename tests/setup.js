@@ -29,7 +29,8 @@ vi.mock('../src/features/lightbox/customization.js', () => ({
 
 // Mock 其他可能被导入的模块
 vi.mock('../src/features/gantt/resizer.js', () => ({
-  initResizer: vi.fn()
+  initResizer: vi.fn(),
+  stretchGridColumnsToFill: vi.fn()
 }));
 
 // 对于 zoom.js, 只 mock 初始化函数（避免 DOM 操作），保留其他原始导出

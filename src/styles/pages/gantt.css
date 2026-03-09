@@ -1219,16 +1219,6 @@
     background: var(--background-white) !important;
 }
 
-/* 让 grid 数据层宽度跟随容器，避免动作单元格跑到可视区外 */
-.gantt_layout_cell.grid_cell .gantt_grid_scale,
-.gantt_layout_cell.grid_cell .gantt_grid_data {
-    width: 100% !important;
-}
-
-.gantt_grid_data .gantt_row {
-    width: 100% !important;
-}
-
 /* 行动画效果 */
 @keyframes ganttSlideIn {
     from {

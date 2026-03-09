@@ -4,7 +4,7 @@
 
 import { applySelectionStyles } from '../selection/selectionManager.js';
 
-function stretchGridColumnsToFill() {
+export function stretchGridColumnsToFill() {
     const columns = gantt?.config?.columns;
     if (!Array.isArray(columns) || columns.length === 0) return;
 
@@ -97,10 +97,8 @@ export function initResizer() {
                 console.warn('无法保存宽度设置:', e);
             }
 
-            if (!isGanttOnly) {
-                setTimeout(stretchGridColumnsToFill, 0);
-                setTimeout(stretchGridColumnsToFill, 80);
-            }
+            setTimeout(stretchGridColumnsToFill, 0);
+            setTimeout(stretchGridColumnsToFill, 80);
 
             resizer._isInitialized = false;
             initResizer();

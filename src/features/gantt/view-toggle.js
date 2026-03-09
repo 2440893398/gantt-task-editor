@@ -9,7 +9,7 @@
 import { getViewMode, setViewMode } from '../../core/store.js';
 import { updateGanttColumns, setGanttOnlyColumns } from './columns.js';
 import { i18n } from '../../utils/i18n.js';
-import { initResizer } from './resizer.js';
+import { initResizer, stretchGridColumnsToFill } from './resizer.js';
 
 // 甘特纯视图的 grid 固定宽度
 const GANTT_ONLY_GRID_WIDTH = 220;
@@ -276,6 +276,9 @@ function applyViewMode(mode) {
 
     if (mode === 'table') {
         setTimeout(stretchTableColumnsToFill, 0);
+    } else {
+        setTimeout(stretchGridColumnsToFill, 0);
+        setTimeout(stretchGridColumnsToFill, 80);
     }
 
     // Panel Bar 控制 & Resizer 初始化

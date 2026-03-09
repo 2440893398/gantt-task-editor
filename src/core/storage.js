@@ -50,12 +50,11 @@ db.version(4).stores({
     person_leaves:     'id, project_id, assignee, startDate, endDate',
     calendar_meta:     null,   // 主键从 year 变为复合键，需先删除再重建（v5）
 }).upgrade(async tx => {
-    const DEFAULT_ID = 'prj_default';
     const now = new Date().toISOString();
 
     // 1. 新建默认项目记录
     await tx.table('projects').add({
-        id: DEFAULT_ID,
+        id: DEFAULT_PROJECT_ID,
         name: '默认项目',
         color: '#4f46e5',
         description: '',
@@ -64,13 +63,13 @@ db.version(4).stores({
     });
 
     // 2. 给已有数据补写 project_id
-    await tx.table('tasks').toCollection().modify({ project_id: DEFAULT_ID });
-    await tx.table('links').toCollection().modify({ project_id: DEFAULT_ID });
-    await tx.table('baselines').toCollection().modify({ project_id: DEFAULT_ID });
-    await tx.table('calendar_settings').toCollection().modify({ project_id: DEFAULT_ID });
-    await tx.table('calendar_custom').toCollection().modify({ project_id: DEFAULT_ID });
-    await tx.table('person_leaves').toCollection().modify({ project_id: DEFAULT_ID });
-    await tx.table('history').toCollection().modify({ project_id: DEFAULT_ID });
+    await tx.table('tasks').toCollection().modify({ project_id: DEFAULT_PROJECT_ID });
+    await tx.table('links').toCollection().modify({ project_id: DEFAULT_PROJECT_ID });
+    await tx.table('baselines').toCollection().modify({ project_id: DEFAULT_PROJECT_ID });
+    await tx.table('calendar_settings').toCollection().modify({ project_id: DEFAULT_PROJECT_ID });
+    await tx.table('calendar_custom').toCollection().modify({ project_id: DEFAULT_PROJECT_ID });
+    await tx.table('person_leaves').toCollection().modify({ project_id: DEFAULT_PROJECT_ID });
+    await tx.table('history').toCollection().modify({ project_id: DEFAULT_PROJECT_ID });
     // calendar_holidays 和 calendar_meta 是 API 缓存数据，清空后会自动重新拉取，无需迁移
 });
 
@@ -79,6 +78,12 @@ db.version(5).stores({
     calendar_holidays: '[date+countryCode], year, countryCode',
     calendar_meta:     '[year+project_id]',
 });
+
+// ========================================
+// 常量导出
+// ========================================
+
+export const DEFAULT_PROJECT_ID = 'prj_default';
 
 // ========================================
 // localStorage 键名常量
@@ -422,10 +427,11 @@ export async function clearAllCache() {
         });
 
         // 清除 IndexedDB
-        await db.transaction('rw', [db.tasks, db.links, db.history], async () => {
+        await db.transaction('rw', [db.tasks, db.links, db.history, db.projects], async () => {
             await db.tasks.clear();
             await db.links.clear();
             await db.history.clear();
+            await db.projects.clear();
         });
 
         console.log('[Storage] All cache cleared');
@@ -601,14 +607,19 @@ export async function saveCalendarSettings(settings) {
 }
 
 /** 节假日缓存 */
-export async function getHolidayDay(dateStr) {
-    return db.calendar_holidays.get(dateStr);
+export async function getHolidayDay(dateStr, countryCode) {
+    if (!countryCode) {
+        // backward-compat: 未传 countryCode 时按 year 二级索引取第一条
+        return db.calendar_holidays
+            .where('year')
+            .equals(new Date(dateStr).getFullYear())
+            .first();
+    }
+    return db.calendar_holidays.get([dateStr, countryCode]);
 }
 
 export async function getHolidayDayByCountry(dateStr, countryCode) {
-    const row = await db.calendar_holidays.get(dateStr);
-    if (!row) return undefined;
-    return row.countryCode === countryCode ? row : undefined;
+    return db.calendar_holidays.get([dateStr, countryCode]);
 }
 
 export async function bulkSaveHolidays(holidays) {
@@ -623,12 +634,14 @@ export async function clearHolidaysByYear(year, countryCode) {
 }
 
 /** 缓存元数据 */
-export async function getCalendarMeta(year) {
-    return db.calendar_meta.get(year);
+export async function getCalendarMeta(year, projectId = DEFAULT_PROJECT_ID) {
+    return db.calendar_meta.get([year, projectId]);
 }
 
 export async function saveCalendarMeta(meta) {
-    await db.calendar_meta.put(meta);
+    // meta must contain { year, project_id }; project_id defaults to DEFAULT_PROJECT_ID
+    const record = { project_id: DEFAULT_PROJECT_ID, ...meta };
+    await db.calendar_meta.put(record);
 }
 
 /** 自定义特殊日 */

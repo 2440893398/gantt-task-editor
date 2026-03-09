@@ -58,7 +58,10 @@ vi.mock('../../../src/utils/toast.js', () => ({
 
 // Mocks for init.js dependencies
 vi.mock('../../../src/data/tasks.js', () => ({ defaultTasks: { data: [], links: [] } }));
-vi.mock('../../../src/features/gantt/resizer.js', () => ({ initResizer: vi.fn() }));
+vi.mock('../../../src/features/gantt/resizer.js', () => ({
+    initResizer: vi.fn(),
+    stretchGridColumnsToFill: vi.fn()
+}));
 vi.mock('../../../src/features/lightbox/customization.js', () => ({
     registerCustomFieldsBlock: vi.fn(),
     configureLightbox: vi.fn(),
