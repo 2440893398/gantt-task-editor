@@ -273,22 +273,192 @@ export function getColumnsConfig() {
 // 任务数据存储 (IndexedDB)
 // ========================================
 
+function normalizeProjectId(projectId) {
+    return projectId ?? DEFAULT_PROJECT_ID;
+}
+
+function withProjectId(record, projectId) {
+    return {
+        ...record,
+        project_id: projectId,
+    };
+}
+
+function serializeTaskDates(task) {
+    const taskCopy = { ...task };
+    // 将 Date 对象转换为字符串
+    if (taskCopy.start_date instanceof Date) {
+        taskCopy.start_date = taskCopy.start_date.toISOString().split('T')[0];
+    }
+    if (taskCopy.end_date instanceof Date) {
+        taskCopy.end_date = taskCopy.end_date.toISOString().split('T')[0];
+    }
+    return taskCopy;
+}
+
+/**
+ * 创建项目作用域存储 API（任务/依赖/基线隔离）
+ * @param {string} projectId
+ * @returns {Object}
+ */
+export function projectScope(projectId = DEFAULT_PROJECT_ID) {
+    const scopedProjectId = normalizeProjectId(projectId);
+
+    return {
+        async saveTasks(tasks) {
+            try {
+                const tasksToSave = (tasks ?? []).map(task => withProjectId(task, scopedProjectId));
+                await db.transaction('rw', db.tasks, async () => {
+                    await db.tasks.where('project_id').equals(scopedProjectId).delete();
+                    if (tasksToSave.length > 0) {
+                        await db.tasks.bulkAdd(tasksToSave);
+                    }
+                });
+                console.log(`[Storage] Saved ${tasksToSave.length} tasks to IndexedDB (project: ${scopedProjectId})`);
+            } catch (e) {
+                console.error('[Storage] Failed to save tasks:', e);
+                throw e;
+            }
+        },
+
+        async getTasks() {
+            try {
+                const tasks = await db.tasks.where('project_id').equals(scopedProjectId).toArray();
+                console.log(`[Storage] Loaded ${tasks.length} tasks from IndexedDB (project: ${scopedProjectId})`);
+                return tasks;
+            } catch (e) {
+                console.error('[Storage] Failed to load tasks:', e);
+                return [];
+            }
+        },
+
+        async saveLinks(links) {
+            try {
+                const linksToSave = (links ?? []).map(link => withProjectId(link, scopedProjectId));
+                await db.transaction('rw', db.links, async () => {
+                    await db.links.where('project_id').equals(scopedProjectId).delete();
+                    if (linksToSave.length > 0) {
+                        await db.links.bulkAdd(linksToSave);
+                    }
+                });
+                console.log(`[Storage] Saved ${linksToSave.length} links to IndexedDB (project: ${scopedProjectId})`);
+            } catch (e) {
+                console.error('[Storage] Failed to save links:', e);
+                throw e;
+            }
+        },
+
+        async getLinks() {
+            try {
+                const links = await db.links.where('project_id').equals(scopedProjectId).toArray();
+                console.log(`[Storage] Loaded ${links.length} links from IndexedDB (project: ${scopedProjectId})`);
+                return links;
+            } catch (e) {
+                console.error('[Storage] Failed to load links:', e);
+                return [];
+            }
+        },
+
+        async saveGanttData(ganttData) {
+            try {
+                const taskRows = (ganttData?.data ?? [])
+                    .map(serializeTaskDates)
+                    .map(task => withProjectId(task, scopedProjectId));
+                const linkRows = (ganttData?.links ?? []).map(link => withProjectId(link, scopedProjectId));
+
+                await db.transaction('rw', [db.tasks, db.links], async () => {
+                    await db.tasks.where('project_id').equals(scopedProjectId).delete();
+                    await db.links.where('project_id').equals(scopedProjectId).delete();
+
+                    if (taskRows.length > 0) {
+                        await db.tasks.bulkAdd(taskRows);
+                    }
+
+                    if (linkRows.length > 0) {
+                        await db.links.bulkAdd(linkRows);
+                    }
+                });
+
+                console.log(`[Storage] Saved gantt data: ${taskRows.length} tasks, ${linkRows.length} links (project: ${scopedProjectId})`);
+            } catch (e) {
+                console.error('[Storage] Failed to save gantt data:', e);
+                throw e;
+            }
+        },
+
+        async getGanttData() {
+            try {
+                const [tasks, links] = await Promise.all([
+                    db.tasks.where('project_id').equals(scopedProjectId).toArray(),
+                    db.links.where('project_id').equals(scopedProjectId).toArray(),
+                ]);
+                console.log(`[Storage] Loaded gantt data: ${tasks.length} tasks, ${links.length} links (project: ${scopedProjectId})`);
+                return { data: tasks, links: links };
+            } catch (e) {
+                console.error('[Storage] Failed to load gantt data:', e);
+                return { data: [], links: [] };
+            }
+        },
+
+        async hasCachedData() {
+            try {
+                const count = await db.tasks.where('project_id').equals(scopedProjectId).count();
+                return count > 0;
+            } catch (e) {
+                console.error('[Storage] Failed to check cached data:', e);
+                return false;
+            }
+        },
+
+        async getBaseline() {
+            try {
+                const baselines = await db.baselines.where('project_id').equals(scopedProjectId).toArray();
+                return baselines.length > 0 ? baselines[0] : null;
+            } catch (e) {
+                console.error('[Storage] Failed to load baseline:', e);
+                return null;
+            }
+        },
+
+        async saveBaseline(baseline) {
+            try {
+                const baselineRecord = withProjectId(
+                    {
+                        id: baseline?.id ?? `baseline_${scopedProjectId}`,
+                        ...baseline,
+                    },
+                    scopedProjectId,
+                );
+
+                await db.transaction('rw', db.baselines, async () => {
+                    await db.baselines.where('project_id').equals(scopedProjectId).delete();
+                    await db.baselines.put(baselineRecord);
+                });
+            } catch (e) {
+                console.error('[Storage] Failed to save baseline:', e);
+                throw e;
+            }
+        },
+
+        async hasBaseline() {
+            try {
+                const count = await db.baselines.where('project_id').equals(scopedProjectId).count();
+                return count > 0;
+            } catch (e) {
+                console.error('[Storage] Failed to check baseline:', e);
+                return false;
+            }
+        },
+    };
+}
+
 /**
  * 保存所有任务数据
  * @param {Array} tasks
  * @returns {Promise<void>}
  */
 export async function saveTasks(tasks) {
-    try {
-        await db.transaction('rw', db.tasks, async () => {
-            await db.tasks.clear();
-            await db.tasks.bulkAdd(tasks);
-        });
-        console.log(`[Storage] Saved ${tasks.length} tasks to IndexedDB`);
-    } catch (e) {
-        console.error('[Storage] Failed to save tasks:', e);
-        throw e;
-    }
+    return projectScope(DEFAULT_PROJECT_ID).saveTasks(tasks);
 }
 
 /**
@@ -296,14 +466,7 @@ export async function saveTasks(tasks) {
  * @returns {Promise<Array>}
  */
 export async function getTasks() {
-    try {
-        const tasks = await db.tasks.toArray();
-        console.log(`[Storage] Loaded ${tasks.length} tasks from IndexedDB`);
-        return tasks;
-    } catch (e) {
-        console.error('[Storage] Failed to load tasks:', e);
-        return [];
-    }
+    return projectScope(DEFAULT_PROJECT_ID).getTasks();
 }
 
 /**
@@ -312,16 +475,7 @@ export async function getTasks() {
  * @returns {Promise<void>}
  */
 export async function saveLinks(links) {
-    try {
-        await db.transaction('rw', db.links, async () => {
-            await db.links.clear();
-            await db.links.bulkAdd(links);
-        });
-        console.log(`[Storage] Saved ${links.length} links to IndexedDB`);
-    } catch (e) {
-        console.error('[Storage] Failed to save links:', e);
-        throw e;
-    }
+    return projectScope(DEFAULT_PROJECT_ID).saveLinks(links);
 }
 
 /**
@@ -329,86 +483,35 @@ export async function saveLinks(links) {
  * @returns {Promise<Array>}
  */
 export async function getLinks() {
-    try {
-        const links = await db.links.toArray();
-        console.log(`[Storage] Loaded ${links.length} links from IndexedDB`);
-        return links;
-    } catch (e) {
-        console.error('[Storage] Failed to load links:', e);
-        return [];
-    }
+    return projectScope(DEFAULT_PROJECT_ID).getLinks();
 }
 
 /**
  * 保存甘特图数据（任务 + 依赖）
  * @param {Object} ganttData - { data: [], links: [] }
  * @returns {Promise<void>}
+ * @deprecated Use `projectScope(projectId).saveGanttData(...)` instead.
  */
 export async function saveGanttData(ganttData) {
-    try {
-        await db.transaction('rw', [db.tasks, db.links], async () => {
-            // 清空旧数据
-            await db.tasks.clear();
-            await db.links.clear();
-
-            // 保存新数据
-            if (ganttData.data && ganttData.data.length > 0) {
-                // 处理日期字段，确保可以序列化
-                const tasksToSave = ganttData.data.map(task => {
-                    const taskCopy = { ...task };
-                    // 将 Date 对象转换为字符串
-                    if (taskCopy.start_date instanceof Date) {
-                        taskCopy.start_date = taskCopy.start_date.toISOString().split('T')[0];
-                    }
-                    if (taskCopy.end_date instanceof Date) {
-                        taskCopy.end_date = taskCopy.end_date.toISOString().split('T')[0];
-                    }
-                    return taskCopy;
-                });
-                await db.tasks.bulkAdd(tasksToSave);
-            }
-
-            if (ganttData.links && ganttData.links.length > 0) {
-                await db.links.bulkAdd(ganttData.links);
-            }
-        });
-        console.log(`[Storage] Saved gantt data: ${ganttData.data?.length || 0} tasks, ${ganttData.links?.length || 0} links`);
-    } catch (e) {
-        console.error('[Storage] Failed to save gantt data:', e);
-        throw e;
-    }
+    return projectScope(DEFAULT_PROJECT_ID).saveGanttData(ganttData);
 }
 
 /**
  * 获取甘特图数据（任务 + 依赖）
  * @returns {Promise<Object>} - { data: [], links: [] }
+ * @deprecated Use `projectScope(projectId).getGanttData()` instead.
  */
 export async function getGanttData() {
-    try {
-        const [tasks, links] = await Promise.all([
-            db.tasks.toArray(),
-            db.links.toArray()
-        ]);
-        console.log(`[Storage] Loaded gantt data: ${tasks.length} tasks, ${links.length} links`);
-        return { data: tasks, links: links };
-    } catch (e) {
-        console.error('[Storage] Failed to load gantt data:', e);
-        return { data: [], links: [] };
-    }
+    return projectScope(DEFAULT_PROJECT_ID).getGanttData();
 }
 
 /**
  * 检查是否有缓存的数据
  * @returns {Promise<boolean>}
+ * @deprecated Use `projectScope(projectId).hasCachedData()` instead.
  */
 export async function hasCachedData() {
-    try {
-        const count = await db.tasks.count();
-        return count > 0;
-    } catch (e) {
-        console.error('[Storage] Failed to check cached data:', e);
-        return false;
-    }
+    return projectScope(DEFAULT_PROJECT_ID).hasCachedData();
 }
 
 // ========================================
