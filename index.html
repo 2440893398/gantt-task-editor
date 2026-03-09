@@ -197,6 +197,7 @@
             style="box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 0 0 1px rgba(226,232,240,0.6);">
             <!-- Left: Search -->
             <div class="flex items-center gap-3 flex-1 min-w-0">
+                <div id="project-picker-mount" class="flex-shrink-0"></div>
                 <div class="relative w-full max-w-md">
                     <span
                         class="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-muted-foreground)] w-4 h-4 flex items-center justify-center shrink-0">
@@ -628,9 +629,25 @@
 
             // 新建任务按钮 - 打开模态框
             document.getElementById('new-task-btn')?.addEventListener('click', () => {
-                // 打开模态框而非直接创建任务
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+
+                if (typeof window.openNewTaskDetailsPanel === 'function') {
+                    window.openNewTaskDetailsPanel({
+                        source: 'toolbar-new-task',
+                        defaults: {
+                            text: '',
+                            start_date: today,
+                            duration: 1,
+                            progress: 0,
+                            parent: 0
+                        }
+                    });
+                    return;
+                }
+
+                // 兼容回退：旧模态框
                 document.getElementById('new-task-modal').showModal();
-                // 聚焦到任务名称输入框
                 setTimeout(() => {
                     document.getElementById('new-task-name')?.focus();
                 }, 100);

@@ -29,12 +29,15 @@ import {
     clearCache,
     getCacheStatus,
     persistLocale,
-    getSavedLocale
+    getSavedLocale,
+    initProjects
 } from './core/store.js';
 import { checkStorageAvailability } from './core/storage.js';
 import { prefetchHolidays } from './features/calendar/holidayFetcher.js';
+import { updateGanttColumns } from './features/gantt/columns.js';
+import { renderProjectPicker } from './features/projects/ProjectPicker.js';
 // 任务详情面板
-import { openTaskDetailsPanel } from './features/task-details/index.js';
+import { openTaskDetailsPanel, openNewTaskDetailsPanel } from './features/task-details/index.js';
 // 视图切换
 import { initViewToggle } from './features/gantt/view-toggle.js';
 import undoManager from './features/ai/services/undoManager.js';
@@ -44,6 +47,7 @@ window.exportConfig = exportConfig;
 
 // 挂载任务详情面板函数到 window（供新建任务按钮使用）
 window.openTaskDetailsPanel = openTaskDetailsPanel;
+window.openNewTaskDetailsPanel = openNewTaskDetailsPanel;
 
 // 挂载工作日历面板（动态 import 必须在 Vite 模块图内才能正确打包）
 window.openCalendarPanel = () =>
@@ -93,6 +97,32 @@ document.addEventListener('DOMContentLoaded', async () => {
         await i18n.init();
         console.log('🌐 国际化初始化完成，当前语言:', i18n.getLanguage());
     }
+
+    // 初始化项目状态 + 渲染项目切换器
+    await initProjects();
+    const projectPickerMount = document.getElementById('project-picker-mount');
+    if (projectPickerMount) {
+        renderProjectPicker(projectPickerMount);
+    }
+
+    document.addEventListener('projectSwitched', async () => {
+        try {
+            await restoreStateFromCache();
+
+            const cachedData = await restoreGanttDataFromCache();
+            gantt.clearAll();
+            if (cachedData?.data?.length > 0) {
+                gantt.parse(cachedData);
+            } else {
+                gantt.parse({ data: [], links: [] });
+            }
+
+            updateGanttColumns();
+        } catch (error) {
+            console.error('[Main] Failed to reload project after switch:', error);
+            showToast(i18n.t('common.operationFailed') || '操作失败', 'error');
+        }
+    });
 
     // 初始化甘特图（传入缓存恢复函数）
     await initGanttWithCache();

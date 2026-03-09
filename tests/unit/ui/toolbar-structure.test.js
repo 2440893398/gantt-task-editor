@@ -26,4 +26,9 @@ describe('toolbar structure in index.html', () => {
     const html = fs.readFileSync(path.resolve(process.cwd(), 'index.html'), 'utf8');
     expect(html).toContain('id="new-task-btn"');
   });
+
+  it('includes project picker mount in toolbar left area', () => {
+    const html = fs.readFileSync(path.resolve(process.cwd(), 'index.html'), 'utf8');
+    expect(html).toContain('id="project-picker-mount"');
+  });
 });
