@@ -35,6 +35,51 @@ db.version(3).stores({
     calendar_meta: 'year'
 });
 
+// v4: 新增 projects 表，给各表索引加 project_id；
+//     同时将 calendar_holidays 和 calendar_meta 设为 null（旧主键无法在线变更），
+//     由 v5 重建为新复合主键。
+db.version(4).stores({
+    projects:          'id, name, createdAt, updatedAt',
+    tasks:             '++id, project_id, priority, status, start_date, parent',
+    links:             '++id, project_id, source, target, type',
+    history:           '++id, project_id, timestamp, action',
+    baselines:         'id, project_id',
+    calendar_settings: '++id, project_id',
+    calendar_holidays: null,   // 主键从 date 变为复合键，需先删除再重建（v5）
+    calendar_custom:   'id, date, project_id',
+    person_leaves:     'id, project_id, assignee, startDate, endDate',
+    calendar_meta:     null,   // 主键从 year 变为复合键，需先删除再重建（v5）
+}).upgrade(async tx => {
+    const DEFAULT_ID = 'prj_default';
+    const now = new Date().toISOString();
+
+    // 1. 新建默认项目记录
+    await tx.table('projects').add({
+        id: DEFAULT_ID,
+        name: '默认项目',
+        color: '#4f46e5',
+        description: '',
+        createdAt: now,
+        updatedAt: now,
+    });
+
+    // 2. 给已有数据补写 project_id
+    await tx.table('tasks').toCollection().modify({ project_id: DEFAULT_ID });
+    await tx.table('links').toCollection().modify({ project_id: DEFAULT_ID });
+    await tx.table('baselines').toCollection().modify({ project_id: DEFAULT_ID });
+    await tx.table('calendar_settings').toCollection().modify({ project_id: DEFAULT_ID });
+    await tx.table('calendar_custom').toCollection().modify({ project_id: DEFAULT_ID });
+    await tx.table('person_leaves').toCollection().modify({ project_id: DEFAULT_ID });
+    await tx.table('history').toCollection().modify({ project_id: DEFAULT_ID });
+    // calendar_holidays 和 calendar_meta 是 API 缓存数据，清空后会自动重新拉取，无需迁移
+});
+
+// v5: 以新复合主键重建 v4 中删除的两张缓存表
+db.version(5).stores({
+    calendar_holidays: '[date+countryCode], year, countryCode',
+    calendar_meta:     '[year+project_id]',
+});
+
 // ========================================
 // localStorage 键名常量
 // ========================================
