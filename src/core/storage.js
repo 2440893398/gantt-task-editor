@@ -608,13 +608,7 @@ export async function saveCalendarSettings(settings) {
 
 /** 节假日缓存 */
 export async function getHolidayDay(dateStr, countryCode) {
-    if (!countryCode) {
-        // backward-compat: 未传 countryCode 时按 year 二级索引取第一条
-        return db.calendar_holidays
-            .where('year')
-            .equals(new Date(dateStr).getFullYear())
-            .first();
-    }
+    if (!countryCode) return undefined;
     return db.calendar_holidays.get([dateStr, countryCode]);
 }
 

@@ -15,7 +15,7 @@
 
 import 'fake-indexeddb/auto';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { db } from '../../../src/core/storage.js';
+import { db, DEFAULT_PROJECT_ID } from '../../../src/core/storage.js';
 
 // ============================================================
 // Mock 外部依赖（必须在 import renderTab1 之前）
@@ -203,5 +203,19 @@ describe('tab1-settings: DOM 渲染', () => {
 
         const newVal = parseInt(valEl.textContent, 10);
         expect(newVal).toBe(initialVal + 1);
+    });
+
+    it('点击重新拉取时按 [year+project_id] 复合键清理 meta 缓存', async () => {
+        await renderTab1(container);
+
+        const thisYear = new Date().getFullYear();
+        const deleteSpy = vi.spyOn(db.calendar_meta, 'delete');
+
+        const refetchBtn = container.querySelector('#cal-refetch');
+        refetchBtn.click();
+        await new Promise(r => setTimeout(r, 80));
+
+        expect(deleteSpy).toHaveBeenCalledWith([thisYear, DEFAULT_PROJECT_ID]);
+        expect(deleteSpy).toHaveBeenCalledWith([thisYear + 1, DEFAULT_PROJECT_ID]);
     });
 });

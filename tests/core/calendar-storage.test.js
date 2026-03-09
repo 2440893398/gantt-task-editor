@@ -17,10 +17,12 @@ import 'fake-indexeddb/auto';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { db } from '../../src/core/storage.js';
 import {
+    DEFAULT_PROJECT_ID,
     getCustomDay,
     saveCustomDay,
     deleteCustomDay,
     getAllCustomDays,
+    getHolidayDay,
     getHolidayDayByCountry,
     bulkSaveHolidays,
     clearHolidaysByYear,
@@ -221,6 +223,26 @@ describe('calendar_holidays: getHolidayDayByCountry', () => {
     });
 });
 
+describe('calendar_holidays: getHolidayDay requires countryCode', () => {
+    beforeEach(async () => {
+        await db.open();
+        await db.calendar_holidays.clear();
+    });
+
+    afterEach(async () => {
+        await db.calendar_holidays.clear();
+    });
+
+    it('未传 countryCode 时返回 undefined（避免错误命中同年其他国家数据）', async () => {
+        await bulkSaveHolidays([
+            { date: '2026-01-01', year: 2026, countryCode: 'JP', isOffDay: true, name: '元日' }
+        ]);
+
+        const found = await getHolidayDay('2026-01-01');
+        expect(found).toBeUndefined();
+    });
+});
+
 describe('calendar_holidays: clearHolidaysByYear', () => {
     beforeEach(async () => {
         await db.open();
@@ -333,6 +355,25 @@ describe('calendar_meta: getCalendarMeta / saveCalendarMeta', () => {
         const meta = await getCalendarMeta(2026);
         expect(meta.countryCode).toBe('JP');
         expect(meta.fetchedAt).toBe(2000);
+    });
+
+    it('saveCalendarMeta 会自动补齐默认 project_id', async () => {
+        await saveCalendarMeta({ year: 2026, countryCode: 'CN', fetchedAt: 1000 });
+
+        const raw = await db.calendar_meta.get([2026, DEFAULT_PROJECT_ID]);
+        expect(raw).toBeDefined();
+        expect(raw.project_id).toBe(DEFAULT_PROJECT_ID);
+    });
+
+    it('getCalendarMeta 支持按 project_id 读取复合主键记录', async () => {
+        await saveCalendarMeta({ year: 2026, project_id: 'prj_alpha', countryCode: 'CN', fetchedAt: 1000 });
+        await saveCalendarMeta({ year: 2026, project_id: 'prj_beta', countryCode: 'JP', fetchedAt: 2000 });
+
+        const alpha = await getCalendarMeta(2026, 'prj_alpha');
+        const beta = await getCalendarMeta(2026, 'prj_beta');
+
+        expect(alpha.countryCode).toBe('CN');
+        expect(beta.countryCode).toBe('JP');
     });
 });
 

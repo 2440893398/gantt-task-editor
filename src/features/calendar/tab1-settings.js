@@ -6,7 +6,7 @@
  * - 节假日数据状态卡片
  */
 
-import { getCalendarSettings, saveCalendarSettings, getCalendarMeta, db } from '../../core/storage.js';
+import { DEFAULT_PROJECT_ID, getCalendarSettings, saveCalendarSettings, getCalendarMeta, db } from '../../core/storage.js';
 import { ensureHolidaysCached } from './holidayFetcher.js';
 import { refreshHolidayHighlightCache } from '../gantt/init.js';
 import { i18n } from '../../utils/i18n.js';
@@ -149,8 +149,8 @@ export async function renderTab1(container) {
         // 强制清除 meta 触发重新拉取
         const { db } = await import('../../core/storage.js');
         const thisYear = new Date().getFullYear();
-        await db.calendar_meta.delete(thisYear);
-        await db.calendar_meta.delete(thisYear + 1);
+        await db.calendar_meta.delete([thisYear, DEFAULT_PROJECT_ID]);
+        await db.calendar_meta.delete([thisYear + 1, DEFAULT_PROJECT_ID]);
         await ensureHolidaysCached(thisYear);
         await ensureHolidaysCached(thisYear + 1);
         await refreshHolidayHighlightCache();
