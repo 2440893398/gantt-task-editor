@@ -253,29 +253,33 @@ describe('calendar_holidays: clearHolidaysByYear', () => {
         await db.calendar_holidays.clear();
     });
 
-    it('清除指定年份的所有节假日，无论 countryCode', async () => {
+    it('清除指定年份 + countryCode 的节假日，不影响同年其他国家', async () => {
         await bulkSaveHolidays([
             { date: '2026-01-01', year: 2026, countryCode: 'CN', isOffDay: true, name: '元旦CN' },
             { date: '2026-01-01', year: 2026, countryCode: 'JP', isOffDay: true, name: '元日JP' },
             { date: '2025-12-25', year: 2025, countryCode: 'CN', isOffDay: true, name: '圣诞' },
         ]);
 
-        await clearHolidaysByYear(2026);
+        await clearHolidaysByYear(2026, 'CN');
 
         const remaining = await db.calendar_holidays.toArray();
-        expect(remaining).toHaveLength(1);
-        expect(remaining[0].year).toBe(2025);
+        expect(remaining).toHaveLength(2);
+        expect(remaining.some(h => h.year === 2026 && h.countryCode === 'JP')).toBe(true);
+        expect(remaining.some(h => h.year === 2025)).toBe(true);
     });
 
-    it('清除后同年的节假日查询返回 undefined', async () => {
+    it('清除后仅目标国家的节假日查询返回 undefined', async () => {
         await bulkSaveHolidays([
-            { date: '2026-05-01', year: 2026, countryCode: 'CN', isOffDay: true, name: '劳动节' }
+            { date: '2026-05-01', year: 2026, countryCode: 'CN', isOffDay: true, name: '劳动节' },
+            { date: '2026-05-01', year: 2026, countryCode: 'JP', isOffDay: true, name: '憲法記念日' }
         ]);
 
-        await clearHolidaysByYear(2026);
+        await clearHolidaysByYear(2026, 'CN');
 
-        const result = await getHolidayDayByCountry('2026-05-01', 'CN');
-        expect(result).toBeUndefined();
+        const cnResult = await getHolidayDayByCountry('2026-05-01', 'CN');
+        const jpResult = await getHolidayDayByCountry('2026-05-01', 'JP');
+        expect(cnResult).toBeUndefined();
+        expect(jpResult).toBeDefined();
     });
 });
 

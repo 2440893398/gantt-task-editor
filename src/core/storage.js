@@ -621,6 +621,15 @@ export async function bulkSaveHolidays(holidays) {
 }
 
 export async function clearHolidaysByYear(year, countryCode) {
+    if (countryCode) {
+        await db.calendar_holidays
+            .where('year')
+            .equals(year)
+            .and(holiday => holiday.countryCode === countryCode)
+            .delete();
+        return;
+    }
+
     await db.calendar_holidays
         .where('year')
         .equals(year)

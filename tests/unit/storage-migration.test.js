@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import Dexie from 'dexie';
 
+function createMigrationTestDbName(prefix) {
+    const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+    return `${prefix}_${suffix}`;
+}
+
 /**
  * 辅助函数：创建一个已有 v3 数据的数据库，再用 v4/v5 schema 打开，触发真实的 upgrade 回调。
  * 每个测试用唯一的 dbName，避免 fake-indexeddb 单测之间共享状态。
@@ -115,7 +120,8 @@ describe('Storage migration v4', () => {
     });
 
     it('should create default project during v3->v4 upgrade', async () => {
-        const db = await createV3ThenUpgradeToV5('MigTest_projects');
+        const dbName = createMigrationTestDbName('MigTest_projects');
+        const db = await createV3ThenUpgradeToV5(dbName);
         try {
             const projects = await db.projects.toArray();
             expect(projects.length).toBeGreaterThanOrEqual(1);
@@ -125,11 +131,13 @@ describe('Storage migration v4', () => {
             expect(defaultProj.color).toBe('#4f46e5');
         } finally {
             db.close();
+            await Dexie.delete(dbName);
         }
     });
 
     it('should backfill project_id on existing tasks during v3->v4 upgrade', async () => {
-        const db = await createV3ThenUpgradeToV5('MigTest_tasks');
+        const dbName = createMigrationTestDbName('MigTest_tasks');
+        const db = await createV3ThenUpgradeToV5(dbName);
         try {
             const tasks = await db.tasks.toArray();
             expect(tasks.length).toBeGreaterThanOrEqual(1);
@@ -138,11 +146,13 @@ describe('Storage migration v4', () => {
             }
         } finally {
             db.close();
+            await Dexie.delete(dbName);
         }
     });
 
     it('should backfill project_id on existing links during v3->v4 upgrade', async () => {
-        const db = await createV3ThenUpgradeToV5('MigTest_links');
+        const dbName = createMigrationTestDbName('MigTest_links');
+        const db = await createV3ThenUpgradeToV5(dbName);
         try {
             const links = await db.links.toArray();
             expect(links.length).toBeGreaterThanOrEqual(1);
@@ -151,11 +161,13 @@ describe('Storage migration v4', () => {
             }
         } finally {
             db.close();
+            await Dexie.delete(dbName);
         }
     });
 
     it('calendar_holidays should use compound PK [date+countryCode] after upgrade', async () => {
-        const db = await createV3ThenUpgradeToV5('MigTest_holidays');
+        const dbName = createMigrationTestDbName('MigTest_holidays');
+        const db = await createV3ThenUpgradeToV5(dbName);
         try {
             // 插入同一 date 不同 countryCode 的数据，不应冲突
             await db.calendar_holidays.add({ date: '2024-01-01', countryCode: 'CN', year: 2024, name: '元旦' });
@@ -164,6 +176,7 @@ describe('Storage migration v4', () => {
             expect(all.length).toBe(2);
         } finally {
             db.close();
+            await Dexie.delete(dbName);
         }
     });
 });
