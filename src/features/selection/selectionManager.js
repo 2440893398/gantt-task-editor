@@ -78,6 +78,15 @@ export function applySelectionStyles() {
             row.classList.add('gantt-selected');
             row.style.backgroundColor = 'rgba(59, 130, 246, 0.15)';
         });
+
+        // 高亮右侧甘特条本身，增强可见性
+        const taskBars = document.querySelectorAll(`.gantt_task_line[task_id="${taskId}"]`);
+        taskBars.forEach(bar => {
+            bar.classList.add('gantt-selected');
+            bar.style.outline = '2px solid #3b82f6';
+            bar.style.outlineOffset = '1px';
+            bar.style.boxShadow = '0 0 0 1px rgba(59, 130, 246, 0.5)';
+        });
     });
 
     // 更新未选中任务的复选框状态

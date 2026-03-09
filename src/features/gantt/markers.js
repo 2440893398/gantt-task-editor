@@ -6,6 +6,16 @@
 
 let todayMarkerId = null;
 
+function rerenderMarkerLayer() {
+    if (typeof gantt.renderMarkers === 'function') {
+        gantt.renderMarkers();
+        return;
+    }
+    if (typeof gantt.render === 'function') {
+        gantt.render();
+    }
+}
+
 /**
  * 初始化标记功能
  */
@@ -139,7 +149,7 @@ function scheduleDailyUpdate() {
         } else {
             addTodayLineElement();
         }
-        gantt.render();
+        rerenderMarkerLayer();
         // 继续下一天的计划
         scheduleDailyUpdate();
     }, msUntilMidnight);
@@ -155,5 +165,5 @@ export function refreshTodayMarker() {
     } else {
         addTodayLineElement();
     }
-    gantt.render();
+    rerenderMarkerLayer();
 }

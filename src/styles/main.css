@@ -344,12 +344,73 @@
 .gantt_row:hover .gantt-drag-handle {
     opacity: 1;
 }
-.gantt_row.row-dragging {
+/* 拖拽时的半透明样式 */
+.gantt_row.row-dragging,
+.row-dragging {
     opacity: 0.4;
+    background: rgba(59, 130, 246, 0.1) !important;
 }
-.gantt_row.row-drag-ghost {
+/* 拖放位置指示器 - 蓝线 */
+.gantt_row.row-drag-ghost,
+.row-drag-ghost {
     background: transparent !important;
-    border-top: 2px solid #3b82f6 !important;
-    height: 2px !important;
-    overflow: hidden;
+    border-top: 3px solid #3b82f6 !important;
+    height: 0 !important;
+    overflow: visible !important;
+    position: relative;
+}
+.gantt_row.row-drag-ghost::after,
+.row-drag-ghost::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: -3px;
+    height: 3px;
+    background: linear-gradient(90deg, transparent, #3b82f6 20%, #3b82f6 80%, transparent);
+}
+/* 拖到元素上方时的高亮 */
+.gantt_row.row-drag-over,
+.row-drag-over {
+    background: rgba(59, 130, 246, 0.08) !important;
+    border-left: 3px solid #3b82f6 !important;
+}
+/* 拖拽选中时（尚未松手） */
+.gantt_row.row-drag-chosen,
+.row-drag-chosen {
+    opacity: 0.6;
+    background: rgba(59, 130, 246, 0.15) !important;
+    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
+}
+/* 悬停在目标行上（备用类，目前未使用） */
+.gantt_row.row-drag-hover,
+.row-drag-hover {
+    background: rgba(59, 130, 246, 0.06) !important;
+}
+
+/* 行内插入位置指示器（基于目标行的上/下边框） */
+.gantt_row.row-drop-indicator-before,
+.row-drop-indicator-before,
+.gantt_row.row-drop-indicator-after,
+.row-drop-indicator-after {
+    position: relative;
+}
+.gantt_row.row-drop-indicator-before::before,
+.row-drop-indicator-before::before,
+.gantt_row.row-drop-indicator-after::before,
+.row-drop-indicator-after::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: #3b82f6;
+}
+.gantt_row.row-drop-indicator-before::before,
+.row-drop-indicator-before::before {
+    top: -1px;
+}
+.gantt_row.row-drop-indicator-after::before,
+.row-drop-indicator-after::before {
+    bottom: -1px;
 }

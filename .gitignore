@@ -12,6 +12,8 @@ dist-cn/
 .agent/
 .agents/
 .codex/skills/
+.gemini/
+.github/
 .opencode/
 .vscode/
 *.swp
@@ -51,6 +53,9 @@ temp/
 .*.swp
 .*.swo
 .worktrees/
+
+# Documentation
+docs/tmp/
 
 # Local configuration
 *.local.json

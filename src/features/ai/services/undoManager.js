@@ -468,19 +468,24 @@ export function saveReorderState(before, after) {
  * @param {Array<{id, parent, sortorder}>} items - 要应用的顺序快照
  */
 function _applyReorderSnapshot(items) {
-    // 按 sortorder 从小到大排序，确保顺序正确
-    const sorted = [...items].sort((a, b) => a.sortorder - b.sortorder);
-    sorted.forEach(({ id, parent, sortorder }) => {
+    // 直接使用快照中的 sortorder 值，不重新计算
+    // 因为快照已经记录了正确的顺序
+    items.forEach(({ id, parent, sortorder }) => {
         try {
             const task = gantt.getTask(id);
-            if (!task) return;
+            if (!task) {
+                console.warn('[UndoManager] _applyReorderSnapshot: task not found', id);
+                return;
+            }
+            // 直接恢复 parent 和 sortorder
             task.parent = parent ?? 0;
-            task.sortorder = sortorder;
-            gantt.moveTask(id, sortorder, parent ?? 0);
+            task.sortorder = sortorder ?? 0;
+            gantt.updateTask(id);
         } catch (e) {
             console.warn('[UndoManager] _applyReorderSnapshot: failed for task', id, e);
         }
     });
+
     gantt.render();
 }
 

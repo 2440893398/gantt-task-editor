@@ -299,6 +299,9 @@ export default {
         schedule: 'スケジュール',
         planStart: '開始予定',
         planEnd: '終了予定',
+        scheduleMode: 'モード',
+        scheduleModeStartDuration: '開始 + 期間',
+        scheduleModeStartEnd: '開始 + 終了',
         actualStart: '実際の開始',
         actualEnd: '実際の終了',
         notStarted: '未開始',
@@ -324,6 +327,8 @@ export default {
         dateRangeError: '実際の開始日は実際の終了日より後にできません',
         fieldDisabled: 'このフィールドは無効です',
         parentAssigneeLock: '親担当者をロック',
+        unsavedTitle: '未保存の変更を破棄しますか？',
+        unsavedMessage: '未保存の変更があります。閉じてもよろしいですか？',
         // サブタスク削除機能
         deleteSubtask: 'サブタスク削除',
         deleteSubtaskTitle: 'サブタスク削除',

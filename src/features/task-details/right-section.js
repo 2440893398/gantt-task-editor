@@ -204,6 +204,31 @@ export function bindRightSectionEvents(panel, task, context = {}) {
         undoManager.saveState(task.id);
     };
 
+    // 「开始 + 工期」模式下，用 start_date + duration 校正 end_date（打开面板时若数据不一致则自动修正）
+    if (typeof gantt !== 'undefined' && typeof gantt.calculateEndDate === 'function') {
+        const mode = normalizeScheduleMode(draftTask.schedule_mode);
+        if (mode === 'start_duration' && draftTask.start_date && (draftTask.duration || draftTask.estimated_hours)) {
+            const duration = draftTask.duration || draftTask.estimated_hours || 0;
+            const correctEnd = gantt.calculateEndDate(draftTask.start_date, duration);
+            if (correctEnd) {
+                const currentEnd = draftTask.end_date ? new Date(draftTask.end_date).getTime() : null;
+                const correctEndTime = new Date(correctEnd).getTime();
+                if (currentEnd !== correctEndTime) {
+                    mutateDraft((target) => {
+                        target.end_date = correctEnd;
+                    });
+                    if (!isDraftMode) {
+                        task.end_date = correctEnd;
+                    }
+                    const endDateEl = panel.querySelector('#task-end-date');
+                    if (endDateEl) {
+                        updateDateTriggerDisplay(endDateEl, formatDateValue(exclusiveToInclusive(correctEnd)), false);
+                    }
+                }
+            }
+        }
+    }
+
     // 状态选择 (自定义下拉)
     bindDropdown(panel, 'task-status', (value) => {
         const nextStatus = value;
@@ -425,17 +450,32 @@ export function bindRightSectionEvents(panel, task, context = {}) {
                     return;
                 }
                 saveTaskState();
+                const mode = normalizeScheduleMode(draftTask.schedule_mode);
+                const startDate = draftTask.start_date;
+                let nextEndDate = draftTask.end_date;
+                // 「开始 + 工期」模式：根据开始日期 + 新工期重算计划截止
+                if (mode === 'start_duration' && startDate && typeof gantt !== 'undefined' && typeof gantt.calculateEndDate === 'function') {
+                    nextEndDate = gantt.calculateEndDate(startDate, value);
+                }
                 mutateDraft((target) => {
                     target.duration = value;
                     target.estimated_hours = value;
+                    if (nextEndDate) target.end_date = nextEndDate;
                 });
                 if (!isDraftMode) {
                     task.duration = value;
                     task.estimated_hours = value;
+                    if (nextEndDate) task.end_date = nextEndDate;
                 }
                 durationInput.value = value; // 标准化显示
                 if (durationHint) {
                     durationHint.textContent = formatDuration(value);
+                }
+                if (nextEndDate) {
+                    const endDateEl = panel.querySelector('#task-end-date');
+                    if (endDateEl) {
+                        updateDateTriggerDisplay(endDateEl, formatDateValue(exclusiveToInclusive(nextEndDate)), false);
+                    }
                 }
                 persistIfNeeded();
             }

@@ -265,6 +265,9 @@ export default {
         schedule: '排期',
         planStart: '计划开始',
         planEnd: '计划截止',
+        scheduleMode: '模式',
+        scheduleModeStartDuration: '开始 + 工期',
+        scheduleModeStartEnd: '开始 + 截止',
         actualStart: '实际开始',
         actualEnd: '实际结束',
         notStarted: '未开始',
@@ -297,6 +300,8 @@ export default {
         dateRangeError: '实际开始时间不能晚于实际结束时间',
         fieldDisabled: '此字段已禁用',
         parentAssigneeLock: '锁定上级负责人',
+        unsavedTitle: '放弃未保存修改？',
+        unsavedMessage: '你有未保存的修改，确定要关闭吗？',
         // 子任务删除功能
         deleteSubtask: '删除子任务',
         deleteSubtaskTitle: '删除子任务',

@@ -177,6 +177,7 @@ function setTableLayout() {
  * @param {number} gridWidth - 左侧 grid 宽度，用于定位右侧标题
  */
 function updateSplitPanelBar(visible, gridWidth) {
+    if (typeof document === 'undefined') return;
     const bar = document.getElementById('split-panel-bar');
     if (!bar) return;
 

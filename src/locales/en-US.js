@@ -266,6 +266,9 @@ export default {
         schedule: 'Schedule',
         planStart: 'Start',
         planEnd: 'Due',
+        scheduleMode: 'Mode',
+        scheduleModeStartDuration: 'Start + Duration',
+        scheduleModeStartEnd: 'Start + End',
         actualStart: 'Actual Start',
         actualEnd: 'Actual End',
         notStarted: 'Not Started',
@@ -298,6 +301,8 @@ export default {
         dateRangeError: 'Actual start date cannot be later than actual end date',
         fieldDisabled: 'This field is disabled',
         parentAssigneeLock: 'Lock parent assignee',
+        unsavedTitle: 'Discard unsaved changes?',
+        unsavedMessage: 'You have unsaved changes. Are you sure you want to close?',
         // Subtask deletion
         deleteSubtask: 'Delete Subtask',
         deleteSubtaskTitle: 'Delete Subtask',

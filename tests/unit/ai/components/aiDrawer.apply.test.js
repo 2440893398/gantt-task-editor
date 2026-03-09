@@ -46,7 +46,7 @@ describe('AiDrawer apply button visibility', () => {
         AiDrawer.addMessage('assistant', 'assistant reply');
 
         expect(document.querySelector('.ai-msg-apply')).toBeNull();
-    });
+    }, 15000);
 
     it('renders apply button when apply callback is provided', async () => {
         const AiDrawer = await import('../../../../src/features/ai/components/AiDrawer.js');

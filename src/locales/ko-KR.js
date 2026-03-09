@@ -297,6 +297,9 @@ export default {
         schedule: '일정',
         planStart: '시작 예정',
         planEnd: '종료 예정',
+        scheduleMode: '모드',
+        scheduleModeStartDuration: '시작 + 기간',
+        scheduleModeStartEnd: '시작 + 종료',
         actualStart: '실제 시작',
         actualEnd: '실제 종료',
         notStarted: '시작하지 않음',
@@ -322,6 +325,8 @@ export default {
         dateRangeError: '실제 시작일은 실제 종료일보다 늦을 수 없습니다',
         fieldDisabled: '이 필드는 비활성화되었습니다',
         parentAssigneeLock: '상위 담당자 잠금',
+        unsavedTitle: '저장되지 않은 변경 사항을 버리시겠습니까?',
+        unsavedMessage: '저장되지 않은 변경 사항이 있습니다. 닫으시겠습니까?',
         // 하위 작업 삭제 기능
         deleteSubtask: '하위 작업 삭제',
         deleteSubtaskTitle: '하위 작업 삭제',
