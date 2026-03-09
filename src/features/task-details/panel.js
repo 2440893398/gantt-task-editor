@@ -14,8 +14,11 @@ import undoManager from '../ai/services/undoManager.js';
 let currentPanel = null;
 let currentTaskId = null;
 let currentDraftTask = null;
+let initialDraftTask = null;
 let isFullscreen = false;
 let parentTaskStack = [];
+let isCreatingNewTask = false;
+let pendingNewTaskPayload = null;
 
 function cloneValue(value) {
     if (typeof structuredClone === 'function') {
@@ -92,12 +95,17 @@ function applyDraftChanges(sourceTask, draftTask) {
 }
 
 function isDraftDirty() {
+    if (!currentDraftTask) return false;
+    if (isCreatingNewTask) {
+        return hasDraftChanges(initialDraftTask, currentDraftTask);
+    }
     return hasDraftChanges(getCurrentSourceTask(), currentDraftTask);
 }
 
 function resetDraftFromSource() {
     const sourceTask = getCurrentSourceTask();
     currentDraftTask = sourceTask ? cloneValue(sourceTask) : null;
+    initialDraftTask = currentDraftTask ? cloneValue(currentDraftTask) : null;
 }
 
 function updateCurrentDraft(mutator) {
@@ -153,7 +161,10 @@ export function openTaskDetailsPanel(taskId) {
     }
 
     currentTaskId = taskId;
+    isCreatingNewTask = false;
+    pendingNewTaskPayload = null;
     currentDraftTask = cloneValue(task);
+    initialDraftTask = cloneValue(task);
 
     const overlay = document.createElement('div');
     overlay.id = 'task-details-overlay';
@@ -181,6 +192,84 @@ export function openTaskDetailsPanel(taskId) {
     currentPanel = panel;
 
     bindPanelEvents(panel, task);
+
+    requestAnimationFrame(() => {
+        overlay.classList.remove('opacity-0');
+        panel.classList.remove('scale-95', 'opacity-0');
+        panel.classList.add('scale-100', 'opacity-100');
+    });
+
+    document.addEventListener('keydown', handleEscKey);
+    document.body.style.overflow = 'hidden';
+}
+
+function buildDraftTaskFromPayload(payload = {}) {
+    const defaults = payload?.defaults || {};
+    const fallbackStartDate = new Date();
+    fallbackStartDate.setHours(0, 0, 0, 0);
+
+    const startDate = defaults.start_date ? new Date(defaults.start_date) : fallbackStartDate;
+    if (Number.isNaN(startDate.getTime())) {
+        startDate.setTime(fallbackStartDate.getTime());
+    }
+
+    return {
+        text: defaults.text || '',
+        summary: defaults.summary || defaults.description || '',
+        description: defaults.description || defaults.summary || '',
+        start_date: startDate,
+        duration: Number.isFinite(Number(defaults.duration)) ? Number(defaults.duration) : 1,
+        progress: Number.isFinite(Number(defaults.progress)) ? Number(defaults.progress) : 0,
+        parent: defaults.parent ?? 0,
+        status: defaults.status || 'not_started',
+        priority: defaults.priority || 'medium',
+        assignee: defaults.assignee || '',
+        schedule_mode: defaults.schedule_mode || 'start_duration'
+    };
+}
+
+export function openNewTaskDetailsPanel(payload = {}) {
+    if (currentPanel) {
+        const overlay = document.getElementById('task-details-overlay');
+        destroyRichTextEditor();
+        if (overlay) overlay.remove();
+        currentPanel = null;
+        document.removeEventListener('keydown', handleEscKey);
+    }
+
+    currentTaskId = null;
+    isCreatingNewTask = true;
+    pendingNewTaskPayload = payload;
+    const draftTask = buildDraftTaskFromPayload(payload);
+    currentDraftTask = cloneValue(draftTask);
+    initialDraftTask = cloneValue(draftTask);
+
+    const overlay = document.createElement('div');
+    overlay.id = 'task-details-overlay';
+    overlay.className = 'fixed inset-0 bg-black/50 z-[5999] transition-opacity duration-300 opacity-0 flex items-center justify-center';
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) {
+            closeTaskDetailsPanel();
+        }
+    });
+    document.body.appendChild(overlay);
+
+    const panel = document.createElement('div');
+    panel.id = 'task-details-panel';
+    panel.className = `
+        w-[1000px] max-w-[92vw] h-[88vh] max-h-[850px]
+        bg-base-100 shadow-2xl rounded-xl
+        z-[6000] flex flex-col
+        transition-all duration-300 ease-out
+        scale-95 opacity-0
+    `;
+
+    panel.innerHTML = buildPanelHTML(currentDraftTask);
+
+    overlay.appendChild(panel);
+    currentPanel = panel;
+
+    bindPanelEvents(panel, currentDraftTask);
 
     requestAnimationFrame(() => {
         overlay.classList.remove('opacity-0');
@@ -294,6 +383,32 @@ function bindPanelEvents(panel, task) {
 }
 
 function handleConfirmSave() {
+    if (isCreatingNewTask) {
+        if (!currentDraftTask) {
+            showToast(i18n.t('message.error') || '保存失败', 'error');
+            return;
+        }
+
+        const taskToCreate = cloneValue(currentDraftTask);
+        if (!String(taskToCreate.text || '').trim()) {
+            taskToCreate.text = i18n.t('taskDetails.newTask') || '新任务';
+        }
+
+        const parentId = taskToCreate.parent ?? pendingNewTaskPayload?.defaults?.parent ?? 0;
+        const createdTaskId = gantt.addTask(taskToCreate, parentId);
+        const createdTask = gantt.getTask(createdTaskId);
+
+        isCreatingNewTask = false;
+        pendingNewTaskPayload = null;
+        currentTaskId = createdTaskId;
+        currentDraftTask = cloneValue(createdTask);
+        initialDraftTask = cloneValue(createdTask);
+
+        showToast(i18n.t('message.saveSuccess') || '保存成功', 'success');
+        refreshTaskDetailsPanel();
+        return;
+    }
+
     const sourceTask = getCurrentSourceTask();
     if (!sourceTask || !currentDraftTask) {
         showToast(i18n.t('message.error') || '保存失败', 'error');
@@ -368,7 +483,10 @@ export function closeTaskDetailsPanel(options = {}) {
         currentPanel = null;
         currentTaskId = null;
         currentDraftTask = null;
+        initialDraftTask = null;
         isFullscreen = false;
+        isCreatingNewTask = false;
+        pendingNewTaskPayload = null;
 
         if (parentTaskStack.length > 0) {
             const parentId = parentTaskStack.pop();

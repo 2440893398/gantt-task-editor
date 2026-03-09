@@ -5,6 +5,7 @@
 
 export {
     openTaskDetailsPanel,
+    openNewTaskDetailsPanel,
     openChildTaskPanel,
     closeTaskDetailsPanel,
     isTaskDetailsPanelOpen,

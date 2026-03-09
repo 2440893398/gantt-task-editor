@@ -60,6 +60,14 @@ describe('task-details panel draft workflow', () => {
 
         global.gantt = {
             getTask: vi.fn((id) => taskStore[id]),
+            addTask: vi.fn((payload) => {
+                const createdId = 2;
+                taskStore[createdId] = {
+                    id: createdId,
+                    ...payload
+                };
+                return createdId;
+            }),
             updateTask: vi.fn(),
             deleteTask: vi.fn()
         };
@@ -115,5 +123,34 @@ describe('task-details panel draft workflow', () => {
         args.onConfirm();
         vi.runAllTimers();
         expect(document.getElementById('task-details-overlay')).toBeNull();
+    });
+
+    it('creates a new task only after confirm save in new-task flow', async () => {
+        const panel = await import('../../../src/features/task-details/panel.js');
+
+        panel.openNewTaskDetailsPanel({
+            source: 'unit-test',
+            defaults: {
+                text: '',
+                start_date: new Date('2026-03-06'),
+                duration: 1,
+                progress: 0,
+                parent: 0
+            }
+        });
+
+        panel.__test__.updateCurrentDraft((draft) => {
+            draft.text = 'Draft task from panel';
+        });
+
+        expect(global.gantt.addTask).not.toHaveBeenCalled();
+
+        const confirmBtn = document.querySelector('#btn-confirm-save');
+        expect(confirmBtn).toBeTruthy();
+        confirmBtn.click();
+
+        expect(global.gantt.addTask).toHaveBeenCalledTimes(1);
+        expect(global.gantt.updateTask).not.toHaveBeenCalled();
+        expect(global.gantt.getTask(2).text).toBe('Draft task from panel');
     });
 });

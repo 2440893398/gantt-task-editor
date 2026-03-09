@@ -252,6 +252,11 @@ function stretchTableColumnsToFill() {
 function applyViewMode(mode) {
     if (typeof gantt === 'undefined') return;
 
+    if (typeof document !== 'undefined') {
+        document.documentElement.style.setProperty('--gantt-grid-scroll-left', '0px');
+        document.documentElement.classList.remove('gantt-grid-h-scrolled');
+    }
+
     if (mode === 'split') {
         gantt.config.show_grid = true;
         gantt.config.show_chart = true;

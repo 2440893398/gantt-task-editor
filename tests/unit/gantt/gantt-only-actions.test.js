@@ -215,6 +215,27 @@ describe('gantt-only action affordances', () => {
         expect(payload.defaults.start_date).toBeInstanceOf(Date);
         expect(payload.defaults.start_date.getHours()).toBe(0);
     });
+
+    it('opens draft panel when clicking grid add (+) instead of creating immediately', async () => {
+        const { updateGanttColumns } = await import('../../../src/features/gantt/columns.js');
+        updateGanttColumns();
+
+        const addCol = global.gantt.config.columns.find((col) => col.name === 'quick_add');
+        expect(addCol).toBeTruthy();
+
+        const html = addCol.template({
+            id: 321,
+            text: 'Parent Task',
+            parent: 0,
+            start_date: new Date('2026-03-10T00:00:00.000Z')
+        });
+        document.body.innerHTML = html;
+
+        document.querySelector('[data-action="quick-add"]').click();
+
+        expect(window.openNewTaskDetailsPanel).toHaveBeenCalledTimes(1);
+        expect(global.gantt.addTask).not.toHaveBeenCalled();
+    });
 });
 
 describe('timeline empty-area create action', () => {

@@ -40,4 +40,27 @@ describe('gantt navigation today behavior', () => {
         expect(global.gantt.config.start_date).toBeNull();
         expect(global.gantt.config.end_date).toBeNull();
     });
+
+    it('does not hijack space key inside contenteditable editors', async () => {
+        document.body.innerHTML = '<div id="gantt_here"><div class="gantt_task"></div></div>';
+
+        global.gantt.getScrollState = vi.fn(() => ({ x: 0 }));
+        global.gantt.scrollTo = vi.fn();
+
+        const { initNavigation } = await import('../../../src/features/gantt/navigation.js');
+        initNavigation();
+
+        const editor = document.createElement('div');
+        editor.setAttribute('contenteditable', 'true');
+        document.body.appendChild(editor);
+
+        const event = new KeyboardEvent('keydown', {
+            code: 'Space',
+            bubbles: true,
+            cancelable: true
+        });
+
+        editor.dispatchEvent(event);
+        expect(event.defaultPrevented).toBe(false);
+    });
 });

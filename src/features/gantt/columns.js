@@ -16,6 +16,12 @@ import { showToast } from '../../utils/toast.js';
 
 let taskActionHandlersBound = false;
 
+const TASK_ACTION_ICONS = {
+    addChild: '<svg class="gantt-task-action-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>',
+    edit: '<svg class="gantt-task-action-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M11.7 2.3a1 1 0 0 1 1.4 0l.6.6a1 1 0 0 1 0 1.4l-7.7 7.7-2.8.8.8-2.8zM9.9 4.1l2 2"/></svg>',
+    delete: '<svg class="gantt-task-action-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 4.5h9M6.2 4.5V3.2h3.6v1.3M5.2 6.2v5.6M8 6.2v5.6M10.8 6.2v5.6M4.8 4.5l.6 8.5h5.2l.6-8.5"/></svg>'
+};
+
 /**
  * 获取本地化的列名称
  * @param {string} key - 列名键
@@ -206,6 +212,34 @@ function ensureTaskActionHandlersBound() {
             return;
         }
 
+        if (action === 'quick-add') {
+            const baseTask = getTaskByAnyId(gantt, taskId);
+            if (!baseTask) return;
+
+            const payload = buildNewTaskPayload({
+                source: 'grid-column-add',
+                parentTaskId: baseTask.parent ?? 0,
+                parentId: baseTask.parent ?? 0,
+                startDate: baseTask.start_date,
+                text: '',
+                duration: 1,
+                progress: 0
+            });
+
+            if (typeof window.openNewTaskDetailsPanel === 'function') {
+                window.openNewTaskDetailsPanel(payload);
+                return;
+            }
+
+            if (typeof gantt.addTask === 'function') {
+                const createdTaskId = gantt.addTask(payload.defaults, payload.defaults.parent);
+                if (typeof window.openTaskDetailsPanel === 'function') {
+                    window.openTaskDetailsPanel(createdTaskId);
+                }
+            }
+            return;
+        }
+
         if (action === 'delete') {
             const task = getTaskByAnyId(gantt, taskId);
             if (!task) return;
@@ -237,10 +271,10 @@ function renderTaskActionsCell(task) {
     const labels = shouldShowAddChild ? `${addChildLabel}/${editLabel}/${deleteLabel}` : `${editLabel}/${deleteLabel}`;
     return `<div class="gantt-task-actions-cell" role="group" aria-label="${labels}">
         ${shouldShowAddChild
-        ? `<button type="button" class="gantt-task-action-btn gantt-task-action-add-child" data-action="add-child" data-task-id="${taskId}" title="${addChildLabel}" aria-label="${addChildLabel}">＋</button>`
+        ? `<button type="button" class="gantt-task-action-btn gantt-task-action-add-child" data-action="add-child" data-task-id="${taskId}" title="${addChildLabel}" aria-label="${addChildLabel}">${TASK_ACTION_ICONS.addChild}</button>`
         : ''}
-        <button type="button" class="gantt-task-action-btn gantt-task-action-edit" data-action="edit" data-task-id="${taskId}" title="${editLabel}" aria-label="${editLabel}">✎</button>
-        <button type="button" class="gantt-task-action-btn gantt-task-action-delete" data-action="delete" data-task-id="${taskId}" title="${deleteLabel}" aria-label="${deleteLabel}">🗑</button>
+        <button type="button" class="gantt-task-action-btn gantt-task-action-edit" data-action="edit" data-task-id="${taskId}" title="${editLabel}" aria-label="${editLabel}">${TASK_ACTION_ICONS.edit}</button>
+        <button type="button" class="gantt-task-action-btn gantt-task-action-delete" data-action="delete" data-task-id="${taskId}" title="${deleteLabel}" aria-label="${deleteLabel}">${TASK_ACTION_ICONS.delete}</button>
     </div>`;
 }
 
@@ -458,8 +492,18 @@ export function updateGanttColumns() {
 
     });
 
-    // 添加列 - 宽度44px匹配设计稿
-    columns.push({ name: "add", label: "", width: 44, min_width: 44 });
+    // 添加列 - 打开草稿编辑面板（不立即创建）
+    columns.push({
+        name: 'quick_add',
+        label: '',
+        width: 44,
+        min_width: 44,
+        template: function (task) {
+            const taskId = escapeAttr(task.id);
+            const addLabel = i18n.t('taskDetails.addSubtask') || '添加';
+            return `<button type="button" class="gantt-task-action-btn gantt-grid-add-btn" data-action="quick-add" data-task-id="${taskId}" title="${addLabel}" aria-label="${addLabel}">${TASK_ACTION_ICONS.addChild}</button>`;
+        }
+    });
 
     columns.push({
         name: 'actions',

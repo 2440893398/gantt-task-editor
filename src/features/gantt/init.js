@@ -200,6 +200,51 @@ function stretchTextColumnToGridWidth() {
     gantt.render();
 }
 
+function syncPinnedGridScrollState() {
+    if (typeof document === 'undefined') return;
+
+    const root = document.documentElement;
+    const grid = document.querySelector('.gantt_grid');
+    if (!grid) {
+        root.style.setProperty('--gantt-grid-scroll-left', '0px');
+        root.classList.remove('gantt-grid-h-scrolled');
+        return;
+    }
+
+    const maxScroll = Math.max(0, (grid.scrollWidth || 0) - (grid.clientWidth || 0));
+    const nextScrollLeft = maxScroll > 0
+        ? Math.min(maxScroll, Math.max(0, Math.round(grid.scrollLeft || 0)))
+        : 0;
+
+    root.style.setProperty('--gantt-grid-scroll-left', `${nextScrollLeft}px`);
+    root.classList.toggle('gantt-grid-h-scrolled', nextScrollLeft > 0);
+}
+
+function bindPinnedGridScrollSync() {
+    const grid = document.querySelector('.gantt_grid');
+    if (!grid) {
+        syncPinnedGridScrollState();
+        return;
+    }
+
+    const sync = () => {
+        syncPinnedGridScrollState();
+    };
+
+    if (!grid.__pinnedActionScrollBound) {
+        grid.addEventListener('scroll', sync, { passive: true });
+        grid.__pinnedActionScrollBound = true;
+    }
+
+    document.querySelectorAll('.gantt_hor_scroll').forEach((scrollbar) => {
+        if (scrollbar.__pinnedActionScrollBound) return;
+        scrollbar.addEventListener('scroll', sync, { passive: true });
+        scrollbar.__pinnedActionScrollBound = true;
+    });
+
+    syncPinnedGridScrollState();
+}
+
 // Conflict state
 let conflictTaskIds = new Set();
 let conflictDetails = {};
@@ -861,6 +906,7 @@ export function initGantt() {
 
     // 甘特图渲染后重新应用选中样式
     gantt.attachEvent("onGanttRender", function () {
+        bindPinnedGridScrollSync();
         bindGridColumnReorderSync();
         if (state.selectedTasks.size > 0) {
             setTimeout(updateSelectedTasksUI, 50);

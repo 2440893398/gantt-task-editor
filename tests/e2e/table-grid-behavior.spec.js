@@ -185,5 +185,34 @@ test.describe('table grid behavior regressions', () => {
         expect(alignment.scrollLeft).toBeGreaterThan(0);
         expect(alignment.diffLeft).toBe(0);
         expect(alignment.diffRight).toBe(0);
+
+        const recover = await page.evaluate(() => {
+            const bottomScrollbar = document.querySelector('.gantt_hor_scroll');
+            if (!bottomScrollbar) {
+                return { btnVisible: false, offset: '' };
+            }
+
+            bottomScrollbar.scrollLeft = 0;
+            bottomScrollbar.dispatchEvent(new Event('scroll', { bubbles: true }));
+
+            const grid = document.querySelector('.gantt_grid');
+            const firstRow = document.querySelector('.gantt_grid_data .gantt_row');
+            const actionBtn = firstRow?.querySelector('.gantt_cell.gantt_last_cell .gantt-task-action-btn') || null;
+            if (!grid || !actionBtn) {
+                return { btnVisible: false, offset: getComputedStyle(document.documentElement).getPropertyValue('--gantt-grid-scroll-left').trim() };
+            }
+
+            const gridRect = grid.getBoundingClientRect();
+            const btnRect = actionBtn.getBoundingClientRect();
+            const btnVisible = btnRect.left >= gridRect.left - 1 && btnRect.right <= gridRect.right + 1;
+
+            return {
+                btnVisible,
+                offset: getComputedStyle(document.documentElement).getPropertyValue('--gantt-grid-scroll-left').trim()
+            };
+        });
+
+        expect(recover.btnVisible).toBe(true);
+        expect(recover.offset).toBe('0px');
     });
 });

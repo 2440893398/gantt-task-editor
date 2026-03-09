@@ -108,9 +108,17 @@ function setupManualDrag() {
     if (!ganttContainer) return;
 
     // 1. 监听空格键按下/释放 (全局)
+    const isTypingTarget = (target) => {
+        if (!target) return false;
+        if (target.matches && target.matches('input, textarea, select')) return true;
+        if (target.isContentEditable) return true;
+        if (target.closest && target.closest('[contenteditable="true"], .ql-editor')) return true;
+        return false;
+    };
+
     document.addEventListener('keydown', (e) => {
-        // 仅在不是输入框时响应空格键
-        if (e.code === 'Space' && !e.target.matches('input, textarea, select')) {
+        // 仅在不是输入区域时响应空格键
+        if (e.code === 'Space' && !isTypingTarget(e.target)) {
             if (!spacePressed) {
                 spacePressed = true;
                 ganttContainer.classList.add('space-drag-mode');

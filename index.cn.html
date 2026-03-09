@@ -627,9 +627,25 @@
 
             // 新建任务按钮 - 打开模态框
             document.getElementById('new-task-btn')?.addEventListener('click', () => {
-                // 打开模态框而非直接创建任务
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+
+                if (typeof window.openNewTaskDetailsPanel === 'function') {
+                    window.openNewTaskDetailsPanel({
+                        source: 'toolbar-new-task',
+                        defaults: {
+                            text: '',
+                            start_date: today,
+                            duration: 1,
+                            progress: 0,
+                            parent: 0
+                        }
+                    });
+                    return;
+                }
+
+                // 兼容回退：旧模态框
                 document.getElementById('new-task-modal').showModal();
-                // 聚焦到任务名称输入框
                 setTimeout(() => {
                     document.getElementById('new-task-name')?.focus();
                 }, 100);
