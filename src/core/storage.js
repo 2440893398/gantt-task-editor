@@ -274,7 +274,121 @@ export function getColumnsConfig() {
 // ========================================
 
 function normalizeProjectId(projectId) {
+    if (projectId === '') {
+        return DEFAULT_PROJECT_ID;
+    }
     return projectId ?? DEFAULT_PROJECT_ID;
+}
+
+const PROJECT_ID_NAMESPACE_SEPARATOR = '::';
+
+function isEmptyScopedIdValue(value) {
+    return value === null || value === undefined || value === '';
+}
+
+function isRootScopedIdValue(value) {
+    return value === 0 || value === '0';
+}
+
+function coerceDecodedIdValue(value) {
+    if (typeof value !== 'string') {
+        return value;
+    }
+
+    if (/^-?\d+(\.\d+)?$/.test(value) && String(Number(value)) === value) {
+        return Number(value);
+    }
+
+    return value;
+}
+
+function decodeScopedIdValue(value, projectId) {
+    if (typeof value !== 'string') {
+        return value;
+    }
+
+    const prefix = `${projectId}${PROJECT_ID_NAMESPACE_SEPARATOR}`;
+    if (!value.startsWith(prefix)) {
+        return value;
+    }
+
+    return coerceDecodedIdValue(value.slice(prefix.length));
+}
+
+function encodeScopedIdValue(value, projectId) {
+    const decodedValue = decodeScopedIdValue(value, projectId);
+    if (isEmptyScopedIdValue(decodedValue) || isRootScopedIdValue(decodedValue)) {
+        return decodedValue;
+    }
+
+    return `${projectId}${PROJECT_ID_NAMESPACE_SEPARATOR}${String(decodedValue)}`;
+}
+
+function encodeTaskForProject(task, projectId) {
+    const encoded = { ...task };
+
+    if (Object.hasOwn(encoded, 'id')) {
+        encoded.id = encodeScopedIdValue(encoded.id, projectId);
+    }
+    if (Object.hasOwn(encoded, 'parent')) {
+        encoded.parent = encodeScopedIdValue(encoded.parent, projectId);
+    }
+
+    return withProjectId(encoded, projectId);
+}
+
+function decodeTaskForProject(task, projectId) {
+    const decoded = { ...task };
+
+    if (Object.hasOwn(decoded, 'id')) {
+        decoded.id = decodeScopedIdValue(decoded.id, projectId);
+    }
+    if (Object.hasOwn(decoded, 'parent')) {
+        decoded.parent = decodeScopedIdValue(decoded.parent, projectId);
+    }
+
+    return decoded;
+}
+
+function encodeLinkForProject(link, projectId) {
+    const encoded = { ...link };
+
+    if (Object.hasOwn(encoded, 'id')) {
+        encoded.id = encodeScopedIdValue(encoded.id, projectId);
+    }
+    if (Object.hasOwn(encoded, 'source')) {
+        encoded.source = encodeScopedIdValue(encoded.source, projectId);
+    }
+    if (Object.hasOwn(encoded, 'target')) {
+        encoded.target = encodeScopedIdValue(encoded.target, projectId);
+    }
+
+    return withProjectId(encoded, projectId);
+}
+
+function decodeLinkForProject(link, projectId) {
+    const decoded = { ...link };
+
+    if (Object.hasOwn(decoded, 'id')) {
+        decoded.id = decodeScopedIdValue(decoded.id, projectId);
+    }
+    if (Object.hasOwn(decoded, 'source')) {
+        decoded.source = decodeScopedIdValue(decoded.source, projectId);
+    }
+    if (Object.hasOwn(decoded, 'target')) {
+        decoded.target = decodeScopedIdValue(decoded.target, projectId);
+    }
+
+    return decoded;
+}
+
+function buildScopedBaselineId(projectId, savedAt) {
+    const parsed = new Date(savedAt);
+    const datePart = Number.isNaN(parsed.getTime())
+        ? new Date().toISOString().slice(0, 10)
+        : parsed.toISOString().slice(0, 10);
+
+    return `baseline_${projectId}_${datePart}`;
 }
 
 function withProjectId(record, projectId) {
@@ -307,7 +421,7 @@ export function projectScope(projectId = DEFAULT_PROJECT_ID) {
     return {
         async saveTasks(tasks) {
             try {
-                const tasksToSave = (tasks ?? []).map(task => withProjectId(task, scopedProjectId));
+                const tasksToSave = (tasks ?? []).map(task => encodeTaskForProject(task, scopedProjectId));
                 await db.transaction('rw', db.tasks, async () => {
                     await db.tasks.where('project_id').equals(scopedProjectId).delete();
                     if (tasksToSave.length > 0) {
@@ -323,7 +437,8 @@ export function projectScope(projectId = DEFAULT_PROJECT_ID) {
 
         async getTasks() {
             try {
-                const tasks = await db.tasks.where('project_id').equals(scopedProjectId).toArray();
+                const tasks = (await db.tasks.where('project_id').equals(scopedProjectId).toArray())
+                    .map(task => decodeTaskForProject(task, scopedProjectId));
                 console.log(`[Storage] Loaded ${tasks.length} tasks from IndexedDB (project: ${scopedProjectId})`);
                 return tasks;
             } catch (e) {
@@ -334,7 +449,7 @@ export function projectScope(projectId = DEFAULT_PROJECT_ID) {
 
         async saveLinks(links) {
             try {
-                const linksToSave = (links ?? []).map(link => withProjectId(link, scopedProjectId));
+                const linksToSave = (links ?? []).map(link => encodeLinkForProject(link, scopedProjectId));
                 await db.transaction('rw', db.links, async () => {
                     await db.links.where('project_id').equals(scopedProjectId).delete();
                     if (linksToSave.length > 0) {
@@ -350,7 +465,8 @@ export function projectScope(projectId = DEFAULT_PROJECT_ID) {
 
         async getLinks() {
             try {
-                const links = await db.links.where('project_id').equals(scopedProjectId).toArray();
+                const links = (await db.links.where('project_id').equals(scopedProjectId).toArray())
+                    .map(link => decodeLinkForProject(link, scopedProjectId));
                 console.log(`[Storage] Loaded ${links.length} links from IndexedDB (project: ${scopedProjectId})`);
                 return links;
             } catch (e) {
@@ -363,8 +479,8 @@ export function projectScope(projectId = DEFAULT_PROJECT_ID) {
             try {
                 const taskRows = (ganttData?.data ?? [])
                     .map(serializeTaskDates)
-                    .map(task => withProjectId(task, scopedProjectId));
-                const linkRows = (ganttData?.links ?? []).map(link => withProjectId(link, scopedProjectId));
+                    .map(task => encodeTaskForProject(task, scopedProjectId));
+                const linkRows = (ganttData?.links ?? []).map(link => encodeLinkForProject(link, scopedProjectId));
 
                 await db.transaction('rw', [db.tasks, db.links], async () => {
                     await db.tasks.where('project_id').equals(scopedProjectId).delete();
@@ -392,8 +508,10 @@ export function projectScope(projectId = DEFAULT_PROJECT_ID) {
                     db.tasks.where('project_id').equals(scopedProjectId).toArray(),
                     db.links.where('project_id').equals(scopedProjectId).toArray(),
                 ]);
+                const decodedTasks = tasks.map(task => decodeTaskForProject(task, scopedProjectId));
+                const decodedLinks = links.map(link => decodeLinkForProject(link, scopedProjectId));
                 console.log(`[Storage] Loaded gantt data: ${tasks.length} tasks, ${links.length} links (project: ${scopedProjectId})`);
-                return { data: tasks, links: links };
+                return { data: decodedTasks, links: decodedLinks };
             } catch (e) {
                 console.error('[Storage] Failed to load gantt data:', e);
                 return { data: [], links: [] };
@@ -422,10 +540,12 @@ export function projectScope(projectId = DEFAULT_PROJECT_ID) {
 
         async saveBaseline(baseline) {
             try {
+                const savedAt = baseline?.savedAt ?? new Date().toISOString();
                 const baselineRecord = withProjectId(
                     {
-                        id: baseline?.id ?? `baseline_${scopedProjectId}`,
                         ...baseline,
+                        savedAt,
+                        id: buildScopedBaselineId(scopedProjectId, savedAt),
                     },
                     scopedProjectId,
                 );
