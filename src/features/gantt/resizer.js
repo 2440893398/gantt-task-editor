@@ -4,6 +4,31 @@
 
 import { applySelectionStyles } from '../selection/selectionManager.js';
 
+function stretchGridColumnsToFill() {
+    const columns = gantt?.config?.columns;
+    if (!Array.isArray(columns) || columns.length === 0) return;
+
+    const textCol = columns.find((column) => column?.name === 'text');
+    if (!textCol) return;
+
+    const gridEl = document.querySelector('.gantt_grid');
+    const gridWidth = gridEl ? Math.floor(gridEl.clientWidth) : 0;
+    if (!gridWidth) return;
+
+    const fixedWidth = columns.reduce((sum, column) => {
+        if (!column || column.name === 'text') return sum;
+        const width = Number(column.width);
+        return sum + (Number.isFinite(width) ? width : 0);
+    }, 0);
+
+    const minWidth = Number.isFinite(Number(textCol.min_width)) ? Number(textCol.min_width) : 240;
+    const targetWidth = Math.max(minWidth, gridWidth - fixedWidth);
+    if (Number(textCol.width) === targetWidth) return;
+
+    textCol.width = targetWidth;
+    gantt.render();
+}
+
 /**
  * 同步 Panel Bar 左侧宽度（避免循环引用，直接操作 DOM）
  */
@@ -70,6 +95,11 @@ export function initResizer() {
                 localStorage.setItem(storageKey, colConfig.width);
             } catch (e) {
                 console.warn('无法保存宽度设置:', e);
+            }
+
+            if (!isGanttOnly) {
+                setTimeout(stretchGridColumnsToFill, 0);
+                setTimeout(stretchGridColumnsToFill, 80);
             }
 
             resizer._isInitialized = false;

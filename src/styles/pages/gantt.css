@@ -1140,17 +1140,25 @@
     opacity: 1;
 }
 
-.gantt_grid_head_cell.gantt_actions,
-.gantt_cell.gantt_actions {
-    position: sticky;
+.gantt_grid_head_cell[data-column-name="actions"],
+.gantt_grid_data .gantt_row .gantt_cell.gantt_last_cell {
+    position: sticky !important;
     right: 0;
-    z-index: 4;
-    background: var(--background-white);
+    z-index: 24;
+    background: var(--background-white) !important;
     box-shadow: -1px 0 0 var(--border-color);
 }
 
-.gantt_grid_head_cell.gantt_actions {
-    z-index: 5;
+.gantt_grid_head_cell[data-column-name="add"],
+.gantt_grid_data .gantt_row .gantt_cell:nth-last-child(2) {
+    position: sticky !important;
+    right: 95px;
+    z-index: 23;
+    background: var(--background-white) !important;
+}
+
+.gantt_grid_head_cell[data-column-name="actions"] {
+    z-index: 25;
 }
 
 .gantt-task-actions-cell {
@@ -1209,6 +1217,16 @@
 
 .gantt_grid_data {
     background: var(--background-white) !important;
+}
+
+/* 让 grid 数据层宽度跟随容器，避免动作单元格跑到可视区外 */
+.gantt_layout_cell.grid_cell .gantt_grid_scale,
+.gantt_layout_cell.grid_cell .gantt_grid_data {
+    width: 100% !important;
+}
+
+.gantt_grid_data .gantt_row {
+    width: 100% !important;
 }
 
 /* 行动画效果 */

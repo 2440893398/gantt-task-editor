@@ -174,6 +174,32 @@ function bindGridColumnReorderSync() {
     });
 }
 
+function stretchTextColumnToGridWidth() {
+    if (!gantt?.config?.layout?.css) return;
+    if (String(gantt.config.layout.css).includes('gantt-only-mode')) return;
+
+    const columns = gantt.config.columns || [];
+    const textCol = columns.find((column) => column?.name === 'text');
+    if (!textCol) return;
+
+    const gridEl = document.querySelector('.gantt_grid');
+    const gridWidth = gridEl ? Math.floor(gridEl.clientWidth) : 0;
+    if (!gridWidth) return;
+
+    const fixedWidth = columns.reduce((sum, column) => {
+        if (!column || column.name === 'text') return sum;
+        const width = Number(column.width);
+        return sum + (Number.isFinite(width) ? width : 0);
+    }, 0);
+
+    const minWidth = Number.isFinite(Number(textCol.min_width)) ? Number(textCol.min_width) : 240;
+    const targetWidth = Math.max(minWidth, gridWidth - fixedWidth);
+    if (Number(textCol.width) === targetWidth) return;
+
+    textCol.width = targetWidth;
+    gantt.render();
+}
+
 // Conflict state
 let conflictTaskIds = new Set();
 let conflictDetails = {};
@@ -546,6 +572,9 @@ export function initGantt() {
             minWidth: column.min_width,
             maxWidth: column.max_width
         });
+
+        setTimeout(stretchTextColumnToGridWidth, 0);
+
         return true;
     });
 
