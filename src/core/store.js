@@ -9,9 +9,6 @@ import {
     getCustomFieldsDef,
     saveFieldOrder,
     getFieldOrder as getStoredFieldOrder,
-    saveGanttData,
-    getGanttData,
-    hasCachedData,
     clearAllCache,
     getStorageStatus,
     saveLocale,
@@ -22,8 +19,30 @@ import {
     saveSystemFieldSettings,
     getSystemFieldSettings,
     saveViewMode,
-    getViewMode as getStoredViewMode
+    getViewMode as getStoredViewMode,
+    projectScope,
+    DEFAULT_PROJECT_ID
 } from './storage.js';
+import { getAllProjects, createProject } from '../features/projects/manager.js';
+
+const DEFAULT_PROJECT_ID_KEY = 'gantt_current_project_id';
+
+function getStoredProjectId() {
+    try {
+        return localStorage.getItem(DEFAULT_PROJECT_ID_KEY);
+    } catch (error) {
+        console.warn('[Store] Failed to read current project from localStorage:', error);
+        return null;
+    }
+}
+
+function persistProjectId(projectId) {
+    try {
+        localStorage.setItem(DEFAULT_PROJECT_ID_KEY, projectId);
+    } catch (error) {
+        console.warn('[Store] Failed to persist current project to localStorage:', error);
+    }
+}
 
 // 全局状态
 export const state = {
@@ -41,6 +60,9 @@ export const state = {
     },
     aiStatus: 'idle', // idle | loading | streaming | error
     viewMode: 'split', // 'split' | 'table' | 'gantt'
+    // 项目管理
+    currentProjectId: null,
+    projects: [],
     // System field settings
     systemFieldSettings: {
         enabled: {
@@ -156,14 +178,16 @@ export async function restoreStateFromCache() {
  */
 export async function restoreGanttDataFromCache() {
     try {
-        const hasData = await hasCachedData();
+        const currentProjectId = state.currentProjectId ?? DEFAULT_PROJECT_ID;
+        const scope = projectScope(currentProjectId);
+        const hasData = await scope.hasCachedData();
         if (!hasData) {
             console.log('[Store] No cached gantt data found');
             return null;
         }
 
-        const ganttData = await getGanttData();
-        if (ganttData.data && ganttData.data.length > 0) {
+        const ganttData = await scope.getGanttData();
+        if (ganttData?.data?.length > 0) {
             console.log('[Store] Restored gantt data from cache:', ganttData.data.length, 'tasks');
             return ganttData;
         }
@@ -195,10 +219,80 @@ export async function persistGanttData() {
 
     try {
         const data = gantt.serialize();
-        await saveGanttData(data);
+        const currentProjectId = state.currentProjectId ?? DEFAULT_PROJECT_ID;
+        await projectScope(currentProjectId).saveGanttData(data);
         console.log('[Store] Persisted gantt data');
     } catch (e) {
         console.error('[Store] Failed to persist gantt data:', e);
+    }
+}
+
+/**
+ * 初始化项目状态
+ * @returns {Promise<void>}
+ */
+export async function initProjects() {
+    try {
+        let projects = await getAllProjects();
+        if (projects.length === 0) {
+            const defaultProject = await createProject({ name: '默认项目' });
+            projects = [defaultProject];
+        }
+
+        state.projects = projects;
+
+        const savedProjectId = getStoredProjectId();
+        const validProjectId = projects.find(project => project.id === savedProjectId)?.id;
+
+        state.currentProjectId = validProjectId ?? projects[0].id;
+        persistProjectId(state.currentProjectId);
+    } catch (e) {
+        console.error('[Store] Failed to initialize projects:', e);
+        state.projects = [];
+        state.currentProjectId = DEFAULT_PROJECT_ID;
+    }
+}
+
+/**
+ * 刷新项目列表缓存
+ * @returns {Promise<void>}
+ */
+export async function refreshProjects() {
+    try {
+        state.projects = await getAllProjects();
+    } catch (e) {
+        console.error('[Store] Failed to refresh projects:', e);
+        state.projects = [];
+    }
+}
+
+/**
+ * 切换当前项目
+ * @param {string} projectId
+ * @returns {Promise<void>}
+ */
+export async function switchProject(projectId) {
+    if (!projectId || projectId === state.currentProjectId) {
+        return;
+    }
+
+    if (!state.projects.some(project => project.id === projectId)) {
+        console.warn('[Store] Ignored switch to unknown project:', projectId);
+        return;
+    }
+
+    try {
+        if (typeof gantt !== 'undefined' && state.currentProjectId) {
+            const currentData = gantt.serialize();
+            await projectScope(state.currentProjectId).saveGanttData(currentData);
+        }
+
+        state.currentProjectId = projectId;
+        persistProjectId(projectId);
+        document.dispatchEvent(new CustomEvent('projectSwitched', { detail: { projectId } }));
+    } catch (e) {
+        console.error('[Store] Failed to switch project:', e);
+        throw e;
     }
 }
 
@@ -219,6 +313,8 @@ export async function clearCache() {
     // 重置为默认状态
     state.customFields = [...defaultCustomFields];
     state.fieldOrder = [...defaultFieldOrder];
+    state.currentProjectId = null;
+    state.projects = [];
     state.isDataLoaded = false;
     console.log('[Store] Cache cleared, state reset to defaults');
 }
