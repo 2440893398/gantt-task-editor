@@ -23,6 +23,7 @@ import { loadColumnWidthPrefs, saveColumnWidthPref } from './column-widths.js';
 
 import { showSummaryPopover, hideSummaryPopover } from '../../utils/dom.js';
 import { initBaseline, handleSaveBaseline, handleToggleBaseline } from './baseline.js';
+import { initSummaryBar } from './summary-bar.js';
 import { detectResourceConflicts } from './resource-conflict.js';
 import { exportCurrentView, exportFullGantt } from './export-image.js';
 import { exportToExcel } from '../config/configIO.js';
@@ -914,6 +915,7 @@ export function initGantt() {
     initCriticalPath();
 
     // 初始化基线功能
+    initSummaryBar();
     initBaseline();
 
     // Init Smart Snapping (Phase 5)
