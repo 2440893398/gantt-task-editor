@@ -86,32 +86,36 @@ async function renderModal(modal) {
         const createdAt = project.createdAt ? new Date(project.createdAt).toLocaleDateString() : '-';
 
         return `
-            <tr data-project-row-id="${projectId}">
+            <tr data-project-row-id="${projectId}" class="${project.id === state.currentProjectId ? 'bg-primary/10' : ''}">
                 <td>
-                    <div class="flex items-center gap-2">
+                    <div class="flex items-center gap-3">
                         <div class="color-picker flex gap-1">
                             ${COLORS.map(color => `
                                 <button
                                     type="button"
-                                    class="w-4 h-4 rounded-full cursor-pointer ring-2 ${color === projectColor ? 'ring-offset-1 ring-gray-600' : 'ring-transparent'}"
+                                    class="w-2 h-2 rounded-full cursor-pointer transition-transform hover:scale-125 ${color === projectColor ? 'ring-1 ring-offset-1 ring-gray-400' : ''}"
                                     style="background:${color}"
                                     data-color="${color}"
                                     data-color-project-id="${projectId}"
                                 ></button>
                             `).join('')}
                         </div>
-                        <input class="input input-sm w-36" value="${projectName}" data-name-project-id="${projectId}" />
+                        <input class="input input-sm w-40 bg-transparent border-0 focus:border-b focus:border-primary focus:outline-none focus:bg-base-200/50 rounded-none px-1"
+                               value="${projectName}"
+                               data-name-project-id="${projectId}" />
                     </div>
                 </td>
-                <td class="text-sm text-base-content/60">${counts[index]}</td>
-                <td class="text-sm text-base-content/60">${createdAt}</td>
-                <td>
+                <td class="text-sm text-base-content/60 w-16">${counts[index]}</td>
+                <td class="text-sm text-base-content/60 w-24">${createdAt}</td>
+                <td class="w-16">
                     <button
-                        class="btn btn-ghost btn-xs text-error"
+                        class="btn btn-ghost btn-xs ${state.projects.length <= 1 ? 'btn-disabled text-base-content/30' : 'text-error'}"
                         data-delete-project-id="${projectId}"
                         ${state.projects.length <= 1 ? 'disabled' : ''}
                     >
-                        ${i18n.t('form.delete') || 'Delete'}
+                        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>
+                        </svg>
                     </button>
                 </td>
             </tr>
@@ -119,22 +123,36 @@ async function renderModal(modal) {
     }).join('');
 
     modal.innerHTML = `
-        <div class="modal-box max-w-2xl">
-            <h3 class="font-bold text-lg mb-4">${i18n.t('project.manage') || 'Manage Projects'}</h3>
-            <table class="table table-sm">
+        <div class="modal-box max-w-xl">
+            <div class="flex items-center justify-between pb-4 border-b border-base-200">
+                <h3 class="font-bold text-base">${i18n.t('project.manage') || '管理项目'}</h3>
+                <button class="btn btn-ghost btn-sm btn-circle" onclick="this.closest('dialog').close()">
+                    <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M18 6 6 18M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+            <table class="table table-sm mt-4">
                 <thead>
                     <tr>
-                        <th>${i18n.t('project.name') || 'Project Name'}</th>
-                        <th>${i18n.t('project.taskCount') || 'Task Count'}</th>
-                        <th>${i18n.t('project.createdAt') || 'Created At'}</th>
-                        <th></th>
+                        <th class="w-auto">${i18n.t('project.name') || '项目名称'}</th>
+                        <th class="w-16">${i18n.t('project.taskCount') || '任务数'}</th>
+                        <th class="w-24">${i18n.t('project.createdAt') || '创建时间'}</th>
+                        <th class="w-16"></th>
                     </tr>
                 </thead>
                 <tbody>${rows}</tbody>
             </table>
+            <div class="mt-4 p-3 bg-base-200 rounded-lg flex items-center gap-2 text-sm text-base-content/70">
+                <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="10"/>
+                    <path d="M12 16v-4M12 8h.01"/>
+                </svg>
+                <span>点击颜色圆点可更改项目颜色</span>
+            </div>
             <div class="modal-action">
                 <form method="dialog">
-                    <button class="btn">${i18n.t('shortcuts.close') || 'Close'}</button>
+                    <button class="btn btn-sm">${i18n.t('shortcuts.close') || '关闭'}</button>
                 </form>
             </div>
         </div>

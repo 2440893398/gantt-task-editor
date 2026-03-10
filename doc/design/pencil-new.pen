@@ -17172,6 +17172,2066 @@
           ]
         }
       ]
+    },
+    {
+      "type": "frame",
+      "id": "WNmne",
+      "x": -3126,
+      "y": 2358,
+      "name": "ProjectPicker (项目切换器)",
+      "width": 400,
+      "layout": "vertical",
+      "children": [
+        {
+          "type": "frame",
+          "id": "jDW2q",
+          "name": "Picker Header",
+          "width": "fill_container",
+          "height": 44,
+          "fill": "$--card",
+          "padding": [
+            0,
+            12
+          ],
+          "justifyContent": "space_between",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "0NcKQ",
+              "name": "Left",
+              "gap": 10,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "ellipse",
+                  "id": "BGJwA",
+                  "name": "Color Dot",
+                  "fill": "#4f46e5",
+                  "width": 12,
+                  "height": 12
+                },
+                {
+                  "type": "text",
+                  "id": "G5VZm",
+                  "name": "Project Name",
+                  "fill": "$--foreground",
+                  "content": "默认项目",
+                  "fontFamily": "$--font-primary",
+                  "fontSize": 14,
+                  "fontWeight": "500"
+                }
+              ]
+            },
+            {
+              "type": "icon_font",
+              "id": "1ePNN",
+              "name": "Arrow",
+              "width": 16,
+              "height": 16,
+              "iconFontName": "chevron-down",
+              "iconFontFamily": "lucide",
+              "fill": "$--muted-foreground"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "ySSq7",
+          "name": "Dropdown Menu",
+          "width": "fill_container",
+          "fill": "$--card",
+          "cornerRadius": "$--radius-m",
+          "stroke": {
+            "thickness": 1
+          },
+          "layout": "vertical",
+          "gap": 2,
+          "padding": 6,
+          "children": [
+            {
+              "type": "frame",
+              "id": "8liQN",
+              "name": "Item Active",
+              "width": "fill_container",
+              "height": 36,
+              "fill": "$--primary-soft",
+              "cornerRadius": 6,
+              "padding": [
+                0,
+                10
+              ],
+              "justifyContent": "space_between",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "CjuGw",
+                  "name": "Left",
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "ellipse",
+                      "id": "VDaP8",
+                      "name": "Color",
+                      "fill": "#4f46e5",
+                      "width": 10,
+                      "height": 10
+                    },
+                    {
+                      "type": "text",
+                      "id": "1gDNQ",
+                      "name": "Name",
+                      "fill": "$--foreground",
+                      "content": "默认项目",
+                      "fontFamily": "$--font-primary",
+                      "fontSize": 13,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "icon_font",
+                  "id": "q8W4A",
+                  "name": "Check",
+                  "width": 14,
+                  "height": 14,
+                  "iconFontName": "check",
+                  "iconFontFamily": "lucide",
+                  "fill": "$--primary"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "e9pR1",
+              "name": "Item",
+              "width": "fill_container",
+              "height": 36,
+              "cornerRadius": 6,
+              "padding": [
+                0,
+                10
+              ],
+              "justifyContent": "space_between",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "tzq17",
+                  "name": "Left",
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "ellipse",
+                      "id": "Zu9td",
+                      "name": "Color",
+                      "fill": "#059669",
+                      "width": 10,
+                      "height": 10
+                    },
+                    {
+                      "type": "text",
+                      "id": "8bOX1",
+                      "name": "Name",
+                      "fill": "$--foreground",
+                      "content": "项目 B",
+                      "fontFamily": "$--font-primary",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "YTjDv",
+              "name": "Item",
+              "width": "fill_container",
+              "height": 36,
+              "cornerRadius": 6,
+              "padding": [
+                0,
+                10
+              ],
+              "justifyContent": "space_between",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "2um2Y",
+                  "name": "Left",
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "ellipse",
+                      "id": "Mv0iU",
+                      "name": "Color",
+                      "fill": "#d97706",
+                      "width": 10,
+                      "height": 10
+                    },
+                    {
+                      "type": "text",
+                      "id": "eQGGs",
+                      "name": "Name",
+                      "fill": "$--foreground",
+                      "content": "项目 C",
+                      "fontFamily": "$--font-primary",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "rectangle",
+              "id": "nDESF",
+              "name": "Divider",
+              "fill": "$--border",
+              "width": "fill_container",
+              "height": 1
+            },
+            {
+              "type": "frame",
+              "id": "wFZOv",
+              "name": "Create Item",
+              "width": "fill_container",
+              "height": 36,
+              "cornerRadius": 6,
+              "padding": [
+                0,
+                10
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon_font",
+                  "id": "aNMLu",
+                  "name": "Plus",
+                  "width": 14,
+                  "height": 14,
+                  "iconFontName": "plus",
+                  "iconFontFamily": "lucide",
+                  "fill": "$--muted-foreground"
+                },
+                {
+                  "type": "text",
+                  "id": "ZIwH5",
+                  "name": "Text",
+                  "fill": "$--foreground",
+                  "content": "新建项目",
+                  "fontFamily": "$--font-primary",
+                  "fontSize": 13,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "f6fFN",
+              "name": "Manage Item",
+              "width": "fill_container",
+              "height": 36,
+              "cornerRadius": 6,
+              "padding": [
+                0,
+                10
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon_font",
+                  "id": "2ptDw",
+                  "name": "Settings",
+                  "width": 14,
+                  "height": 14,
+                  "iconFontName": "settings",
+                  "iconFontFamily": "lucide",
+                  "fill": "$--muted-foreground"
+                },
+                {
+                  "type": "text",
+                  "id": "T6jJl",
+                  "name": "Text",
+                  "fill": "$--foreground",
+                  "content": "管理项目",
+                  "fontFamily": "$--font-primary",
+                  "fontSize": 13,
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "AK7YA",
+          "name": "Tag",
+          "fill": "$--secondary",
+          "cornerRadius": "$--radius-pill",
+          "gap": 6,
+          "padding": [
+            4,
+            8
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "icon_font",
+              "id": "IagD6",
+              "name": "Icon",
+              "width": 12,
+              "height": 12,
+              "iconFontName": "folder",
+              "iconFontFamily": "lucide",
+              "fill": "$--muted-foreground"
+            },
+            {
+              "type": "text",
+              "id": "rIJnJ",
+              "name": "Label",
+              "fill": "$--muted-foreground",
+              "content": "ProjectPicker 组件",
+              "fontFamily": "$--font-secondary",
+              "fontSize": 11,
+              "fontWeight": "500"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "LOjg6",
+      "x": -2686,
+      "y": 2358,
+      "name": "ProjectModal (项目管理弹窗)",
+      "width": 600,
+      "layout": "vertical",
+      "children": [
+        {
+          "type": "frame",
+          "id": "NPgkO",
+          "name": "Backdrop",
+          "width": "fill_container",
+          "height": "fill_container",
+          "fill": "#0F172A66"
+        },
+        {
+          "type": "frame",
+          "id": "vN5nr",
+          "name": "Modal Card",
+          "width": 560,
+          "fill": "$--card",
+          "cornerRadius": "$--radius-m",
+          "stroke": {
+            "thickness": 1
+          },
+          "layout": "vertical",
+          "children": [
+            {
+              "type": "frame",
+              "id": "REziX",
+              "name": "Header",
+              "width": "fill_container",
+              "height": 56,
+              "fill": "$--surface",
+              "padding": [
+                0,
+                20
+              ],
+              "justifyContent": "space_between",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "cnwwq",
+                  "name": "Title",
+                  "fill": "$--foreground",
+                  "content": "管理项目",
+                  "fontFamily": "Source Sans 3",
+                  "fontSize": 16,
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "frame",
+                  "id": "1EWcQ",
+                  "name": "Close Button",
+                  "width": 28,
+                  "height": 28,
+                  "cornerRadius": 6,
+                  "layout": "none",
+                  "children": [
+                    {
+                      "type": "icon_font",
+                      "id": "vRzHh",
+                      "x": 0,
+                      "y": 0,
+                      "name": "Icon",
+                      "width": 14,
+                      "height": 14,
+                      "iconFontName": "x",
+                      "iconFontFamily": "lucide",
+                      "fill": "$--muted-foreground"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "o4gyt",
+              "name": "Body",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 12,
+              "padding": 16,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "mIkqB",
+                  "name": "Table Header",
+                  "width": "fill_container",
+                  "height": 32,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "0MTJ2",
+                      "name": "Col1",
+                      "fill": "$--muted-foreground",
+                      "content": "项目名称",
+                      "fontFamily": "Source Sans 3",
+                      "fontSize": 12,
+                      "fontWeight": "500"
+                    },
+                    {
+                      "type": "text",
+                      "id": "nnsUD",
+                      "name": "Col2",
+                      "fill": "$--muted-foreground",
+                      "content": "任务数",
+                      "fontFamily": "Source Sans 3",
+                      "fontSize": 12,
+                      "fontWeight": "500"
+                    },
+                    {
+                      "type": "text",
+                      "id": "hMn7w",
+                      "name": "Col3",
+                      "fill": "$--muted-foreground",
+                      "content": "创建时间",
+                      "fontFamily": "Source Sans 3",
+                      "fontSize": 12,
+                      "fontWeight": "500"
+                    },
+                    {
+                      "type": "text",
+                      "id": "hR9OS",
+                      "name": "Col4",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "Source Sans 3",
+                      "fontSize": 12,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "zpkvf",
+                  "name": "Row 1",
+                  "width": "fill_container",
+                  "height": 44,
+                  "cornerRadius": 8,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "8DRYK",
+                      "name": "Content",
+                      "width": "fill_container",
+                      "gap": 12,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "TNcBu",
+                          "name": "Color Group",
+                          "gap": 4,
+                          "children": [
+                            {
+                              "type": "ellipse",
+                              "id": "svxyR",
+                              "name": "Dot",
+                              "fill": "#4f46e5",
+                              "width": 8,
+                              "height": 8
+                            },
+                            {
+                              "type": "ellipse",
+                              "id": "ORJxm",
+                              "name": "Dot",
+                              "fill": "#4f46e5",
+                              "width": 8,
+                              "height": 8
+                            },
+                            {
+                              "type": "ellipse",
+                              "id": "RZx1Z",
+                              "name": "Dot",
+                              "fill": "#4f46e5",
+                              "width": 8,
+                              "height": 8
+                            },
+                            {
+                              "type": "ellipse",
+                              "id": "eeDMQ",
+                              "name": "Dot",
+                              "fill": "#cbd5e1",
+                              "width": 8,
+                              "height": 8
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "Bw4sv",
+                          "name": "Name",
+                          "fill": "$--foreground",
+                          "content": "默认项目",
+                          "fontFamily": "Source Sans 3",
+                          "fontSize": 14,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "P02SR",
+                      "name": "Count",
+                      "fill": "$--muted-foreground",
+                      "content": "12",
+                      "fontFamily": "Source Sans 3",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "NheL8",
+                      "name": "Date",
+                      "fill": "$--muted-foreground",
+                      "content": "2026/1/15",
+                      "fontFamily": "Source Sans 3",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "26RfE",
+                      "name": "Actions",
+                      "width": 60,
+                      "gap": 4,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "EmgnX",
+                          "name": "Delete",
+                          "width": 28,
+                          "height": 28,
+                          "cornerRadius": 4,
+                          "layout": "none",
+                          "children": [
+                            {
+                              "type": "icon_font",
+                              "id": "TYuE0",
+                              "x": 0,
+                              "y": 0,
+                              "name": "Icon",
+                              "width": 14,
+                              "height": 14,
+                              "iconFontName": "trash-2",
+                              "iconFontFamily": "lucide",
+                              "fill": "$--muted-foreground"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "5EKZk",
+                  "name": "Row 2",
+                  "width": "fill_container",
+                  "height": 44,
+                  "cornerRadius": 8,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "xOTwU",
+                      "name": "Content",
+                      "width": "fill_container",
+                      "gap": 12,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "GBiQv",
+                          "name": "Color Group",
+                          "gap": 4,
+                          "children": [
+                            {
+                              "type": "ellipse",
+                              "id": "412Gy",
+                              "name": "Dot",
+                              "fill": "#059669",
+                              "width": 8,
+                              "height": 8
+                            },
+                            {
+                              "type": "ellipse",
+                              "id": "FdwZh",
+                              "name": "Dot",
+                              "fill": "#059669",
+                              "width": 8,
+                              "height": 8
+                            },
+                            {
+                              "type": "ellipse",
+                              "id": "PA6i1",
+                              "name": "Dot",
+                              "fill": "#cbd5e1",
+                              "width": 8,
+                              "height": 8
+                            },
+                            {
+                              "type": "ellipse",
+                              "id": "NfD1u",
+                              "name": "Dot",
+                              "fill": "#cbd5e1",
+                              "width": 8,
+                              "height": 8
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "HaC15",
+                          "name": "Name",
+                          "fill": "$--foreground",
+                          "content": "项目 B",
+                          "fontFamily": "Source Sans 3",
+                          "fontSize": 14,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "pFvQp",
+                      "name": "Count",
+                      "fill": "$--muted-foreground",
+                      "content": "5",
+                      "fontFamily": "Source Sans 3",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "ZZClE",
+                      "name": "Date",
+                      "fill": "$--muted-foreground",
+                      "content": "2026/2/20",
+                      "fontFamily": "Source Sans 3",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "8TB5i",
+                      "name": "Actions",
+                      "width": 60,
+                      "gap": 4,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "qvLMx",
+                          "name": "Delete",
+                          "width": 28,
+                          "height": 28,
+                          "cornerRadius": 4,
+                          "layout": "none",
+                          "children": [
+                            {
+                              "type": "icon_font",
+                              "id": "v4s3F",
+                              "x": 0,
+                              "y": 0,
+                              "name": "Icon",
+                              "width": 14,
+                              "height": 14,
+                              "iconFontName": "trash-2",
+                              "iconFontFamily": "lucide",
+                              "fill": "$--danger"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "cPikC",
+                  "name": "Row 3",
+                  "width": "fill_container",
+                  "height": 44,
+                  "cornerRadius": 8,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "SdAIH",
+                      "name": "Content",
+                      "width": "fill_container",
+                      "gap": 12,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "nRjv5",
+                          "name": "Color Group",
+                          "gap": 4,
+                          "children": [
+                            {
+                              "type": "ellipse",
+                              "id": "j0R6w",
+                              "name": "Dot",
+                              "fill": "#d97706",
+                              "width": 8,
+                              "height": 8
+                            },
+                            {
+                              "type": "ellipse",
+                              "id": "LzGPC",
+                              "name": "Dot",
+                              "fill": "#d97706",
+                              "width": 8,
+                              "height": 8
+                            },
+                            {
+                              "type": "ellipse",
+                              "id": "zWUGD",
+                              "name": "Dot",
+                              "fill": "#d97706",
+                              "width": 8,
+                              "height": 8
+                            },
+                            {
+                              "type": "ellipse",
+                              "id": "fAPdY",
+                              "name": "Dot",
+                              "fill": "#cbd5e1",
+                              "width": 8,
+                              "height": 8
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "xXbsT",
+                          "name": "Name",
+                          "fill": "$--foreground",
+                          "content": "项目 C",
+                          "fontFamily": "Source Sans 3",
+                          "fontSize": 14,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "unwH7",
+                      "name": "Count",
+                      "fill": "$--muted-foreground",
+                      "content": "8",
+                      "fontFamily": "Source Sans 3",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "4XPEt",
+                      "name": "Date",
+                      "fill": "$--muted-foreground",
+                      "content": "2026/3/1",
+                      "fontFamily": "Source Sans 3",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "18yFX",
+                      "name": "Actions",
+                      "width": 60,
+                      "gap": 4,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "i57cL",
+                          "name": "Delete",
+                          "width": 28,
+                          "height": 28,
+                          "cornerRadius": 4,
+                          "layout": "none",
+                          "children": [
+                            {
+                              "type": "icon_font",
+                              "id": "gts9i",
+                              "x": 0,
+                              "y": 0,
+                              "name": "Icon",
+                              "width": 14,
+                              "height": 14,
+                              "iconFontName": "trash-2",
+                              "iconFontFamily": "lucide",
+                              "fill": "$--danger"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "V61Qr",
+              "name": "Footer",
+              "width": "fill_container",
+              "height": 56,
+              "fill": "$--surface",
+              "gap": 10,
+              "padding": [
+                0,
+                20
+              ],
+              "justifyContent": "end",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "KHCSe",
+                  "name": "Cancel Button",
+                  "width": "fit_content(0)",
+                  "height": 36,
+                  "fill": "$--secondary",
+                  "cornerRadius": "$--radius-pill",
+                  "layout": "none",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "5wijo",
+                      "x": 0,
+                      "y": 0,
+                      "name": "Text",
+                      "fill": "$--foreground",
+                      "content": "关闭",
+                      "fontFamily": "Source Sans 3",
+                      "fontSize": 13,
+                      "fontWeight": "500"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "v0GKf",
+          "name": "Tag",
+          "fill": "$--secondary",
+          "cornerRadius": "$--radius-pill",
+          "gap": 6,
+          "padding": [
+            4,
+            8
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "icon_font",
+              "id": "rsRts",
+              "name": "Icon",
+              "width": 12,
+              "height": 12,
+              "iconFontName": "folder-cog",
+              "iconFontFamily": "lucide",
+              "fill": "$--muted-foreground"
+            },
+            {
+              "type": "text",
+              "id": "omvqe",
+              "name": "Label",
+              "fill": "$--muted-foreground",
+              "content": "ProjectModal 弹窗",
+              "fontFamily": "Source Sans 3",
+              "fontSize": 11,
+              "fontWeight": "500"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "2BSW8",
+      "x": -2066,
+      "y": 2358,
+      "name": "ShareDialog (分享弹窗)",
+      "width": 480,
+      "layout": "vertical",
+      "children": [
+        {
+          "type": "frame",
+          "id": "1rvFJ",
+          "name": "Backdrop",
+          "width": "fill_container",
+          "height": "fill_container",
+          "fill": "#0F172A66"
+        },
+        {
+          "type": "frame",
+          "id": "eRFUc",
+          "name": "Modal Card",
+          "width": 440,
+          "fill": "$--card",
+          "cornerRadius": "$--radius-m",
+          "stroke": {
+            "thickness": 1
+          },
+          "layout": "vertical",
+          "children": [
+            {
+              "type": "frame",
+              "id": "U2G0j",
+              "name": "Header",
+              "width": "fill_container",
+              "height": 56,
+              "fill": "$--surface",
+              "padding": [
+                0,
+                20
+              ],
+              "justifyContent": "space_between",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "E1NqD",
+                  "name": "Title",
+                  "fill": "$--foreground",
+                  "content": "分享项目",
+                  "fontFamily": "Source Sans 3",
+                  "fontSize": 16,
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "frame",
+                  "id": "Xfo7J",
+                  "name": "Close Button",
+                  "width": 28,
+                  "height": 28,
+                  "cornerRadius": 6,
+                  "layout": "none",
+                  "children": [
+                    {
+                      "type": "icon_font",
+                      "id": "myU2c",
+                      "x": 0,
+                      "y": 0,
+                      "name": "Icon",
+                      "width": 14,
+                      "height": 14,
+                      "iconFontName": "x",
+                      "iconFontFamily": "lucide",
+                      "fill": "$--muted-foreground"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "DulyV",
+              "name": "Body",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 16,
+              "padding": 20,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "3qPaX",
+                  "name": "Project Info",
+                  "gap": 10,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "ellipse",
+                      "id": "IOg5G",
+                      "name": "Color",
+                      "fill": "#4f46e5",
+                      "width": 12,
+                      "height": 12
+                    },
+                    {
+                      "type": "text",
+                      "id": "UiiCw",
+                      "name": "Name",
+                      "fill": "$--foreground",
+                      "content": "默认项目",
+                      "fontFamily": "Source Sans 3",
+                      "fontSize": 14,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "8HZnq",
+                  "name": "Key Label",
+                  "fill": "$--foreground",
+                  "content": "分享 Key（留空自动生成）",
+                  "fontFamily": "Source Sans 3",
+                  "fontSize": 13,
+                  "fontWeight": "500"
+                },
+                {
+                  "type": "frame",
+                  "id": "DH2Sp",
+                  "name": "Input Field",
+                  "width": "fill_container",
+                  "height": 40,
+                  "fill": "$--secondary",
+                  "cornerRadius": 8,
+                  "padding": [
+                    0,
+                    12
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon_font",
+                      "id": "mvUxm",
+                      "name": "Icon",
+                      "width": 16,
+                      "height": 16,
+                      "iconFontName": "key",
+                      "iconFontFamily": "lucide",
+                      "fill": "$--muted-foreground"
+                    },
+                    {
+                      "type": "text",
+                      "id": "IjeEj",
+                      "name": "Text",
+                      "fill": "$--foreground",
+                      "content": "abc12345",
+                      "fontFamily": "Source Sans 3",
+                      "fontSize": 14,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "OALkI",
+                  "name": "Hint",
+                  "fill": "$--muted-foreground",
+                  "content": "填入上次的 Key 可覆盖更新云端数据",
+                  "fontFamily": "Source Sans 3",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "KIgqW",
+                  "name": "Hint",
+                  "fill": "$--secondary",
+                  "cornerRadius": 6,
+                  "gap": 8,
+                  "padding": [
+                    8,
+                    10
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon_font",
+                      "id": "xaMHo",
+                      "name": "Icon",
+                      "width": 14,
+                      "height": 14,
+                      "iconFontName": "info",
+                      "iconFontFamily": "lucide",
+                      "fill": "$--muted-foreground"
+                    },
+                    {
+                      "type": "text",
+                      "id": "67SET",
+                      "name": "Text",
+                      "fill": "$--muted-foreground",
+                      "content": "点击生成分享链接将项目数据上传到云端",
+                      "fontFamily": "Source Sans 3",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "7XpSF",
+              "name": "Footer",
+              "width": "fill_container",
+              "height": 56,
+              "fill": "$--surface",
+              "gap": 10,
+              "padding": [
+                0,
+                20
+              ],
+              "justifyContent": "end",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "XnvoC",
+                  "name": "Cancel Button",
+                  "width": "fit_content(0)",
+                  "height": 36,
+                  "fill": "$--secondary",
+                  "cornerRadius": "$--radius-pill",
+                  "layout": "none",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "mm18Q",
+                      "x": 0,
+                      "y": 0,
+                      "name": "Text",
+                      "fill": "$--foreground",
+                      "content": "取消",
+                      "fontFamily": "Source Sans 3",
+                      "fontSize": 13,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "G2Xcw",
+                  "name": "Generate Button",
+                  "width": "fit_content(0)",
+                  "height": 36,
+                  "fill": "$--primary",
+                  "cornerRadius": "$--radius-pill",
+                  "layout": "none",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "D0qiy",
+                      "x": 0,
+                      "y": 0,
+                      "name": "Text",
+                      "fill": "#FFFFFF",
+                      "content": "生成分享链接",
+                      "fontFamily": "Source Sans 3",
+                      "fontSize": 13,
+                      "fontWeight": "500"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "kvWzR",
+          "name": "Tag",
+          "fill": "$--secondary",
+          "cornerRadius": "$--radius-pill",
+          "gap": 6,
+          "padding": [
+            4,
+            8
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "icon_font",
+              "id": "RqqoA",
+              "name": "Icon",
+              "width": 12,
+              "height": 12,
+              "iconFontName": "share-2",
+              "iconFontFamily": "lucide",
+              "fill": "$--muted-foreground"
+            },
+            {
+              "type": "text",
+              "id": "ikFXr",
+              "name": "Label",
+              "fill": "$--muted-foreground",
+              "content": "ShareDialog 弹窗",
+              "fontFamily": "Source Sans 3",
+              "fontSize": 11,
+              "fontWeight": "500"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "WWnlb",
+      "x": -1546,
+      "y": 2358,
+      "name": "ImportDialog (导入弹窗)",
+      "width": 520,
+      "layout": "vertical",
+      "children": [
+        {
+          "type": "frame",
+          "id": "9mY8O",
+          "name": "Backdrop",
+          "width": "fill_container",
+          "height": "fill_container",
+          "fill": "#0F172A66"
+        },
+        {
+          "type": "frame",
+          "id": "AIaUf",
+          "name": "Modal Card",
+          "width": 480,
+          "fill": "$--card",
+          "cornerRadius": "$--radius-m",
+          "stroke": {
+            "thickness": 1
+          },
+          "layout": "vertical",
+          "children": [
+            {
+              "type": "frame",
+              "id": "GGg3v",
+              "name": "Header",
+              "width": "fill_container",
+              "height": 56,
+              "fill": "$--surface",
+              "padding": [
+                0,
+                20
+              ],
+              "justifyContent": "space_between",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "XDYfI",
+                  "name": "Title",
+                  "fill": "$--foreground",
+                  "content": "检测到分享链接",
+                  "fontFamily": "Source Sans 3",
+                  "fontSize": 16,
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "frame",
+                  "id": "TfjFB",
+                  "name": "Close Button",
+                  "width": 28,
+                  "height": 28,
+                  "cornerRadius": 6,
+                  "layout": "none",
+                  "children": [
+                    {
+                      "type": "icon_font",
+                      "id": "iLGtD",
+                      "x": 0,
+                      "y": 0,
+                      "name": "Icon",
+                      "width": 14,
+                      "height": 14,
+                      "iconFontName": "x",
+                      "iconFontFamily": "lucide",
+                      "fill": "$--muted-foreground"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "QlwV6",
+              "name": "Body",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 16,
+              "padding": 20,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "KH8Hy",
+                  "name": "Info Card",
+                  "width": "fill_container",
+                  "fill": "$--secondary",
+                  "cornerRadius": 10,
+                  "layout": "vertical",
+                  "gap": 10,
+                  "padding": 16,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "j68pJ",
+                      "name": "Row 1",
+                      "gap": 8,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "XaVeC",
+                          "name": "Label",
+                          "fill": "$--muted-foreground",
+                          "content": "项目名称：",
+                          "fontFamily": "Source Sans 3",
+                          "fontSize": 13,
+                          "fontWeight": "500"
+                        },
+                        {
+                          "type": "text",
+                          "id": "cSM6c",
+                          "name": "Value",
+                          "fill": "$--foreground",
+                          "content": "产品规划 v2.0",
+                          "fontFamily": "Source Sans 3",
+                          "fontSize": 13,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "lodI5",
+                      "name": "Row 2",
+                      "gap": 8,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "5GHTw",
+                          "name": "Label",
+                          "fill": "$--muted-foreground",
+                          "content": "任务数量：",
+                          "fontFamily": "Source Sans 3",
+                          "fontSize": 13,
+                          "fontWeight": "500"
+                        },
+                        {
+                          "type": "text",
+                          "id": "SuIEG",
+                          "name": "Value",
+                          "fill": "$--foreground",
+                          "content": "28 个任务",
+                          "fontFamily": "Source Sans 3",
+                          "fontSize": 13,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "n4gov",
+                      "name": "Row 3",
+                      "gap": 8,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "BgDU3",
+                          "name": "Label",
+                          "fill": "$--muted-foreground",
+                          "content": "分享时间：",
+                          "fontFamily": "Source Sans 3",
+                          "fontSize": 13,
+                          "fontWeight": "500"
+                        },
+                        {
+                          "type": "text",
+                          "id": "zP7Pq",
+                          "name": "Value",
+                          "fill": "$--foreground",
+                          "content": "2026/3/8 14:30",
+                          "fontFamily": "Source Sans 3",
+                          "fontSize": 13,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "x3S7P",
+                  "name": "Mode Label",
+                  "fill": "$--foreground",
+                  "content": "请选择导入方式：",
+                  "fontFamily": "Source Sans 3",
+                  "fontSize": 14,
+                  "fontWeight": "500"
+                },
+                {
+                  "type": "frame",
+                  "id": "ajvQx",
+                  "name": "Option New",
+                  "width": "fill_container",
+                  "fill": "$--primary-soft",
+                  "cornerRadius": 10,
+                  "gap": 12,
+                  "padding": 14,
+                  "children": [
+                    {
+                      "type": "ellipse",
+                      "id": "W9Mpj",
+                      "name": "Radio",
+                      "fill": "$--primary",
+                      "width": 18,
+                      "height": 18,
+                      "stroke": {
+                        "thickness": 2
+                      }
+                    },
+                    {
+                      "type": "frame",
+                      "id": "TM9NC",
+                      "name": "Content",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 4,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "yZ6aD",
+                          "name": "Title",
+                          "fill": "$--foreground",
+                          "content": "新建项目导入（推荐）",
+                          "fontFamily": "Source Sans 3",
+                          "fontSize": 14,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "7odti",
+                          "name": "Hint",
+                          "fill": "$--muted-foreground",
+                          "content": "在本地新建项目，不影响现有数据",
+                          "fontFamily": "Source Sans 3",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "rPdfY",
+                  "name": "Option Replace",
+                  "width": "fill_container",
+                  "fill": "$--card",
+                  "cornerRadius": 10,
+                  "stroke": {
+                    "thickness": 1
+                  },
+                  "gap": 12,
+                  "padding": 14,
+                  "children": [
+                    {
+                      "type": "ellipse",
+                      "id": "dYFfl",
+                      "name": "Radio",
+                      "fill": "$--card",
+                      "width": 18,
+                      "height": 18,
+                      "stroke": {
+                        "thickness": 1
+                      }
+                    },
+                    {
+                      "type": "frame",
+                      "id": "kv5Vp",
+                      "name": "Content",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 4,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "xVcmn",
+                          "name": "Title",
+                          "fill": "$--foreground",
+                          "content": "覆盖当前项目",
+                          "fontFamily": "Source Sans 3",
+                          "fontSize": 14,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "fAG72",
+                          "name": "Hint",
+                          "fill": "$--danger",
+                          "content": "替换当前项目数据，无法撤销",
+                          "fontFamily": "Source Sans 3",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "B0nEa",
+              "name": "Footer",
+              "width": "fill_container",
+              "height": 64,
+              "fill": "$--surface",
+              "gap": 10,
+              "padding": [
+                0,
+                20
+              ],
+              "justifyContent": "end",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "Z48Jd",
+                  "name": "Cancel Button",
+                  "width": "fit_content(0)",
+                  "height": 40,
+                  "fill": "$--secondary",
+                  "cornerRadius": "$--radius-pill",
+                  "layout": "none",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "iB5mM",
+                      "x": 0,
+                      "y": 0,
+                      "name": "Text",
+                      "fill": "$--foreground",
+                      "content": "取消",
+                      "fontFamily": "Source Sans 3",
+                      "fontSize": 14,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "CLs3d",
+                  "name": "Confirm Button",
+                  "width": "fit_content(0)",
+                  "height": 40,
+                  "fill": "$--primary",
+                  "cornerRadius": "$--radius-pill",
+                  "layout": "none",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "P4vrZ",
+                      "x": 0,
+                      "y": 0,
+                      "name": "Text",
+                      "fill": "#FFFFFF",
+                      "content": "确认导入",
+                      "fontFamily": "Source Sans 3",
+                      "fontSize": 14,
+                      "fontWeight": "500"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "L8xC9",
+          "name": "Tag",
+          "fill": "$--secondary",
+          "cornerRadius": "$--radius-pill",
+          "gap": 6,
+          "padding": [
+            4,
+            8
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "icon_font",
+              "id": "XFhCq",
+              "name": "Icon",
+              "width": 12,
+              "height": 12,
+              "iconFontName": "download",
+              "iconFontFamily": "lucide",
+              "fill": "$--muted-foreground"
+            },
+            {
+              "type": "text",
+              "id": "6qkKJ",
+              "name": "Label",
+              "fill": "$--muted-foreground",
+              "content": "ImportDialog 弹窗",
+              "fontFamily": "Source Sans 3",
+              "fontSize": 11,
+              "fontWeight": "500"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "B3DID",
+      "x": 520,
+      "y": 2920,
+      "name": "CreateProjectDialog",
+      "width": 400,
+      "layout": "vertical",
+      "children": [
+        {
+          "type": "frame",
+          "id": "d8qN8",
+          "name": "Backdrop",
+          "width": "fill_container",
+          "height": "fill_container",
+          "fill": "#0F172A66"
+        },
+        {
+          "type": "frame",
+          "id": "OqwDG",
+          "name": "Modal Card",
+          "width": 400,
+          "fill": "$--card",
+          "cornerRadius": "$--radius-m",
+          "stroke": {
+            "thickness": 1
+          },
+          "layout": "vertical",
+          "children": [
+            {
+              "type": "frame",
+              "id": "fNkeb",
+              "name": "Header",
+              "width": "fill_container",
+              "height": 56,
+              "fill": "$--surface",
+              "padding": [
+                0,
+                20
+              ],
+              "justifyContent": "space_between",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "TBzQc",
+                  "name": "Title",
+                  "fill": "$--foreground",
+                  "content": "新建项目",
+                  "fontFamily": "Source Sans 3",
+                  "fontSize": 16,
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "frame",
+                  "id": "OQzyC",
+                  "name": "Close Button",
+                  "width": 28,
+                  "height": 28,
+                  "cornerRadius": 6,
+                  "layout": "none",
+                  "children": [
+                    {
+                      "type": "icon_font",
+                      "id": "j9J5T",
+                      "x": 0,
+                      "y": 0,
+                      "name": "Icon",
+                      "width": 14,
+                      "height": 14,
+                      "iconFontName": "x",
+                      "iconFontFamily": "lucide",
+                      "fill": "$--muted-foreground"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "xEp2r",
+              "name": "Body",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 16,
+              "padding": 20,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "0u0zO",
+                  "name": "Name Label",
+                  "fill": "$--foreground",
+                  "content": "项目名称",
+                  "fontFamily": "Source Sans 3",
+                  "fontSize": 13,
+                  "fontWeight": "500"
+                },
+                {
+                  "type": "frame",
+                  "id": "WgZ66",
+                  "name": "Input Field",
+                  "width": "fill_container",
+                  "height": 44,
+                  "fill": "$--secondary",
+                  "cornerRadius": 8,
+                  "padding": [
+                    0,
+                    14
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon_font",
+                      "id": "dkw7R",
+                      "name": "Icon",
+                      "width": 16,
+                      "height": 16,
+                      "iconFontName": "folder",
+                      "iconFontFamily": "lucide",
+                      "fill": "$--muted-foreground"
+                    },
+                    {
+                      "type": "text",
+                      "id": "wpE46",
+                      "name": "Placeholder",
+                      "fill": "$--muted-foreground",
+                      "content": "请输入项目名称",
+                      "fontFamily": "Source Sans 3",
+                      "fontSize": 14,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "vGgIb",
+                  "name": "Color Label",
+                  "fill": "$--foreground",
+                  "content": "项目颜色",
+                  "fontFamily": "Source Sans 3",
+                  "fontSize": 13,
+                  "fontWeight": "500"
+                },
+                {
+                  "type": "frame",
+                  "id": "U3Z7p",
+                  "name": "Color Grid",
+                  "width": "fill_container",
+                  "gap": 10,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "zEwPp",
+                      "name": "Color 1",
+                      "width": 32,
+                      "height": 32,
+                      "cornerRadius": 16,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "ellipse",
+                          "id": "EgvJy",
+                          "x": 4,
+                          "y": 4,
+                          "name": "Circle",
+                          "fill": "#4f46e5",
+                          "width": 24,
+                          "height": 24
+                        },
+                        {
+                          "type": "icon_font",
+                          "id": "2gO2g",
+                          "x": 9,
+                          "y": 9,
+                          "name": "Check",
+                          "width": 14,
+                          "height": 14,
+                          "iconFontName": "check",
+                          "iconFontFamily": "lucide",
+                          "fill": "#FFFFFF"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "cs7uz",
+                      "name": "Color 2",
+                      "width": 32,
+                      "height": 32,
+                      "cornerRadius": 16,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "ellipse",
+                          "id": "3sPGm",
+                          "x": 4,
+                          "y": 4,
+                          "name": "Circle",
+                          "fill": "#0891b2",
+                          "width": 24,
+                          "height": 24
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "stU6Z",
+                      "name": "Color 3",
+                      "width": 32,
+                      "height": 32,
+                      "cornerRadius": 16,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "ellipse",
+                          "id": "RFYTF",
+                          "x": 4,
+                          "y": 4,
+                          "name": "Circle",
+                          "fill": "#059669",
+                          "width": 24,
+                          "height": 24
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "Efcpa",
+                      "name": "Color 4",
+                      "width": 32,
+                      "height": 32,
+                      "cornerRadius": 16,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "ellipse",
+                          "id": "OQlIX",
+                          "x": 4,
+                          "y": 4,
+                          "name": "Circle",
+                          "fill": "#d97706",
+                          "width": 24,
+                          "height": 24
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "e3pE6",
+                      "name": "Color 5",
+                      "width": 32,
+                      "height": 32,
+                      "cornerRadius": 16,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "ellipse",
+                          "id": "xW0oJ",
+                          "x": 4,
+                          "y": 4,
+                          "name": "Circle",
+                          "fill": "#dc2626",
+                          "width": 24,
+                          "height": 24
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "r6jtY",
+                      "name": "Color 6",
+                      "width": 32,
+                      "height": 32,
+                      "cornerRadius": 16,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "ellipse",
+                          "id": "anveX",
+                          "x": 4,
+                          "y": 4,
+                          "name": "Circle",
+                          "fill": "#7c3aed",
+                          "width": 24,
+                          "height": 24
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "zhSb6",
+                      "name": "Color 7",
+                      "width": 32,
+                      "height": 32,
+                      "cornerRadius": 16,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "ellipse",
+                          "id": "WSJiS",
+                          "x": 4,
+                          "y": 4,
+                          "name": "Circle",
+                          "fill": "#db2777",
+                          "width": 24,
+                          "height": 24
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "igndV",
+              "name": "Footer",
+              "width": "fill_container",
+              "height": 64,
+              "fill": "$--surface",
+              "gap": 10,
+              "padding": [
+                0,
+                20
+              ],
+              "justifyContent": "end",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "qTWKN",
+                  "name": "Cancel Button",
+                  "width": "fit_content(0)",
+                  "height": 40,
+                  "fill": "$--secondary",
+                  "cornerRadius": "$--radius-pill",
+                  "layout": "none",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "nhzKu",
+                      "x": 0,
+                      "y": 0,
+                      "name": "Text",
+                      "fill": "$--foreground",
+                      "content": "取消",
+                      "fontFamily": "Source Sans 3",
+                      "fontSize": 14,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "7tdvY",
+                  "name": "Confirm Button",
+                  "width": "fit_content(0)",
+                  "height": 40,
+                  "fill": "$--primary",
+                  "cornerRadius": "$--radius-pill",
+                  "layout": "none",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "FWikN",
+                      "x": 0,
+                      "y": 0,
+                      "name": "Text",
+                      "fill": "#FFFFFF",
+                      "content": "创建项目",
+                      "fontFamily": "Source Sans 3",
+                      "fontSize": 14,
+                      "fontWeight": "500"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "DdhNB",
+          "name": "Tag",
+          "fill": "$--secondary",
+          "cornerRadius": "$--radius-pill",
+          "gap": 6,
+          "padding": [
+            4,
+            8
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "icon_font",
+              "id": "nFIkw",
+              "name": "Icon",
+              "width": 12,
+              "height": 12,
+              "iconFontName": "plus-circle",
+              "iconFontFamily": "lucide",
+              "fill": "$--muted-foreground"
+            },
+            {
+              "type": "text",
+              "id": "JL84A",
+              "name": "Label",
+              "fill": "$--muted-foreground",
+              "content": "CreateProjectDialog 弹窗",
+              "fontFamily": "Source Sans 3",
+              "fontSize": 11,
+              "fontWeight": "500"
+            }
+          ]
+        }
+      ]
     }
   ],
   "variables": {

@@ -642,9 +642,14 @@ export default {
         created: '项目已创建',
         manage: '管理项目',
         name: '项目名称',
+        namePlaceholder: '请输入项目名称',
+        color: '项目颜色',
+        description: '项目描述',
+        descPlaceholder: '请输入项目描述...',
         taskCount: '任务数',
         createdAt: '创建时间',
-        deleted: '项目已删除'
+        deleted: '项目已删除',
+        deleteConfirm: '确认删除项目"{name}"？该项目包含 {count} 个任务，删除后无法恢复。'
     },
 
     // 分享
@@ -652,6 +657,7 @@ export default {
         title: '分享项目',
         keyLabel: '分享 Key（留空自动生成）',
         keyHint: '填入上次的 Key 可覆盖更新云端数据',
+        initialHint: '点击"生成分享链接"将项目数据上传到云端，生成后可复制链接分享给他人',
         generate: '生成分享链接',
         regenerate: '重新生成',
         uploading: '上传中...',
@@ -689,6 +695,7 @@ export default {
         noData: '暂无数据',
         success: '操作成功',
         error: '操作失败',
-        warning: '警告'
+        warning: '警告',
+        optional: '可选'
     }
 };
