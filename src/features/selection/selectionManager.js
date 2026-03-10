@@ -4,6 +4,18 @@
 
 import { state } from '../../core/store.js';
 
+function isTaskSelected(taskId) {
+    if (state.selectedTasks.has(taskId)) return true;
+
+    const stringId = String(taskId);
+    if (state.selectedTasks.has(stringId)) return true;
+
+    const numericId = Number(taskId);
+    if (!Number.isNaN(numericId) && state.selectedTasks.has(numericId)) return true;
+
+    return false;
+}
+
 /**
  * 更新选中任务的 UI
  */
@@ -32,8 +44,8 @@ export function updateSelectedTasksUI() {
     if (selectAll) {
         const allTaskIds = [];
         gantt.eachTask(task => allTaskIds.push(task.id));
-        const allSelected = allTaskIds.length > 0 && allTaskIds.every(id => state.selectedTasks.has(id));
-        const someSelected = allTaskIds.some(id => state.selectedTasks.has(id));
+        const allSelected = allTaskIds.length > 0 && allTaskIds.every(id => isTaskSelected(id));
+        const someSelected = allTaskIds.some(id => isTaskSelected(id));
 
         selectAll.checked = allSelected;
         selectAll.indeterminate = someSelected && !allSelected;
@@ -91,7 +103,7 @@ export function applySelectionStyles() {
 
     // 更新未选中任务的复选框状态
     gantt.eachTask(function (task) {
-        if (!state.selectedTasks.has(task.id)) {
+        if (!isTaskSelected(task.id)) {
             const checkbox = document.querySelector(`.gantt-checkbox-selection[data-task-id="${task.id}"]`);
             if (checkbox) {
                 checkbox.checked = false;

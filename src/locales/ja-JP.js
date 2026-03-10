@@ -577,7 +577,8 @@ export default {
         name: 'プロジェクト名',
         taskCount: 'タスク数',
         createdAt: '作成日',
-        deleted: 'プロジェクトが削除されました'
+        deleted: 'プロジェクトが削除されました',
+        deleteTitle: 'プロジェクトを削除'
     },
 
     // 共有

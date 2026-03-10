@@ -613,7 +613,8 @@ export default {
         name: 'Project Name',
         taskCount: 'Tasks',
         createdAt: 'Created',
-        deleted: 'Project deleted'
+        deleted: 'Project deleted',
+        deleteTitle: 'Delete Project'
     },
 
     // Share

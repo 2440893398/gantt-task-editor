@@ -573,7 +573,8 @@ export default {
         name: '프로젝트 이름',
         taskCount: '작업 수',
         createdAt: '생성일',
-        deleted: '프로젝트가 삭제되었습니다'
+        deleted: '프로젝트가 삭제되었습니다',
+        deleteTitle: '프로젝트 삭제'
     },
 
     // 공유

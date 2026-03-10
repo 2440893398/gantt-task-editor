@@ -649,6 +649,7 @@ export default {
         taskCount: '任务数',
         createdAt: '创建时间',
         deleted: '项目已删除',
+        deleteTitle: '删除项目',
         deleteConfirm: '确认删除项目"{name}"？该项目包含 {count} 个任务，删除后无法恢复。'
     },
 

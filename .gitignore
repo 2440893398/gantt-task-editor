@@ -36,6 +36,8 @@ test-results/
 doc/testdoc/playwright-report/
 doc/testdoc/screenshot/
 doc/testdoc/screenshots/
+doc/testdoc/vitest-report
+docs/.doc-automation
 coverage/
 tests/e2e/downloads/
 tests/e2e/screenshots/
