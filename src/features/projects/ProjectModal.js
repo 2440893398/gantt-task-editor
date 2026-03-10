@@ -357,12 +357,20 @@ function bindCreateRow(modal) {
             await createProject({ name, color: selectedColor });
             await refreshProjects();
             document.dispatchEvent(new CustomEvent('projectsUpdated'));
-            await renderModal(modal);
-            openModalDialog(modal);
         } catch (error) {
             console.error('[Projects] Failed to create project inline:', error);
             showToast(i18n.t('common.operationFailed') || '操作失败', 'error');
             btn.disabled = false;
+            return;
+        }
+
+        // Re-render separately — project was already created at this point
+        try {
+            await renderModal(modal);
+            openModalDialog(modal);
+        } catch (renderError) {
+            console.warn('[Projects] Project created but failed to refresh display:', renderError);
+            showToast(i18n.t('project.createdButRefreshFailed') || '项目已创建，请刷新页面', 'warning');
         }
     };
 

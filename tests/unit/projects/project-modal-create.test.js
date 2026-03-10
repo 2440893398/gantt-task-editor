@@ -97,6 +97,26 @@ describe('ProjectModal inline create row', () => {
         );
     });
 
+    it('选择非默认颜色后提交应以该颜色调用 createProject', async () => {
+        const { createProject } = await import('../../../src/features/projects/manager.js');
+        const modal = await renderFreshModal();
+
+        // COLORS[1] = '#0891b2' — click the second color button
+        const colorBtn = modal.querySelectorAll('[data-inline-color]')[1];
+        colorBtn.click();
+
+        const input = modal.querySelector('#project-inline-create-input');
+        const submitBtn = modal.querySelector('[data-testid="project-inline-create-btn"]');
+
+        input.value = 'Colored Project';
+        submitBtn.click();
+        await new Promise(r => setTimeout(r, 50));
+
+        expect(createProject).toHaveBeenCalledWith(
+            expect.objectContaining({ name: 'Colored Project', color: '#0891b2' }),
+        );
+    });
+
     it('有效名称提交后应调用 createProject → refreshProjects 并派发 projectsUpdated 事件', async () => {
         const { createProject } = await import('../../../src/features/projects/manager.js');
         const { refreshProjects } = await import('../../../src/core/store.js');
