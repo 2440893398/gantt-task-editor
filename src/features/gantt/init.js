@@ -524,6 +524,12 @@ export function initGantt() {
         if (task.progress >= 1) {
             classes.push("task_completed");
         }
+
+        // 有子任务的父任务：隐藏默认实心条，由 summary-bar layer 接管
+        if (typeof gantt.hasChild === 'function' && gantt.hasChild(task.id)) {
+            classes.push('summary-parent');
+        }
+
         return classes.join(" ");
     };
 
