@@ -3,12 +3,21 @@
  */
 
 import { state, refreshProjects, switchProject } from '../../core/store.js';
-import { updateProject, deleteProject, getProjectTaskCount } from './manager.js';
+import { createProject, updateProject, deleteProject, getProjectTaskCount } from './manager.js';
 import { i18n } from '../../utils/i18n.js';
 import { showToast } from '../../utils/toast.js';
+import { showConfirmDialog } from '../../components/common/confirm-dialog.js';
 
 const MODAL_ID = 'project-manage-modal';
 const COLORS = ['#4f46e5', '#0891b2', '#059669', '#d97706', '#dc2626', '#7c3aed', '#db2777'];
+
+function getI18nText(key, fallback) {
+    const value = i18n.t(key);
+    if (!value || value === key) {
+        return fallback;
+    }
+    return value;
+}
 
 function escapeHtml(value) {
     return String(value ?? '')
@@ -21,8 +30,8 @@ function escapeHtml(value) {
 
 function buildDeleteConfirmText(projectName, taskCount) {
     const fallback = `Delete project "${projectName}"? This project has ${taskCount} tasks and cannot be recovered.`;
-    const localized = i18n.t('project.deleteConfirm');
-    if (!localized || localized === 'project.deleteConfirm') {
+    const localized = getI18nText('project.deleteConfirm', '');
+    if (!localized) {
         return fallback;
     }
 
@@ -38,6 +47,41 @@ function sanitizeColor(value) {
     return '#4f46e5';
 }
 
+function openModalDialog(modal) {
+    if (typeof modal.showModal === 'function') {
+        try {
+            modal.showModal();
+            return;
+        } catch (error) {
+            console.warn('[Projects] showModal fallback to open attribute:', error);
+        }
+    }
+    modal.setAttribute('open', 'open');
+}
+
+function closeModalDialog(modal) {
+    if (typeof modal.close === 'function') {
+        modal.close();
+        return;
+    }
+    modal.removeAttribute('open');
+}
+
+function confirmProjectDelete(message) {
+    return new Promise(resolve => {
+        showConfirmDialog({
+            icon: 'trash-2',
+            variant: 'danger',
+            title: getI18nText('project.deleteTitle', getI18nText('message.confirmDeleteTitle', '删除项目')),
+            message,
+            confirmText: getI18nText('form.delete', '删除'),
+            cancelText: getI18nText('form.cancel', '取消'),
+            onConfirm: () => resolve(true),
+            onCancel: () => resolve(false)
+        });
+    });
+}
+
 /**
  * 打开项目管理弹窗
  */
@@ -51,16 +95,7 @@ export function openProjectModal() {
     }
 
     renderModal(modal).then(() => {
-        if (typeof modal.showModal === 'function') {
-            try {
-                modal.showModal();
-            } catch (error) {
-                console.warn('[Projects] showModal fallback to open attribute:', error);
-                modal.setAttribute('open', 'open');
-            }
-        } else {
-            modal.setAttribute('open', 'open');
-        }
+        openModalDialog(modal);
     }).catch(error => {
         console.error('[Projects] Failed to render project modal:', error);
         showToast(i18n.t('common.operationFailed') || '操作失败', 'error');
@@ -141,7 +176,46 @@ async function renderModal(modal) {
                         <th class="w-16"></th>
                     </tr>
                 </thead>
-                <tbody>${rows}</tbody>
+                <tbody>
+                    ${rows}
+                    <tr id="project-inline-create-row">
+                        <td>
+                            <div class="flex items-center gap-3">
+                                <div class="color-picker flex gap-1" id="inline-create-color-picker">
+                                    ${COLORS.map((color, i) => `
+                                        <button
+                                            type="button"
+                                            class="w-2 h-2 rounded-full cursor-pointer transition-transform hover:scale-125 ${i === 0 ? 'ring-1 ring-offset-1 ring-gray-400' : ''}"
+                                            style="background:${color}"
+                                            data-inline-color="${color}"
+                                        ></button>
+                                    `).join('')}
+                                </div>
+                                <input
+                                    id="project-inline-create-input"
+                                    class="input input-sm w-40 bg-transparent border-0 border-b border-base-300 focus:border-primary focus:outline-none focus:bg-base-200/50 rounded-none px-1"
+                                    placeholder="${i18n.t('project.newProjectPlaceholder') || '新项目名称'}"
+                                    maxlength="50"
+                                />
+                            </div>
+                        </td>
+                        <td></td>
+                        <td></td>
+                        <td class="w-16">
+                            <button
+                                type="button"
+                                id="project-inline-create-btn"
+                                data-testid="project-inline-create-btn"
+                                class="btn btn-ghost btn-xs text-primary"
+                                title="${i18n.t('project.create') || '新建项目'}"
+                            >
+                                <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                    <path d="M12 5v14M5 12h14"/>
+                                </svg>
+                            </button>
+                        </td>
+                    </tr>
+                </tbody>
             </table>
             <div class="mt-4 p-3 bg-base-200 rounded-lg flex items-center gap-2 text-sm text-base-content/70">
                 <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -220,7 +294,10 @@ function bindModalEvents(modal) {
             }
 
             const message = buildDeleteConfirmText(projectName, taskCount);
-            if (!window.confirm(message)) {
+            closeModalDialog(modal);
+            const confirmed = await confirmProjectDelete(message);
+            if (!confirmed) {
+                openModalDialog(modal);
                 return;
             }
 
@@ -234,11 +311,63 @@ function bindModalEvents(modal) {
                 }
 
                 await renderModal(modal);
+                openModalDialog(modal);
                 showToast(i18n.t('project.deleted') || '项目已删除', 'success');
             } catch (error) {
                 console.error('[Projects] Failed to delete project:', error);
+                openModalDialog(modal);
                 showToast(i18n.t('common.operationFailed') || '操作失败', 'error');
             }
         });
+    });
+
+    bindCreateRow(modal);
+}
+
+function bindCreateRow(modal) {
+    let selectedColor = COLORS[0];
+
+    // 颜色选择
+    modal.querySelectorAll('[data-inline-color]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            selectedColor = btn.dataset.inlineColor;
+            modal.querySelectorAll('[data-inline-color]').forEach(b => {
+                b.classList.toggle('ring-1', b.dataset.inlineColor === selectedColor);
+                b.classList.toggle('ring-offset-1', b.dataset.inlineColor === selectedColor);
+                b.classList.toggle('ring-gray-400', b.dataset.inlineColor === selectedColor);
+            });
+        });
+    });
+
+    const input = modal.querySelector('#project-inline-create-input');
+    const btn = modal.querySelector('#project-inline-create-btn');
+    if (!input || !btn) return;
+
+    const doCreate = async () => {
+        const name = input.value.trim();
+        if (!name) {
+            input.classList.add('input-error');
+            input.focus();
+            setTimeout(() => input.classList.remove('input-error'), 1000);
+            return;
+        }
+
+        btn.disabled = true;
+        try {
+            await createProject({ name, color: selectedColor });
+            await refreshProjects();
+            document.dispatchEvent(new CustomEvent('projectsUpdated'));
+            await renderModal(modal);
+            openModalDialog(modal);
+        } catch (error) {
+            console.error('[Projects] Failed to create project inline:', error);
+            showToast(i18n.t('common.operationFailed') || '操作失败', 'error');
+            btn.disabled = false;
+        }
+    };
+
+    btn.addEventListener('click', doCreate);
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') doCreate();
     });
 }
