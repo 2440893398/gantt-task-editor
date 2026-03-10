@@ -13,7 +13,9 @@ const mockSwitchProject = vi.fn();
 const mockUpdateProject = vi.fn();
 const mockDeleteProject = vi.fn();
 const mockGetProjectTaskCount = vi.fn(async id => (id === 'prj_a' ? 3 : 1));
+const mockCreateProject = vi.fn(async ({ name, color }) => ({ id: 'prj_new', name, color }));
 const mockShowToast = vi.fn();
+const showConfirmDialogMock = vi.fn();
 
 vi.mock('../../src/core/store.js', () => ({
     state: mockState,
@@ -25,6 +27,7 @@ vi.mock('../../src/features/projects/manager.js', () => ({
     updateProject: mockUpdateProject,
     deleteProject: mockDeleteProject,
     getProjectTaskCount: mockGetProjectTaskCount,
+    createProject: mockCreateProject,
 }));
 
 vi.mock('../../src/utils/i18n.js', () => ({
@@ -35,6 +38,10 @@ vi.mock('../../src/utils/i18n.js', () => ({
 
 vi.mock('../../src/utils/toast.js', () => ({
     showToast: mockShowToast,
+}));
+
+vi.mock('../../src/components/common/confirm-dialog.js', () => ({
+    showConfirmDialog: showConfirmDialogMock,
 }));
 
 describe('ProjectModal', () => {
@@ -58,9 +65,10 @@ describe('ProjectModal', () => {
         mockGetProjectTaskCount.mockReset();
         mockGetProjectTaskCount.mockImplementation(async id => (id === 'prj_a' ? 3 : 1));
         mockShowToast.mockReset();
+        showConfirmDialogMock.mockReset();
 
-        window.confirm = vi.fn(() => true);
         HTMLDialogElement.prototype.showModal = vi.fn();
+        HTMLDialogElement.prototype.close = vi.fn();
     });
 
     it('creates and opens project manage dialog', async () => {
@@ -71,7 +79,7 @@ describe('ProjectModal', () => {
         const modal = document.getElementById('project-manage-modal');
         expect(modal).toBeTruthy();
         expect(modal.textContent).toContain('project.manage');
-        expect(modal.querySelectorAll('tbody tr').length).toBe(2);
+        expect(modal.querySelectorAll('tbody tr').length).toBe(3); // 2 project rows + 1 inline create row
     });
 
     it('updates project color on color button click', async () => {
@@ -157,6 +165,15 @@ describe('ProjectModal', () => {
         deleteButton.click();
         await flushAsync();
 
+        expect(showConfirmDialogMock).toHaveBeenCalledTimes(1);
+        expect(showConfirmDialogMock.mock.calls[0][0]).toMatchObject({
+            title: '删除项目',
+            confirmText: '删除',
+            cancelText: '取消',
+        });
+        showConfirmDialogMock.mock.calls[0][0].onConfirm();
+        await flushAsync();
+
         expect(mockDeleteProject).toHaveBeenCalledWith('prj_a');
         expect(mockSwitchProject).toHaveBeenCalledWith('prj_b');
     });
@@ -172,7 +189,29 @@ describe('ProjectModal', () => {
         deleteButton.click();
         await flushAsync();
 
+        expect(showConfirmDialogMock).toHaveBeenCalledTimes(1);
+        showConfirmDialogMock.mock.calls[0][0].onConfirm();
+        await flushAsync();
+
         expect(mockDeleteProject).toHaveBeenCalledWith('prj_b');
         expect(mockSwitchProject).not.toHaveBeenCalled();
+    });
+
+    it('does not delete when project-delete confirm dialog is cancelled', async () => {
+        const { openProjectModal } = await import('../../src/features/projects/ProjectModal.js');
+        openProjectModal();
+        await flushAsync();
+
+        const deleteButton = document.querySelector('[data-delete-project-id="prj_a"]');
+        deleteButton.click();
+        await flushAsync();
+
+        expect(showConfirmDialogMock).toHaveBeenCalledTimes(1);
+        showConfirmDialogMock.mock.calls[0][0].onCancel();
+        await flushAsync();
+
+        expect(mockDeleteProject).not.toHaveBeenCalled();
+        expect(HTMLDialogElement.prototype.close).toHaveBeenCalledTimes(1);
+        expect(HTMLDialogElement.prototype.showModal).toHaveBeenCalledTimes(2);
     });
 });
