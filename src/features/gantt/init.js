@@ -528,15 +528,27 @@ export function initGantt() {
     };
 
     // 批量选择模板
+    const isTaskSelected = (taskId) => {
+        if (state.selectedTasks.has(taskId)) return true;
+
+        const stringId = String(taskId);
+        if (state.selectedTasks.has(stringId)) return true;
+
+        const numericId = Number(taskId);
+        if (!Number.isNaN(numericId) && state.selectedTasks.has(numericId)) return true;
+
+        return false;
+    };
+
     gantt.templates.grid_row_class = function (start, end, task) {
-        if (state.selectedTasks.has(task.id)) {
+        if (isTaskSelected(task.id)) {
             return "gantt-selected";
         }
         return "";
     };
 
     gantt.templates.task_row_class = function (start, end, task) {
-        if (state.selectedTasks.has(task.id)) {
+        if (isTaskSelected(task.id)) {
             return "gantt-selected";
         }
         return "";
@@ -702,7 +714,7 @@ export function initGantt() {
         return true;
     });
 
-    // 任务点击事件 (批量选择)
+    // 任务点击事件：仅复选框参与批量选择，点击行本身不改变选择状态
     gantt.attachEvent("onTaskClick", function (id, e) {
         if (e.target) {
             if (e.target.classList && e.target.classList.contains('gantt-checkbox-selection')) {
@@ -717,20 +729,22 @@ export function initGantt() {
             }
         }
 
-        if (state.isCtrlPressed || e.ctrlKey || e.metaKey) {
-            if (state.selectedTasks.has(id)) {
-                state.selectedTasks.delete(id);
-            } else {
-                state.selectedTasks.add(id);
-            }
-            updateSelectedTasksUI();
-            return false;
+        if (typeof gantt.selectTask === 'function') {
+            gantt.selectTask(id);
         }
 
-        // 普通单击：清空已选，高亮当前任务
-        state.selectedTasks.clear();
-        state.selectedTasks.add(id);
-        updateSelectedTasksUI();
+        // 定位时间轴到任务起始日期（仅 split / gantt 模式有时间轴）
+        if (state.viewMode !== 'table') {
+            try {
+                const task = gantt.getTask(id);
+                if (task && typeof gantt.showDate === 'function') {
+                    gantt.showDate(task.start_date);
+                }
+            } catch (err) {
+                console.warn('[Gantt] Failed to locate task on timeline:', err);
+            }
+        }
+
         return true;
     });
 
@@ -987,34 +1001,50 @@ export function setupGlobalEvents() {
         }
     });
 
-    // 复选框事件委托
-    gantt.$grid.addEventListener('change', function (e) {
-        if (e.target.classList.contains('gantt-checkbox-selection')) {
-            const taskId = parseInt(e.target.getAttribute('data-task-id'));
-            if (e.target.checked) {
-                state.selectedTasks.add(taskId);
-            } else {
-                state.selectedTasks.delete(taskId);
-            }
-            updateSelectedTasksUI();
-            e.stopPropagation();
+    const getTaskIdVariants = (rawTaskId) => {
+        const ids = [rawTaskId];
+        const numericTaskId = Number(rawTaskId);
+        if (!Number.isNaN(numericTaskId)) {
+            ids.push(numericTaskId);
         }
+        return ids;
+    };
+
+    // 复选框事件委托（绑定到 document，避免 gantt 重建 DOM 后监听失效）
+    document.addEventListener('change', function (e) {
+        if (!e.target || !e.target.classList || !e.target.classList.contains('gantt-checkbox-selection')) {
+            return;
+        }
+
+        const rawTaskId = e.target.getAttribute('data-task-id');
+        const taskIds = getTaskIdVariants(rawTaskId);
+
+        if (e.target.checked) {
+            taskIds.forEach(taskId => state.selectedTasks.delete(taskId));
+            state.selectedTasks.add(rawTaskId);
+        } else {
+            taskIds.forEach(taskId => state.selectedTasks.delete(taskId));
+        }
+        updateSelectedTasksUI();
+        e.stopPropagation();
     });
 
     // 全选复选框事件委托
-    gantt.$grid_scale.addEventListener('click', function (e) {
-        if (e.target.id === 'select-all-checkbox') {
-            const allTaskIds = [];
-            gantt.eachTask(task => allTaskIds.push(task.id));
-
-            if (e.target.checked) {
-                allTaskIds.forEach(id => state.selectedTasks.add(id));
-            } else {
-                state.selectedTasks.clear();
-            }
-            updateSelectedTasksUI();
-            e.stopPropagation();
+    document.addEventListener('click', function (e) {
+        if (!e.target || e.target.id !== 'select-all-checkbox') {
+            return;
         }
+
+        const allTaskIds = [];
+        gantt.eachTask(task => allTaskIds.push(task.id));
+
+        if (e.target.checked) {
+            allTaskIds.forEach(id => state.selectedTasks.add(id));
+        } else {
+            state.selectedTasks.clear();
+        }
+        updateSelectedTasksUI();
+        e.stopPropagation();
     });
 
     // 初始化 Resizer
