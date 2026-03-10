@@ -127,6 +127,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 初始化甘特图（传入缓存恢复函数）
     await initGanttWithCache();
 
+    // 检测并处理分享链接参数
+    const { checkShareParam } = await import('./features/share/ImportDialog.js');
+    await checkShareParam();
+
     // 后台静默预拉取节假日（当年 + 次年），不阻塞 UI
     prefetchHolidays();
 
