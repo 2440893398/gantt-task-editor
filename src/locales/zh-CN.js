@@ -631,5 +631,64 @@ export default {
         noLeaveThatDay: '当天暂无请假记录',
         noSpecialDays: '暂无特殊工作日配置',
         noLeaves: '点击「添加请假」记录缺勤'
+    },
+
+    // 项目管理
+    project: {
+        default: '默认项目',
+        unnamed: '未命名项目',
+        create: '新建项目',
+        createPrompt: '请输入项目名称',
+        created: '项目已创建',
+        manage: '管理项目',
+        name: '项目名称',
+        taskCount: '任务数',
+        createdAt: '创建时间',
+        deleted: '项目已删除'
+    },
+
+    // 分享
+    share: {
+        title: '分享项目',
+        keyLabel: '分享 Key（留空自动生成）',
+        keyHint: '填入上次的 Key 可覆盖更新云端数据',
+        generate: '生成分享链接',
+        regenerate: '重新生成',
+        uploading: '上传中...',
+        linkGenerated: '链接已生成（30天有效）',
+        copy: '复制',
+        copied: '链接已复制',
+        expiresAt: '有效期至',
+        uploadFailed: '上传失败，请检查网络或使用文件导出',
+        notFound: '分享链接已过期或不存在，请联系分享人重新分享',
+        loadFailed: '加载分享数据失败',
+        importTitle: '检测到分享链接',
+        taskCount: '任务数',
+        exportedAt: '分享时间',
+        importMode: '请选择导入方式：',
+        importNew: '新建项目导入（推荐）',
+        importNewHint: '在本地新建项目，不影响现有数据',
+        importReplace: '覆盖当前项目',
+        importReplaceHint: '替换当前项目的所有数据，无法撤销',
+        confirmImport: '确认导入',
+        importSuccess: '导入成功：{{count}} 个任务',
+        importedProject: '导入的项目'
+    },
+
+    // 通用
+    common: {
+        delete: '删除',
+        close: '关闭',
+        cancel: '取消',
+        confirm: '确认',
+        save: '保存',
+        edit: '编辑',
+        add: '添加',
+        search: '搜索',
+        loading: '加载中...',
+        noData: '暂无数据',
+        success: '操作成功',
+        error: '操作失败',
+        warning: '警告'
     }
 };

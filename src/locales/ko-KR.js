@@ -560,5 +560,64 @@ export default {
         noLeaveThatDay: '해당 날짜의 휴가 기록이 없습니다',
         noSpecialDays: '특별 근무일 없음',
         noLeaves: '「휴가 추가」를 클릭하세요'
+    },
+
+    // 프로젝트 관리
+    project: {
+        default: '기본 프로젝트',
+        unnamed: '이름 없는 프로젝트',
+        create: '새 프로젝트',
+        createPrompt: '프로젝트 이름 입력',
+        created: '프로젝트가 생성되었습니다',
+        manage: '프로젝트 관리',
+        name: '프로젝트 이름',
+        taskCount: '작업 수',
+        createdAt: '생성일',
+        deleted: '프로젝트가 삭제되었습니다'
+    },
+
+    // 공유
+    share: {
+        title: '프로젝트 공유',
+        keyLabel: '공유 키 (비워두면 자동 생성)',
+        keyHint: '이전 키를 입력하면 클라우드 데이터 업데이트',
+        generate: '공유 링크 생성',
+        regenerate: '다시 생성',
+        uploading: '업로드 중...',
+        linkGenerated: '링크가 생성되었습니다 (30일 유효)',
+        copy: '복사',
+        copied: '링크가 복사되었습니다',
+        expiresAt: '만료일',
+        uploadFailed: '업로드 실패, 네트워크 확인 또는 파일 내보내기 사용',
+        notFound: '공유 링크가 만료되었거나 존재하지 않습니다. 공유자에게 문의하세요',
+        loadFailed: '공유 데이터 로드 실패',
+        importTitle: '공유 링크 감지',
+        taskCount: '작업 수',
+        exportedAt: '공유 시간',
+        importMode: '가져오기 모드 선택:',
+        importNew: '새 프로젝트로 가져오기 (권장)',
+        importNewHint: '로컬에 새 프로젝트 생성, 기존 데이터에 영향 없음',
+        importReplace: '현재 프로젝트 덮어쓰기',
+        importReplaceHint: '현재 프로젝트의 모든 데이터 교체, 취소 불가',
+        confirmImport: '가져오기 확인',
+        importSuccess: '가져오기 성공: {{count}}개 작업',
+        importedProject: '가져온 프로젝트'
+    },
+
+    // 공통
+    common: {
+        delete: '삭제',
+        close: '닫기',
+        cancel: '취소',
+        confirm: '확인',
+        save: '저장',
+        edit: '편집',
+        add: '추가',
+        search: '검색',
+        loading: '로딩 중...',
+        noData: '데이터 없음',
+        success: '성공',
+        error: '오류',
+        warning: '경고'
     }
 };

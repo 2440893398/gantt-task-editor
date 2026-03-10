@@ -600,5 +600,64 @@ export default {
         noLeaveThatDay: 'No leave records for this day',
         noSpecialDays: 'No special days configured',
         noLeaves: 'Click "Add Leave" to record absences'
+    },
+
+    // Project Management
+    project: {
+        default: 'Default Project',
+        unnamed: 'Unnamed Project',
+        create: 'New Project',
+        createPrompt: 'Enter project name',
+        created: 'Project created',
+        manage: 'Manage Projects',
+        name: 'Project Name',
+        taskCount: 'Tasks',
+        createdAt: 'Created',
+        deleted: 'Project deleted'
+    },
+
+    // Share
+    share: {
+        title: 'Share Project',
+        keyLabel: 'Share Key (leave empty to auto-generate)',
+        keyHint: 'Enter previous Key to update cloud data',
+        generate: 'Generate Share Link',
+        regenerate: 'Regenerate',
+        uploading: 'Uploading...',
+        linkGenerated: 'Link generated (30 days valid)',
+        copy: 'Copy',
+        copied: 'Link copied',
+        expiresAt: 'Expires at',
+        uploadFailed: 'Upload failed, please check network or use file export',
+        notFound: 'Share link expired or not found, please contact the sharer',
+        loadFailed: 'Failed to load share data',
+        importTitle: 'Share Link Detected',
+        taskCount: 'Tasks',
+        exportedAt: 'Shared at',
+        importMode: 'Select import mode:',
+        importNew: 'Import as New Project (Recommended)',
+        importNewHint: 'Create new project locally, does not affect existing data',
+        importReplace: 'Replace Current Project',
+        importReplaceHint: 'Replace all current project data, cannot be undone',
+        confirmImport: 'Confirm Import',
+        importSuccess: 'Import successful: {{count}} tasks',
+        importedProject: 'Imported Project'
+    },
+
+    // Common
+    common: {
+        delete: 'Delete',
+        close: 'Close',
+        cancel: 'Cancel',
+        confirm: 'Confirm',
+        save: 'Save',
+        edit: 'Edit',
+        add: 'Add',
+        search: 'Search',
+        loading: 'Loading...',
+        noData: 'No data',
+        success: 'Success',
+        error: 'Error',
+        warning: 'Warning'
     }
 };

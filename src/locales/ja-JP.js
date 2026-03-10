@@ -564,5 +564,64 @@ export default {
         noLeaveThatDay: 'この日の休暇記録はありません',
         noSpecialDays: '特別日の設定なし',
         noLeaves: '「休暇を追加」をクリック'
+    },
+
+    // プロジェクト管理
+    project: {
+        default: 'デフォルトプロジェクト',
+        unnamed: '無名プロジェクト',
+        create: '新規プロジェクト',
+        createPrompt: 'プロジェクト名を入力',
+        created: 'プロジェクトが作成されました',
+        manage: 'プロジェクト管理',
+        name: 'プロジェクト名',
+        taskCount: 'タスク数',
+        createdAt: '作成日',
+        deleted: 'プロジェクトが削除されました'
+    },
+
+    // 共有
+    share: {
+        title: 'プロジェクトを共有',
+        keyLabel: '共有キー（空欄で自動生成）',
+        keyHint: '前回のキーを入力するとクラウドデータを更新',
+        generate: '共有リンクを生成',
+        regenerate: '再生成',
+        uploading: 'アップロード中...',
+        linkGenerated: 'リンクが生成されました（30日間有効）',
+        copy: 'コピー',
+        copied: 'リンクがコピーされました',
+        expiresAt: '有効期限',
+        uploadFailed: 'アップロード失敗、ネットワークを確認またはファイルエクスポートを使用',
+        notFound: '共有リンクが期限切れまたは存在しません。共有者に連絡してください',
+        loadFailed: '共有データの読み込みに失敗しました',
+        importTitle: '共有リンクを検出',
+        taskCount: 'タスク数',
+        exportedAt: '共有日時',
+        importMode: 'インポートモードを選択：',
+        importNew: '新規プロジェクトとしてインポート（推奨）',
+        importNewHint: '新規プロジェクトをローカルに作成、既存データに影響なし',
+        importReplace: '現在のプロジェクトを置換',
+        importReplaceHint: '現在のプロジェクトすべてのデータを置換、元に戻せません',
+        confirmImport: 'インポートを確認',
+        importSuccess: 'インポート成功：{{count}}タスク',
+        importedProject: 'インポートしたプロジェクト'
+    },
+
+    // 共通
+    common: {
+        delete: '削除',
+        close: '閉じる',
+        cancel: 'キャンセル',
+        confirm: '確認',
+        save: '保存',
+        edit: '編集',
+        add: '追加',
+        search: '検索',
+        loading: '読み込み中...',
+        noData: 'データなし',
+        success: '成功',
+        error: 'エラー',
+        warning: '警告'
     }
 };
