@@ -23,7 +23,6 @@ import { loadColumnWidthPrefs, saveColumnWidthPref } from './column-widths.js';
 
 import { showSummaryPopover, hideSummaryPopover } from '../../utils/dom.js';
 import { initBaseline, handleSaveBaseline, handleToggleBaseline } from './baseline.js';
-import { initSummaryBar } from './summary-bar.js';
 import { detectResourceConflicts } from './resource-conflict.js';
 import { exportCurrentView, exportFullGantt } from './export-image.js';
 import { exportToExcel } from '../config/configIO.js';
@@ -526,11 +525,6 @@ export function initGantt() {
             classes.push("task_completed");
         }
 
-        // 有子任务的父任务：隐藏默认实心条，由 summary-bar layer 接管
-        if (typeof gantt.hasChild === 'function' && gantt.hasChild(task.id)) {
-            classes.push('summary-parent');
-        }
-
         return classes.join(" ");
     };
 
@@ -915,7 +909,6 @@ export function initGantt() {
     initCriticalPath();
 
     // 初始化基线功能
-    initSummaryBar();
     initBaseline();
 
     // Init Smart Snapping (Phase 5)
