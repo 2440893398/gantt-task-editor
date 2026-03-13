@@ -161,6 +161,7 @@ tests/
 - **知识库 ID**: `f6dd9088-2e05-4dcb-b53e-7eb43d3dda4c`
 - **检索方式**: 使用 `hybrid_search` 工具进行混合搜索
 - **新增文档**: 使用 `create_knowledge_from_url` 工具将文档 URL 添加到知识库
+- **同步映射文件**: `scripts/weknora-sync-map.json`（记录文件路径与 knowledge_id 的映射）
 
 **检索示例**:
 
@@ -183,3 +184,39 @@ tests/
   enable_multimodel: true
 }
 ```
+
+**自动同步机制（Git Hook）**:
+
+每次 `git commit` 后，自动同步修改的文档到知识库：
+
+1. **触发时机**: Git commit 后自动执行 `post-commit` hook
+2. **同步范围**: 本次 commit 修改的 `.md` 文件
+3. **更新策略**: 先删除旧记录，再重新添加（weknora 不支持直接更新）
+
+**同步流程**:
+
+```
+Git Commit → post-commit hook → sync-to-weknora.js → 检测修改的 .md 文件 → 查询映射文件 → delete_knowledge（已存在）→ create_knowledge_from_url → 更新映射文件
+```
+
+**配置**:
+
+- **Hook 文件**: `.git/hooks/post-commit`
+- **同步脚本**: `scripts/sync-to-weknora.js`
+- **映射文件**: `scripts/weknora-sync-map.json`
+
+**手动同步**:
+
+```bash
+# 同步所有文档
+node scripts/sync-to-weknora.js
+
+# 同步指定文件
+node scripts/sync-to-weknora.js AGENTS.md docs/spec.md
+```
+
+**注意事项**:
+
+- weknora 服务需要能访问 GitHub（获取 raw URL）
+- 映射文件 `weknora-sync-map.json` 需要提交到仓库，确保多端同步
+- 如果 weknora 服务不可用，hook 会静默失败（不影响 commit）
