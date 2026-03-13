@@ -185,25 +185,32 @@ tests/
 }
 ```
 
-**自动同步机制（Git Hook）**:
+**自动同步机制（AI 提交代码后自动执行）**:
 
-每次 `git commit` 后，自动同步修改的文档到知识库：
+每次 AI 提交代码后，自动同步修改的文档到知识库：
 
-1. **触发时机**: Git commit 后自动执行 `post-commit` hook
+1. **触发时机**: AI 执行 `git commit` 后自动调用同步脚本
 2. **同步范围**: 本次 commit 修改的 `.md` 文件
 3. **更新策略**: 先删除旧记录，再重新添加（weknora 不支持直接更新）
 
 **同步流程**:
 
 ```
-Git Commit → post-commit hook → sync-to-weknora.js → 检测修改的 .md 文件 → 查询映射文件 → delete_knowledge（已存在）→ create_knowledge_from_url → 更新映射文件
+Git Commit → AI 调用 sync-to-weknora.js → 检测修改的 .md 文件 → 查询映射文件 → delete_knowledge（已存在）→ create_knowledge_from_url → 更新映射文件
 ```
 
 **配置**:
 
-- **Hook 文件**: `.git/hooks/post-commit`
-- **同步脚本**: `scripts/sync-to-weknora.js`
+- **同步脚本**: `scripts/weknora-sync.js`
 - **映射文件**: `scripts/weknora-sync-map.json`
+
+**环境变量**:
+
+```bash
+# 设置 weknora 服务地址
+set WEKNORA_API_URL=http://your-weknora-server:8080
+set WEKNORA_API_KEY=your-api-key  # 如果需要
+```
 
 **手动同步**:
 
