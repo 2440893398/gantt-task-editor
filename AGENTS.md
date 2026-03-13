@@ -152,3 +152,34 @@ tests/
 4. **记录决策链**：使用 TodoWrite 记录「问题 → 方案 → 可能的副作用 → 应对措施」，确保每一步都经过审慎思考。
 
 > 核心原则：解决问题不能制造新问题。如果方案 X 解决了问题 A 但引出问题 B，而解决 B 又会恢复问题 A，则方案 X 不可行，必须寻找其他路径。
+
+### 文档检索（weknora MCP）
+
+本项目已配置 weknora MCP Server 用于文档检索。所有与项目相关的文档检索都应使用 weknora：
+
+- **知识库名称**: `Gantt Chart Project`
+- **知识库 ID**: `f6dd9088-2e05-4dcb-b53e-7eb43d3dda4c`
+- **检索方式**: 使用 `hybrid_search` 工具进行混合搜索
+- **新增文档**: 使用 `create_knowledge_from_url` 工具将文档 URL 添加到知识库
+
+**检索示例**:
+
+```javascript
+// 使用 hybrid_search 工具搜索知识库
+{
+  kb_id: "f6dd9088-2e05-4dcb-b53e-7eb43d3dda4c",
+  query: "项目相关问题",
+  match_count: 5
+}
+```
+
+**添加新文档到知识库**:
+
+```javascript
+// 使用 create_knowledge_from_url 添加文档
+{
+  kb_id: "f6dd9088-2e05-4dcb-b53e-7eb43d3dda4c",
+  url: "https://example.com/doc-url",
+  enable_multimodel: true
+}
+```
