@@ -78,15 +78,25 @@ describe('right-section date recalculation by schedule mode', () => {
     it('in start_duration mode, changing start recalculates end', async () => {
         const { bindRightSectionEvents } = await import('../../../src/features/task-details/right-section.js');
         const panel = buildPanel();
+        // Use local-timezone Date objects so the panel-open correction check
+        // (right-section.js ~line 208) sees end_date === calculateEndDate(start, duration)
+        // and does NOT fire a spurious extra call before the user interaction.
+        // The mock does: new Date(start); setDate(getDate() + duration) — which is local-time-based.
+        // new Date(2026, 2, 1) local + 3 days === new Date(2026, 2, 4) local → no mismatch.
         const task = {
             id: 1,
             schedule_mode: 'start_duration',
-            start_date: new Date('2026-03-01T00:00:00.000Z'),
-            end_date: new Date('2026-03-08T00:00:00.000Z'),
+            start_date: new Date(2026, 2, 1),   // March 1, 2026 local time
+            end_date: new Date(2026, 2, 4),     // March 4, 2026 local time (start + duration)
             duration: 3
         };
 
         bindRightSectionEvents(panel, task);
+
+        // Reset spy after panel initialization so we isolate the user-interaction call.
+        // The panel may call calculateEndDate once on open to auto-correct end_date vs
+        // start+duration inconsistencies; that initialization path is tested separately.
+        global.gantt.calculateEndDate.mockClear();
 
         panel.querySelector('#task-start-date').click();
         const call = openTaskDatePickerPopoverMock.mock.calls[0][0];

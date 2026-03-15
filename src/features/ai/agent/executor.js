@@ -9,6 +9,7 @@ import { loadSkill } from '../skills/registry.js';
 import { getToolsForSkill } from '../tools/registry.js';
 import { i18n } from '../../../utils/i18n.js';
 import { IMPORT_SYSTEM_PROMPT, DIFF_JSON_SCHEMA } from '../prompts/importPrompt.js';
+import { getAiConfigState } from '../../../core/store.js';
 
 function hasAttachmentContext(messages = []) {
     return Array.isArray(messages) && messages.some((m) =>
@@ -30,7 +31,7 @@ function resolveModel(modelOrProvider, modelId) {
         return modelOrProvider;
     }
 
-    const config = JSON.parse(localStorage.getItem('gantt_ai_config') || '{}');
+    const config = getAiConfigState();
     const id = modelId || config.model || 'gpt-3.5-turbo';
 
     if (shouldUseChatEndpoint(config.baseUrl) && typeof modelOrProvider.chat === 'function') {
@@ -109,7 +110,7 @@ export async function executeSkill(skillId, messages, modelOrProvider, modelIdOr
     }
 
     // 2. Check API compatibility for tool calling
-    const config = JSON.parse(localStorage.getItem('gantt_ai_config') || '{}');
+    const config = getAiConfigState();
     const currentModel = config.model || 'gpt-3.5-turbo';
     const apiSupportsTools = isToolCallingSupportedByAPI(config.baseUrl, currentModel);
     

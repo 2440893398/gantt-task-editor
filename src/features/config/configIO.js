@@ -5,6 +5,7 @@
 
 import ExcelJS from 'exceljs';
 import { state, isFieldEnabled, getSystemFieldOptions, getFieldType, getCustomFieldByName } from '../../core/store.js';
+import { projectScope } from '../../core/storage.js';
 import { INTERNAL_FIELDS, SYSTEM_FIELD_CONFIG } from '../../data/fields.js';
 import { showToast } from '../../utils/toast.js';
 import { updateGanttColumns } from '../gantt/columns.js';
@@ -127,11 +128,10 @@ export async function exportFullBackup() {
         // 获取所有数据
         const ganttData = gantt.serialize();
 
-        // 获取 baseline 数据
+        // 获取 baseline 数据（按当前项目隔离）
         let baselineData = null;
         try {
-            const { loadBaseline } = await import('../../core/store.js');
-            const baseline = await loadBaseline();
+            const baseline = await projectScope(state.currentProjectId).getBaseline();
             baselineData = baseline ? baseline.snapshot : null;
         } catch (error) {
             console.warn('[Backup] Could not load baseline:', error);
@@ -319,11 +319,13 @@ export async function importFullBackup(file) {
         persistCustomFields();
         persistSystemFieldSettings();
 
-        // 还原 baseline（如果存在）
+        // 还原 baseline（如果存在，按当前项目隔离）
         if (backup.data.baseline) {
             try {
-                const { saveBaseline } = await import('../../core/store.js');
-                await saveBaseline(backup.data.baseline);
+                await projectScope(state.currentProjectId).saveBaseline({
+                    snapshot: backup.data.baseline,
+                    savedAt: new Date().toISOString(),
+                });
             } catch (error) {
                 console.warn('[Backup] Could not restore baseline:', error);
             }

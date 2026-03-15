@@ -8,6 +8,7 @@ const mockTasks = {
 };
 global.gantt = {
     getTask: vi.fn((id) => mockTasks[id]),
+    updateTask: vi.fn(),  // _applyReorderSnapshot sets task props then calls updateTask
     moveTask: vi.fn(),
     render: vi.fn(),
     eachTask: vi.fn(),
@@ -41,7 +42,7 @@ describe('UndoManager reorder', () => {
         expect(saveReorderState('bad', [])).toBe(false);
     });
 
-    it('undo reorder 应调用 gantt.moveTask 恢复 before 状态并 render', async () => {
+    it('undo reorder 应调用 gantt.updateTask 恢复 before 状态并 render', async () => {
         const { saveReorderState, undo, clearHistory } = await import('../../src/features/ai/services/undoManager.js');
         clearHistory();
 
@@ -52,11 +53,12 @@ describe('UndoManager reorder', () => {
         const result = undo();
 
         expect(result).toBe(true);
-        expect(gantt.moveTask).toHaveBeenCalled();
+        // _applyReorderSnapshot sets task.parent/sortorder directly then calls gantt.updateTask
+        expect(gantt.updateTask).toHaveBeenCalledWith('task1');
         expect(gantt.render).toHaveBeenCalled();
     });
 
-    it('redo reorder 应调用 gantt.moveTask 恢复 after 状态并 render', async () => {
+    it('redo reorder 应调用 gantt.updateTask 恢复 after 状态并 render', async () => {
         const { saveReorderState, undo, redo, clearHistory, canRedo } = await import('../../src/features/ai/services/undoManager.js');
         clearHistory();
 
@@ -71,7 +73,7 @@ describe('UndoManager reorder', () => {
         const result = redo();
 
         expect(result).toBe(true);
-        expect(gantt.moveTask).toHaveBeenCalled();
+        expect(gantt.updateTask).toHaveBeenCalledWith('task1');
         expect(gantt.render).toHaveBeenCalled();
     });
 

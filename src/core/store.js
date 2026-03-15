@@ -395,8 +395,8 @@ export function reorderFields(oldIndex, newIndex) {
     const movedField = state.customFields.splice(oldIndex, 1)[0];
     state.customFields.splice(newIndex, 0, movedField);
 
-    // 更新 fieldOrder (F-112: 包含 summary)
-    state.fieldOrder = ["text", ...state.customFields.map(f => f.name), "summary", "start_date", "duration", "progress"];
+    // 更新 fieldOrder
+    state.fieldOrder = ["text", ...state.customFields.map(f => f.name), "description", "start_date", "duration", "progress"];
 }
 
 // ========================================
@@ -664,41 +664,4 @@ export function getVisibleFields() {
     });
 }
 
-/**
- * Save baseline snapshot to IndexedDB
- * @param {Object} snapshot - { data: [...], links: [...] }
- * @returns {Promise<void>}
- */
-export async function saveBaseline(snapshot) {
-    const { db } = await import('./storage.js');
-
-    const baseline = {
-        id: 'baseline_' + new Date().toISOString().slice(0, 10),
-        savedAt: new Date().toISOString(),
-        snapshot
-    };
-
-    // Clear old baseline and save new one (single baseline only)
-    await db.baselines.clear();
-    await db.baselines.add(baseline);
-}
-
-/**
- * Load baseline snapshot from IndexedDB
- * @returns {Promise<Object|null>} Baseline object or null if not found
- */
-export async function loadBaseline() {
-    const { db } = await import('./storage.js');
-    const baselines = await db.baselines.toArray();
-    return baselines.length > 0 ? baselines[0] : null;
-}
-
-/**
- * Check if baseline exists
- * @returns {Promise<boolean>}
- */
-export async function hasBaseline() {
-    const { db } = await import('./storage.js');
-    const count = await db.baselines.count();
-    return count > 0;
-}
+// Baseline functions removed. Use projectScope(state.currentProjectId).saveBaseline() etc. from storage.js

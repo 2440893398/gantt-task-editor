@@ -1,0 +1,11 @@
+{
+  "version": "1.0",
+  "sizePreset": "auto",
+  "theme": "tutorial",
+  "themes": null,
+  "defaultSizes": {
+    "markerSize": 22,
+    "strokeWidth": 3,
+    "fontSize": 11
+  }
+}

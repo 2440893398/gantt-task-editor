@@ -649,12 +649,29 @@ export async function clearAllCache() {
             removeLocalStorage(key);
         });
 
-        // 清除 IndexedDB
-        await db.transaction('rw', [db.tasks, db.links, db.history, db.projects], async () => {
+        // 清除 IndexedDB（包含所有表）
+        await db.transaction('rw', [
+            db.tasks,
+            db.links,
+            db.history,
+            db.projects,
+            db.baselines,
+            db.calendar_settings,
+            db.calendar_holidays,
+            db.calendar_custom,
+            db.person_leaves,
+            db.calendar_meta,
+        ], async () => {
             await db.tasks.clear();
             await db.links.clear();
             await db.history.clear();
             await db.projects.clear();
+            await db.baselines.clear();
+            await db.calendar_settings.clear();
+            await db.calendar_holidays.clear();
+            await db.calendar_custom.clear();
+            await db.person_leaves.clear();
+            await db.calendar_meta.clear();
         });
 
         console.log('[Storage] All cache cleared');

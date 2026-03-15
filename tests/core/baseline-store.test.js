@@ -1,8 +1,11 @@
 // tests/core/baseline-store.test.js
 import 'fake-indexeddb/auto';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { db } from '../../src/core/storage.js';
-import { saveBaseline, loadBaseline, hasBaseline } from '../../src/core/store.js';
+import { db, projectScope, DEFAULT_PROJECT_ID } from '../../src/core/storage.js';
+
+// saveBaseline / loadBaseline / hasBaseline were removed from store.js.
+// They are now accessed via projectScope(projectId) from storage.js.
+const scope = projectScope(DEFAULT_PROJECT_ID);
 
 describe('Baseline Store', () => {
     beforeEach(async () => {
@@ -21,8 +24,8 @@ describe('Baseline Store', () => {
             links: []
         };
 
-        await saveBaseline(snapshot);
-        const saved = await loadBaseline();
+        await scope.saveBaseline({ snapshot, savedAt: new Date().toISOString() });
+        const saved = await scope.getBaseline();
 
         expect(saved).toBeDefined();
         expect(saved.snapshot.data).toHaveLength(1);
@@ -30,16 +33,16 @@ describe('Baseline Store', () => {
     });
 
     it('should overwrite existing baseline', async () => {
-        await saveBaseline({ data: [{ id: 1, text: 'Old' }], links: [] });
-        await saveBaseline({ data: [{ id: 1, text: 'New' }], links: [] });
+        await scope.saveBaseline({ snapshot: { data: [{ id: 1, text: 'Old' }], links: [] }, savedAt: new Date().toISOString() });
+        await scope.saveBaseline({ snapshot: { data: [{ id: 1, text: 'New' }], links: [] }, savedAt: new Date().toISOString() });
 
-        const saved = await loadBaseline();
+        const saved = await scope.getBaseline();
         expect(saved.snapshot.data[0].text).toBe('New');
     });
 
     it('should check if baseline exists', async () => {
-        expect(await hasBaseline()).toBe(false);
-        await saveBaseline({ data: [], links: [] });
-        expect(await hasBaseline()).toBe(true);
+        expect(await scope.hasBaseline()).toBe(false);
+        await scope.saveBaseline({ snapshot: { data: [], links: [] }, savedAt: new Date().toISOString() });
+        expect(await scope.hasBaseline()).toBe(true);
     });
 });

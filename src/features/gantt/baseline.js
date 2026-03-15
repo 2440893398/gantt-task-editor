@@ -1,5 +1,6 @@
 // src/features/gantt/baseline.js
-import { saveBaseline, loadBaseline, hasBaseline } from '../../core/store.js';
+import { state } from '../../core/store.js';
+import { projectScope } from '../../core/storage.js';
 import { showToast } from '../../utils/toast.js';
 import i18n from '../../utils/i18n.js';
 
@@ -74,7 +75,7 @@ export async function handleSaveBaseline() {
         if (task.end_date instanceof Date) task.end_date = gantt.date.date_to_str('%Y-%m-%d')(task.end_date);
     });
 
-    await saveBaseline(snapshot);
+    await projectScope(state.currentProjectId).saveBaseline({ snapshot, savedAt: new Date().toISOString() });
 
     const date = new Date().toLocaleString();
     showToast(i18n.t('baseline.saved') + ` (${date})`, 'success');
@@ -99,7 +100,7 @@ export function handleToggleBaseline(checked) {
  * Load baseline data and merge into tasks
  */
 async function loadBaselineData() {
-    const baseline = await loadBaseline();
+    const baseline = await projectScope(state.currentProjectId).getBaseline();
     if (!baseline) return;
 
     const baselineMap = new Map();

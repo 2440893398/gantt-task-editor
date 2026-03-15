@@ -77,6 +77,8 @@ describe('tab3-leaves regressions', () => {
 
 describe('tab2-special-days regressions', () => {
     beforeEach(async () => {
+        // vi.doMock calls from tab3 tests persist across describe blocks unless modules are reset
+        vi.resetModules();
         await db.open();
         await resetCalendarDB();
     });

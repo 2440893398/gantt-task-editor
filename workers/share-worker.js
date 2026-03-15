@@ -35,9 +35,7 @@ export default {
         if (request.method === 'POST' && url.pathname === '/api/share') {
             try {
                 const body = await request.json();
-                const key = (body.key && /^[a-z0-9]{4,16}$/.test(body.key))
-                    ? body.key
-                    : genKey();
+                const key = genKey(); // Always server-generated; never trust client-supplied keys
                 const data = body.data;
                 if (!data || !data.tasks) {
                     return new Response('Invalid payload', { status: 400, headers });

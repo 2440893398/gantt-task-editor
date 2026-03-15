@@ -2,40 +2,43 @@
 
 ## Project Overview
 
-Vanilla JS (ES6 modules) Gantt chart project management SPA. Vite 5 build, Tailwind 4 + DaisyUI 5, DHTMLX Gantt (CDN), Dexie.js (IndexedDB), Vercel AI SDK. Dual deployment: Vercel (international) + Cloudflare Workers (China).
+Vanilla JS (ES6 modules) Gantt chart project management SPA. Vite 5 build, Tailwind 4 + DaisyUI 5, DHTMLX Gantt (CDN, global `window.gantt`), Dexie.js (IndexedDB), Vercel AI SDK. Dual deployment: Vercel (international) + Cloudflare Workers (China).
 
 ## Build / Dev / Test Commands
 
 ```bash
-npm run dev            # Vite dev server on http://localhost:5273
-npm run build          # Production build -> dist/
-npm run build:cn       # China build -> dist-cn/ (vite.config.cn.js)
+npm run dev            # Vite dev server → http://localhost:5273
+npm run build          # Production build → dist/
+npm run build:cn       # China build → dist-cn/ (vite.config.cn.js)
 npm run preview        # Preview production build
 
 npm test               # Vitest watch mode (unit tests)
 npm run test:ui        # Vitest with browser UI
-npm run test:coverage  # Vitest with v8 coverage
+npm run test:coverage  # Vitest with v8 coverage → doc/testdoc/vitest-coverage/
 
-npm run test:e2e       # Playwright E2E tests (Chromium, auto-starts dev server)
+npm run test:e2e       # Playwright E2E (Chromium, auto-starts dev server)
 ```
 
 **Run a single unit test:**
 
 ```bash
 npx vitest run tests/unit/time-formatter.test.js
-npx vitest run --reporter=verbose tests/utils/some-test.test.js
+npx vitest run --reporter=verbose tests/unit/zoom.test.js
+# Tests co-located inside src/ are also valid:
+npx vitest run src/features/ai/services/undoManager.test.js
 ```
 
 **Run a single E2E test:**
 
 ```bash
-npx playwright test tests/e2e/some-spec.spec.js
+npx playwright test tests/e2e/gantt-basic.spec.js
+npx playwright test tests/e2e/gantt-basic.spec.js --headed   # with browser visible
 ```
 
 **Test config notes:**
 
-- Vitest: jsdom env, `pool: 'forks'`, setup at `tests/setup.js`, excludes `tests/e2e/`
-- Playwright: Chromium only, baseURL `http://127.0.0.1:5273`, 60s test / 30s action timeout
+- Vitest: jsdom env, `pool: 'forks'`, `singleFork: true`, setup file `tests/setup.js`, excludes `tests/e2e/` and `.worktrees/`
+- Playwright: Chromium only, `baseURL http://127.0.0.1:5273`, 60s test / 30s action timeout, auto-starts dev server
 - Coverage target: 80%+. Reports: `doc/testdoc/vitest-report/`, `doc/testdoc/playwright-report/`
 - No ESLint/Prettier configured — style enforced by convention
 
@@ -45,102 +48,142 @@ npx playwright test tests/e2e/some-spec.spec.js
 
 - ES Modules throughout (`"type": "module"` in package.json)
 - Prefer **named exports**: `export function showToast(...)`, `export const state = {...}`
-- Import with relative paths from `src/`: `import { state } from '../core/store.js'`
-- Group imports by category: styles first, then features, utils, core
+- Default export only for singleton instances: `export default undoManager`
+- Import with relative paths including `.js` extension: `import { state } from '../core/store.js'`
+- Group imports: CSS/styles first → feature modules → utilities → core
 
 ### Naming Conventions
 
 | Element | Convention | Example |
 |---------|-----------|---------|
-| Files | `kebab-case.js` | `time-formatter.js`, `rich-text-editor.js` |
-| AI component files | `PascalCase.js` | `AiConfigModal.js`, `AiDrawer.js` |
-| Functions/variables | `camelCase` | `formatDuration`, `currentLanguage` |
+| Source files | `kebab-case.js` | `time-formatter.js`, `inline-edit.js` |
+| AI/UI component files | `PascalCase.js` | `AiConfigModal.js`, `ProjectPicker.js` |
+| Functions / variables | `camelCase` | `formatDuration`, `currentProjectId` |
 | Constants | `UPPER_SNAKE_CASE` | `PRIORITY_COLORS`, `STORAGE_KEYS` |
 | Classes | `PascalCase` | `AiService` |
-| CSS classes | Tailwind utilities + DaisyUI components | `btn btn-primary` |
-| HTML IDs | `kebab-case` | `user-profile-form` |
-| Test IDs | `data-testid` attribute | `data-testid="save-btn"` |
+| CSS classes | Tailwind utilities + DaisyUI | `btn btn-primary`, `modal modal-open` |
+| HTML IDs | `kebab-case` | `user-profile-form`, `gantt-container` |
+| Test selectors | `data-testid` attribute | `data-testid="save-btn"` |
+| i18n attribute variants | `data-i18n-*` | `data-i18n-placeholder`, `data-i18n-title` |
 
 ### Formatting
 
-- **4-space indentation** in JS source files
-- **Single quotes** for strings
-- Template literals for interpolation: `` `Hello ${name}` ``
-- Use optional chaining (`?.`) and nullish coalescing (`??`) freely
-- All async code uses `async/await` (no raw Promise chains)
+- **4-space indentation** in all JS/CSS source files
+- **Single quotes** for JS strings; backticks for interpolation
+- Template literals: `` `Hello ${name}` ``
+- Freely use optional chaining (`?.`) and nullish coalescing (`??`)
+- All async code uses `async/await`; no raw `.then()` chains
+- Section separators in long files: `// ========== 功能名称 ==========`
 
 ### Error Handling
 
-- Wrap with `try/catch`, log via `console.error()` / `console.warn()` with **tagged prefixes**:
+Wrap with `try/catch`, log via `console.error()` / `console.warn()` with **bracketed module tags**:
 
-  ```js
-  try { ... } catch (error) {
-      console.error('[Storage] Failed to save:', error);
-  }
-  ```
+```js
+try {
+    localStorage.setItem(key, value);
+} catch (error) {
+    console.warn('[Store] Failed to persist to localStorage:', error);
+}
+```
 
-- Tags follow module name: `[Storage]`, `[Store]`, `[AI]`, `[Calendar]`, etc.
-- localStorage operations always wrapped in try/catch (quota/privacy errors)
+Standard tags: `[Storage]`, `[Store]`, `[AI]`, `[Calendar]`, `[Gantt]`, `[Projects]`, `[Share]`
+
+- All localStorage reads/writes must be wrapped (quota / privacy errors)
+- Async Dexie operations should be wrapped at the call site
 
 ### Documentation
 
-- JSDoc on exported functions with `@param` and `@returns`
-- Chinese comments are common alongside English code — both acceptable
-- Section separators for long files: `// ========== 样式导入 ==========`
+- JSDoc on all exported functions:
+  ```js
+  /**
+   * @param {string} key - i18n translation key
+   * @returns {string} Translated string
+   */
+  export function t(key) { ... }
+  ```
+- Chinese comments are common alongside English code — both are acceptable
+- Section separators for files > ~100 lines: `// ========== 样式导入 ==========`
 
 ### State & Events
 
-- Centralized state in `src/core/store.js` — import `state` object, don't create parallel state
-- Storage abstraction in `src/core/storage.js` — Dexie (IndexedDB) + localStorage wrapper
-- Events via `CustomEvent` + `document.dispatchEvent()` and `gantt.attachEvent()`
-- Global bridge: some functions exposed on `window.*` for HTML onclick handlers
+- **Single source of truth**: `src/core/store.js` exports `state` object — never create parallel state
+- Storage abstraction: `src/core/storage.js` — Dexie (IndexedDB) + localStorage wrapper; do not call Dexie directly from feature modules
+- Custom events: `document.dispatchEvent(new CustomEvent('eventName', { detail: {...} }))`
+- DHTMLX events: `gantt.attachEvent('onTaskClick', handler)`
+- Global bridge: functions exposed on `window.*` for HTML `onclick` handlers (e.g., `window.exportConfig`, `window.openTaskDetailsPanel`)
+- Dynamic imports for deferred panels: `import('./features/calendar/panel.js').then(m => m.openCalendarPanel())`
 
 ### I18n
 
-- Use `i18n.t('key')` in JS, `data-i18n="key"` in HTML
-- Also `data-i18n-placeholder`, `data-i18n-title`, `data-i18n-tip` for HTML attributes
+- JS: `i18n.t('message.key')` — import `{ i18n }` from `'./utils/i18n.js'`
+- HTML: `data-i18n="key"`, `data-i18n-placeholder="key"`, `data-i18n-title="key"`, `data-i18n-tip="key"`
 - 4 locales: `zh-CN`, `en-US`, `ja-JP`, `ko-KR` in `src/locales/`
+- Always provide a fallback string: `i18n.t('key') || '默认文本'`
 
 ### Styling
 
-- Tailwind CSS 4 with `@import "tailwindcss"` and `@layer` directives
-- DaisyUI 5 component classes (`btn`, `modal`, `dropdown`, `card`, etc.)
+- Tailwind CSS 4 with `@import "tailwindcss"` and `@layer` directives in CSS files
+- DaisyUI 5 component classes (`btn`, `modal`, `dropdown`, `card`, `badge`, etc.)
 - CSS custom properties in `:root` for design tokens
-- Component CSS in `src/styles/components/`, page CSS in `src/styles/pages/`
+- Component-scoped CSS: `src/styles/components/`; page-level: `src/styles/pages/`; responsive: `src/styles/responsive/`
+- Never use inline `style=""` where a utility class suffices
 
 ### Testing
 
-- Vitest: `describe`/`it`/`expect`, mock with `vi.fn()` / `vi.spyOn()`
-- Global mocks in `tests/setup.js` for gantt, localStorage, DOM-dependent modules
-- Tests mirror source structure: `tests/unit/`, `tests/e2e/`, `tests/features/`, `tests/integration/`
-- E2E: Playwright with Chromium, use `data-testid` selectors
+- Vitest unit tests: `describe` / `it` / `expect`, mock with `vi.fn()` / `vi.spyOn()` / `vi.mock()`
+- `tests/setup.js` provides global mocks for `gantt`, `localStorage`, `Sortable`, and common feature modules
+- When writing new tests that need the real module implementation, use `vi.mock('../path', async (importOriginal) => { const orig = await importOriginal(); return { ...orig, initFoo: vi.fn() }; })`
+- Tests may live in `tests/` mirroring `src/` structure, or co-located inside `src/` (e.g., `undoManager.test.js`)
+- E2E: Playwright with Chromium; prefer `data-testid` selectors over CSS class selectors
 
 ## Project Structure (key paths)
 
 ```
 src/
-  main.js                  # App entry, init sequence, event wiring
-  config/constants.js      # PRIORITY_COLORS, STORAGE_KEYS, SYSTEM_FIELD_CONFIG
-  core/storage.js          # Dexie + localStorage CRUD
-  core/store.js            # Global state, persistence, migrations
-  features/ai/             # AI assistant (agent, api, prompts, tools, skills)
-  features/gantt/           # Gantt chart (init, columns, zoom, scheduler, markers)
-  features/calendar/       # Work calendar, holidays
-  features/customFields/   # Custom field management
-  features/lightbox/       # Task edit dialog
-  features/selection/      # Multi-select, batch edit
-  features/task-details/   # Task detail side panel
-  locales/                 # zh-CN, en-US, ja-JP, ko-KR
-  styles/                  # main.css, components/, pages/, responsive/
-  utils/                   # i18n, toast, analytics, time-formatter, dom
+  main.js                      # App entry: init sequence, global window bridges
+  config/constants.js          # PRIORITY_COLORS, STATUS_COLORS, FIELD_TYPE_CONFIG
+  core/storage.js              # Dexie + localStorage CRUD, projectScope helper
+  core/store.js                # Global state object, persistence, migrations
+  data/                        # defaultTasks, defaultCustomFields, fields config
+  features/
+    ai/
+      agent/                   # executor.js, router.js
+      api/client.js            # Vercel AI SDK wrapper
+      components/              # AiConfigModal.js, AiDrawer.js, AiFloatingBtn.js, DiffConfirmModal.js
+      manager.js               # AI module init & lightbox integration
+      services/                # aiService.js, errorHandler.js, undoManager.js
+      skills/, tools/, prompts/, renderers/, utils/
+    calendar/                  # Work calendar, holiday fetcher, panel
+    config/configIO.js         # Import/export project config + Excel
+    customFields/              # Custom field CRUD UI (manager.js)
+    gantt/                     # ~22 modules: init, columns, zoom, markers, scheduler, etc.
+    lightbox/customization.js  # Task edit dialog (DHTMLX lightbox)
+    projects/                  # ProjectPicker, ProjectModal, CreateProjectDialog, manager
+    selection/                 # Multi-select, batch edit
+    share/                     # Share link (Cloudflare Worker)
+    task-details/              # Task detail side panel (panel.js, left/right sections)
+  locales/                     # zh-CN.js, en-US.js, ja-JP.js, ko-KR.js
+  styles/                      # main.css, components/, pages/, responsive/
+  utils/                       # i18n.js, toast.js, time-formatter.js, dom.js, analytics.js
+workers/
+  share-worker.js              # Cloudflare Worker for share links
 tests/
-  setup.js                 # Global test mocks
-  unit/                    # ~70 unit test files
-  e2e/                     # ~27 Playwright specs
+  setup.js                     # Global Vitest mocks (gantt, localStorage, Sortable, modules)
+  unit/                        # Unit tests mirroring src/ structure (~70+ files)
+  e2e/                         # Playwright specs (~27 files)
   features/, core/, integration/, utils/
 ```
 
-## 注意事项
+## Architecture Notes
+
+- **DHTMLX Gantt** is loaded via CDN; `window.gantt` is the global entry point — never import it as a module
+- **Vite manual chunks**: `vendor` (dexie, exceljs, marked, quill, zod) and `ai` (@ai-sdk/openai, ai) are split for optimal caching
+- **China build** (`vite.config.cn.js`): outputs to `dist-cn/`, deployed on Cloudflare Workers via `wrangler.jsonc`
+- **Project scoping**: all Dexie operations use `projectScope(projectId)` to namespace data per project
+- **Undo/redo**: `undoManager` (singleton default export) tracks AI-driven task mutations
+
+## 注意事项 (Agent Guidelines)
 
 ### 可行性分析（防止循环问题）
 
@@ -157,73 +200,9 @@ tests/
 
 本项目已配置 weknora MCP Server 用于文档检索。所有与项目相关的文档检索都应使用 weknora：
 
-- **知识库名称**: `Gantt Chart Project`
 - **知识库 ID**: `f6dd9088-2e05-4dcb-b53e-7eb43d3dda4c`
-- **检索方式**: 使用 `hybrid_search` 工具进行混合搜索
-- **新增文档**: 使用 `create_knowledge_from_url` 工具将文档 URL 添加到知识库
-- **同步映射文件**: `scripts/weknora-sync-map.json`（记录文件路径与 knowledge_id 的映射）
-
-**检索示例**:
-
-```javascript
-// 使用 hybrid_search 工具搜索知识库
-{
-  kb_id: "f6dd9088-2e05-4dcb-b53e-7eb43d3dda4c",
-  query: "项目相关问题",
-  match_count: 5
-}
-```
-
-**添加新文档到知识库**:
-
-```javascript
-// 使用 create_knowledge_from_url 添加文档
-{
-  kb_id: "f6dd9088-2e05-4dcb-b53e-7eb43d3dda4c",
-  url: "https://example.com/doc-url",
-  enable_multimodel: true
-}
-```
-
-**自动同步机制（AI 提交代码后自动执行）**:
-
-每次 AI 提交代码后，自动同步修改的文档到知识库：
-
-1. **触发时机**: AI 执行 `git commit` 后自动调用同步脚本
-2. **同步范围**: 本次 commit 修改的 `.md` 文件
-3. **更新策略**: 先删除旧记录，再重新添加（weknora 不支持直接更新）
-
-**同步流程**:
-
-```
-Git Commit → AI 调用 sync-to-weknora.js → 检测修改的 .md 文件 → 查询映射文件 → delete_knowledge（已存在）→ create_knowledge_from_url → 更新映射文件
-```
-
-**配置**:
-
-- **同步脚本**: `scripts/weknora-sync.js`
-- **映射文件**: `scripts/weknora-sync-map.json`
-
-**环境变量**:
-
-```bash
-# 设置 weknora 服务地址
-set WEKNORA_API_URL=http://your-weknora-server:8080
-set WEKNORA_API_KEY=your-api-key  # 如果需要
-```
-
-**手动同步**:
-
-```bash
-# 同步所有文档
-node scripts/sync-to-weknora.js
-
-# 同步指定文件
-node scripts/sync-to-weknora.js AGENTS.md docs/spec.md
-```
-
-**注意事项**:
-
-- weknora 服务需要能访问 GitHub（获取 raw URL）
-- 映射文件 `weknora-sync-map.json` 需要提交到仓库，确保多端同步
+- **检索方式**: `hybrid_search` 工具，`match_count: 5`
+- **新增文档**: `create_knowledge_from_url`（`kb_id` + `url` + `enable_multimodel: true`）
+- **同步脚本**: `scripts/weknora-sync.js`；映射文件: `scripts/weknora-sync-map.json`
+- **手动同步**: `node scripts/sync-to-weknora.js [file...]`（无参数时同步全部 `.md` 文件）
 - 如果 weknora 服务不可用，hook 会静默失败（不影响 commit）

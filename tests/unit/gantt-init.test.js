@@ -114,16 +114,16 @@ describe('全局事件设置', () => {
     expect(addEventListenerSpy).toHaveBeenCalledWith('keyup', expect.any(Function));
   });
 
-  it('应该设置复选框事件委托', () => {
-    const addEventListenerSpy = vi.spyOn(gantt.$grid, 'addEventListener');
+  it('应该设置复选框事件委托（绑定到 document 避免 gantt 重建 DOM 后失效）', () => {
+    const addEventListenerSpy = vi.spyOn(document, 'addEventListener');
 
     setupGlobalEvents();
 
     expect(addEventListenerSpy).toHaveBeenCalledWith('change', expect.any(Function));
   });
 
-  it('应该设置全选复选框事件', () => {
-    const addEventListenerSpy = vi.spyOn(gantt.$grid_scale, 'addEventListener');
+  it('应该设置全选复选框事件委托（绑定到 document）', () => {
+    const addEventListenerSpy = vi.spyOn(document, 'addEventListener');
 
     setupGlobalEvents();
 
