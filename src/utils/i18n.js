@@ -74,13 +74,28 @@ function t(key, params = {}) {
 
     if (typeof value !== 'string') {
         console.warn(`Missing translation for key: ${key}`);
-        return key;
+        return '';
     }
 
     // 替换参数 {{param}}
     return value.replace(/\{\{(\w+)\}\}/g, (match, param) => {
         return params[param] !== undefined ? params[param] : match;
     });
+}
+
+/**
+ * 获取带回退值的翻译文本
+ * @param {string} key 翻译键
+ * @param {string} fallback 缺失翻译时的回退文案
+ * @param {object} params 替换参数
+ * @returns {string} 翻译后的文本或回退文案
+ */
+function getI18nText(key, fallback = '', params = {}) {
+    const value = t(key, params);
+    if (!value || value === key) {
+        return fallback;
+    }
+    return value;
 }
 
 /**
@@ -281,6 +296,7 @@ function getAllLocales() {
 // 导出
 export const i18n = {
     t,
+    getText: getI18nText,
     setLanguage,
     getLanguage,
     formatDate,
@@ -290,6 +306,8 @@ export const i18n = {
     getAllLocales,
     refresh
 };
+
+export { getI18nText };
 
 // 挂载到 window 对象，便于在 HTML 中使用
 if (typeof window !== 'undefined') {

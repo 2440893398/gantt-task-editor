@@ -19,6 +19,7 @@ vi.mock('../../../src/features/projects/manager.js', () => ({
 }));
 vi.mock('../../../src/utils/i18n.js', () => ({
     i18n: { t: (k) => k },
+    getI18nText: (_key, fallback) => fallback,
 }));
 vi.mock('../../../src/utils/toast.js', () => ({
     showToast: vi.fn(),

@@ -4,6 +4,7 @@ node_modules/
 # Build output
 dist/
 dist-cn/
+dist-utools/
 
 # IDE
 .idea
@@ -16,6 +17,8 @@ dist-cn/
 .github/
 .opencode/
 .vscode/
+.worktrees/
+
 *.swp
 *.swo
 

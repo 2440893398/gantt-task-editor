@@ -640,6 +640,7 @@ export default {
         create: '新建项目',
         createPrompt: '请输入项目名称',
         created: '项目已创建',
+        createdButRefreshFailed: '项目已创建，请刷新页面',
         manage: '管理项目',
         name: '项目名称',
         namePlaceholder: '请输入项目名称',
@@ -696,6 +697,7 @@ export default {
         noData: '暂无数据',
         success: '操作成功',
         error: '操作失败',
+        operationFailed: '操作失败',
         warning: '警告',
         optional: '可选'
     }

@@ -4,20 +4,12 @@
 
 import { state, refreshProjects, switchProject } from '../../core/store.js';
 import { createProject, updateProject, deleteProject, getProjectTaskCount } from './manager.js';
-import { i18n } from '../../utils/i18n.js';
+import { i18n, getI18nText } from '../../utils/i18n.js';
 import { showToast } from '../../utils/toast.js';
 import { showConfirmDialog } from '../../components/common/confirm-dialog.js';
 
 const MODAL_ID = 'project-manage-modal';
 const COLORS = ['#4f46e5', '#0891b2', '#059669', '#d97706', '#dc2626', '#7c3aed', '#db2777'];
-
-function getI18nText(key, fallback) {
-    const value = i18n.t(key);
-    if (!value || value === key) {
-        return fallback;
-    }
-    return value;
-}
 
 function escapeHtml(value) {
     return String(value ?? '')
@@ -98,7 +90,7 @@ export function openProjectModal() {
         openModalDialog(modal);
     }).catch(error => {
         console.error('[Projects] Failed to render project modal:', error);
-        showToast(i18n.t('common.operationFailed') || '操作失败', 'error');
+        showToast(getI18nText('common.operationFailed', '操作失败'), 'error');
     });
 }
 
@@ -116,7 +108,7 @@ async function renderModal(modal) {
 
     const rows = state.projects.map((project, index) => {
         const projectColor = sanitizeColor(project.color);
-        const projectName = escapeHtml(project.name || i18n.t('project.unnamed') || 'Untitled Project');
+        const projectName = escapeHtml(project.name || getI18nText('project.unnamed', 'Untitled Project'));
         const projectId = escapeHtml(project.id);
         const createdAt = project.createdAt ? new Date(project.createdAt).toLocaleDateString() : '-';
 
@@ -160,7 +152,7 @@ async function renderModal(modal) {
     modal.innerHTML = `
         <div class="modal-box max-w-xl">
             <div class="flex items-center justify-between pb-4 border-b border-base-200">
-                <h3 class="font-bold text-base">${i18n.t('project.manage') || '管理项目'}</h3>
+                <h3 class="font-bold text-base">${getI18nText('project.manage', '管理项目')}</h3>
                 <button class="btn btn-ghost btn-sm btn-circle" onclick="this.closest('dialog').close()">
                     <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                         <path d="M18 6 6 18M6 6l12 12"/>
@@ -170,9 +162,9 @@ async function renderModal(modal) {
             <table class="table table-sm mt-4">
                 <thead>
                     <tr>
-                        <th class="w-auto">${i18n.t('project.name') || '项目名称'}</th>
-                        <th class="w-16">${i18n.t('project.taskCount') || '任务数'}</th>
-                        <th class="w-24">${i18n.t('project.createdAt') || '创建时间'}</th>
+                        <th class="w-auto">${getI18nText('project.name', '项目名称')}</th>
+                        <th class="w-16">${getI18nText('project.taskCount', '任务数')}</th>
+                        <th class="w-24">${getI18nText('project.createdAt', '创建时间')}</th>
                         <th class="w-16"></th>
                     </tr>
                 </thead>
@@ -194,7 +186,7 @@ async function renderModal(modal) {
                                 <input
                                     id="project-inline-create-input"
                                     class="input input-sm w-40 bg-transparent border-0 border-b border-base-300 focus:border-primary focus:outline-none focus:bg-base-200/50 rounded-none px-1"
-                                    placeholder="${i18n.t('project.newProjectPlaceholder') || '新项目名称'}"
+                                     placeholder="${getI18nText('project.namePlaceholder', '新项目名称')}"
                                     maxlength="50"
                                 />
                             </div>
@@ -207,7 +199,7 @@ async function renderModal(modal) {
                                 id="project-inline-create-btn"
                                 data-testid="project-inline-create-btn"
                                 class="btn btn-ghost btn-xs text-primary"
-                                title="${i18n.t('project.create') || '新建项目'}"
+                                 title="${getI18nText('project.create', '新建项目')}"
                             >
                                 <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                     <path d="M12 5v14M5 12h14"/>
@@ -226,7 +218,7 @@ async function renderModal(modal) {
             </div>
             <div class="modal-action">
                 <form method="dialog">
-                    <button class="btn btn-sm">${i18n.t('shortcuts.close') || '关闭'}</button>
+                    <button class="btn btn-sm">${getI18nText('shortcuts.close', '关闭')}</button>
                 </form>
             </div>
         </div>
@@ -249,7 +241,7 @@ function bindModalEvents(modal) {
                 await renderModal(modal);
             } catch (error) {
                 console.error('[Projects] Failed to update project color:', error);
-                showToast(i18n.t('common.operationFailed') || '操作失败', 'error');
+                showToast(getI18nText('common.operationFailed', '操作失败'), 'error');
             }
         });
     });
@@ -261,7 +253,7 @@ function bindModalEvents(modal) {
             const currentProject = state.projects.find(project => project.id === projectId);
             if (!name) {
                 input.value = currentProject?.name || '';
-                showToast(i18n.t('validation.required') || 'This field is required', 'warning');
+                showToast(getI18nText('validation.required', 'This field is required'), 'warning');
                 return;
             }
 
@@ -275,7 +267,7 @@ function bindModalEvents(modal) {
                 document.dispatchEvent(new CustomEvent('projectsUpdated'));
             } catch (error) {
                 console.error('[Projects] Failed to rename project:', error);
-                showToast(i18n.t('common.operationFailed') || '操作失败', 'error');
+                showToast(getI18nText('common.operationFailed', '操作失败'), 'error');
             }
         });
     });
@@ -284,7 +276,7 @@ function bindModalEvents(modal) {
         button.addEventListener('click', async () => {
             const projectId = button.dataset.deleteProjectId;
             const project = state.projects.find(item => item.id === projectId);
-            const projectName = project?.name || i18n.t('project.unnamed') || 'Untitled Project';
+            const projectName = project?.name || getI18nText('project.unnamed', 'Untitled Project');
 
             let taskCount = 0;
             try {
@@ -312,11 +304,11 @@ function bindModalEvents(modal) {
 
                 await renderModal(modal);
                 openModalDialog(modal);
-                showToast(i18n.t('project.deleted') || '项目已删除', 'success');
+                showToast(getI18nText('project.deleted', '项目已删除'), 'success');
             } catch (error) {
                 console.error('[Projects] Failed to delete project:', error);
                 openModalDialog(modal);
-                showToast(i18n.t('common.operationFailed') || '操作失败', 'error');
+                showToast(getI18nText('common.operationFailed', '操作失败'), 'error');
             }
         });
     });
@@ -359,7 +351,7 @@ function bindCreateRow(modal) {
             document.dispatchEvent(new CustomEvent('projectsUpdated'));
         } catch (error) {
             console.error('[Projects] Failed to create project inline:', error);
-            showToast(i18n.t('common.operationFailed') || '操作失败', 'error');
+            showToast(getI18nText('common.operationFailed', '操作失败'), 'error');
             btn.disabled = false;
             return;
         }
@@ -370,7 +362,7 @@ function bindCreateRow(modal) {
             openModalDialog(modal);
         } catch (renderError) {
             console.warn('[Projects] Project created but failed to refresh display:', renderError);
-            showToast(i18n.t('project.createdButRefreshFailed') || '项目已创建，请刷新页面', 'warning');
+            showToast(getI18nText('project.createdButRefreshFailed', '项目已创建，请刷新页面'), 'warning');
         }
     };
 

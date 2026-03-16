@@ -609,12 +609,18 @@ export default {
         create: 'New Project',
         createPrompt: 'Enter project name',
         created: 'Project created',
+        createdButRefreshFailed: 'Project created. Please refresh the page.',
         manage: 'Manage Projects',
         name: 'Project Name',
+        namePlaceholder: 'Enter project name',
+        color: 'Project Color',
+        description: 'Project Description',
+        descPlaceholder: 'Enter project description...',
         taskCount: 'Tasks',
         createdAt: 'Created',
         deleted: 'Project deleted',
-        deleteTitle: 'Delete Project'
+        deleteTitle: 'Delete Project',
+        deleteConfirm: 'Delete project "{name}"? This project has {count} tasks and cannot be recovered.'
     },
 
     // Share
@@ -622,6 +628,7 @@ export default {
         title: 'Share Project',
         keyLabel: 'Share Key (leave empty to auto-generate)',
         keyHint: 'Enter previous Key to update cloud data',
+        initialHint: 'Click "Generate Share Link" to upload project data and create a link you can share with others',
         generate: 'Generate Share Link',
         regenerate: 'Regenerate',
         uploading: 'Uploading...',
@@ -659,6 +666,8 @@ export default {
         noData: 'No data',
         success: 'Success',
         error: 'Error',
-        warning: 'Warning'
+        operationFailed: 'Operation failed',
+        warning: 'Warning',
+        optional: 'Optional'
     }
 };

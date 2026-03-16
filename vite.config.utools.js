@@ -11,7 +11,22 @@ export default defineConfig({
         rollupOptions: {
             ...baseConfig.build.rollupOptions,
             // uTools 版本排除 AI 相关代码（减小体积）
-            external: ['ai', '@ai-sdk/openai']
+            external: ['ai', '@ai-sdk/openai'],
+            output: {
+                ...baseConfig.build.rollupOptions?.output,
+                manualChunks: (id) => {
+                    // 排除 AI 相关模块（已在 external 中排除）
+                    if (id.includes('node_modules/ai') || id.includes('node_modules/@ai-sdk')) {
+                        return;
+                    }
+                    // 使用默认的 vendor 分块
+                    if (id.includes('node_modules')) {
+                        if (['dexie', 'exceljs', 'marked', 'quill', 'zod'].some(m => id.includes(m))) {
+                            return 'vendor';
+                        }
+                    }
+                }
+            }
         }
     },
     define: {

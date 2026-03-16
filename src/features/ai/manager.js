@@ -8,6 +8,7 @@ import { initAiConfigModal } from './components/AiConfigModal.js';
 import { initAiFloatingBtn } from './components/AiFloatingBtn.js';
 import { initAiDrawer } from './components/AiDrawer.js';
 import AiService from './services/aiService.js';
+import { platformConfig } from '../../config/platform.js';
 
 /**
  * 从甘特图数据构建任务数据对象（用于 AI 抽屉中展示富卡片）
@@ -73,6 +74,12 @@ function buildTaskDataFromGantt(taskId) {
  * 初始化 AI 模块
  */
 export function initAiModule() {
+    // uTools 平台禁用 AI 功能
+    if (!platformConfig.enableAI) {
+        console.log('[AI] AI 功能在当前平台禁用');
+        return;
+    }
+
     console.log('[AI] Initializing AI module...');
 
     // 1. 恢复 AI 配置

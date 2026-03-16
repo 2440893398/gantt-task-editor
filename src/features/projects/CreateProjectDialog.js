@@ -4,7 +4,7 @@
 
 import { createProject } from './manager.js';
 import { refreshProjects, switchProject } from '../../core/store.js';
-import { i18n } from '../../utils/i18n.js';
+import { i18n, getI18nText } from '../../utils/i18n.js';
 import { showToast } from '../../utils/toast.js';
 
 const MODAL_ID = 'project-create-modal';
@@ -56,7 +56,7 @@ function renderCreateModal(modal) {
     modal.innerHTML = `
         <div class="modal-box max-w-sm">
             <div class="flex items-center justify-between pb-4 border-b border-base-200">
-                <h3 class="font-bold text-base">${i18n.t('project.create') || '新建项目'}</h3>
+                <h3 class="font-bold text-base">${getI18nText('project.create', '新建项目')}</h3>
                 <button class="btn btn-ghost btn-sm btn-circle" onclick="this.closest('dialog').close()">
                     <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                         <path d="M18 6 6 18M6 6l12 12"/>
@@ -67,7 +67,7 @@ function renderCreateModal(modal) {
             <div class="mt-4 space-y-4">
                 <div class="form-control">
                     <label class="label py-1">
-                        <span class="label-text text-sm font-medium">${i18n.t('project.name') || '项目名称'}</span>
+                        <span class="label-text text-sm font-medium">${getI18nText('project.name', '项目名称')}</span>
                     </label>
                     <div class="flex items-center gap-2 px-3 py-2.5 bg-base-200 rounded-lg">
                         <svg class="w-4 h-4 text-base-content/50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -75,13 +75,13 @@ function renderCreateModal(modal) {
                         </svg>
                         <input id="project-name-input" type="text" maxlength="50"
                                class="input input-sm bg-transparent border-0 focus:outline-none flex-1 px-0"
-                               placeholder="${i18n.t('project.namePlaceholder') || '请输入项目名称'}" />
+                               placeholder="${getI18nText('project.namePlaceholder', '请输入项目名称')}" />
                     </div>
                 </div>
 
                 <div class="form-control">
                     <label class="label py-1">
-                        <span class="label-text text-sm font-medium">${i18n.t('project.color') || '项目颜色'}</span>
+                        <span class="label-text text-sm font-medium">${getI18nText('project.color', '项目颜色')}</span>
                     </label>
                     <div class="flex items-center gap-2" id="color-picker">
                         ${COLORS.map((color, index) => `
@@ -103,22 +103,22 @@ function renderCreateModal(modal) {
 
                 <div class="form-control">
                     <label class="label py-1">
-                        <span class="label-text text-sm font-medium">${i18n.t('project.description') || '项目描述'}</span>
-                        <span class="label-text-alt text-base-content/50">（${i18n.t('common.optional') || '可选'}）</span>
+                        <span class="label-text text-sm font-medium">${getI18nText('project.description', '项目描述')}</span>
+                        <span class="label-text-alt text-base-content/50">（${getI18nText('common.optional', '可选')}）</span>
                     </label>
                     <textarea id="project-desc-input"
                               class="textarea textarea-sm bg-base-200 border-0 focus:outline-none resize-none"
                               rows="3"
-                              placeholder="${i18n.t('project.descPlaceholder') || '请输入项目描述...'}"></textarea>
+                              placeholder="${getI18nText('project.descPlaceholder', '请输入项目描述...')}"></textarea>
                 </div>
             </div>
 
             <div class="modal-action">
                 <form method="dialog">
-                    <button class="btn btn-sm">${i18n.t('common.cancel') || '取消'}</button>
+                    <button class="btn btn-sm">${getI18nText('common.cancel', '取消')}</button>
                 </form>
                 <button id="create-confirm-btn" class="btn btn-sm btn-primary">
-                    ${i18n.t('project.create') || '创建项目'}
+                    ${getI18nText('project.create', '创建项目')}
                 </button>
             </div>
         </div>
@@ -156,7 +156,7 @@ function bindCreateModalEvents(modal) {
 
         if (!name) {
             nameInput.focus();
-            showToast(i18n.t('validation.required') || '请输入项目名称', 'warning');
+            showToast(getI18nText('validation.required', '请输入项目名称'), 'warning');
             return;
         }
 
@@ -173,10 +173,10 @@ function bindCreateModalEvents(modal) {
             await switchProject(project.id);
 
             modal.close();
-            showToast(i18n.t('project.created') || '项目已创建', 'success');
+            showToast(getI18nText('project.created', '项目已创建'), 'success');
         } catch (error) {
             console.error('[Projects] Failed to create project:', error);
-            showToast(i18n.t('common.operationFailed') || '操作失败', 'error');
+            showToast(getI18nText('common.operationFailed', '操作失败'), 'error');
         }
     });
 

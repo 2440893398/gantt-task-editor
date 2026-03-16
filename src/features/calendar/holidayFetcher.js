@@ -12,6 +12,7 @@ import {
     bulkSaveHolidays,
     clearHolidaysByYear,
 } from '../../core/storage.js';
+import { platformConfig } from '../../config/platform.js';
 
 const CACHE_DAYS = 30;
 
@@ -60,6 +61,12 @@ async function fetchNagerHolidays(year, countryCode) {
  * 拉取失败静默降级（不抛错）
  */
 export async function ensureHolidaysCached(year, countryCodeOverride = null) {
+    // uTools 平台禁用节假日 API
+    if (!platformConfig.enableHolidayAPI) {
+        console.log('[Calendar] 节假日 API 在当前平台禁用');
+        return;
+    }
+
     const settings = await getCalendarSettings();
     const countryCode = countryCodeOverride || settings.countryCode;
 

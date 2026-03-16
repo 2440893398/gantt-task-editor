@@ -1,8 +1,24 @@
 import { test, expect } from '@playwright/test';
 
-async function dragResizer(page, deltaX) {
+async function waitForResizerReady(page) {
     const resizer = page.locator('#custom-resizer');
-    await expect(resizer).toBeVisible();
+    await expect(resizer).toBeVisible({ timeout: 15000 });
+    await expect.poll(async () => {
+        const box = await resizer.boundingBox();
+        return box ? Math.round(box.width) : 0;
+    }, { timeout: 15000 }).toBeGreaterThan(0);
+}
+
+async function switchView(page, view) {
+    const toggle = page.locator(`[data-view="${view}"]`);
+    await toggle.click();
+    await expect(toggle).toHaveClass(/active/, { timeout: 15000 });
+    await waitForResizerReady(page);
+}
+
+async function dragResizer(page, deltaX) {
+    await waitForResizerReady(page);
+    const resizer = page.locator('#custom-resizer');
     const box = await resizer.boundingBox();
     expect(box).toBeTruthy();
 
@@ -65,7 +81,7 @@ test.describe('table grid behavior regressions', () => {
     test.beforeEach(async ({ page }) => {
         await page.goto('/');
         await waitForGanttData(page);
-        await page.locator('[data-view="split"]').click();
+        await switchView(page, 'split');
     });
 
     test('after widening split grid, columns should still fill width without right blank area', async ({ page }) => {
@@ -115,7 +131,7 @@ test.describe('table grid behavior regressions', () => {
     });
 
     test('gantt-only mode keeps the actions column pinned to the far right after widening the grid', async ({ page }) => {
-        await page.locator('[data-view="gantt"]').click();
+        await switchView(page, 'gantt');
         await dragResizer(page, 420);
 
         const layout = await page.evaluate(() => {

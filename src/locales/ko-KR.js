@@ -569,12 +569,18 @@ export default {
         create: '새 프로젝트',
         createPrompt: '프로젝트 이름 입력',
         created: '프로젝트가 생성되었습니다',
+        createdButRefreshFailed: '프로젝트가 생성되었습니다. 페이지를 새로고침하세요.',
         manage: '프로젝트 관리',
         name: '프로젝트 이름',
+        namePlaceholder: '프로젝트 이름을 입력하세요',
+        color: '프로젝트 색상',
+        description: '프로젝트 설명',
+        descPlaceholder: '프로젝트 설명을 입력하세요...',
         taskCount: '작업 수',
         createdAt: '생성일',
         deleted: '프로젝트가 삭제되었습니다',
-        deleteTitle: '프로젝트 삭제'
+        deleteTitle: '프로젝트 삭제',
+        deleteConfirm: '프로젝트 "{name}"을(를) 삭제하시겠습니까? 이 프로젝트에는 작업 {count}개가 있으며 삭제 후 복구할 수 없습니다.'
     },
 
     // 공유
@@ -582,6 +588,7 @@ export default {
         title: '프로젝트 공유',
         keyLabel: '공유 키 (비워두면 자동 생성)',
         keyHint: '이전 키를 입력하면 클라우드 데이터 업데이트',
+        initialHint: '"공유 링크 생성"을 클릭하면 프로젝트 데이터가 업로드되고 다른 사람과 공유할 링크가 생성됩니다',
         generate: '공유 링크 생성',
         regenerate: '다시 생성',
         uploading: '업로드 중...',
@@ -619,6 +626,8 @@ export default {
         noData: '데이터 없음',
         success: '성공',
         error: '오류',
-        warning: '경고'
+        operationFailed: '작업에 실패했습니다',
+        warning: '경고',
+        optional: '선택 사항'
     }
 };

@@ -3,7 +3,7 @@
  */
 
 import { state, switchProject, refreshProjects } from '../../core/store.js';
-import { i18n } from '../../utils/i18n.js';
+import { i18n, getI18nText } from '../../utils/i18n.js';
 import { showToast } from '../../utils/toast.js';
 const pickerControllers = new WeakMap();
 
@@ -49,7 +49,7 @@ export function renderProjectPicker(container) {
 function updateProjectPicker(container) {
     const current = state.projects.find(project => project.id === state.currentProjectId);
     const currentColor = sanitizeColor(current?.color);
-    const currentName = escapeHtml(current?.name || i18n.t('project.unnamed') || 'Untitled Project');
+    const currentName = escapeHtml(current?.name || getI18nText('project.unnamed', 'Untitled Project'));
 
     container.innerHTML = `
         <div class="dropdown">
@@ -63,7 +63,7 @@ function updateProjectPicker(container) {
             <ul tabindex="0" class="dropdown-content menu bg-base-100 rounded-box z-[70] w-64 p-2 shadow-lg border border-base-200 mt-2">
                 ${state.projects.map(project => {
                     const color = sanitizeColor(project.color);
-                    const name = escapeHtml(project.name || i18n.t('project.unnamed') || 'Untitled Project');
+                    const name = escapeHtml(project.name || getI18nText('project.unnamed', 'Untitled Project'));
                     return `
                     <li>
                         <a class="gap-2 ${project.id === state.currentProjectId ? 'active' : ''}" data-project-id="${project.id}">
@@ -84,7 +84,7 @@ function updateProjectPicker(container) {
                         <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                             <path d="M12 5v14M5 12h14"/>
                         </svg>
-                        ${i18n.t('project.create') || 'Create Project'}
+                        ${getI18nText('project.create', 'Create Project')}
                     </a>
                 </li>
                 <li>
@@ -93,7 +93,7 @@ function updateProjectPicker(container) {
                             <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
                             <circle cx="12" cy="12" r="3"/>
                         </svg>
-                        ${i18n.t('project.manage') || 'Manage Projects'}
+                        ${getI18nText('project.manage', 'Manage Projects')}
                     </a>
                 </li>
             </ul>
@@ -118,7 +118,7 @@ function updateProjectPicker(container) {
             openCreateProjectDialog();
         } catch (error) {
             console.error('[Projects] Failed to open create project dialog:', error);
-            showToast(i18n.t('common.operationFailed') || '操作失败', 'error');
+            showToast(getI18nText('common.operationFailed', '操作失败'), 'error');
         }
     });
 
@@ -128,7 +128,7 @@ function updateProjectPicker(container) {
             .then(module => module.openProjectModal())
             .catch(error => {
                 console.error('[Projects] Failed to open project modal:', error);
-                showToast(i18n.t('common.operationFailed') || '操作失败', 'error');
+                showToast(getI18nText('common.operationFailed', '操作失败'), 'error');
             });
     });
 }

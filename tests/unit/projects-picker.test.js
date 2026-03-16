@@ -22,6 +22,7 @@ vi.mock('../../src/utils/i18n.js', () => ({
     i18n: {
         t: vi.fn(key => key),
     },
+    getI18nText: vi.fn((key, fallback) => fallback || key),
 }));
 
 vi.mock('../../src/utils/toast.js', () => ({
@@ -76,5 +77,15 @@ describe('ProjectPicker', () => {
 
         expect(mount.innerHTML).not.toContain('<img');
         expect(mount.textContent).toContain('<img src=x onerror=alert(1)>');
+    });
+
+    it('renders fallback action labels when translation key is missing', async () => {
+        const { renderProjectPicker } = await import('../../src/features/projects/ProjectPicker.js');
+        const mount = document.getElementById('mount');
+
+        renderProjectPicker(mount);
+
+        expect(mount.textContent).toContain('Create Project');
+        expect(mount.textContent).toContain('Manage Projects');
     });
 });

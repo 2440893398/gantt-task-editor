@@ -207,6 +207,7 @@ function syncPinnedGridScrollState() {
     const grid = document.querySelector('.gantt_grid');
     if (!grid) {
         root.style.setProperty('--gantt-grid-scroll-left', '0px');
+        root.style.setProperty('--gantt-grid-pin-offset', '0px');
         root.classList.remove('gantt-grid-h-scrolled');
         return;
     }
@@ -215,8 +216,10 @@ function syncPinnedGridScrollState() {
     const nextScrollLeft = maxScroll > 0
         ? Math.min(maxScroll, Math.max(0, Math.round(grid.scrollLeft || 0)))
         : 0;
+    const pinOffset = maxScroll > 0 ? nextScrollLeft - maxScroll : 0;
 
     root.style.setProperty('--gantt-grid-scroll-left', `${nextScrollLeft}px`);
+    root.style.setProperty('--gantt-grid-pin-offset', `${pinOffset}px`);
     root.classList.toggle('gantt-grid-h-scrolled', nextScrollLeft > 0);
 }
 

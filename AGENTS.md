@@ -206,3 +206,24 @@ tests/
 - **同步脚本**: `scripts/weknora-sync.js`；映射文件: `scripts/weknora-sync-map.json`
 - **手动同步**: `node scripts/sync-to-weknora.js [file...]`（无参数时同步全部 `.md` 文件）
 - 如果 weknora 服务不可用，hook 会静默失败（不影响 commit）
+
+
+## NotebookLM 知识库
+
+用于项目文档的 AI 问答和学习材料生成：
+
+- **知识库 ID**: `d347b45c-383f-4395-8fd9-727902138c64`
+- **知识库名称**: Image Annotator MCP Server Design and Testing Plans
+- **访问链接**: https://notebooklm.google.com/notebook/d347b45c-383f-4395-8fd9-727902138c64
+
+### 使用场景
+
+1. **查询项目信息** - 当需要了解项目架构、设计决策、技术实现时，可使用 `notebook_query` 向知识库提问
+2. **生成学习材料** - 使用 `studio_create` 生成播客、测验、幻灯片、报告等
+3. **添加新文档** - 新增或修改文档后，使用 `source_add` 将更新同步到知识库
+
+### 同步规则
+
+- 新增 `.md` 文档后，同步添加到 NotebookLM 知识库
+- 修改重要文档（如设计文档、技术方案）后，更新知识库中的对应来源
+- 可通过 `notebook_list` 和 `notebook_get` 查看知识库状态

@@ -573,12 +573,18 @@ export default {
         create: '新規プロジェクト',
         createPrompt: 'プロジェクト名を入力',
         created: 'プロジェクトが作成されました',
+        createdButRefreshFailed: 'プロジェクトは作成されました。ページを更新してください。',
         manage: 'プロジェクト管理',
         name: 'プロジェクト名',
+        namePlaceholder: 'プロジェクト名を入力',
+        color: 'プロジェクトカラー',
+        description: 'プロジェクト説明',
+        descPlaceholder: 'プロジェクト説明を入力...',
         taskCount: 'タスク数',
         createdAt: '作成日',
         deleted: 'プロジェクトが削除されました',
-        deleteTitle: 'プロジェクトを削除'
+        deleteTitle: 'プロジェクトを削除',
+        deleteConfirm: 'プロジェクト「{name}」を削除しますか？このプロジェクトには {count} 件のタスクがあり、削除後は復元できません。'
     },
 
     // 共有
@@ -586,6 +592,7 @@ export default {
         title: 'プロジェクトを共有',
         keyLabel: '共有キー（空欄で自動生成）',
         keyHint: '前回のキーを入力するとクラウドデータを更新',
+        initialHint: '「共有リンクを生成」をクリックするとプロジェクトデータがアップロードされ、他の人に共有できるリンクが作成されます',
         generate: '共有リンクを生成',
         regenerate: '再生成',
         uploading: 'アップロード中...',
@@ -623,6 +630,8 @@ export default {
         noData: 'データなし',
         success: '成功',
         error: 'エラー',
-        warning: '警告'
+        operationFailed: '操作に失敗しました',
+        warning: '警告',
+        optional: '任意'
     }
 };

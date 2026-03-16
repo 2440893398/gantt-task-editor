@@ -1015,7 +1015,7 @@
 .gantt_row {
     border-bottom: 1px solid var(--border-color) !important;
     transition: all 0.2s ease;
-    overflow: hidden !important;
+    overflow: visible !important;
 }
 
 .gantt_row:hover {
@@ -1161,9 +1161,9 @@
     z-index: 25;
 }
 
-.gantt-grid-h-scrolled .gantt_grid_data .gantt_row .gantt_cell.gantt_last_cell,
-.gantt-grid-h-scrolled .gantt_grid_data .gantt_row .gantt_cell:nth-last-child(2) {
-    transform: translateX(var(--gantt-grid-scroll-left, 0px));
+.gantt_grid_data .gantt_row .gantt_cell.gantt_last_cell,
+.gantt_grid_data .gantt_row .gantt_cell:nth-last-child(2) {
+    transform: translateX(var(--gantt-grid-pin-offset, 0px));
 }
 
 .gantt-task-actions-cell {
@@ -1236,16 +1236,6 @@
 
 .gantt_grid_data {
     background: var(--background-white) !important;
-}
-
-/* 让 grid 数据层宽度跟随容器，避免动作单元格跑到可视区外 */
-.gantt_layout_cell.grid_cell .gantt_grid_scale,
-.gantt_layout_cell.grid_cell .gantt_grid_data {
-    width: 100% !important;
-}
-
-.gantt_grid_data .gantt_row {
-    width: 100% !important;
 }
 
 /* 行动画效果 */

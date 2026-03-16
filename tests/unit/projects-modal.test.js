@@ -34,6 +34,7 @@ vi.mock('../../src/utils/i18n.js', () => ({
     i18n: {
         t: vi.fn(key => key),
     },
+    getI18nText: vi.fn((key, fallback) => fallback || key),
 }));
 
 vi.mock('../../src/utils/toast.js', () => ({
@@ -78,8 +79,17 @@ describe('ProjectModal', () => {
 
         const modal = document.getElementById('project-manage-modal');
         expect(modal).toBeTruthy();
-        expect(modal.textContent).toContain('project.manage');
+        expect(modal.textContent).toContain('管理项目');
         expect(modal.querySelectorAll('tbody tr').length).toBe(3); // 2 project rows + 1 inline create row
+    });
+
+    it('uses fallback placeholder text when translation key is missing', async () => {
+        const { openProjectModal } = await import('../../src/features/projects/ProjectModal.js');
+        openProjectModal();
+        await flushAsync();
+
+        const input = document.getElementById('project-inline-create-input');
+        expect(input?.getAttribute('placeholder')).toBe('新项目名称');
     });
 
     it('updates project color on color button click', async () => {
