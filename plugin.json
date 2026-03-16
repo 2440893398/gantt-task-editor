@@ -1,0 +1,16 @@
+{
+    "name": "甘特图工具",
+    "description": "高效的甘特图项目管理工具，支持任务创建、依赖管理、Excel导入导出",
+    "version": "1.0.0",
+    "main": "index.html",
+    "author": "Your Name",
+    "icon": "icon.png",
+    "features": [
+        {
+            "code": "gantt",
+            "explain": "打开甘特图项目管理工具",
+            "cmds": ["甘特图", "gantt", "项目管理", "任务管理"]
+        }
+    ],
+    "platform": ["win32", "darwin", "linux"]
+}

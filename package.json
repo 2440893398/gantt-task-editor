@@ -5,7 +5,9 @@
     "type": "module",
     "scripts": {
         "dev": "vite",
+        "dev:utools": "vite --config vite.config.utools.js",
         "build": "vite build",
+        "build:utools": "vite build --config vite.config.utools.js",
         "build:cn": "vite build --config vite.config.cn.js && mv dist-cn/index.cn.html dist-cn/index.html",
         "preview": "vite preview",
         "test": "vitest",
