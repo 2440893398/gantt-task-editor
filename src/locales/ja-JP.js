@@ -49,6 +49,7 @@ export default {
         priority: '優先度',
         assignee: '担当者',
         status: 'ステータス',
+        status_desc: 'ステータス説明',
         summary: '概要',
         description: '説明'
     },
@@ -325,6 +326,7 @@ export default {
         systemField: 'システム',
         quickDate: '今日',
         dateRangeError: '実際の開始日は実際の終了日より後にできません',
+        planDateRangeError: '計画開始日は計画終了日より後にできません',
         fieldDisabled: 'このフィールドは無効です',
         parentAssigneeLock: '親担当者をロック',
         unsavedTitle: '未保存の変更を破棄しますか？',

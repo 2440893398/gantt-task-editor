@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Tab1: 基础设置
  * - 国家/地区选择
  * - 每日工作小时数
@@ -11,6 +11,8 @@ import { ensureHolidaysCached } from './holidayFetcher.js';
 import { refreshHolidayHighlightCache } from '../gantt/init.js';
 import { i18n } from '../../utils/i18n.js';
 import { resolveCountryByLocale } from './locale-country.js';
+import { normalizeScheduleMode } from '../task-details/schedule-mode.js';
+import { showToast } from '../../utils/toast.js';
 
 const COUNTRIES = [
     { code: 'CN', flag: '🇨🇳', name: '中国' },
@@ -172,6 +174,64 @@ export async function renderTab1(container) {
         await ensureHolidaysCached(thisYear);
         await ensureHolidaysCached(thisYear + 1);
         await refreshHolidayHighlightCache();
+
+        // 工作日历变更后，重新计算所有受影响任务的日期
+        recalculateTasksOnCalendarChange();
     };
     document.addEventListener('calendar:save', saveHandler);
+}</**
+ * 工作日历变更后，重新计算所有任务的 end_date 或 duration
+ */
+function recalculateTasksOnCalendarChange() {
+    if (typeof gantt === 'undefined' || typeof gantt.getTaskByTime !== 'function') {
+        return;
+    }
+
+    const tasks = gantt.getTaskByTime();
+    if (!tasks || tasks.length === 0) return;
+
+    let updated = 0;
+    tasks.forEach(task => {
+        if (!task.start_date || task.type === 'project') return;
+
+        const mode = normalizeScheduleMode(task.schedule_mode);
+        const duration = task.duration || task.estimated_hours || 0;
+
+        try {
+            if (mode === 'start_duration') {
+                // 模式：开始日期 + 工期 = 结束日期
+                // 重新计算 end_date（考虑新的工作日）
+                if (duration > 0) {
+                    const newEndDate = gantt.calculateEndDate(task.start_date, duration);
+                    if (newEndDate && task.end_date) {
+                        const oldEnd = new Date(task.end_date).getTime();
+                        const newEnd = newEndDate.getTime();
+                        if (oldEnd !== newEnd) {
+                            task.end_date = newEndDate;
+                            gantt.updateTask(task.id);
+                            updated++;
+                        }
+                    }
+                }
+            } else if (mode === 'start_end') {
+                // 模式：开始 + 结束 → 工期
+                // 重新计算 duration
+                if (task.end_date) {
+                    const newDuration = gantt.calculateDuration(task.start_date, task.end_date);
+                    if (newDuration !== task.duration) {
+                        task.duration = newDuration;
+                        gantt.updateTask(task.id);
+                        updated++;
+                    }
+                }
+            }
+        } catch (e) {
+            console.warn('[Calendar] Failed to recalculate task:', task.id, e);
+        }
+    });
+
+    if (updated > 0) {
+        console.log(`[Calendar] Recalculated ${updated} tasks after calendar change`);
+        showToast(i18n.t('calendar.tasksRecalculated') || `已重新计算 ${updated} 个任务的排期`, 'success');
+    }
 }

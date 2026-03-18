@@ -137,6 +137,34 @@ Standard tags: `[Storage]`, `[Store]`, `[AI]`, `[Calendar]`, `[Gantt]`, `[Projec
 - Tests may live in `tests/` mirroring `src/` structure, or co-located inside `src/` (e.g., `undoManager.test.js`)
 - E2E: Playwright with Chromium; prefer `data-testid` selectors over CSS class selectors
 
+### Bugfix 测试规范
+
+**修复 bug 时，必须添加对应的测试用例，防止 regression（回归）：**
+
+1. **何时需要写测试**
+   - 修复任何 bug 之后，必须添加或补充相应的测试用例
+   - 如果某个功能原本就缺少测试，修复 bug 时优先补上测试
+   - 如果现有的测试用例已经覆盖了该场景，可以跳过
+
+2. **测试文件位置**
+   - 单元测试：`tests/unit/` 下对应模块目录，或与源文件同目录（如 `src/features/ai/services/undoManager.test.js`）
+   - E2E 测试：`tests/e2e/` 下对应的功能目录
+
+3. **测试用例命名**
+   - 使用描述性命名，清晰表达测试场景
+   - 推荐格式：`should [expected behavior] when [condition]`
+   - 例如：`should return false when taskId is missing`, `should restore previous task state`
+
+4. **验证方式**
+   - 测试用例必须能够捕获该 bug（修复前失败，修复后通过）
+   - 运行 `npm test` 确保所有测试通过后再提交
+
+5. **提交规范**
+   - bugfix commit 中应包含测试用例的改动
+   - commit message 示例：`fix(ai): align import diff classification with current gantt snapshot`
+
+> **核心原则**：每一次 bugfix 都是改进测试覆盖的机会。修复 bug 后添加测试，可以在后续修改中快速发现 regression。
+
 ## Project Structure (key paths)
 
 ```
@@ -184,6 +212,10 @@ tests/
 - **Undo/redo**: `undoManager` (singleton default export) tracks AI-driven task mutations
 
 ## 注意事项 (Agent Guidelines)
+
+### Bugfix 必须带测试
+
+修复 bug 时，**必须**同步添加或更新对应的测试用例，详见上方 **Bugfix 测试规范** 部分。这是防止"改A坏B"的核心手段。
 
 ### 可行性分析（防止循环问题）
 

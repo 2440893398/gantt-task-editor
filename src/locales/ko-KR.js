@@ -48,6 +48,7 @@ export default {
         priority: '우선순위',
         assignee: '담당자',
         status: '상태',
+        status_desc: '상태 설명',
         summary: '요약',
         description: '설명'
     },
@@ -323,6 +324,7 @@ export default {
         systemField: '시스템',
         quickDate: '오늘',
         dateRangeError: '실제 시작일은 실제 종료일보다 늦을 수 없습니다',
+        planDateRangeError: '계획 시작일은 계획 종료일보다 늦을 수 없습니다',
         fieldDisabled: '이 필드는 비활성화되었습니다',
         parentAssigneeLock: '상위 담당자 잠금',
         unsavedTitle: '저장되지 않은 변경 사항을 버리시겠습니까?',

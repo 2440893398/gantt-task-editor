@@ -16,7 +16,7 @@ import { openTaskDatePickerPopover } from './date-picker-popover.js';
 
 // 系统默认字段 - 这些字段在面板中有固定展示位置，不应在自定义字段区域重复显示
 const SYSTEM_FIELDS = [
-    'text', 'priority', 'assignee', 'status', 'summary', 'description',
+    'text', 'priority', 'assignee', 'status', 'status_desc', 'summary', 'description',
     'start_date', 'end_date', 'duration', 'progress',
     'actual_start', 'actual_end', 'actual_hours', 'estimated_hours',
     'parent', 'id', 'open', 'type', 'render', '$level', '$open', '$virtual'
@@ -93,6 +93,7 @@ function registerDropdownWrapper(wrapper) {
 export function renderRightSection(task) {
     // Check which sections should be visible based on field enabled status
     const showStatus = isFieldEnabled('status');
+    const showStatusDesc = isFieldEnabled('status_desc');
     const showProgress = isFieldEnabled('progress');
     const showDuration = isFieldEnabled('duration');
     const showActualHours = isFieldEnabled('actual_hours');
@@ -110,6 +111,11 @@ export function renderRightSection(task) {
         ${showStatus ? `
         <div class="mb-3">
             ${renderStatusSelect(task.status)}
+        </div>
+        ` : ''}
+        ${showStatusDesc ? `
+        <div class="mb-3">
+            ${renderStatusDescInput(task.status_desc)}
         </div>
         ` : ''}
 
@@ -264,6 +270,27 @@ export function bindRightSectionEvents(panel, task, context = {}) {
             });
         }
     });
+
+    // 状态描述输入框
+    const statusDescInput = panel.querySelector('#task-status-desc');
+    if (statusDescInput) {
+        let debounceTimer = null;
+        statusDescInput.addEventListener('input', (e) => {
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => {
+                const value = e.target.value;
+                if (draftTask.status_desc === value) return;
+                saveTaskState();
+                mutateDraft((target) => {
+                    target.status_desc = value;
+                });
+                if (!isDraftMode) {
+                    task.status_desc = value;
+                }
+                persistIfNeeded();
+            }, 300);
+        });
+    }
 
     // 负责人 (支持文本或下拉)
     const assigneeType = getFieldType('assignee');
@@ -504,12 +531,18 @@ export function bindRightSectionEvents(panel, task, context = {}) {
     const addFieldBtn = panel.querySelector('#add-field-btn');
     if (addFieldBtn) {
         addFieldBtn.addEventListener('click', () => {
-            // 打开字段管理
-            if (typeof window.openFieldManagementPanel === 'function') {
-                window.openFieldManagementPanel();
-            } else {
-                showToast(i18n.t('message.featureNotReady') || '功能开发中', 'info');
+            // 打开字段管理前先关闭任务详情面板
+            if (typeof window.closeTaskDetailsPanel === 'function') {
+                window.closeTaskDetailsPanel({ force: true });
             }
+            // 延迟一点确保面板关闭完成
+            setTimeout(() => {
+                if (typeof window.openFieldManagementPanel === 'function') {
+                    window.openFieldManagementPanel();
+                } else {
+                    showToast(i18n.t('message.featureNotReady') || '功能开发中', 'info');
+                }
+            }, 100);
         });
     }
 
@@ -539,6 +572,24 @@ function renderStatusSelect(currentStatus) {
     `;
 
     return renderDropdownHTML('task-status', options, currentStatus, renderLabel, '选择状态');
+}
+
+/**
+ * 渲染状态描述输入框
+ */
+function renderStatusDescInput(currentDesc) {
+    return `
+        <div class="flex items-center gap-2">
+            <span class="text-sm text-base-content/60 whitespace-nowrap">${i18n.t('columns.status_desc') || '状态描述'}</span>
+            <input
+                type="text"
+                id="task-status-desc"
+                class="input input-sm input-bordered flex-1"
+                placeholder="${i18n.t('taskDetails.statusDescPlaceholder') || '添加状态说明...'}"
+                value="${currentDesc || ''}"
+            />
+        </div>
+    `;
 }
 
 /**
@@ -997,6 +1048,19 @@ function bindDateInput(panel, selector, task, fieldName, isEndDate = false, opti
             const nextStart = nextTask.start_date ? new Date(nextTask.start_date).getTime() : null;
             const nextEnd = nextTask.end_date ? new Date(nextTask.end_date).getTime() : null;
             const nextDuration = nextTask.duration || 0;
+
+            // 校验：开始时间不能大于结束时间
+            if (nextStart !== null && nextEnd !== null && nextStart > nextEnd) {
+                showToast(i18n.t('message.planDateRangeError') || '计划开始时间不能大于计划结束时间', 'error', 3000);
+                // 重置输入框显示
+                if (fieldName === 'start_date') {
+                    updateDateTriggerDisplay(input, formatDateValue(task.start_date), false);
+                } else if (fieldName === 'end_date') {
+                    updateDateTriggerDisplay(input, formatDateValue(exclusiveToInclusive(task.end_date)), false);
+                }
+                return;
+            }
+
             if (prevStart === nextStart && prevEnd === nextEnd && prevDuration === nextDuration) {
                 return;
             }

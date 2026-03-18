@@ -48,6 +48,7 @@ export default {
         priority: '优先级',
         assignee: '负责人',
         status: '状态',
+        status_desc: '状态描述',
         summary: '概述',
         description: '描述'
     },
@@ -298,6 +299,7 @@ export default {
         systemField: '系统',
         quickDate: '今天',
         dateRangeError: '实际开始时间不能晚于实际结束时间',
+        planDateRangeError: '计划开始时间不能大于计划结束时间',
         fieldDisabled: '此字段已禁用',
         parentAssigneeLock: '锁定上级负责人',
         unsavedTitle: '放弃未保存修改？',

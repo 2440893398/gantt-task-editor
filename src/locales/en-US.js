@@ -48,6 +48,7 @@ export default {
         priority: 'Priority',
         assignee: 'Assignee',
         status: 'Status',
+        status_desc: 'Status Description',
         summary: 'Summary',
         description: 'Description'
     },
@@ -299,6 +300,7 @@ export default {
         systemField: 'System',
         quickDate: 'Today',
         dateRangeError: 'Actual start date cannot be later than actual end date',
+        planDateRangeError: 'Planned start date cannot be later than planned end date',
         fieldDisabled: 'This field is disabled',
         parentAssigneeLock: 'Lock parent assignee',
         unsavedTitle: 'Discard unsaved changes?',

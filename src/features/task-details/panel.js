@@ -168,7 +168,7 @@ export function openTaskDetailsPanel(taskId) {
 
     const overlay = document.createElement('div');
     overlay.id = 'task-details-overlay';
-    overlay.className = 'fixed inset-0 bg-black/50 z-[5999] transition-opacity duration-300 opacity-0 flex items-center justify-center';
+    overlay.className = 'fixed inset-0 bg-black/50 z-[6200] transition-opacity duration-300 opacity-0 flex items-center justify-center';
     overlay.addEventListener('click', (e) => {
         if (e.target === overlay) {
             closeTaskDetailsPanel();
@@ -221,7 +221,8 @@ function buildDraftTaskFromPayload(payload = {}) {
         duration: Number.isFinite(Number(defaults.duration)) ? Number(defaults.duration) : 1,
         progress: Number.isFinite(Number(defaults.progress)) ? Number(defaults.progress) : 0,
         parent: defaults.parent ?? 0,
-        status: defaults.status || 'not_started',
+        status: defaults.status || '',
+        status_desc: defaults.status_desc || '',
         priority: defaults.priority || 'medium',
         assignee: defaults.assignee || '',
         schedule_mode: defaults.schedule_mode || 'start_duration'
@@ -246,7 +247,7 @@ export function openNewTaskDetailsPanel(payload = {}) {
 
     const overlay = document.createElement('div');
     overlay.id = 'task-details-overlay';
-    overlay.className = 'fixed inset-0 bg-black/50 z-[5999] transition-opacity duration-300 opacity-0 flex items-center justify-center';
+    overlay.className = 'fixed inset-0 bg-black/50 z-[6200] transition-opacity duration-300 opacity-0 flex items-center justify-center';
     overlay.addEventListener('click', (e) => {
         if (e.target === overlay) {
             closeTaskDetailsPanel();

@@ -13,7 +13,7 @@ export const defaultCustomFields = [
  * description 列直接展示富文本摘要（悬浮 tooltip 预览完整内容）
  * end_date 紧跟 start_date（canDisable:false，始终展示）
  */
-export const defaultFieldOrder = ["text", "priority", "assignee", "status", "description", "start_date", "end_date", "duration", "progress"];
+export const defaultFieldOrder = ["text", "priority", "assignee", "status", "status_desc", "description", "start_date", "end_date", "duration", "progress", "estimated_hours"];
 
 /**
  * System field configuration
@@ -70,6 +70,13 @@ export const SYSTEM_FIELD_CONFIG = {
         allowedTypes: ['select'],
         linkedGroup: null
     },
+    status_desc: {
+        i18nKey: 'columns.status_desc',
+        type: 'text',
+        canDisable: true,
+        allowedTypes: ['text'],
+        linkedGroup: null
+    },
     progress: {
         i18nKey: 'columns.progress',
         type: 'number',
@@ -104,6 +111,13 @@ export const SYSTEM_FIELD_CONFIG = {
         canDisable: true,
         allowedTypes: ['number'],
         linkedGroup: 'actual'
+    },
+    estimated_hours: {
+        i18nKey: 'columns.estimated_hours',
+        type: 'number',
+        canDisable: true,
+        allowedTypes: ['number'],
+        linkedGroup: null
     }
 };
 
@@ -112,5 +126,5 @@ export const SYSTEM_FIELD_CONFIG = {
  */
 export const INTERNAL_FIELDS = [
     'summary', 'parent', 'id', 'open', 'type', 'render',
-    '$level', '$open', '$virtual', 'estimated_hours'
+    '$level', '$open', '$virtual'
 ];

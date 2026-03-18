@@ -37,7 +37,7 @@ import { prefetchHolidays } from './features/calendar/holidayFetcher.js';
 import { updateGanttColumns } from './features/gantt/columns.js';
 import { renderProjectPicker } from './features/projects/ProjectPicker.js';
 // 任务详情面板
-import { openTaskDetailsPanel, openNewTaskDetailsPanel } from './features/task-details/index.js';
+import { openTaskDetailsPanel, openNewTaskDetailsPanel, closeTaskDetailsPanel } from './features/task-details/index.js';
 // 视图切换
 import { initViewToggle } from './features/gantt/view-toggle.js';
 import undoManager from './features/ai/services/undoManager.js';
@@ -48,6 +48,7 @@ window.exportConfig = exportConfig;
 // 挂载任务详情面板函数到 window（供新建任务按钮使用）
 window.openTaskDetailsPanel = openTaskDetailsPanel;
 window.openNewTaskDetailsPanel = openNewTaskDetailsPanel;
+window.closeTaskDetailsPanel = closeTaskDetailsPanel;
 
 // 挂载工作日历面板（动态 import 必须在 Vite 模块图内才能正确打包）
 window.openCalendarPanel = () =>

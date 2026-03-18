@@ -7206,9 +7206,35 @@
               "ref": "ylx3L",
               "width": "fill_container",
               "name": "toolRun2",
+              "height": "fit_content",
+              "x": 14,
+              "y": 74,
               "descendants": {
+                "XpVSf": {
+                  "width": "fill_container",
+                  "height": "fit_content",
+                  "x": 12,
+                  "y": 8
+                },
+                "pjMTF": {
+                  "width": "fit_content",
+                  "height": "fit_content"
+                },
+                "egDUD": {
+                  "y": 3
+                },
                 "T5zON": {
-                  "content": "查询 今日任务（运行中）"
+                  "content": "查询 今日任务（运行中）",
+                  "x": 20
+                },
+                "aNgVy": {
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "x": 1054,
+                  "y": 3
+                },
+                "CUrbX": {
+                  "x": 20
                 }
               }
             },
@@ -7218,9 +7244,35 @@
               "ref": "f9x33",
               "width": "fill_container",
               "name": "toolDone2",
+              "height": "fit_content",
+              "x": 14,
+              "y": 120,
               "descendants": {
+                "wyn8A": {
+                  "width": "fill_container",
+                  "height": "fit_content",
+                  "x": 12,
+                  "y": 8
+                },
+                "VxXz3": {
+                  "width": "fit_content",
+                  "height": "fit_content"
+                },
+                "NQEOB": {
+                  "y": 3
+                },
                 "C3jbb": {
-                  "content": "查询 今日任务（已完成，3条）"
+                  "content": "查询 今日任务（已完成，3条）",
+                  "x": 20
+                },
+                "voY2L": {
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "x": 1054,
+                  "y": 3
+                },
+                "tmqls": {
+                  "x": 20
                 }
               }
             },
@@ -7230,15 +7282,57 @@
               "ref": "UC3sf",
               "width": "fill_container",
               "name": "toolExpand2",
+              "height": "fit_content",
+              "x": 14,
+              "y": 166,
               "descendants": {
+                "PWvA6": {
+                  "width": "fill_container",
+                  "height": "fit_content",
+                  "x": 12,
+                  "y": 8
+                },
+                "dEqEI": {
+                  "width": "fit_content",
+                  "height": "fit_content"
+                },
+                "QqOrd": {
+                  "y": 3
+                },
                 "2XeqT": {
-                  "content": "查询 今日任务（展开）"
+                  "content": "查询 今日任务（展开）",
+                  "x": 20
+                },
+                "VCvoS": {
+                  "width": "fit_content",
+                  "height": "fit_content",
+                  "x": 1054,
+                  "y": 3
+                },
+                "3ngR9": {
+                  "x": 20
+                },
+                "yzP6x": {
+                  "width": "fill_container",
+                  "height": "fit_content",
+                  "x": 12,
+                  "y": 36
                 },
                 "uRWnH": {
-                  "content": "参数：today=2026-02-06"
+                  "content": "参数：today=2026-02-06",
+                  "x": 8,
+                  "y": 8
+                },
+                "PBzUf": {
+                  "width": "fill_container",
+                  "height": "fit_content",
+                  "x": 12,
+                  "y": 79
                 },
                 "UIcLr": {
-                  "content": "结果：#1.2 设计登录页面；#2.1 实现用户认证；#2.3 编写测试用例"
+                  "content": "结果：#1.2 设计登录页面；#2.1 实现用户认证；#2.3 编写测试用例",
+                  "x": 8,
+                  "y": 8
                 }
               }
             }
@@ -7860,9 +7954,35 @@
                           "ref": "ylx3L",
                           "width": "fill_container",
                           "name": "toolRunning1",
+                          "height": "fit_content",
+                          "x": 0,
+                          "y": 0,
                           "descendants": {
+                            "XpVSf": {
+                              "width": "fill_container",
+                              "height": "fit_content",
+                              "x": 12,
+                              "y": 8
+                            },
+                            "pjMTF": {
+                              "width": "fit_content",
+                              "height": "fit_content"
+                            },
+                            "egDUD": {
+                              "y": 3
+                            },
                             "T5zON": {
-                              "content": "read_excel_file — 解析工作安排2024.xlsx…"
+                              "content": "read_excel_file — 解析工作安排2024.xlsx…",
+                              "x": 20
+                            },
+                            "aNgVy": {
+                              "width": "fit_content",
+                              "height": "fit_content",
+                              "x": 358,
+                              "y": 3
+                            },
+                            "CUrbX": {
+                              "x": 20
                             }
                           }
                         },
@@ -7872,9 +7992,35 @@
                           "ref": "ylx3L",
                           "width": "fill_container",
                           "name": "toolRunning2",
+                          "height": "fit_content",
+                          "x": 0,
+                          "y": 44,
                           "descendants": {
+                            "XpVSf": {
+                              "width": "fill_container",
+                              "height": "fit_content",
+                              "x": 12,
+                              "y": 8
+                            },
+                            "pjMTF": {
+                              "width": "fit_content",
+                              "height": "fit_content"
+                            },
+                            "egDUD": {
+                              "y": 3
+                            },
                             "T5zON": {
-                              "content": "get_calendar_workdays — 查询工作日历…"
+                              "content": "get_calendar_workdays — 查询工作日历…",
+                              "x": 20
+                            },
+                            "aNgVy": {
+                              "width": "fit_content",
+                              "height": "fit_content",
+                              "x": 358,
+                              "y": 3
+                            },
+                            "CUrbX": {
+                              "x": 20
                             }
                           }
                         }
@@ -7927,9 +8073,35 @@
                           "ref": "f9x33",
                           "width": "fill_container",
                           "name": "toolDone1",
+                          "height": "fit_content",
+                          "x": 0,
+                          "y": 0,
                           "descendants": {
+                            "wyn8A": {
+                              "width": "fill_container",
+                              "height": "fit_content",
+                              "x": 12,
+                              "y": 8
+                            },
+                            "VxXz3": {
+                              "width": "fit_content",
+                              "height": "fit_content"
+                            },
+                            "NQEOB": {
+                              "y": 3
+                            },
                             "C3jbb": {
-                              "content": "read_excel_file (完成，识别到 12 行数据)"
+                              "content": "read_excel_file (完成，识别到 12 行数据)",
+                              "x": 20
+                            },
+                            "voY2L": {
+                              "width": "fit_content",
+                              "height": "fit_content",
+                              "x": 358,
+                              "y": 3
+                            },
+                            "tmqls": {
+                              "x": 20
                             }
                           }
                         },
@@ -10158,6 +10330,199 @@
           "y": 35,
           "name": "exampleModalRef",
           "descendants": {
+            "KZD0j": {
+              "width": "fill_container"
+            },
+            "21K2N": {
+              "y": 25
+            },
+            "mm9Uy": {
+              "width": "fit_content",
+              "height": "fit_content"
+            },
+            "sw4ys": {
+              "x": 8,
+              "y": 7
+            },
+            "29ciO": {
+              "x": 18,
+              "y": 2
+            },
+            "9Q5Pm": {
+              "width": "fit_content",
+              "height": "fit_content"
+            },
+            "qDQKz": {
+              "x": 8,
+              "y": 7
+            },
+            "nH1AN": {
+              "x": 18,
+              "y": 2
+            },
+            "3bGhb": {
+              "width": "fit_content",
+              "height": "fit_content"
+            },
+            "5O5mB": {
+              "x": 8,
+              "y": 7
+            },
+            "EUklI": {
+              "x": 18,
+              "y": 2
+            },
+            "JEMvI": {
+              "x": 8,
+              "y": 8
+            },
+            "bUGbY": {
+              "width": "fill_container",
+              "y": 64
+            },
+            "J2lBv": {
+              "width": "fill_container",
+              "height": "fill_container",
+              "y": 65
+            },
+            "titcd": {
+              "width": "fill_container"
+            },
+            "slwYj": {
+              "width": "fill_container",
+              "y": 28
+            },
+            "ZEyPm": {
+              "x": 4.5,
+              "y": 4.5
+            },
+            "8wC22": {
+              "y": 21
+            },
+            "iXZ2w": {
+              "width": "fill_container",
+              "y": 80
+            },
+            "jDGv2": {
+              "width": "fill_container",
+              "y": 81
+            },
+            "K8WDr": {
+              "x": 4.5,
+              "y": 4.5
+            },
+            "p2cKt": {
+              "y": 21
+            },
+            "TMyVA": {
+              "width": "fill_container",
+              "y": 133
+            },
+            "ZQBlg": {
+              "width": "fill_container",
+              "y": 134
+            },
+            "cuJC9": {
+              "x": 4.5,
+              "y": 4.5
+            },
+            "68qR8": {
+              "y": 21
+            },
+            "1ol8s": {
+              "width": "fill_container",
+              "y": 186
+            },
+            "jDZb5": {
+              "width": "fill_container",
+              "y": 187
+            },
+            "wPcXp": {
+              "width": "fill_container",
+              "y": 215
+            },
+            "Luu3U": {
+              "x": 4.5,
+              "y": 4.5
+            },
+            "Aahfz": {
+              "y": 21
+            },
+            "vGvea": {
+              "width": "fill_container",
+              "y": 267
+            },
+            "XtaQ3": {
+              "width": "fill_container",
+              "y": 268
+            },
+            "6Sqk9": {
+              "x": 4,
+              "y": 4
+            },
+            "G6e0m": {
+              "y": 19
+            },
+            "9is0c": {
+              "width": "fill_container",
+              "y": 316
+            },
+            "zIBhx": {
+              "width": "fill_container",
+              "y": 317
+            },
+            "Ekq56": {
+              "width": "fill_container",
+              "y": 345
+            },
+            "uHmvO": {
+              "x": 5,
+              "y": 5
+            },
+            "JYjnS": {
+              "y": 22
+            },
+            "HLEqO": {
+              "width": "fill_container",
+              "y": 397
+            },
+            "U2KDP": {
+              "width": "fill_container",
+              "y": 398
+            },
+            "sZlXO": {
+              "x": 5,
+              "y": 5
+            },
+            "Yd3zK": {
+              "y": 21
+            },
+            "HZkq4": {
+              "width": "fill_container"
+            },
+            "VJZPa": {
+              "width": "fit_content"
+            },
+            "pgGTE": {
+              "x": 8,
+              "y": 7
+            },
+            "JXUzv": {
+              "x": 18,
+              "y": 3
+            },
+            "HL7CV": {
+              "x": 23.5,
+              "y": 5.5
+            },
+            "gH1tO": {
+              "x": 23.5,
+              "y": 5.5
+            },
+            "hH3GN": {
+              "width": "fill_container",
+              "y": 52
+            },
             "ftLLX": {
               "name": "Body",
               "width": "fill_container",
@@ -10166,6 +10531,109 @@
               "flipY": false,
               "x": 0,
               "y": 52
+            },
+            "6NlND": {
+              "width": "fill_container",
+              "x": 20,
+              "y": 20
+            },
+            "zslmb": {
+              "x": 12,
+              "y": 8.5
+            },
+            "C4UpR": {
+              "width": "fill_container",
+              "x": 20,
+              "y": 80
+            },
+            "LtKlN": {
+              "width": "fill_container",
+              "x": 20,
+              "y": 128
+            },
+            "LOeaE": {
+              "x": 12,
+              "y": 12
+            },
+            "xM3vI": {
+              "width": "fill_container",
+              "x": 20,
+              "y": 20
+            },
+            "8m9mq": {
+              "width": "fill_container",
+              "x": 20,
+              "y": 72
+            },
+            "bINCj": {
+              "width": "fit_content",
+              "height": "fit_content"
+            },
+            "mFSgm": {
+              "x": 8,
+              "y": 2
+            },
+            "2PZwv": {
+              "width": "fill_container",
+              "x": 20,
+              "y": 120
+            },
+            "4r8p1": {
+              "width": "fit_content",
+              "height": "fit_content"
+            },
+            "VLFkP": {
+              "x": 8,
+              "y": 2
+            },
+            "3OXSj": {
+              "width": "fill_container",
+              "x": 20,
+              "y": 168
+            },
+            "R9yFU": {
+              "x": 20,
+              "y": 181
+            },
+            "zxQc8": {
+              "width": "fill_container",
+              "x": 20,
+              "y": 209
+            },
+            "C9tmf": {
+              "width": "fill_container",
+              "x": 20,
+              "y": 257
+            },
+            "K5dxx": {
+              "width": "fill_container",
+              "x": 20,
+              "y": 305
+            },
+            "hTUtQ": {
+              "x": 20,
+              "y": 318
+            },
+            "hRRct": {
+              "width": "fill_container",
+              "x": 20,
+              "y": 346
+            },
+            "68mco": {
+              "width": "fill_container",
+              "y": 623
+            },
+            "X9l5E": {
+              "width": "fill_container",
+              "y": 624
+            },
+            "soYa1": {
+              "x": 22.5,
+              "y": 8.5
+            },
+            "CofaR": {
+              "x": 17.5,
+              "y": 8.5
             }
           }
         },
