@@ -41,6 +41,17 @@ describe('gantt navigation today behavior', () => {
         expect(global.gantt.config.end_date).toBeNull();
     });
 
+    it('ignores resize handles when enabling drag timeline panning', async () => {
+        document.body.innerHTML = '<div id="gantt_here"><div class="gantt_task"></div></div>';
+        global.gantt.getScrollState = vi.fn(() => ({ x: 0 }));
+        global.gantt.scrollTo = vi.fn();
+
+        const { initNavigation } = await import('../../../src/features/gantt/navigation.js');
+        initNavigation();
+
+        expect(global.gantt.config.drag_timeline.ignore).toContain('.gantt_task_drag');
+    });
+
     it('does not hijack space key inside contenteditable editors', async () => {
         document.body.innerHTML = '<div id="gantt_here"><div class="gantt_task"></div></div>';
 

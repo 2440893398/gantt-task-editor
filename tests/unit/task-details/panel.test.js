@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const showConfirmDialogMock = vi.fn();
 const showToastMock = vi.fn();
 const saveStateMock = vi.fn();
+const bindRightSectionEventsMock = vi.fn();
 
 vi.mock('../../../src/utils/i18n.js', () => ({
     i18n: {
@@ -29,7 +30,7 @@ vi.mock('../../../src/features/task-details/left-section.js', () => ({
 
 vi.mock('../../../src/features/task-details/right-section.js', () => ({
     renderRightSection: vi.fn(() => '<div id="right-mock"></div>'),
-    bindRightSectionEvents: vi.fn()
+    bindRightSectionEvents: bindRightSectionEventsMock
 }));
 
 vi.mock('../../../src/features/ai/services/undoManager.js', () => ({
@@ -45,6 +46,7 @@ describe('task-details panel draft workflow', () => {
         vi.clearAllMocks();
         vi.useFakeTimers();
         document.body.innerHTML = '';
+        bindRightSectionEventsMock.mockReset();
 
         const taskStore = {
             1: {
@@ -122,6 +124,23 @@ describe('task-details panel draft workflow', () => {
 
         args.onConfirm();
         vi.runAllTimers();
+        expect(document.getElementById('task-details-overlay')).toBeNull();
+    });
+
+    it('does not show discard confirmation when bind-time normalization mutates the draft', async () => {
+        bindRightSectionEventsMock.mockImplementationOnce((panelEl, task, context) => {
+            context.onDraftMutated((draft) => {
+                draft.end_date = new Date('2026-03-03T00:00:00.000Z');
+            });
+        });
+
+        const panel = await import('../../../src/features/task-details/panel.js');
+
+        panel.openTaskDetailsPanel(1);
+        panel.closeTaskDetailsPanel();
+        vi.runAllTimers();
+
+        expect(showConfirmDialogMock).not.toHaveBeenCalled();
         expect(document.getElementById('task-details-overlay')).toBeNull();
     });
 

@@ -95,17 +95,18 @@ function applyDraftChanges(sourceTask, draftTask) {
 }
 
 function isDraftDirty() {
-    if (!currentDraftTask) return false;
-    if (isCreatingNewTask) {
-        return hasDraftChanges(initialDraftTask, currentDraftTask);
-    }
-    return hasDraftChanges(getCurrentSourceTask(), currentDraftTask);
+    if (!currentDraftTask || !initialDraftTask) return false;
+    return hasDraftChanges(initialDraftTask, currentDraftTask);
+}
+
+function syncDraftBaseline() {
+    initialDraftTask = currentDraftTask ? cloneValue(currentDraftTask) : null;
 }
 
 function resetDraftFromSource() {
     const sourceTask = getCurrentSourceTask();
     currentDraftTask = sourceTask ? cloneValue(sourceTask) : null;
-    initialDraftTask = currentDraftTask ? cloneValue(currentDraftTask) : null;
+    syncDraftBaseline();
 }
 
 function updateCurrentDraft(mutator) {
@@ -164,7 +165,7 @@ export function openTaskDetailsPanel(taskId) {
     isCreatingNewTask = false;
     pendingNewTaskPayload = null;
     currentDraftTask = cloneValue(task);
-    initialDraftTask = cloneValue(task);
+    syncDraftBaseline();
 
     const overlay = document.createElement('div');
     overlay.id = 'task-details-overlay';
@@ -192,6 +193,7 @@ export function openTaskDetailsPanel(taskId) {
     currentPanel = panel;
 
     bindPanelEvents(panel, task);
+    syncDraftBaseline();
 
     requestAnimationFrame(() => {
         overlay.classList.remove('opacity-0');
@@ -243,7 +245,7 @@ export function openNewTaskDetailsPanel(payload = {}) {
     pendingNewTaskPayload = payload;
     const draftTask = buildDraftTaskFromPayload(payload);
     currentDraftTask = cloneValue(draftTask);
-    initialDraftTask = cloneValue(draftTask);
+    syncDraftBaseline();
 
     const overlay = document.createElement('div');
     overlay.id = 'task-details-overlay';
@@ -271,6 +273,7 @@ export function openNewTaskDetailsPanel(payload = {}) {
     currentPanel = panel;
 
     bindPanelEvents(panel, currentDraftTask);
+    syncDraftBaseline();
 
     requestAnimationFrame(() => {
         overlay.classList.remove('opacity-0');
@@ -416,7 +419,7 @@ function handleConfirmSave() {
         return;
     }
 
-    if (!hasDraftChanges(sourceTask, currentDraftTask)) {
+    if (!isDraftDirty()) {
         showToast(i18n.t('message.noChanges') || '没有可保存的变更', 'info');
         return;
     }
@@ -533,6 +536,8 @@ export function refreshTaskDetailsPanel() {
         rightSection.innerHTML = renderRightSection(currentDraftTask);
         bindRightSectionEvents(currentPanel, task, getBindingContext(currentPanel));
     }
+
+    syncDraftBaseline();
 }
 
 /**

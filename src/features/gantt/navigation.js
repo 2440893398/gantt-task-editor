@@ -85,7 +85,7 @@ function bindUndoRedoButtons() {
 function configureDragTimeline() {
     // 配置 drag_timeline 插件 - 允许直接鼠标拖拽
     gantt.config.drag_timeline = {
-        ignore: ".gantt_task_line, .gantt_task_link, .gantt_task_content",
+        ignore: ".gantt_task_line, .gantt_task_link, .gantt_task_content, .gantt_task_drag, .gantt_link_control, .gantt_side_content",
         useKey: false,  // 不需要按键即可拖拽
         render: true
     };

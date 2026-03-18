@@ -26,6 +26,10 @@ vi.mock('../../../src/features/gantt/init.js', () => ({
     refreshHolidayHighlightCache: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock('../../../src/features/calendar/holidayFetcher.js', () => ({
+    ensureHolidaysCached: vi.fn().mockResolvedValue(undefined),
+}));
+
 // Mock i18n 工具 — 避免 import 链问题
 vi.mock('../../../src/utils/i18n.js', () => ({
     i18n: { t: (key) => key },
@@ -61,6 +65,99 @@ function cleanupContainer(container) {
     }
 }
 
+function toLocalDate(y, m, d) {
+    return new Date(y, m - 1, d);
+}
+
+function toYmd(date) {
+    return [
+        date.getFullYear(),
+        String(date.getMonth() + 1).padStart(2, '0'),
+        String(date.getDate()).padStart(2, '0')
+    ].join('-');
+}
+
+function createWorktimeAwareGantt(task) {
+    const weekConfig = new Map();
+    const dateOverrides = new Map();
+
+    for (let day = 0; day < 7; day += 1) {
+        weekConfig.set(day, day >= 1 && day <= 5);
+    }
+
+    function isWorkDay(date) {
+        const dateKey = toYmd(date);
+        if (dateOverrides.has(dateKey)) {
+            return dateOverrides.get(dateKey);
+        }
+        return weekConfig.get(date.getDay()) ?? false;
+    }
+
+    function calculateEndDate(start, duration) {
+        const remainingTarget = Math.max(1, Number(duration) || 0);
+        const cursor = new Date(start);
+        cursor.setHours(0, 0, 0, 0);
+
+        let consumed = 0;
+        while (consumed < remainingTarget) {
+            if (isWorkDay(cursor)) {
+                consumed += 1;
+            }
+            if (consumed < remainingTarget) {
+                cursor.setDate(cursor.getDate() + 1);
+            }
+        }
+
+        cursor.setDate(cursor.getDate() + 1);
+        return cursor;
+    }
+
+    function calculateDuration(start, end) {
+        const cursor = new Date(start);
+        cursor.setHours(0, 0, 0, 0);
+        const exclusiveEnd = new Date(end);
+        exclusiveEnd.setHours(0, 0, 0, 0);
+
+        let duration = 0;
+        while (cursor < exclusiveEnd) {
+            if (isWorkDay(cursor)) {
+                duration += 1;
+            }
+            cursor.setDate(cursor.getDate() + 1);
+        }
+        return duration;
+    }
+
+    return {
+        getTaskByTime: vi.fn(() => []),
+        eachTask: vi.fn((callback) => callback(task)),
+        updateTask: vi.fn(),
+        render: vi.fn(),
+        hasChild: vi.fn(() => false),
+        getChildren: vi.fn(() => []),
+        setWorkTime: vi.fn((config) => {
+            if (Array.isArray(config?.days)) {
+                config.days.forEach((flag, index) => {
+                    weekConfig.set(index, !!flag);
+                });
+                return;
+            }
+
+            if (typeof config?.day === 'number') {
+                weekConfig.set(config.day, config.hours !== false);
+                return;
+            }
+
+            if (config?.date) {
+                const dateKey = toYmd(new Date(config.date));
+                dateOverrides.set(dateKey, config.hours !== false);
+            }
+        }),
+        calculateEndDate: vi.fn(calculateEndDate),
+        calculateDuration: vi.fn(calculateDuration),
+    };
+}
+
 // ============================================================
 // 1. calendar:save 事件不重复注册
 // ============================================================
@@ -75,6 +172,7 @@ describe('tab1-settings: calendar:save 监听器不重复注册', () => {
     });
 
     afterEach(async () => {
+        vi.restoreAllMocks();
         cleanupContainer(container);
         await resetDB();
     });
@@ -150,6 +248,7 @@ describe('tab1-settings: DOM 渲染', () => {
     });
 
     afterEach(async () => {
+        vi.restoreAllMocks();
         cleanupContainer(container);
         await resetDB();
     });
@@ -217,5 +316,59 @@ describe('tab1-settings: DOM 渲染', () => {
 
         expect(deleteSpy).toHaveBeenCalledWith([thisYear, DEFAULT_PROJECT_ID]);
         expect(deleteSpy).toHaveBeenCalledWith([thisYear + 1, DEFAULT_PROJECT_ID]);
+    });
+});
+
+describe('tab1-settings: calendar recalculation after save', () => {
+    let container;
+    let task;
+
+    beforeEach(async () => {
+        await db.open();
+        await resetDB();
+        container = makeContainer();
+
+        task = {
+            id: 1,
+            type: 'task',
+            schedule_mode: 'start_duration',
+            start_date: toLocalDate(2026, 5, 4),
+            duration: 5,
+            end_date: toLocalDate(2026, 5, 9),
+            estimated_hours: 40,
+        };
+
+        global.gantt = createWorktimeAwareGantt(task);
+    });
+
+    afterEach(async () => {
+        vi.restoreAllMocks();
+        cleanupContainer(container);
+        await resetDB();
+        delete global.gantt;
+    });
+
+    it('re-syncs gantt worktime before recalculating existing tasks after calendar save', async () => {
+        await db.calendar_holidays.bulkPut([
+            { date: '2026-05-06', year: 2026, countryCode: 'CN', isOffDay: true, name: '调休日' }
+        ]);
+
+        await renderTab1(container);
+
+        container.querySelector('#cal-hours-dec').click();
+        container.querySelector('#cal-hours-dec').click();
+
+        document.dispatchEvent(new Event('calendar:save'));
+        await new Promise((resolve) => setTimeout(resolve, 50));
+
+        expect(global.gantt.setWorkTime).toHaveBeenCalled();
+        expect(global.gantt.calculateEndDate).toHaveBeenCalledTimes(1);
+        expect(global.gantt.setWorkTime.mock.invocationCallOrder[0]).toBeLessThan(
+            global.gantt.calculateEndDate.mock.invocationCallOrder[0]
+        );
+        expect(toYmd(task.end_date)).toBe('2026-05-12');
+        expect(task.estimated_hours).toBe(30);
+        expect(global.gantt.updateTask).toHaveBeenCalledTimes(1);
+        expect(global.gantt.updateTask).toHaveBeenCalledWith(1);
     });
 });

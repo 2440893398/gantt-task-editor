@@ -236,6 +236,69 @@ describe('gantt-only action affordances', () => {
         expect(window.openNewTaskDetailsPanel).toHaveBeenCalledTimes(1);
         expect(global.gantt.addTask).not.toHaveBeenCalled();
     });
+
+    it('keeps row quick-add on the same parent when clicking + for a child task', async () => {
+        global.gantt.isTaskExists = vi.fn((id) => id === 11 || id === 10);
+        global.gantt.getTask = vi.fn((id) => {
+            if (id === 11) {
+                return {
+                    id: 11,
+                    parent: 10,
+                    text: 'Child Task',
+                    start_date: new Date('2026-03-12T00:00:00.000Z'),
+                    duration: 2
+                };
+            }
+
+            if (id === 10) {
+                return {
+                    id: 10,
+                    parent: 0,
+                    text: 'Parent Task',
+                    start_date: new Date('2026-03-10T00:00:00.000Z'),
+                    duration: 4
+                };
+            }
+
+            return null;
+        });
+
+        const { updateGanttColumns } = await import('../../../src/features/gantt/columns.js');
+        updateGanttColumns();
+
+        const addCol = global.gantt.config.columns.find((col) => col.name === 'quick_add');
+        document.body.innerHTML = addCol.template({
+            id: 11,
+            parent: 10,
+            text: 'Child Task',
+            start_date: new Date('2026-03-12T00:00:00.000Z')
+        });
+
+        document.querySelector('[data-action="quick-add"]').click();
+
+        expect(window.openNewTaskDetailsPanel).toHaveBeenCalledTimes(1);
+        const payload = window.openNewTaskDetailsPanel.mock.calls[0][0];
+        expect(payload.source).toBe('grid-column-add');
+        expect(payload.parentTaskId).toBe(10);
+        expect(payload.defaults.parent).toBe(10);
+    });
+
+    it('renders a quick-add header button that creates a root-level task draft', async () => {
+        const { updateGanttColumns } = await import('../../../src/features/gantt/columns.js');
+        updateGanttColumns();
+
+        const addCol = global.gantt.config.columns.find((col) => col.name === 'quick_add');
+        expect(addCol).toBeTruthy();
+        expect(addCol.label).toContain('data-action="quick-add-root"');
+
+        document.body.innerHTML = addCol.label;
+        document.querySelector('[data-action="quick-add-root"]').click();
+
+        expect(window.openNewTaskDetailsPanel).toHaveBeenCalledTimes(1);
+        const payload = window.openNewTaskDetailsPanel.mock.calls[0][0];
+        expect(payload.source).toBe('grid-column-add-root');
+        expect(payload.defaults.parent).toBe(0);
+    });
 });
 
 describe('timeline empty-area create action', () => {

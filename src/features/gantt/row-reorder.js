@@ -7,6 +7,8 @@ import Sortable from 'sortablejs';
 import { state } from '../../core/store.js';
 import undoManager from '../ai/services/undoManager.js';
 
+const CHILD_INDENT_THRESHOLD = 24;
+
 /**
  * 采集当前所有任务的顺序快照（基于 DOM 中的实际显示顺序）
  * @returns {Array<{id, parent, sortorder}>}
@@ -51,6 +53,81 @@ function captureOrderSnapshot() {
     return snapshot;
 }
 
+function clearDropIndicator(row) {
+    if (!row?.classList) return;
+    row.classList.remove('row-drop-indicator-before', 'row-drop-indicator-after', 'row-drop-indicator-child');
+}
+
+function getTaskIdFromRow(row) {
+    return row?.getAttribute?.('task_id') || null;
+}
+
+function getTaskFromRow(row) {
+    const taskId = getTaskIdFromRow(row);
+    if (!taskId || typeof gantt?.getTask !== 'function') return null;
+    return gantt.getTask(taskId);
+}
+
+function isDescendantTask(candidateParentId, draggedTaskId) {
+    if (!candidateParentId || !draggedTaskId || typeof gantt?.getTask !== 'function') {
+        return false;
+    }
+
+    let currentId = String(candidateParentId);
+    const draggedId = String(draggedTaskId);
+
+    while (currentId && currentId !== '0') {
+        if (currentId === draggedId) {
+            return true;
+        }
+
+        const currentTask = gantt.getTask(currentId);
+        if (!currentTask) break;
+
+        const nextParentId = currentTask.parent ?? 0;
+        if (String(nextParentId) === currentId) break;
+        currentId = nextParentId ? String(nextParentId) : '';
+    }
+
+    return false;
+}
+
+function getDropIntent(prevTask, draggedTaskId, dragStartX, clientX) {
+    if (!prevTask) return 'root';
+
+    const horizontalShift = dragStartX == null || !Number.isFinite(clientX)
+        ? 0
+        : clientX - dragStartX;
+
+    const wantsChild = horizontalShift > CHILD_INDENT_THRESHOLD;
+    if (!wantsChild) {
+        return 'sibling';
+    }
+
+    if (String(prevTask.id) === String(draggedTaskId) || isDescendantTask(prevTask.id, draggedTaskId)) {
+        return 'sibling';
+    }
+
+    return 'child';
+}
+
+function computeSiblingIndex(rows, item, newParent) {
+    const targetIndex = rows.indexOf(item);
+    if (targetIndex <= 0) return 0;
+
+    let siblingIndex = 0;
+    for (let index = 0; index < targetIndex; index += 1) {
+        const rowTask = getTaskFromRow(rows[index]);
+        if (!rowTask) continue;
+
+        if (String(rowTask.parent ?? 0) === String(newParent ?? 0)) {
+            siblingIndex += 1;
+        }
+    }
+
+    return siblingIndex;
+}
+
 /**
  * 初始化行拖拽排序
  * 每次 gantt 重新渲染后调用此函数重新挂载 SortableJS
@@ -86,11 +163,18 @@ export function initRowSortable() {
 
     let beforeSnapshot = null;
     let indicatorRow = null;
+    let dragStartX = null;
+    let currentDraggedTaskId = null;
 
     try {
         const sortableInstance = Sortable.create(gridData, {
             handle: '.gantt-drag-handle',
             animation: 150,
+            forceFallback: true,
+            fallbackClass: 'row-drag-fallback',
+            fallbackOnBody: true,
+            swapThreshold: 0.65,
+            invertSwap: true,
             sort: true,                        // 启用排序检测，让 Sortable 计算位置变化
             ghostClass: 'row-drag-ghost',
             dragClass: 'row-dragging',
@@ -103,123 +187,156 @@ export function initRowSortable() {
                     beforeSnapshot = captureOrderSnapshot();
                     console.log('[RowReorder] onStart snapshot:', JSON.stringify(beforeSnapshot.slice(0, 5)));
                 }
+
+                dragStartX = evt.originalEvent?.clientX ?? null;
+                currentDraggedTaskId = evt.item?.getAttribute?.('task_id') || null;
             },
 
-        onMove(evt) {
-            // 实时更新目标行上的插入指示器（根据 willInsertAfter 决定线在目标行上方还是下方）
-            const relatedRow = evt.related && evt.related.closest
-                ? evt.related.closest('.gantt_row')
-                : null;
+            onMove(evt) {
+                const relatedRow = evt.related && evt.related.closest
+                    ? evt.related.closest('.gantt_row')
+                    : null;
 
-            if (indicatorRow && indicatorRow !== relatedRow) {
-                indicatorRow.classList.remove('row-drop-indicator-before', 'row-drop-indicator-after');
-            }
+                if (indicatorRow && indicatorRow !== relatedRow) {
+                    clearDropIndicator(indicatorRow);
+                }
 
-            if (relatedRow) {
-                const className = evt.willInsertAfter ? 'row-drop-indicator-after' : 'row-drop-indicator-before';
-                relatedRow.classList.remove('row-drop-indicator-before', 'row-drop-indicator-after');
-                relatedRow.classList.add(className);
-                indicatorRow = relatedRow;
-            } else {
-                indicatorRow = null;
-            }
+                if (relatedRow) {
+                    const relatedTask = getTaskFromRow(relatedRow);
+                    const intent = getDropIntent(
+                        relatedTask,
+                        currentDraggedTaskId || evt.dragged?.getAttribute?.('task_id'),
+                        dragStartX,
+                        evt.originalEvent?.clientX,
+                    );
 
-            // 返回 true 允许 SortableJS 检测位置变化，但不要修改 DOM（由我们在 onEnd 中手动处理）
-            return true;
-        },
+                    clearDropIndicator(relatedRow);
+                    if (intent === 'child') {
+                        relatedRow.classList.add('row-drop-indicator-child');
+                    } else {
+                        relatedRow.classList.add(evt.willInsertAfter ? 'row-drop-indicator-after' : 'row-drop-indicator-before');
+                    }
+                    indicatorRow = relatedRow;
+                } else {
+                    indicatorRow = null;
+                }
 
-        onEnd(evt) {
-            const { item, newIndex, oldIndex } = evt;
+                return true;
+            },
 
-            console.log('[RowReorder] onEnd:', { oldIndex, newIndex, changed: oldIndex !== newIndex });
+            onEnd(evt) {
+                const { item, newIndex, oldIndex } = evt;
+                const horizontalShift = dragStartX == null || !Number.isFinite(evt.originalEvent?.clientX)
+                    ? 0
+                    : evt.originalEvent.clientX - dragStartX;
+                const hierarchyIntent = Math.abs(horizontalShift) > CHILD_INDENT_THRESHOLD;
 
-            // 清理指示器
-            if (indicatorRow) {
-                indicatorRow.classList.remove('row-drop-indicator-before', 'row-drop-indicator-after');
-                indicatorRow = null;
-            }
+                console.log('[RowReorder] onEnd:', { oldIndex, newIndex, changed: oldIndex !== newIndex });
 
-            // 如果位置没变，不做任何处理
-            if (oldIndex === newIndex) {
-                console.log('[RowReorder] Position unchanged, skipping');
-                beforeSnapshot = null;
-                return;
-            }
+                if (indicatorRow) {
+                    clearDropIndicator(indicatorRow);
+                    indicatorRow = null;
+                }
 
-            // 若正在执行 undo/redo，忽略此次排序
-            if (undoManager.isApplyingHistoryOperation()) {
-                beforeSnapshot = null;
-                return;
-            }
-
-            const draggedTaskId = item.getAttribute('task_id');
-            if (!draggedTaskId) {
-                beforeSnapshot = null;
-                return;
-            }
-
-            try {
-                // 获取新位置的上方兄弟行（用于推断 parent）
-                const allRows = Array.from(gridData.querySelectorAll('.gantt_row[task_id]'));
-                const prevRow = newIndex > 0 ? allRows[newIndex - 1] : null;
-                const prevTaskId = prevRow ? prevRow.getAttribute('task_id') : null;
-
-                // 获取被拖任务
-                const draggedTask = gantt.getTask(draggedTaskId);
-                if (!draggedTask) {
+                if (oldIndex === newIndex && !hierarchyIntent) {
+                    console.log('[RowReorder] Position unchanged, skipping');
                     beforeSnapshot = null;
+                    dragStartX = null;
+                    currentDraggedTaskId = null;
                     return;
                 }
 
-                let newParent = 0;
-                if (prevTaskId) {
-                    const prevTask = gantt.getTask(prevTaskId);
+                if (undoManager.isApplyingHistoryOperation()) {
+                    beforeSnapshot = null;
+                    dragStartX = null;
+                    currentDraggedTaskId = null;
+                    return;
+                }
+
+                const draggedTaskId = item.getAttribute('task_id') || currentDraggedTaskId;
+                if (!draggedTaskId) {
+                    beforeSnapshot = null;
+                    dragStartX = null;
+                    currentDraggedTaskId = null;
+                    return;
+                }
+
+                try {
+                    const allRows = Array.from(gridData.querySelectorAll('.gantt_row[task_id]'));
+                    const resolvedIndex = allRows.indexOf(item);
+                    const targetIndex = resolvedIndex >= 0 ? resolvedIndex : newIndex;
+                    const prevRow = targetIndex > 0 ? allRows[targetIndex - 1] : null;
+                    const nextRow = targetIndex >= 0 && targetIndex < allRows.length - 1 ? allRows[targetIndex + 1] : null;
+                    const prevTask = getTaskFromRow(prevRow);
+                    const nextTask = getTaskFromRow(nextRow);
+                    const draggedTask = gantt.getTask(draggedTaskId);
+
+                    if (!draggedTask) {
+                        beforeSnapshot = null;
+                        dragStartX = null;
+                        currentDraggedTaskId = null;
+                        return;
+                    }
+
+                    const intent = getDropIntent(prevTask, draggedTaskId, dragStartX, evt.originalEvent?.clientX);
+
+                    let newParent = 0;
                     if (prevTask) {
-                        // 跨父级移动逻辑：
-                        // 如果上方任务是父任务（有子任务），则将拖拽任务变为该父任务的子任务（缩进一级）
-                        // 否则使用与上方任务相同的父级（同级）
-                        if (gantt.hasChild && gantt.hasChild(prevTaskId)) {
-                            // 上方任务是父任务，缩进为该父任务的子任务
-                            newParent = prevTaskId;
+                        if (intent === 'child') {
+                            newParent = prevTask.id;
                         } else {
-                            // 上方任务是普通任务，保持同级
+                            newParent = prevTask.parent ?? 0;
+                        }
+
+                        const droppingBetweenParentAndChild =
+                            intent !== 'child' &&
+                            typeof gantt.hasChild === 'function' &&
+                            gantt.hasChild(prevTask.id) &&
+                            nextTask &&
+                            String(nextTask.parent ?? 0) === String(prevTask.id);
+
+                        if (droppingBetweenParentAndChild) {
                             newParent = prevTask.parent ?? 0;
                         }
                     }
-                }
 
-                // 计算 sortorder（基于 Gantt 的内部排序逻辑）
-                const siblings = [];
-                gantt.eachTask(function (task) {
-                    if ((task.parent ?? 0) == newParent && task.id != draggedTaskId) {
-                        siblings.push(task);
+                    if (String(newParent ?? 0) === String(draggedTaskId) || isDescendantTask(newParent, draggedTaskId)) {
+                        console.warn('[RowReorder] Invalid drop target, reverting:', { draggedTaskId, newParent });
+                        gantt.render();
+                        beforeSnapshot = null;
+                        dragStartX = null;
+                        currentDraggedTaskId = null;
+                        return;
                     }
-                }, newParent || undefined);
 
-                // 更新 Gantt 任务数据
-                draggedTask.parent = newParent;
-                gantt.updateTask(draggedTaskId);
+                    const siblingIndex = computeSiblingIndex(allRows, item, newParent);
+                    draggedTask.parent = newParent;
+                    draggedTask.sortorder = siblingIndex;
 
-                // 重新渲染 Gantt 以同步 DOM 和数据
-                gantt.render();
+                    if (typeof gantt.moveTask === 'function') {
+                        gantt.moveTask(draggedTaskId, siblingIndex, newParent);
+                    } else {
+                        gantt.updateTask(draggedTaskId);
+                        gantt.render();
+                    }
 
-                // 保存排序快照到 undo 栈
-                if (beforeSnapshot) {
-                    const afterSnapshot = captureOrderSnapshot();
-                    undoManager.saveReorderState(beforeSnapshot, afterSnapshot);
+                    if (beforeSnapshot) {
+                        const afterSnapshot = captureOrderSnapshot();
+                        undoManager.saveReorderState(beforeSnapshot, afterSnapshot);
+                    }
+                } catch (e) {
+                    console.error('[RowReorder] Failed to apply reorder:', e);
+                    gantt.render();
+                } finally {
+                    if (indicatorRow) {
+                        clearDropIndicator(indicatorRow);
+                        indicatorRow = null;
+                    }
+                    beforeSnapshot = null;
+                    dragStartX = null;
+                    currentDraggedTaskId = null;
                 }
-            } catch (e) {
-                console.error('[RowReorder] Failed to apply reorder:', e);
-                // 出错时刷新甘特图恢复原状
-                gantt.render();
-            } finally {
-                if (indicatorRow) {
-                    indicatorRow.classList.remove('row-drop-indicator-before', 'row-drop-indicator-after');
-                    indicatorRow = null;
-                }
-                beforeSnapshot = null;
-            }
-        },
+            },
     });
     
     state.sortableInstance = sortableInstance;

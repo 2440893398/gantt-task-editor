@@ -77,6 +77,26 @@ describe('甘特图初始化', () => {
     );
   });
 
+  it('点击时间轴任务条时不应触发 showDate 打断拖拽', () => {
+    global.gantt.selectTask = vi.fn();
+    global.gantt.showDate = vi.fn();
+    global.gantt.getTask = vi.fn(() => ({ start_date: new Date('2026-02-02T00:00:00.000Z') }));
+
+    initGantt();
+
+    const taskClickHandler = global.gantt.attachEvent.mock.calls.find(
+      ([eventName]) => eventName === 'onTaskClick'
+    )?.[1];
+
+    const target = document.createElement('div');
+    target.className = 'gantt_task_drag';
+
+    taskClickHandler?.(1, { target });
+
+    expect(global.gantt.selectTask).toHaveBeenCalledWith(1);
+    expect(global.gantt.showDate).not.toHaveBeenCalled();
+  });
+
   it('应该注册 Lightbox 保存事件处理器', () => {
     initGantt();
 

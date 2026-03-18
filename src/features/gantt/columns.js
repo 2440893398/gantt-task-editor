@@ -29,13 +29,9 @@ const TASK_ACTION_ICONS = {
  * @returns {string} 本地化的列名称
  */
 function getColumnLabel(key, customFieldLabel = null) {
-    // 如果 i18n 可用，使用本地化文本
-    if (window.i18n && typeof window.i18n.t === 'function') {
-        const translated = window.i18n.t(`columns.${key}`);
-        // 如果翻译键不存在会返回键本身，则使用默认值
-        if (translated !== `columns.${key}`) {
-            return translated;
-        }
+    const translated = i18n?.t?.(`columns.${key}`) || '';
+    if (translated && translated !== `columns.${key}`) {
+        return translated;
     }
 
     // 自定义字段标签兜底
@@ -160,6 +156,30 @@ function formatGridDate(value) {
     return `${y}-${m}-${d}`;
 }
 
+function getTranslatedLabel(key, fallback) {
+    const translated = i18n?.t?.(key) || '';
+    if (translated && translated !== key) {
+        return translated;
+    }
+    return fallback;
+}
+
+function openTaskDraft(payload) {
+    if (!payload?.defaults) return;
+
+    if (typeof window.openNewTaskDetailsPanel === 'function') {
+        window.openNewTaskDetailsPanel(payload);
+        return;
+    }
+
+    if (typeof gantt.addTask === 'function') {
+        const createdTaskId = gantt.addTask(payload.defaults, payload.defaults.parent);
+        if (typeof window.openTaskDetailsPanel === 'function') {
+            window.openTaskDetailsPanel(createdTaskId);
+        }
+    }
+}
+
 function ensureTaskActionHandlersBound() {
     if (taskActionHandlersBound) return;
 
@@ -170,9 +190,25 @@ function ensureTaskActionHandlersBound() {
         event.preventDefault();
         event.stopPropagation();
 
-        const taskId = actionBtn.dataset.taskId;
         const action = actionBtn.dataset.action;
-        if (!taskId || !action) return;
+        if (!action) return;
+
+        if (action === 'quick-add-root') {
+            const startDate = new Date();
+            startDate.setHours(0, 0, 0, 0);
+            openTaskDraft(buildNewTaskPayload({
+                source: 'grid-column-add-root',
+                parentId: 0,
+                startDate,
+                text: '',
+                duration: 1,
+                progress: 0,
+            }));
+            return;
+        }
+
+        const taskId = actionBtn.dataset.taskId;
+        if (!taskId) return;
 
         if (action === 'edit') {
             const task = getTaskByAnyId(gantt, taskId);
@@ -198,17 +234,7 @@ function ensureTaskActionHandlersBound() {
                 progress: 0
             });
 
-            if (typeof window.openNewTaskDetailsPanel === 'function') {
-                window.openNewTaskDetailsPanel(payload);
-                return;
-            }
-
-            if (typeof gantt.addTask === 'function') {
-                const createdTaskId = gantt.addTask(payload.defaults, payload.defaults.parent);
-                if (typeof window.openTaskDetailsPanel === 'function') {
-                    window.openTaskDetailsPanel(createdTaskId);
-                }
-            }
+            openTaskDraft(payload);
             return;
         }
 
@@ -226,17 +252,7 @@ function ensureTaskActionHandlersBound() {
                 progress: 0
             });
 
-            if (typeof window.openNewTaskDetailsPanel === 'function') {
-                window.openNewTaskDetailsPanel(payload);
-                return;
-            }
-
-            if (typeof gantt.addTask === 'function') {
-                const createdTaskId = gantt.addTask(payload.defaults, payload.defaults.parent);
-                if (typeof window.openTaskDetailsPanel === 'function') {
-                    window.openTaskDetailsPanel(createdTaskId);
-                }
-            }
+            openTaskDraft(payload);
             return;
         }
 
@@ -495,12 +511,12 @@ export function updateGanttColumns() {
     // 添加列 - 打开草稿编辑面板（不立即创建）
     columns.push({
         name: 'quick_add',
-        label: '',
+        label: `<button type="button" class="gantt-task-action-btn gantt-grid-add-root-btn" data-action="quick-add-root" title="${escapeAttr(getTranslatedLabel('taskDetails.addRootTask', '新建一级任务'))}" aria-label="${escapeAttr(getTranslatedLabel('taskDetails.addRootTask', '新建一级任务'))}">${TASK_ACTION_ICONS.addChild}</button>`,
         width: 44,
         min_width: 44,
         template: function (task) {
             const taskId = escapeAttr(task.id);
-            const addLabel = i18n.t('taskDetails.addSubtask') || '添加';
+            const addLabel = getTranslatedLabel('taskDetails.addSiblingTask', '添加同级任务');
             return `<button type="button" class="gantt-task-action-btn gantt-grid-add-btn" data-action="quick-add" data-task-id="${taskId}" title="${addLabel}" aria-label="${addLabel}">${TASK_ACTION_ICONS.addChild}</button>`;
         }
     });
@@ -568,3 +584,7 @@ export function setGanttOnlyColumns() {
         gantt.render();
     }
 }
+
+export const __test__ = {
+    getColumnLabel
+};

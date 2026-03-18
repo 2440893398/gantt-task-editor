@@ -6,7 +6,7 @@
  * - 节假日数据状态卡片
  */
 
-import { DEFAULT_PROJECT_ID, getCalendarSettings, saveCalendarSettings, getCalendarMeta, db } from '../../core/storage.js';
+import { DEFAULT_PROJECT_ID, getCalendarSettings, saveCalendarSettings, getCalendarMeta, getAllCustomDays, db } from '../../core/storage.js';
 import { ensureHolidaysCached } from './holidayFetcher.js';
 import { refreshHolidayHighlightCache } from '../gantt/init.js';
 import { i18n } from '../../utils/i18n.js';
@@ -27,6 +27,160 @@ const COUNTRIES = [
 
 const DAY_NAMES = ['日', '一', '二', '三', '四', '五', '六'];
 let saveHandler = null;
+let syncedWorktimeOverrideDates = new Set();
+
+function toLocalDayStart(value) {
+    const date = value instanceof Date ? new Date(value) : new Date(value);
+    if (Number.isNaN(date.getTime())) return null;
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function toDateKey(value) {
+    const date = toLocalDayStart(value);
+    if (!date) return '';
+    return [
+        date.getFullYear(),
+        String(date.getMonth() + 1).padStart(2, '0'),
+        String(date.getDate()).padStart(2, '0')
+    ].join('-');
+}
+
+async function syncGanttWorktimeFromCalendar() {
+    if (typeof gantt === 'undefined' || typeof gantt.setWorkTime !== 'function') {
+        return await getCalendarSettings();
+    }
+
+    const settings = await getCalendarSettings();
+    const workdays = Array.isArray(settings.workdaysOfWeek) && settings.workdaysOfWeek.length > 0
+        ? settings.workdaysOfWeek
+        : [1, 2, 3, 4, 5];
+
+    gantt.setWorkTime({
+        days: Array.from({ length: 7 }, (_, day) => workdays.includes(day) ? 1 : 0)
+    });
+
+    if (typeof gantt.unsetWorkTime === 'function') {
+        syncedWorktimeOverrideDates.forEach((dateStr) => {
+            const date = toLocalDayStart(dateStr);
+            if (date) {
+                gantt.unsetWorkTime({ date });
+            }
+        });
+    }
+
+    const overrideMap = new Map();
+    const customs = await getAllCustomDays();
+    customs.forEach((customDay) => {
+        overrideMap.set(customDay.date, !customDay.isOffDay);
+    });
+
+    const holidays = await db.calendar_holidays
+        .where('countryCode')
+        .equals(settings.countryCode || 'CN')
+        .toArray();
+
+    holidays.forEach((holiday) => {
+        if (!overrideMap.has(holiday.date)) {
+            overrideMap.set(holiday.date, !holiday.isOffDay);
+        }
+    });
+
+    const nextOverrideDates = new Set();
+    overrideMap.forEach((isWorkDay, dateStr) => {
+        const date = toLocalDayStart(dateStr);
+        if (!date) return;
+        gantt.setWorkTime({ date, hours: isWorkDay });
+        nextOverrideDates.add(dateStr);
+    });
+
+    syncedWorktimeOverrideDates = nextOverrideDates;
+    return settings;
+}
+
+function updateParentTasksFromChildren(settings) {
+    if (
+        typeof gantt === 'undefined' ||
+        typeof gantt.getTask !== 'function' ||
+        typeof gantt.getChildren !== 'function' ||
+        typeof gantt.calculateDuration !== 'function'
+    ) {
+        return 0;
+    }
+
+    const parentIds = new Set();
+    if (typeof gantt.eachTask === 'function') {
+        gantt.eachTask((task) => {
+            const parentId = task?.parent ?? 0;
+            if (parentId) {
+                parentIds.add(parentId);
+            }
+        });
+    }
+
+    let updated = 0;
+    Array.from(parentIds)
+        .sort((a, b) => (gantt.getTask(b)?.$level ?? 0) - (gantt.getTask(a)?.$level ?? 0))
+        .forEach((parentId) => {
+            const parentTask = gantt.getTask(parentId);
+            if (!parentTask) return;
+
+            const children = gantt.getChildren(parentId)
+                .map((childId) => gantt.getTask(childId))
+                .filter(Boolean);
+
+            if (children.length === 0) return;
+
+            const minStart = children.reduce((min, child) => {
+                if (!child.start_date) return min;
+                return !min || child.start_date < min ? child.start_date : min;
+            }, null);
+
+            const maxEnd = children.reduce((max, child) => {
+                if (!child.end_date) return max;
+                return !max || child.end_date > max ? child.end_date : max;
+            }, null);
+
+            let changed = false;
+            if (minStart && toDateKey(parentTask.start_date) !== toDateKey(minStart)) {
+                parentTask.start_date = new Date(minStart);
+                changed = true;
+            }
+
+            if (maxEnd && toDateKey(parentTask.end_date) !== toDateKey(maxEnd)) {
+                parentTask.end_date = new Date(maxEnd);
+                changed = true;
+            }
+
+            if (parentTask.start_date && parentTask.end_date) {
+                const nextDuration = gantt.calculateDuration(parentTask.start_date, parentTask.end_date);
+                if (Number.isFinite(nextDuration) && nextDuration > 0 && parentTask.duration !== nextDuration) {
+                    parentTask.duration = nextDuration;
+                    changed = true;
+                }
+            }
+
+            if ('estimated_hours' in parentTask) {
+                const nextEstimatedHours = children.reduce((sum, child) => sum + (Number(child.estimated_hours) || 0), 0);
+                if ((Number(parentTask.estimated_hours) || 0) !== nextEstimatedHours) {
+                    parentTask.estimated_hours = nextEstimatedHours;
+                    changed = true;
+                }
+            } else if (settings?.hoursPerDay && Number(parentTask.duration) > 0) {
+                const rolledUpHours = Number(parentTask.duration) * Number(settings.hoursPerDay);
+                if (rolledUpHours > 0) {
+                    parentTask.estimated_hours = rolledUpHours;
+                    changed = true;
+                }
+            }
+
+            if (changed) {
+                gantt.updateTask(parentId);
+                updated += 1;
+            }
+        });
+
+    return updated;
+}
 
 function getDayLabel(dayIndex) {
     return i18n.t(`calendar.weekdays.${dayIndex}`) || DAY_NAMES[dayIndex];
@@ -176,59 +330,86 @@ export async function renderTab1(container) {
         await refreshHolidayHighlightCache();
 
         // 工作日历变更后，重新计算所有受影响任务的日期
-        recalculateTasksOnCalendarChange();
+        await recalculateTasksOnCalendarChange();
     };
     document.addEventListener('calendar:save', saveHandler);
-}</**
+}
+
+/**
  * 工作日历变更后，重新计算所有任务的 end_date 或 duration
  */
-function recalculateTasksOnCalendarChange() {
-    if (typeof gantt === 'undefined' || typeof gantt.getTaskByTime !== 'function') {
+async function recalculateTasksOnCalendarChange() {
+    if (typeof gantt === 'undefined') {
         return;
     }
 
-    const tasks = gantt.getTaskByTime();
+    const settings = await syncGanttWorktimeFromCalendar();
+    const tasks = [];
+
+    if (typeof gantt.eachTask === 'function') {
+        gantt.eachTask((task) => tasks.push(task));
+    } else if (typeof gantt.getTaskByTime === 'function') {
+        tasks.push(...(gantt.getTaskByTime() || []));
+    }
+
     if (!tasks || tasks.length === 0) return;
 
     let updated = 0;
-    tasks.forEach(task => {
-        if (!task.start_date || task.type === 'project') return;
+    const recalculate = () => {
+        tasks.forEach(task => {
+            if (!task?.start_date) return;
+            const hasChildren = typeof gantt.hasChild === 'function' ? gantt.hasChild(task.id) : false;
+            if (task.type === 'project' || hasChildren) return;
 
-        const mode = normalizeScheduleMode(task.schedule_mode);
-        const duration = task.duration || task.estimated_hours || 0;
+            const mode = normalizeScheduleMode(task.schedule_mode);
+            const duration = Number(task.duration) || 0;
+            const hoursPerDay = Number(settings?.hoursPerDay) || 8;
+            let changed = false;
 
-        try {
-            if (mode === 'start_duration') {
-                // 模式：开始日期 + 工期 = 结束日期
-                // 重新计算 end_date（考虑新的工作日）
-                if (duration > 0) {
-                    const newEndDate = gantt.calculateEndDate(task.start_date, duration);
-                    if (newEndDate && task.end_date) {
-                        const oldEnd = new Date(task.end_date).getTime();
-                        const newEnd = newEndDate.getTime();
-                        if (oldEnd !== newEnd) {
+            try {
+                if (mode === 'start_duration') {
+                    if (duration > 0 && typeof gantt.calculateEndDate === 'function') {
+                        const newEndDate = gantt.calculateEndDate(task.start_date, duration);
+                        if (newEndDate && toDateKey(task.end_date) !== toDateKey(newEndDate)) {
                             task.end_date = newEndDate;
-                            gantt.updateTask(task.id);
-                            updated++;
+                            changed = true;
+                        }
+                    }
+                } else if (mode === 'start_end') {
+                    if (task.end_date && typeof gantt.calculateDuration === 'function') {
+                        const newDuration = gantt.calculateDuration(task.start_date, task.end_date);
+                        if (Number.isFinite(newDuration) && newDuration > 0 && newDuration !== task.duration) {
+                            task.duration = newDuration;
+                            changed = true;
                         }
                     }
                 }
-            } else if (mode === 'start_end') {
-                // 模式：开始 + 结束 → 工期
-                // 重新计算 duration
-                if (task.end_date) {
-                    const newDuration = gantt.calculateDuration(task.start_date, task.end_date);
-                    if (newDuration !== task.duration) {
-                        task.duration = newDuration;
-                        gantt.updateTask(task.id);
-                        updated++;
+
+                if ('estimated_hours' in task) {
+                    const nextEstimatedHours = (Number(task.duration) || 0) * hoursPerDay;
+                    if ((Number(task.estimated_hours) || 0) !== nextEstimatedHours) {
+                        task.estimated_hours = nextEstimatedHours;
+                        changed = true;
                     }
                 }
+
+                if (changed) {
+                    gantt.updateTask(task.id);
+                    updated++;
+                }
+            } catch (e) {
+                console.warn('[Calendar] Failed to recalculate task:', task.id, e);
             }
-        } catch (e) {
-            console.warn('[Calendar] Failed to recalculate task:', task.id, e);
-        }
-    });
+        });
+
+        updated += updateParentTasksFromChildren(settings);
+    };
+
+    if (typeof gantt.batchUpdate === 'function') {
+        gantt.batchUpdate(recalculate);
+    } else {
+        recalculate();
+    }
 
     if (updated > 0) {
         console.log(`[Calendar] Recalculated ${updated} tasks after calendar change`);

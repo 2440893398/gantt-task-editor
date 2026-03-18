@@ -93,7 +93,6 @@ function registerDropdownWrapper(wrapper) {
 export function renderRightSection(task) {
     // Check which sections should be visible based on field enabled status
     const showStatus = isFieldEnabled('status');
-    const showStatusDesc = isFieldEnabled('status_desc');
     const showProgress = isFieldEnabled('progress');
     const showDuration = isFieldEnabled('duration');
     const showActualHours = isFieldEnabled('actual_hours');
@@ -111,11 +110,6 @@ export function renderRightSection(task) {
         ${showStatus ? `
         <div class="mb-3">
             ${renderStatusSelect(task.status)}
-        </div>
-        ` : ''}
-        ${showStatusDesc ? `
-        <div class="mb-3">
-            ${renderStatusDescInput(task.status_desc)}
         </div>
         ` : ''}
 
@@ -270,27 +264,6 @@ export function bindRightSectionEvents(panel, task, context = {}) {
             });
         }
     });
-
-    // 状态描述输入框
-    const statusDescInput = panel.querySelector('#task-status-desc');
-    if (statusDescInput) {
-        let debounceTimer = null;
-        statusDescInput.addEventListener('input', (e) => {
-            clearTimeout(debounceTimer);
-            debounceTimer = setTimeout(() => {
-                const value = e.target.value;
-                if (draftTask.status_desc === value) return;
-                saveTaskState();
-                mutateDraft((target) => {
-                    target.status_desc = value;
-                });
-                if (!isDraftMode) {
-                    task.status_desc = value;
-                }
-                persistIfNeeded();
-            }, 300);
-        });
-    }
 
     // 负责人 (支持文本或下拉)
     const assigneeType = getFieldType('assignee');
@@ -1024,11 +997,15 @@ function bindDateInput(panel, selector, task, fieldName, isEndDate = false, opti
             const exclusiveEnd = inclusiveToExclusive(dateValue);
             nextTask.end_date = exclusiveEnd;
             const startDate = nextTask.start_date;
-            if (scheduleMode === 'start_end' && startDate) {
-                // 用 DHTMLX 内部日历计算工作日数，与甘特条渲染保持一致
+            if (startDate && typeof gantt !== 'undefined' && typeof gantt.calculateDuration === 'function') {
+                // 无论当前模式如何，用户显式改动计划截止时都要同步工期，避免 end_date 与 duration 脱节
                 const workDuration = gantt.calculateDuration(startDate, exclusiveEnd);
-                if (workDuration > 0) {
+                if (Number.isFinite(workDuration) && workDuration > 0) {
                     nextTask.duration = workDuration;
+                } else {
+                    const diffMs = exclusiveEnd.getTime() - new Date(startDate).getTime();
+                    const fallbackDuration = Math.max(1, Math.round(diffMs / (24 * 60 * 60 * 1000)));
+                    nextTask.duration = fallbackDuration;
                 }
             }
         } else if (fieldName === 'start_date') {
@@ -1250,7 +1227,10 @@ function formatDateValue(date) {
     if (!date) return null;
     const d = new Date(date);
     if (isNaN(d.getTime())) return null;
-    return d.toISOString().split('T')[0];
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
 }
 
 /**
@@ -1519,3 +1499,7 @@ function getLinkTypeLabel(type) {
         default: return "FS";
     }
 }
+
+export const __test__ = {
+    formatDateValue
+};

@@ -733,12 +733,16 @@ export function initGantt() {
             }
         }
 
+        const isTimelineTaskInteraction = !!(e.target && e.target.closest && e.target.closest(
+            '.gantt_task_line, .gantt_task_content, .gantt_task_drag, .gantt_link_control, .gantt_side_content'
+        ));
+
         if (typeof gantt.selectTask === 'function') {
             gantt.selectTask(id);
         }
 
         // 定位时间轴到任务起始日期（仅 split / gantt 模式有时间轴）
-        if (state.viewMode !== 'table') {
+        if (state.viewMode !== 'table' && !isTimelineTaskInteraction) {
             try {
                 const task = gantt.getTask(id);
                 if (task && typeof gantt.showDate === 'function') {

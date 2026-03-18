@@ -4,10 +4,21 @@ const setupSelectMock = vi.fn();
 const openTaskDatePickerPopoverMock = vi.fn(async () => {});
 const saveStateMock = vi.fn();
 
+const i18nMock = {
+    t: vi.fn((key) => {
+        const map = {
+            'duration.format.daysOnly': '{days}d',
+            'duration.format.hoursOnly': '{hours}h',
+            'duration.format.full': '{days}d {hours}h'
+        };
+        return map[key] || key;
+    }),
+    getLanguage: vi.fn(() => 'zh-CN')
+};
+
 vi.mock('../../../src/utils/i18n.js', () => ({
-    i18n: {
-        t: vi.fn(() => null)
-    }
+    default: i18nMock,
+    i18n: i18nMock
 }));
 
 vi.mock('../../../src/core/store.js', () => ({
@@ -107,6 +118,31 @@ describe('right-section date recalculation by schedule mode', () => {
         expectLocalYmd(task.end_date, 2026, 3, 13);
     });
 
+    it('formats date-only values without relying on UTC ISO serialization', async () => {
+        const { __test__ } = await import('../../../src/features/task-details/right-section.js');
+        const isoSpy = vi.spyOn(Date.prototype, 'toISOString').mockReturnValue('1999-01-01T00:00:00.000Z');
+
+        try {
+            expect(__test__.formatDateValue(new Date(2026, 1, 4))).toBe('2026-02-04');
+        } finally {
+            isoSpy.mockRestore();
+        }
+    });
+
+    it('does not render the status description input in the right panel', async () => {
+        const { renderRightSection } = await import('../../../src/features/task-details/right-section.js');
+
+        const html = renderRightSection({
+            status: 'in_progress',
+            status_desc: '同步中',
+            priority: 'medium',
+            progress: 0.5,
+            duration: 1
+        });
+
+        expect(html).not.toContain('task-status-desc');
+    });
+
     it('in start_end mode, changing start does not recalculate end', async () => {
         const { bindRightSectionEvents } = await import('../../../src/features/task-details/right-section.js');
         const panel = buildPanel();
@@ -153,14 +189,18 @@ describe('right-section date recalculation by schedule mode', () => {
         expect(task.duration).toBe(5);
     });
 
-    it('in start_duration mode, changing end does not recalculate duration', async () => {
+    it('in start_duration mode, changing end to the same visible day recalculates duration to one day', async () => {
         const { bindRightSectionEvents } = await import('../../../src/features/task-details/right-section.js');
         const panel = buildPanel();
+        global.gantt.calculateDuration.mockImplementationOnce((start, end) => {
+            const diffDays = Math.round((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000));
+            return diffDays;
+        });
         const task = {
             id: 4,
             schedule_mode: 'start_duration',
-            start_date: new Date('2026-03-01T00:00:00.000Z'),
-            end_date: new Date('2026-03-08T00:00:00.000Z'),
+            start_date: new Date(2026, 2, 1),
+            end_date: new Date(2026, 2, 4),
             duration: 3
         };
 
@@ -168,10 +208,10 @@ describe('right-section date recalculation by schedule mode', () => {
 
         panel.querySelector('#task-end-date').click();
         const call = openTaskDatePickerPopoverMock.mock.calls[0][0];
-        call.onSelect('2026-03-15');
+        call.onSelect('2026-03-01');
 
-        expect(global.gantt.calculateDuration).not.toHaveBeenCalled();
-        expect(task.duration).toBe(3);
-        expectLocalYmd(task.end_date, 2026, 3, 16);
+        expect(global.gantt.calculateDuration).toHaveBeenCalledTimes(1);
+        expect(task.duration).toBe(1);
+        expectLocalYmd(task.end_date, 2026, 3, 2);
     });
 });

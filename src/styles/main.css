@@ -347,14 +347,20 @@
 /* 拖拽时的半透明样式 */
 .gantt_row.row-dragging,
 .row-dragging {
-    opacity: 0.4;
-    background: rgba(59, 130, 246, 0.1) !important;
+    opacity: 0.28;
+    background: rgba(59, 130, 246, 0.08) !important;
+}
+.row-drag-fallback {
+    opacity: 0.96;
+    background: #ffffff !important;
+    border: 1px solid rgba(59, 130, 246, 0.28) !important;
+    box-shadow: 0 12px 28px rgba(15, 23, 42, 0.18);
 }
 /* 拖放位置指示器 - 蓝线 */
 .gantt_row.row-drag-ghost,
 .row-drag-ghost {
     background: transparent !important;
-    border-top: 3px solid #3b82f6 !important;
+    border-top: 2px solid #3b82f6 !important;
     height: 0 !important;
     overflow: visible !important;
     position: relative;
@@ -363,10 +369,10 @@
 .row-drag-ghost::after {
     content: '';
     position: absolute;
-    left: 0;
-    right: 0;
-    top: -3px;
-    height: 3px;
+    left: 12px;
+    right: 12px;
+    top: -2px;
+    height: 2px;
     background: linear-gradient(90deg, transparent, #3b82f6 20%, #3b82f6 80%, transparent);
 }
 /* 拖到元素上方时的高亮 */
@@ -401,8 +407,8 @@
 .row-drop-indicator-after::before {
     content: '';
     position: absolute;
-    left: 0;
-    right: 0;
+    left: 12px;
+    right: 12px;
     height: 2px;
     background: #3b82f6;
 }
@@ -413,4 +419,34 @@
 .gantt_row.row-drop-indicator-after::before,
 .row-drop-indicator-after::before {
     bottom: -1px;
+}
+.gantt_row.row-drop-indicator-child,
+.row-drop-indicator-child {
+    position: relative;
+    background: rgba(59, 130, 246, 0.08) !important;
+    box-shadow: inset 28px 0 0 rgba(59, 130, 246, 0.12);
+}
+.gantt_row.row-drop-indicator-child::before,
+.row-drop-indicator-child::before {
+    content: '';
+    position: absolute;
+    left: 28px;
+    right: 12px;
+    top: 50%;
+    height: 2px;
+    transform: translateY(-50%);
+    background: linear-gradient(90deg, rgba(59, 130, 246, 0.9), rgba(59, 130, 246, 0.2));
+}
+.gantt_row.row-drop-indicator-child::after,
+.row-drop-indicator-child::after {
+    content: '';
+    position: absolute;
+    left: 24px;
+    top: 50%;
+    width: 8px;
+    height: 8px;
+    transform: translateY(-50%);
+    border-radius: 999px;
+    background: #3b82f6;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
 }
