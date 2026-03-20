@@ -59,6 +59,17 @@ const KEYWORD_PATTERNS = {
         /deadline/i,
         /timeline/i
     ],
+    'task-create': [
+        /添加.*任务/,
+        /新[建增].*任务/,
+        /创建.*任务/,
+        /加[一个几].*任务/,
+        /帮我[加添建].*任务/,
+        /任务.*(?:新建|创建|添加|增加)/,
+        /add.?task/i,
+        /create.?task/i,
+        /new.?task/i
+    ],
     'task-detail-query': [
         /任务详情/,
         /子任务/,

@@ -10,7 +10,8 @@ const {
     reconcileRowsWithExistingTasks,
     setNodeInclude,
     countIncludedRows,
-    applySelectedChanges
+    applySelectedChanges,
+    renderRightPanel
 } = __test__;
 
 describe('DiffConfirmModal helpers', () => {
@@ -246,5 +247,45 @@ describe('DiffConfirmModal helpers', () => {
         expect(undoManagerMock.saveState).toHaveBeenCalledWith('existing');
         expect(ganttMock.updateTask).toHaveBeenCalledWith('existing');
         expect(taskStore.existing.text).toBe('新值');
+    });
+
+    it('renders detail panel with task-details style grouping and row layout', () => {
+        const state = {
+            normalized: normalizeDiffPayload({
+                type: 'task_diff',
+                changes: [
+                    {
+                        op: 'add',
+                        taskId: 'tmp-1',
+                        data: {
+                            text: '随机任务',
+                            assignee: '张三',
+                            priority: 'medium',
+                            status: 'pending',
+                            start_date: '2026-03-24',
+                            end_date: '2026-03-25',
+                            duration: 1
+                        }
+                    }
+                ]
+            }),
+            selectedNodeId: 'diff_row_0'
+        };
+
+        const html = renderRightPanel(state);
+
+        expect(html).toContain('基本属性');
+        expect(html).toContain('排期');
+        expect(html).toContain('工时');
+        expect(html).not.toContain('排期与工时');
+        expect(html).toContain('border-t border-base-200/50 pt-4 mt-4');
+        expect(html).toContain('flex items-center justify-between py-2.5');
+        expect(html).toContain('input input-ghost input-xs w-28 text-right p-0');
+
+        expect(html.indexOf('任务名称')).toBeLessThan(html.indexOf('状态'));
+        expect(html.indexOf('状态')).toBeLessThan(html.indexOf('负责人'));
+        expect(html.indexOf('负责人')).toBeLessThan(html.indexOf('优先级'));
+        expect(html.indexOf('开始日期')).toBeLessThan(html.indexOf('结束日期'));
+        expect(html.indexOf('结束日期')).toBeLessThan(html.indexOf('工期'));
     });
 });

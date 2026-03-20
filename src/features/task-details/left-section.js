@@ -288,6 +288,15 @@ export function bindLeftSectionEvents(panel, task, context = {}) {
         });
     }
 
+    // 绑定子任务列表事件
+    rebindSubtaskEvents(panel, task);
+}
+
+/**
+ * 绑定/重新绑定子任务列表事件（点击打开、删除）
+ * 提取为独立函数，以便 createSubtasks 后重新绑定
+ */
+function rebindSubtaskEvents(panel, task) {
     // 子任务项点击 - 打开子任务详情（点击文本或箭头图标时）
     const subtaskItems = panel.querySelectorAll('.subtask-item');
     subtaskItems.forEach(item => {
@@ -747,9 +756,18 @@ function createSubtasks(task, subtasks) {
     });
 
     if (created > 0) {
-        import('./panel.js').then(({ refreshTaskDetailsPanel }) => {
-            refreshTaskDetailsPanel();
-        });
+        // 直接更新子任务列表 DOM，避免 refreshTaskDetailsPanel 因 isDraftDirty 或 currentTaskId 为空而跳过
+        const subtaskListEl = document.getElementById('subtask-list');
+        if (subtaskListEl) {
+            subtaskListEl.innerHTML = renderSubtasks(task);
+
+            // 更新子任务计数
+            const panel = document.getElementById('task-details-panel');
+            if (panel) {
+                // 重新绑定子任务项事件
+                rebindSubtaskEvents(panel, task);
+            }
+        }
         showToast(i18n.t('message.updateSuccess', { count: created }) || `已更新 ${created} 个任务`, 'success');
     }
 }

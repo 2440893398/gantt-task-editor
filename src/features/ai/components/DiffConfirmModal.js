@@ -167,7 +167,9 @@ function buildHierarchy(rows) {
         });
     };
 
-    rows.filter((row) => !row.parentNodeId).forEach((root) => setLevel(root, 0));
+    rows.filter((row) => !row.parentNodeId).forEach((root) => {
+        setLevel(root, 0);
+    });
 }
 
 export function normalizeDiffPayload(payload) {
@@ -471,6 +473,20 @@ function getRowsByOp(rows, op) {
     return rows.filter((row) => row.op === op);
 }
 
+function getDetailIcon(iconType) {
+    const icons = {
+        text: '<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h10M4 17h16" /></svg>',
+        user: '<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M20 21a8 8 0 10-16 0" /><circle cx="12" cy="7" r="4" /></svg>',
+        flag: '<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" /><line x1="4" y1="22" x2="4" y2="15" /></svg>',
+        status: '<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6" /></svg>',
+        calendar: '<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 11h18" /></svg>',
+        'calendar-check': '<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 11h18" /><path d="m9 16 2 2 4-4" /></svg>',
+        duration: '<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>'
+    };
+
+    return icons[iconType] || icons.text;
+}
+
 function renderRow(row, selectedNodeId) {
     const activeClass = row.nodeId === selectedNodeId ? 'is-active' : '';
     const checked = row.include !== false ? 'checked' : '';
@@ -506,12 +522,32 @@ function renderLeftPanel(state) {
     }).join('');
 }
 
-function renderDetailRow(label, key, value, icon) {
+function renderDetailRow(label, key, value, iconType, options = {}) {
+    const inputClass = options.inputClass || 'input input-ghost input-xs w-28 text-right p-0';
+
     return `
-        <label class="diff-detail-row" title="${escapeHtml(label)}">
-            <span class="diff-detail-label">${icon} ${label}</span>
-            <input type="text" data-field="${key}" value="${escapeHtml(value)}" class="input input-ghost input-xs diff-detail-input" />
+        <label class="flex items-center justify-between py-2.5 gap-3" title="${escapeHtml(label)}">
+            <span class="flex items-center gap-2 text-sm text-base-content/70">
+                ${getDetailIcon(iconType)}
+                <span>${escapeHtml(label)}</span>
+            </span>
+            <input type="text" data-field="${key}" value="${escapeHtml(value)}" class="${inputClass}" />
         </label>
+    `;
+}
+
+function renderDetailBlock(title, rows, withBorder = true) {
+    const containerClass = withBorder
+        ? 'border-t border-base-200/50 pt-4 mt-4'
+        : 'space-y-2';
+
+    return `
+        <div class="${containerClass}">
+            <h4 class="text-xs font-medium text-base-content/50 mb-2 uppercase tracking-wider">${escapeHtml(title)}</h4>
+            <div class="space-y-2">
+                ${rows.join('')}
+            </div>
+        </div>
     `;
 }
 
@@ -523,6 +559,21 @@ function renderRightPanel(state) {
 
     const data = selected.data || {};
     const childRows = state.normalized.flatRows.filter((row) => row.parentNodeId === selected.nodeId);
+    const basicRows = [
+        renderDetailRow('任务名称', 'text', data.text || '', 'text', {
+            inputClass: 'input input-ghost input-xs w-40 max-w-full text-right p-0'
+        }),
+        renderDetailRow('状态', 'status', data.status || '', 'status'),
+        renderDetailRow('负责人', 'assignee', data.assignee || '', 'user'),
+        renderDetailRow('优先级', 'priority', data.priority || '', 'flag')
+    ];
+    const scheduleRows = [
+        renderDetailRow('开始日期', 'start_date', data.start_date || '', 'calendar'),
+        renderDetailRow('结束日期', 'end_date', data.end_date || '', 'calendar-check')
+    ];
+    const workloadRows = [
+        renderDetailRow('工期', 'duration', data.duration ?? '', 'duration')
+    ];
 
     return `
         <div class="diff-detail-header">
@@ -543,16 +594,10 @@ function renderRightPanel(state) {
                 </ul>
             </div>
         ` : ''}
-        <div class="diff-fields">
-            <div class="diff-detail-block-title">基本信息</div>
-            ${renderDetailRow('任务名称', 'text', data.text || '', '📝')}
-            ${renderDetailRow('负责人', 'assignee', data.assignee || '', '👤')}
-            ${renderDetailRow('优先级', 'priority', data.priority || '', '🚩')}
-            ${renderDetailRow('状态', 'status', data.status || '', '●')}
-            <div class="diff-detail-block-title">排期与工时</div>
-            ${renderDetailRow('开始日期', 'start_date', data.start_date || '', '📅')}
-            ${renderDetailRow('结束日期', 'end_date', data.end_date || '', '📅')}
-            ${renderDetailRow('工期', 'duration', data.duration ?? '', '⏱')}
+        <div class="space-y-2">
+            ${renderDetailBlock('基本属性', basicRows, false)}
+            ${renderDetailBlock('排期', scheduleRows)}
+            ${renderDetailBlock('工时', workloadRows)}
         </div>
     `;
 }
@@ -709,5 +754,6 @@ export const __test__ = {
     reconcileRowsWithExistingTasks,
     setNodeInclude,
     countIncludedRows,
-    applySelectedChanges
+    applySelectedChanges,
+    renderRightPanel
 };

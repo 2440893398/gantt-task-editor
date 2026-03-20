@@ -57,6 +57,11 @@ const skillDescriptions = [
         name: 'import-analysis',
         description: '分析附件中的任务内容并生成新增/修改/删除的结构化建议',
         allowedTools: ['get_task_detail', 'get_subtasks', 'get_tasks_by_status']
+    },
+    {
+        name: 'task-create',
+        description: '根据用户描述新增一个或多个任务到甘特图，输出 task_diff JSON 由用户确认后写入',
+        allowedTools: []
     }
 ];
 
@@ -74,7 +79,8 @@ const skillLoaders = {
     'project-summary': () => import('./project-summary/SKILL.md?raw'),
     'field-info': () => import('./field-info/SKILL.md?raw'),
     'calendar-query': () => import('./calendar-query/SKILL.md?raw'),
-    'import-analysis': () => import('./import-analysis/SKILL.md?raw')
+    'import-analysis': () => import('./import-analysis/SKILL.md?raw'),
+    'task-create': () => import('./task-create/SKILL.md?raw')
 };
 
 /**

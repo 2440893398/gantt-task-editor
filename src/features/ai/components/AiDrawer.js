@@ -64,7 +64,7 @@ let tokenStats = {
 function createDrawerHTML() {
     return `
     <!-- AI 流式响应抽屉 -->
-    <div id="ai_drawer" class="fixed inset-y-0 right-0 z-[6100] w-[420px] max-w-full transform translate-x-full transition-transform duration-300 flex flex-col bg-base-100 border-l border-base-300 rounded-l-xl shadow-xl"
+    <div id="ai_drawer" class="fixed inset-y-0 right-0 z-[6300] w-[420px] max-w-full transform translate-x-full transition-transform duration-300 flex flex-col bg-base-100 border-l border-base-300 rounded-l-xl shadow-xl"
          role="dialog" aria-modal="false" aria-labelledby="ai_drawer_title">
         <div id="ai_drawer_resize_handle" class="ai-drawer-resize-handle" aria-hidden="true"></div>
         <!-- 头部 - 56px高度 -->

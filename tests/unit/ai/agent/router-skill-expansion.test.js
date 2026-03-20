@@ -37,7 +37,16 @@ describe('router skill expansion', () => {
 
             // import-analysis
             { input: '请分析我上传的 Excel 并给出导入差异', expected: 'import-analysis' },
-            { input: '导入任务文件后有哪些新增和修改', expected: 'import-analysis' }
+            { input: '导入任务文件后有哪些新增和修改', expected: 'import-analysis' },
+
+            // task-create
+            { input: '添加一个测试任务', expected: 'task-create' },
+            { input: '随便新建一个任务，任务信息随便填', expected: 'task-create' },
+            { input: '新建任务：设计评审', expected: 'task-create' },
+            { input: '创建一个任务叫做部署上线', expected: 'task-create' },
+            { input: '帮我加一个任务', expected: 'task-create' },
+            { input: 'add task: review PR', expected: 'task-create' },
+            { input: 'create task for deployment', expected: 'task-create' }
         ];
 
         cases.forEach(({ input, expected }) => {
@@ -69,7 +78,7 @@ describe('router skill expansion', () => {
     });
 
     describe('skill registry expansion', () => {
-        it('has all 10 skills registered', () => {
+        it('has all 11 skills registered', () => {
             const skills = getSkillDescriptions();
             const names = skills.map(s => s.name);
             expect(names).toContain('task-query');
@@ -82,7 +91,8 @@ describe('router skill expansion', () => {
             expect(names).toContain('field-info');
             expect(names).toContain('calendar-query');
             expect(names).toContain('import-analysis');
-            expect(skills).toHaveLength(10);
+            expect(names).toContain('task-create');
+            expect(skills).toHaveLength(11);
         });
 
         it('each new skill has allowedTools defined', () => {
