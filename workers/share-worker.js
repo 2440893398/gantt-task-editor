@@ -8,6 +8,14 @@ const TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
 const FEEDBACK_TTL_SECONDS = 180 * 24 * 60 * 60; // 180 days
 const MAX_FEEDBACK_BYTES = 18 * 1024 * 1024;
 const KEY_CHARS = 'abcdefghijklmnopqrstuvwxyz0123456789';
+const ADMIN_SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
+const FEEDBACK_STATUSES = new Set(['open', 'in_progress', 'resolved', 'closed']);
+const FEEDBACK_PRIORITIES = new Set(['low', 'medium', 'high', 'urgent']);
+const WORKFLOW_TEXT_LIMITS = {
+    assignee: 120,
+    publicNote: 2000,
+    internalNote: 4000,
+};
 
 function genKey(len = 8) {
     const arr = new Uint8Array(len);
@@ -25,12 +33,97 @@ function corsHeaders() {
     };
 }
 
+function jsonResponse(data, init = {}) {
+    return Response.json(data, {
+        ...init,
+        headers: {
+            ...corsHeaders(),
+            ...(init.headers || {}),
+        },
+    });
+}
+
+function errorResponse(message, status, headers = corsHeaders()) {
+    return Response.json({ error: message }, { status, headers });
+}
+
 function getFeedbackStore(env) {
     return env.FEEDBACK_KV || env.SHARE_KV;
 }
 
 function limitText(value, max = 4000) {
     return String(value || '').slice(0, max);
+}
+
+function base64UrlEncode(value) {
+    const bytes = typeof value === 'string' ? new TextEncoder().encode(value) : value;
+    let binary = '';
+    for (const byte of bytes) {
+        binary += String.fromCharCode(byte);
+    }
+
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function base64UrlDecode(value) {
+    const padded = value
+        .replace(/-/g, '+')
+        .replace(/_/g, '/')
+        .padEnd(Math.ceil(value.length / 4) * 4, '=');
+    const binary = atob(padded);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) {
+        bytes[i] = binary.charCodeAt(i);
+    }
+
+    return new TextDecoder().decode(bytes);
+}
+
+async function signValue(value, secret) {
+    const key = await crypto.subtle.importKey(
+        'raw',
+        new TextEncoder().encode(secret),
+        { name: 'HMAC', hash: 'SHA-256' },
+        false,
+        ['sign']
+    );
+    const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(value));
+
+    return base64UrlEncode(new Uint8Array(signature));
+}
+
+function getAdminSecret(env) {
+    return env.FEEDBACK_ADMIN_TOKEN_SECRET || env.FEEDBACK_ADMIN_PASSWORD || '';
+}
+
+async function createAdminToken(env) {
+    const expiresAtMs = Date.now() + ADMIN_SESSION_TTL_SECONDS * 1000;
+    const payload = base64UrlEncode(JSON.stringify({ role: 'admin', exp: expiresAtMs }));
+    const signature = await signValue(payload, getAdminSecret(env));
+
+    return {
+        token: `${payload}.${signature}`,
+        expiresAt: new Date(expiresAtMs).toISOString(),
+    };
+}
+
+async function isValidAdminToken(request, env) {
+    const header = request.headers.get('Authorization') || '';
+    const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+    if (!token || !getAdminSecret(env)) return false;
+
+    const [payload, signature] = token.split('.');
+    if (!payload || !signature) return false;
+
+    const expected = await signValue(payload, getAdminSecret(env));
+    if (expected !== signature) return false;
+
+    try {
+        const parsed = JSON.parse(base64UrlDecode(payload));
+        return parsed.role === 'admin' && Number(parsed.exp) > Date.now();
+    } catch {
+        return false;
+    }
 }
 
 function normalizeFeedbackPayload(body, request) {
@@ -56,6 +149,87 @@ function normalizeFeedbackPayload(body, request) {
             ipCountry: request.cf?.country || null,
             userAgent: request.headers.get('User-Agent') || null,
         },
+    };
+}
+
+function normalizeWorkflow(feedback) {
+    const workflow = feedback.workflow || {};
+    const receivedAt = feedback.receivedAt || new Date().toISOString();
+    const status = FEEDBACK_STATUSES.has(workflow.status) ? workflow.status : 'open';
+    const priority = FEEDBACK_PRIORITIES.has(workflow.priority) ? workflow.priority : 'medium';
+
+    return {
+        status,
+        priority,
+        assignee: limitText(workflow.assignee, WORKFLOW_TEXT_LIMITS.assignee),
+        publicNote: limitText(workflow.publicNote, WORKFLOW_TEXT_LIMITS.publicNote),
+        internalNote: limitText(workflow.internalNote, WORKFLOW_TEXT_LIMITS.internalNote),
+        updatedAt: workflow.updatedAt || receivedAt,
+        history: Array.isArray(workflow.history) ? workflow.history.slice(-50) : [],
+    };
+}
+
+function normalizeStoredFeedback(key, feedback) {
+    return {
+        ...feedback,
+        key,
+        workflow: normalizeWorkflow(feedback),
+    };
+}
+
+function getSafePagePath(rawUrl) {
+    if (!rawUrl) return '';
+
+    try {
+        const url = new URL(rawUrl);
+        return `${url.pathname}${url.hash ? url.hash.slice(0, 80) : ''}`;
+    } catch {
+        return '';
+    }
+}
+
+function getDescriptionPreview(description) {
+    const text = limitText(description, 300);
+    return text.length < String(description || '').length ? `${text}...` : text;
+}
+
+function serializePublicIssue(issue, detail = false) {
+    const replayEventCount = Number(issue.context?.replay?.eventCount) || 0;
+    const base = {
+        key: issue.key,
+        type: issue.type || 'manual',
+        title: issue.title || '',
+        descriptionPreview: getDescriptionPreview(issue.description),
+        receivedAt: issue.receivedAt || '',
+        status: issue.workflow.status,
+        priority: issue.workflow.priority,
+        assignee: issue.workflow.assignee,
+        publicNote: issue.workflow.publicNote,
+        updatedAt: issue.workflow.updatedAt,
+        pagePath: getSafePagePath(issue.context?.url),
+        projectName: issue.context?.project?.name || '',
+        attachmentCount: Array.isArray(issue.attachments) ? issue.attachments.length : 0,
+        replayEventCount,
+    };
+
+    if (!detail) return base;
+
+    return {
+        ...base,
+        description: issue.description || '',
+        history: issue.workflow.history.map((item) => ({
+            at: item.at,
+            actor: item.actor,
+            changes: item.changes || {},
+            publicNote: item.publicNote || '',
+        })),
+    };
+}
+
+function serializeAdminIssue(issue) {
+    return {
+        ...issue,
+        workflow: normalizeWorkflow(issue),
     };
 }
 
