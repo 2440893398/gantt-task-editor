@@ -13,7 +13,7 @@ describe('gantt today marker refresh', () => {
             renderMarkers: vi.fn(),
             render: vi.fn(),
             attachEvent: vi.fn(),
-            posFromDate: vi.fn(() => 100)
+            posFromDate: vi.fn(() => 100),
         };
     });
 

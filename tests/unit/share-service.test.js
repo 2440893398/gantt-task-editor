@@ -1,9 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockState = {
-    projects: [
-        { id: 'p1', name: 'Test Project', color: '#4f46e5', description: 'desc' },
-    ],
+    projects: [{ id: 'p1', name: 'Test Project', color: '#4f46e5', description: 'desc' }],
     customFields: [{ name: 'cf_1', type: 'text' }],
     fieldOrder: ['text', 'cf_1'],
     systemFieldSettings: { enabled: { status: true }, typeOverrides: {} },
@@ -21,13 +19,19 @@ const mockProjectScope = vi.fn(() => mockScope);
 
 const mockDb = {
     calendar_settings: {
-        where: vi.fn(() => ({ equals: vi.fn(() => ({ first: vi.fn(async () => ({ timezone: 'UTC' })) })) })),
+        where: vi.fn(() => ({
+            equals: vi.fn(() => ({ first: vi.fn(async () => ({ timezone: 'UTC' })) })),
+        })),
     },
     calendar_custom: {
-        where: vi.fn(() => ({ equals: vi.fn(() => ({ toArray: vi.fn(async () => [{ id: 'cd1' }]) })) })),
+        where: vi.fn(() => ({
+            equals: vi.fn(() => ({ toArray: vi.fn(async () => [{ id: 'cd1' }]) })),
+        })),
     },
     person_leaves: {
-        where: vi.fn(() => ({ equals: vi.fn(() => ({ toArray: vi.fn(async () => [{ id: 'lv1' }]) })) })),
+        where: vi.fn(() => ({
+            equals: vi.fn(() => ({ toArray: vi.fn(async () => [{ id: 'lv1' }]) })),
+        })),
     },
 };
 
@@ -81,7 +85,11 @@ describe('shareService', () => {
         vi.stubEnv('VITE_SHARE_API_URL', 'http://share.local');
         const fetchMock = vi.fn(async () => ({
             ok: true,
-            json: async () => ({ key: 'abc12345', url: 'http://app?share=abc12345', expiresAt: '2099-01-01T00:00:00.000Z' }),
+            json: async () => ({
+                key: 'abc12345',
+                url: 'http://app?share=abc12345',
+                expiresAt: '2099-01-01T00:00:00.000Z',
+            }),
         }));
         vi.stubGlobal('fetch', fetchMock);
 
@@ -94,7 +102,7 @@ describe('shareService', () => {
             'http://share.local/api/share',
             expect.objectContaining({
                 method: 'POST',
-            }),
+            })
         );
         expect(body.key).toBe('abc12345');
         expect(body.data.schemaVersion).toBe(1);

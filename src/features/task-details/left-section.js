@@ -5,7 +5,14 @@
 
 import { i18n } from '../../utils/i18n.js';
 import { showToast } from '../../utils/toast.js';
-import { initRichTextEditor, getEditorInstance, getEditorText, onContentChange, setEditorContent, markdownToHtml } from '../../components/rich-text-editor.js';
+import {
+    initRichTextEditor,
+    getEditorInstance,
+    getEditorText,
+    onContentChange,
+    setEditorContent,
+    markdownToHtml,
+} from '../../components/rich-text-editor.js';
 import AiService from '../ai/services/aiService.js';
 import undoManager from '../ai/services/undoManager.js';
 
@@ -152,7 +159,8 @@ export function bindLeftSectionEvents(panel, task, context = {}) {
         titleInput.addEventListener('input', () => {
             const panelTitle = panel.querySelector('#panel-task-title');
             if (panelTitle) {
-                panelTitle.textContent = titleInput.value || i18n.t('taskDetails.newTask') || '新任务';
+                panelTitle.textContent =
+                    titleInput.value || i18n.t('taskDetails.newTask') || '新任务';
             }
         });
 
@@ -174,7 +182,7 @@ export function bindLeftSectionEvents(panel, task, context = {}) {
     if (editorContainer) {
         try {
             const editor = initRichTextEditor('quill-editor', {
-                placeholder: i18n.t('taskDetails.descPlaceholder') || '输入详细描述...'
+                placeholder: i18n.t('taskDetails.descPlaceholder') || '输入详细描述...',
             });
 
             if (editor) {
@@ -183,7 +191,10 @@ export function bindLeftSectionEvents(panel, task, context = {}) {
                 onContentChange((htmlContent, textContent) => {
                     clearTimeout(saveTimeout);
                     saveTimeout = setTimeout(() => {
-                        if (draftTask.summary === htmlContent && draftTask.description === htmlContent) {
+                        if (
+                            draftTask.summary === htmlContent &&
+                            draftTask.description === htmlContent
+                        ) {
                             return;
                         }
                         mutateDraft((target) => {
@@ -232,7 +243,7 @@ export function bindLeftSectionEvents(panel, task, context = {}) {
                     const optimized = extractOptimizedText(result);
                     if (!optimized) return;
                     applyDescriptionResult(task, optimized, context);
-                }
+                },
             });
             restore();
         });
@@ -248,7 +259,7 @@ export function bindLeftSectionEvents(panel, task, context = {}) {
                 start_date: task.start_date,
                 duration: 1,
                 parent: task.id,
-                progress: 0
+                progress: 0,
             });
             // 打开子任务面板（关闭时自动回到父任务）
             import('./panel.js').then(({ openChildTaskPanel }) => {
@@ -274,7 +285,7 @@ export function bindLeftSectionEvents(panel, task, context = {}) {
             await AiService.invokeAgent('task_breakdown', {
                 text: title,
                 taskId: task.id,
-                taskData: taskData,  // 传递完整任务数据
+                taskData: taskData, // 传递完整任务数据
                 onApply: (result) => {
                     const subtasks = normalizeSubtasks(result);
                     if (!subtasks.length) {
@@ -282,7 +293,7 @@ export function bindLeftSectionEvents(panel, task, context = {}) {
                         return;
                     }
                     createSubtasks(task, subtasks);
-                }
+                },
             });
             restore();
         });
@@ -290,7 +301,7 @@ export function bindLeftSectionEvents(panel, task, context = {}) {
 
     // 子任务项点击 - 打开子任务详情（点击文本或箭头图标时）
     const subtaskItems = panel.querySelectorAll('.subtask-item');
-    subtaskItems.forEach(item => {
+    subtaskItems.forEach((item) => {
         // 点击文本打开子任务
         const textEl = item.querySelector('.subtask-text');
         const openBtn = item.querySelector('.subtask-open-btn');
@@ -316,9 +327,9 @@ export function bindLeftSectionEvents(panel, task, context = {}) {
 
     // 子任务删除按钮
     const deleteSubtaskBtns = panel.querySelectorAll('.subtask-delete-btn');
-    deleteSubtaskBtns.forEach(btn => {
+    deleteSubtaskBtns.forEach((btn) => {
         btn.addEventListener('click', (e) => {
-            e.stopPropagation();  // 阻止冒泡到父元素
+            e.stopPropagation(); // 阻止冒泡到父元素
             const subtaskId = btn.dataset.subtaskId;
             if (subtaskId) {
                 showDeleteSubtaskConfirm(subtaskId, task);
@@ -425,7 +436,7 @@ function buildTaskDataForAI(task) {
     if (!endDate && task.start_date && task.duration) {
         endDate = gantt.calculateEndDate({
             start_date: task.start_date,
-            duration: task.duration
+            duration: task.duration,
         });
     }
 
@@ -437,23 +448,23 @@ function buildTaskDataForAI(task) {
         start_date: task.start_date ? formatDate(task.start_date) : null,
         end_date: endDate ? formatDate(endDate) : null,
         duration: task.duration || 0,
-        progress: Math.round((task.progress || 0) * 100),  // 转为百分比
+        progress: Math.round((task.progress || 0) * 100), // 转为百分比
         priority: task.priority || 'medium',
         status: task.status || 'pending',
         assignee: task.assignee || null,
-        subtasks: []
+        subtasks: [],
     };
 
     // 获取现有子任务（包含更完整的信息）
     if (typeof gantt !== 'undefined' && gantt.hasChild && gantt.hasChild(task.id)) {
         const childIds = gantt.getChildren(task.id);
-        taskData.subtasks = childIds.map(childId => {
+        taskData.subtasks = childIds.map((childId) => {
             const child = gantt.getTask(childId);
             let childEndDate = child.end_date;
             if (!childEndDate && child.start_date && child.duration) {
                 childEndDate = gantt.calculateEndDate({
                     start_date: child.start_date,
-                    duration: child.duration
+                    duration: child.duration,
                 });
             }
             return {
@@ -463,10 +474,10 @@ function buildTaskDataForAI(task) {
                 start_date: child.start_date ? formatDate(child.start_date) : null,
                 end_date: childEndDate ? formatDate(childEndDate) : null,
                 duration: child.duration || 1,
-                progress: Math.round((child.progress || 0) * 100),  // 转为百分比
+                progress: Math.round((child.progress || 0) * 100), // 转为百分比
                 priority: child.priority || 'medium',
                 status: child.status || 'pending',
-                assignee: child.assignee || null
+                assignee: child.assignee || null,
             };
         });
     }
@@ -475,7 +486,7 @@ function buildTaskDataForAI(task) {
     taskData.context = {
         totalSubtasks: taskData.subtasks.length,
         parentTaskDuration: task.duration || 0,
-        hint: '请根据父任务的时间范围，合理分配子任务的开始日期和工期'
+        hint: '请根据父任务的时间范围，合理分配子任务的开始日期和工期',
     };
 
     return taskData;
@@ -506,7 +517,7 @@ function renderSubtasks(task) {
     const children = gantt.getChildren(task.id);
     let html = '';
 
-    children.forEach(childId => {
+    children.forEach((childId) => {
         const child = gantt.getTask(childId);
         const isComplete = child.progress >= 1;
 
@@ -519,9 +530,13 @@ function renderSubtasks(task) {
                 <span class="subtask-text flex-1 text-sm cursor-pointer ${isComplete ? 'line-through text-base-content/50' : 'text-base-content'}">
                     ${escapeHtml(child.text)}
                 </span>
-                ${isComplete ? `
+                ${
+                    isComplete
+                        ? `
                     <span class="badge badge-success badge-xs">${i18n.t('enums.status.completed') || '已完成'}</span>
-                ` : ''}
+                `
+                        : ''
+                }
                 <button type="button" class="subtask-delete-btn btn btn-ghost btn-xs btn-square opacity-0 group-hover:opacity-100 transition-opacity text-error/70 hover:text-error hover:bg-error/10"
                         data-subtask-id="${childId}"
                         title="${i18n.t('taskDetails.deleteSubtask') || '删除子任务'}">
@@ -631,15 +646,15 @@ function normalizeSubtasks(result) {
             // 纯文本模式：每行一个子任务
             return result
                 .split('\n')
-                .map(line => line.replace(/^\s*[-*\d\.]+\s*/, '').trim())
+                .map((line) => line.replace(/^\s*[-*\d\.]+\s*/, '').trim())
                 .filter(Boolean)
-                .map(text => ({ text }));  // 转换为对象格式
+                .map((text) => ({ text })); // 转换为对象格式
         }
     }
 
     if (Array.isArray(data?.subtasks)) {
         return data.subtasks
-            .map(item => {
+            .map((item) => {
                 if (typeof item === 'string') {
                     return { text: item.trim() };
                 }
@@ -650,7 +665,7 @@ function normalizeSubtasks(result) {
                     duration: item?.duration || 1,
                     priority: item?.priority || 'medium',
                     progress: item?.progress || 0,
-                    status: item?.status || 'pending'
+                    status: item?.status || 'pending',
                 };
                 // 保留开始日期偏移
                 if (typeof item?.start_date_offset === 'number') {
@@ -662,7 +677,7 @@ function normalizeSubtasks(result) {
                 }
                 return subtask;
             })
-            .filter(item => item.text);  // 过滤空文本
+            .filter((item) => item.text); // 过滤空文本
     }
 
     return [];
@@ -701,14 +716,17 @@ function createSubtasks(task, subtasks) {
     let created = 0;
     const parentStartDate = task.start_date ? new Date(task.start_date) : new Date();
 
-    subtasks.forEach(subtaskData => {
+    subtasks.forEach((subtaskData) => {
         // 支持对象格式和字符串格式
         const text = typeof subtaskData === 'string' ? subtaskData : subtaskData?.text;
         if (!text) return;
 
         // 计算子任务开始日期
         let startDate = parentStartDate;
-        if (typeof subtaskData?.start_date_offset === 'number' && subtaskData.start_date_offset > 0) {
+        if (
+            typeof subtaskData?.start_date_offset === 'number' &&
+            subtaskData.start_date_offset > 0
+        ) {
             startDate = new Date(parentStartDate);
             startDate.setDate(startDate.getDate() + subtaskData.start_date_offset);
         }
@@ -716,7 +734,7 @@ function createSubtasks(task, subtasks) {
         // 处理进度：AI 返回 0-100，gantt 需要 0-1
         let progress = subtaskData?.progress || 0;
         if (progress > 1) {
-            progress = progress / 100;  // 转换百分比为小数
+            progress = progress / 100; // 转换百分比为小数
         }
 
         const newTask = {
@@ -724,7 +742,7 @@ function createSubtasks(task, subtasks) {
             start_date: startDate,
             duration: subtaskData?.duration || 1,
             parent: task.id,
-            progress: progress
+            progress: progress,
         };
 
         // 添加可选属性
@@ -750,7 +768,10 @@ function createSubtasks(task, subtasks) {
         import('./panel.js').then(({ refreshTaskDetailsPanel }) => {
             refreshTaskDetailsPanel();
         });
-        showToast(i18n.t('message.updateSuccess', { count: created }) || `已更新 ${created} 个任务`, 'success');
+        showToast(
+            i18n.t('message.updateSuccess', { count: created }) || `已更新 ${created} 个任务`,
+            'success'
+        );
     }
 }
 
@@ -770,5 +791,5 @@ function escapeHtml(str) {
 export const __test__ = {
     normalizeSubtasks,
     createSubtasks,
-    tryParseJson
+    tryParseJson,
 };

@@ -1,0 +1,4 @@
+interface:
+  display_name: "AGENTS.md Maintainer"
+  short_description: "Create, review, update, split, and migrate repository AGENTS.md guidance."
+  default_prompt: "Use $agents-md-maintainer to create, review, update, split, or migrate concise AGENTS.md instructions for this repository."

@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test';
 test('should reorder fields in field management panel', async ({ page }) => {
     // 1. Visit page
     await page.goto('http://localhost:5273/');
-    page.on('console', msg => console.log('PAGE LOG:', msg.text()));
+    page.on('console', (msg) => console.log('PAGE LOG:', msg.text()));
     await expect(page.locator('#gantt_here')).toBeVisible({ timeout: 10000 });
     await page.waitForTimeout(1000);
 
@@ -33,7 +33,7 @@ test('should reorder fields in field management panel', async ({ page }) => {
     expect(count).toBeGreaterThan(1);
 
     // Get initial order
-    const initialOrder = await items.evaluateAll(list => list.map(el => el.dataset.fieldName));
+    const initialOrder = await items.evaluateAll((list) => list.map((el) => el.dataset.fieldName));
     console.log('Initial Order:', initialOrder);
 
     // 4. Drag first item to be after second item
@@ -56,7 +56,7 @@ test('should reorder fields in field management panel', async ({ page }) => {
     await page.waitForTimeout(500); // Wait for animation
 
     // 5. Get final order
-    const finalOrder = await items.evaluateAll(list => list.map(el => el.dataset.fieldName));
+    const finalOrder = await items.evaluateAll((list) => list.map((el) => el.dataset.fieldName));
     console.log('Final Order:', finalOrder);
 
     // 6. Assert order changed

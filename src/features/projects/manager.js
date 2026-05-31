@@ -23,7 +23,14 @@ export async function getAllProjects() {
  */
 export async function createProject({ name, color = '#4f46e5', description = '' } = {}) {
     const now = new Date().toISOString();
-    const project = { id: genProjectId(), name, color, description, createdAt: now, updatedAt: now };
+    const project = {
+        id: genProjectId(),
+        name,
+        color,
+        description,
+        createdAt: now,
+        updatedAt: now,
+    };
     await db.projects.add(project);
     return project;
 }
@@ -42,17 +49,21 @@ export async function updateProject(id, updates) {
  * @param {string} id
  */
 export async function deleteProject(id) {
-    const tables = ['tasks', 'links', 'baselines', 'calendar_settings',
-                    'calendar_custom', 'person_leaves', 'history'];
-    await db.transaction('rw',
-        [db.projects, ...tables.map(t => db[t])],
-        async () => {
-            for (const t of tables) {
-                await db[t].where('project_id').equals(id).delete();
-            }
-            await db.projects.delete(id);
+    const tables = [
+        'tasks',
+        'links',
+        'baselines',
+        'calendar_settings',
+        'calendar_custom',
+        'person_leaves',
+        'history',
+    ];
+    await db.transaction('rw', [db.projects, ...tables.map((t) => db[t])], async () => {
+        for (const t of tables) {
+            await db[t].where('project_id').equals(id).delete();
         }
-    );
+        await db.projects.delete(id);
+    });
 }
 
 /**

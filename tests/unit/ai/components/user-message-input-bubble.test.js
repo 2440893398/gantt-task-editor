@@ -14,9 +14,9 @@ describe('user message input bubble rendering', () => {
                     progress: 0,
                     start_date: '2025-09-30',
                     end_date: '2025-10-01',
-                    subtasks: [{ text: '子任务A', status: 'completed' }]
-                }
-            }
+                    subtasks: [{ text: '子任务A', status: 'completed' }],
+                },
+            },
         });
 
         expect(html).toContain('ai-task-input-bubble');
@@ -35,8 +35,8 @@ describe('user message input bubble rendering', () => {
             content: '介绍一下这个任务',
             referencedTasks: [
                 { id: 101, hierarchy_id: '#1.1', text: '确认需求与验收标准' },
-                { id: 202, hierarchy_id: '#2.3', text: '设计登录页面' }
-            ]
+                { id: 202, hierarchy_id: '#2.3', text: '设计登录页面' },
+            ],
         });
 
         // Should match input token visual structure (badge + mono hierarchy)
@@ -55,7 +55,7 @@ describe('user message input bubble rendering', () => {
     it('renders only text when referencedTasks is empty array', () => {
         const html = renderUserMessageContent({
             content: '这是普通消息',
-            referencedTasks: []
+            referencedTasks: [],
         });
 
         expect(html).not.toContain('mention-token badge badge-primary');
@@ -65,9 +65,7 @@ describe('user message input bubble rendering', () => {
     it('escapes HTML in referencedTasks text to prevent XSS', () => {
         const html = renderUserMessageContent({
             content: 'test',
-            referencedTasks: [
-                { id: 1, hierarchy_id: '#1', text: '<img onerror=alert(1)>' }
-            ]
+            referencedTasks: [{ id: 1, hierarchy_id: '#1', text: '<img onerror=alert(1)>' }],
         });
 
         expect(html).toContain('mention-token badge badge-primary');

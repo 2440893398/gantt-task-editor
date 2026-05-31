@@ -33,10 +33,12 @@ export function renderUserMentionChip({ hierarchyId, name }) {
  */
 export function renderInlineReferencedTasks(referencedTasks, escapedContent) {
     const chips = referencedTasks
-        .map(task => renderUserMentionChip({
-            hierarchyId: task.hierarchy_id || '',
-            name: task.text || ''
-        }))
+        .map((task) =>
+            renderUserMentionChip({
+                hierarchyId: task.hierarchy_id || '',
+                name: task.text || '',
+            })
+        )
         .join(' ');
 
     return `<span class="ai-user-mention-chips">${chips}</span> ${escapedContent}`;
@@ -45,5 +47,5 @@ export function renderInlineReferencedTasks(referencedTasks, escapedContent) {
 export default {
     renderTaskCitationChip,
     renderUserMentionChip,
-    renderInlineReferencedTasks
+    renderInlineReferencedTasks,
 };

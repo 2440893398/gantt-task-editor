@@ -84,20 +84,26 @@ function renderCreateModal(modal) {
                         <span class="label-text text-sm font-medium">${i18n.t('project.color') || '项目颜色'}</span>
                     </label>
                     <div class="flex items-center gap-2" id="color-picker">
-                        ${COLORS.map((color, index) => `
+                        ${COLORS.map(
+                            (color, index) => `
                             <button
                                 type="button"
                                 class="color-btn w-8 h-8 rounded-full flex items-center justify-center transition-all ${index === 0 ? 'ring-2 ring-offset-2 ring-primary' : 'hover:scale-110'}"
                                 style="background:${color}"
                                 data-color="${color}"
                             >
-                                ${index === 0 ? `
+                                ${
+                                    index === 0
+                                        ? `
                                     <svg class="w-4 h-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                         <polyline points="20 6 9 17 4 12"/>
                                     </svg>
-                                ` : ''}
+                                `
+                                        : ''
+                                }
                             </button>
-                        `).join('')}
+                        `
+                        ).join('')}
                     </div>
                 </div>
 
@@ -132,10 +138,10 @@ function bindCreateModalEvents(modal) {
     let selectedColor = COLORS[0];
 
     // 颜色选择
-    modal.querySelectorAll('.color-btn').forEach(btn => {
+    modal.querySelectorAll('.color-btn').forEach((btn) => {
         btn.addEventListener('click', () => {
             selectedColor = btn.dataset.color;
-            modal.querySelectorAll('.color-btn').forEach(b => {
+            modal.querySelectorAll('.color-btn').forEach((b) => {
                 b.classList.remove('ring-2', 'ring-offset-2', 'ring-primary');
                 b.innerHTML = '';
             });
@@ -166,7 +172,7 @@ function bindCreateModalEvents(modal) {
             const project = await createProject({
                 name,
                 color: selectedColor,
-                description
+                description,
             });
             await refreshProjects();
             document.dispatchEvent(new CustomEvent('projectsUpdated'));

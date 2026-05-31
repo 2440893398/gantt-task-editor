@@ -13,7 +13,6 @@
 import { test, expect } from '@playwright/test';
 
 test.describe('交互体验优化模块 (UX Improvements) - P1', () => {
-
     test.beforeEach(async ({ page }) => {
         await page.goto('/');
         await page.waitForSelector('#gantt_here', { timeout: 15000 });
@@ -24,13 +23,12 @@ test.describe('交互体验优化模块 (UX Improvements) - P1', () => {
     // 4.1 内联编辑测试 (UX-001 ~ UX-005)
     // ========================================
     test.describe('内联编辑 (Inline Edit)', () => {
-
         // UX-001: 验证双击单元格进入编辑模式
         // TODO: 此测试依赖 DHTMLX Gantt 内部行为，需要进一步调查
         test.skip('UX-001: 双击任务名称单元格应进入编辑模式', async ({ page }) => {
             // 检查是否有任务行，如果没有则先创建一个
             let taskRow = page.locator('.gantt_row').first();
-            if (await taskRow.count() === 0) {
+            if ((await taskRow.count()) === 0) {
                 // 创建一个任务
                 await page.locator('#new-task-btn').click();
                 await page.waitForTimeout(500);
@@ -38,7 +36,7 @@ test.describe('交互体验优化模块 (UX Improvements) - P1', () => {
                 const lightbox = page.locator('.gantt_cal_light');
                 if (await lightbox.isVisible().catch(() => false)) {
                     const saveBtn = page.locator('.gantt_save_btn').first();
-                    if (await saveBtn.count() > 0) {
+                    if ((await saveBtn.count()) > 0) {
                         await saveBtn.click();
                         await page.waitForTimeout(500);
                     }
@@ -55,9 +53,9 @@ test.describe('交互体验优化模块 (UX Improvements) - P1', () => {
 
             // 尝试找到可双击的元素
             let targetElement = null;
-            if (await treeContent.count() > 0) {
+            if ((await treeContent.count()) > 0) {
                 targetElement = treeContent;
-            } else if (await taskNameCell.count() > 0) {
+            } else if ((await taskNameCell.count()) > 0) {
                 targetElement = taskNameCell;
             }
 
@@ -67,7 +65,9 @@ test.describe('交互体验优化模块 (UX Improvements) - P1', () => {
                 await page.waitForTimeout(500);
 
                 // 检查是否出现内联编辑器、lightbox 或任务详情面板
-                const inlineEditor = page.locator('.gantt-inline-editor, .gantt-inline-editor-container');
+                const inlineEditor = page.locator(
+                    '.gantt-inline-editor, .gantt-inline-editor-container'
+                );
                 const lightbox = page.locator('.gantt_cal_light');
                 const taskDetailsPanel = page.locator('#task-details-panel, .task-details-panel');
 
@@ -80,8 +80,10 @@ test.describe('交互体验优化模块 (UX Improvements) - P1', () => {
 
                 // 关闭 lightbox 如果打开了
                 if (lightboxVisible) {
-                    const cancelBtn = page.locator('.gantt_cancel_btn, .gantt_btn_set.gantt_cancel_btn_set').first();
-                    if (await cancelBtn.count() > 0) {
+                    const cancelBtn = page
+                        .locator('.gantt_cancel_btn, .gantt_btn_set.gantt_cancel_btn_set')
+                        .first();
+                    if ((await cancelBtn.count()) > 0) {
                         await cancelBtn.click();
                     }
                 }
@@ -99,14 +101,16 @@ test.describe('交互体验优化模块 (UX Improvements) - P1', () => {
             const taskRow = page.locator('.gantt_row').first();
             const treeContent = taskRow.locator('.gantt_tree_content').first();
 
-            if (await treeContent.count() > 0) {
+            if ((await treeContent.count()) > 0) {
                 // 双击进入编辑模式
                 await treeContent.dblclick();
                 await page.waitForTimeout(500);
 
                 // 尝试找到内联编辑器或 lightbox 中的输入框
                 const inlineEditor = page.locator('.gantt-inline-editor');
-                const lightboxInput = page.locator('.gantt_cal_light textarea, .gantt_cal_light input[type="text"]').first();
+                const lightboxInput = page
+                    .locator('.gantt_cal_light textarea, .gantt_cal_light input[type="text"]')
+                    .first();
 
                 if (await inlineEditor.isVisible().catch(() => false)) {
                     // 内联编辑器模式
@@ -119,8 +123,10 @@ test.describe('交互体验优化模块 (UX Improvements) - P1', () => {
                 } else if (await lightboxInput.isVisible().catch(() => false)) {
                     // Lightbox 模式 - 使用保存按钮
                     await lightboxInput.fill('测试修改任务名');
-                    const saveBtn = page.locator('.gantt_save_btn_set, .gantt_btn_set.gantt_save_btn_set').first();
-                    if (await saveBtn.count() > 0) {
+                    const saveBtn = page
+                        .locator('.gantt_save_btn_set, .gantt_btn_set.gantt_save_btn_set')
+                        .first();
+                    if ((await saveBtn.count()) > 0) {
                         await saveBtn.click();
                         await page.waitForTimeout(500);
                     }
@@ -144,7 +150,7 @@ test.describe('交互体验优化模块 (UX Improvements) - P1', () => {
             const taskRow = page.locator('.gantt_row').first();
             const treeContent = taskRow.locator('.gantt_tree_content').first();
 
-            if (await treeContent.count() > 0) {
+            if ((await treeContent.count()) > 0) {
                 const originalText = await treeContent.textContent();
 
                 // 双击进入编辑模式
@@ -172,8 +178,10 @@ test.describe('交互体验优化模块 (UX Improvements) - P1', () => {
 
                     // 如果 Escape 没有关闭，点击取消按钮
                     if (await lightbox.isVisible().catch(() => false)) {
-                        const cancelBtn = page.locator('.gantt_cancel_btn_set, .gantt_btn_set.gantt_cancel_btn_set').first();
-                        if (await cancelBtn.count() > 0) {
+                        const cancelBtn = page
+                            .locator('.gantt_cancel_btn_set, .gantt_btn_set.gantt_cancel_btn_set')
+                            .first();
+                        if ((await cancelBtn.count()) > 0) {
                             await cancelBtn.click();
                             await page.waitForTimeout(500);
                         }
@@ -196,13 +204,12 @@ test.describe('交互体验优化模块 (UX Improvements) - P1', () => {
     // 4.3 关键路径高亮测试 (UX-010 ~ UX-015)
     // ========================================
     test.describe('关键路径高亮 (Critical Path)', () => {
-
         // UX-010: 验证关键路径开关存在
         test('UX-010: 关键路径开关控件应存在', async ({ page }) => {
             // 首先打开更多操作下拉菜单
             const moreBtn = page.locator('.more-btn, #more-actions-btn');
 
-            if (await moreBtn.count() > 0) {
+            if ((await moreBtn.count()) > 0) {
                 await moreBtn.click();
                 await page.waitForTimeout(300);
 
@@ -210,9 +217,11 @@ test.describe('交互体验优化模块 (UX Improvements) - P1', () => {
                 const toggleCPM = page.locator('#toggle-critical-path, [data-action="toggle-cpm"]');
 
                 // 或者在下拉菜单中查找
-                const dropdownCPM = page.locator('.dropdown-menu, #more-actions-dropdown').locator('text=关键路径');
+                const dropdownCPM = page
+                    .locator('.dropdown-menu, #more-actions-dropdown')
+                    .locator('text=关键路径');
 
-                const hasToggle = await toggleCPM.count() > 0 || await dropdownCPM.count() > 0;
+                const hasToggle = (await toggleCPM.count()) > 0 || (await dropdownCPM.count()) > 0;
                 expect(hasToggle).toBeTruthy();
             }
         });
@@ -222,14 +231,14 @@ test.describe('交互体验优化模块 (UX Improvements) - P1', () => {
             // 打开更多操作菜单
             const moreBtn = page.locator('.more-btn, #more-actions-btn');
 
-            if (await moreBtn.count() > 0) {
+            if ((await moreBtn.count()) > 0) {
                 await moreBtn.click();
                 await page.waitForTimeout(300);
 
                 // 点击关键路径开关
                 const toggleCPM = page.locator('#toggle-critical-path');
 
-                if (await toggleCPM.count() > 0) {
+                if ((await toggleCPM.count()) > 0) {
                     await toggleCPM.click();
                     await page.waitForTimeout(500);
 
@@ -249,13 +258,13 @@ test.describe('交互体验优化模块 (UX Improvements) - P1', () => {
         test('UX-013: 关闭关键路径应移除高亮', async ({ page }) => {
             const moreBtn = page.locator('.more-btn, #more-actions-btn');
 
-            if (await moreBtn.count() > 0) {
+            if ((await moreBtn.count()) > 0) {
                 // 开启关键路径
                 await moreBtn.click();
                 await page.waitForTimeout(300);
 
                 const toggleCPM = page.locator('#toggle-critical-path');
-                if (await toggleCPM.count() > 0) {
+                if ((await toggleCPM.count()) > 0) {
                     await toggleCPM.click();
                     await page.waitForTimeout(500);
                     // 点击空白区域关闭菜单
@@ -282,11 +291,10 @@ test.describe('交互体验优化模块 (UX Improvements) - P1', () => {
     // 工具栏交互测试
     // ========================================
     test.describe('工具栏交互', () => {
-
         test('新建任务按钮应可点击', async ({ page }) => {
             const newTaskBtn = page.locator('#new-task-btn, [data-action="add-task"]');
 
-            if (await newTaskBtn.count() > 0) {
+            if ((await newTaskBtn.count()) > 0) {
                 await expect(newTaskBtn).toBeVisible();
                 await expect(newTaskBtn).toBeEnabled();
 
@@ -299,7 +307,7 @@ test.describe('交互体验优化模块 (UX Improvements) - P1', () => {
 
                 // 关闭任务详情面板
                 const closeBtn = page.locator('#btn-close-panel');
-                if (await closeBtn.count() > 0) {
+                if ((await closeBtn.count()) > 0) {
                     await closeBtn.click();
                     await page.waitForTimeout(300);
                 }
@@ -333,7 +341,6 @@ test.describe('交互体验优化模块 (UX Improvements) - P1', () => {
 // 综合交互测试
 // ========================================
 test.describe('综合交互测试', () => {
-
     test.beforeEach(async ({ page }) => {
         await page.goto('/');
         await page.waitForSelector('#gantt_here', { timeout: 15000 });
@@ -345,11 +352,11 @@ test.describe('综合交互测试', () => {
 
         const firstTask = page.locator('.gantt_row').first();
 
-        if (await firstTask.count() > 0) {
+        if ((await firstTask.count()) > 0) {
             // 首先点击复选框或使用 Ctrl+点击选择任务
             const checkbox = firstTask.locator('input[type="checkbox"]');
 
-            if (await checkbox.count() > 0) {
+            if ((await checkbox.count()) > 0) {
                 // 点击复选框选择
                 await checkbox.click();
                 await page.waitForTimeout(300);
@@ -360,13 +367,15 @@ test.describe('综合交互测试', () => {
             }
 
             // 验证任务被选中 - 检查多种可能的选中状态
-            const isSelected = await firstTask.evaluate(el => {
+            const isSelected = await firstTask.evaluate((el) => {
                 const classList = el.className;
                 // 检查常见的选中类名
-                return classList.includes('gantt-selected') ||
+                return (
+                    classList.includes('gantt-selected') ||
                     classList.includes('selected') ||
                     classList.includes('gantt_selected') ||
-                    el.querySelector('input[type="checkbox"]:checked') !== null;
+                    el.querySelector('input[type="checkbox"]:checked') !== null
+                );
             });
 
             expect(isSelected).toBeTruthy();
@@ -409,7 +418,7 @@ test.describe('综合交互测试', () => {
         const dropdown = page.locator('#more-actions-dropdown');
         const moreBtn = dropdown.locator('.more-btn');
 
-        if (await moreBtn.count() > 0) {
+        if ((await moreBtn.count()) > 0) {
             // 点击打开下拉菜单
             await moreBtn.click();
             await page.waitForTimeout(300);
@@ -417,12 +426,14 @@ test.describe('综合交互测试', () => {
             // 使用 ID 选择器查找导出Excel按钮
             const exportExcelBtn = page.locator('#dropdown-export-excel');
 
-            if (await exportExcelBtn.count() > 0) {
+            if ((await exportExcelBtn.count()) > 0) {
                 await expect(exportExcelBtn).toBeVisible();
             } else {
                 // 备用：使用文本选择器
-                const exportBtn = dropdown.locator('.dropdown-item:has-text("导出Excel"), .dropdown-item:has-text("Export Excel")');
-                if (await exportBtn.count() > 0) {
+                const exportBtn = dropdown.locator(
+                    '.dropdown-item:has-text("导出Excel"), .dropdown-item:has-text("Export Excel")'
+                );
+                if ((await exportBtn.count()) > 0) {
                     await expect(exportBtn).toBeVisible();
                 } else {
                     console.log('未找到导出Excel按钮，跳过测试');
@@ -443,7 +454,7 @@ test.describe('综合交互测试', () => {
         const dropdown = page.locator('#more-actions-dropdown');
         const moreBtn = dropdown.locator('.more-btn');
 
-        if (await moreBtn.count() > 0) {
+        if ((await moreBtn.count()) > 0) {
             // 点击打开下拉菜单
             await moreBtn.click();
             await page.waitForTimeout(300);
@@ -451,12 +462,14 @@ test.describe('综合交互测试', () => {
             // 使用 ID 选择器查找导入Excel按钮
             const importExcelBtn = page.locator('#dropdown-import-excel');
 
-            if (await importExcelBtn.count() > 0) {
+            if ((await importExcelBtn.count()) > 0) {
                 await expect(importExcelBtn).toBeVisible();
             } else {
                 // 备用：使用文本选择器
-                const importBtn = dropdown.locator('.dropdown-item:has-text("导入Excel"), .dropdown-item:has-text("Import Excel")');
-                if (await importBtn.count() > 0) {
+                const importBtn = dropdown.locator(
+                    '.dropdown-item:has-text("导入Excel"), .dropdown-item:has-text("Import Excel")'
+                );
+                if ((await importBtn.count()) > 0) {
                     await expect(importBtn).toBeVisible();
                 } else {
                     console.log('未找到导入Excel按钮，跳过测试');
@@ -477,7 +490,6 @@ test.describe('综合交互测试', () => {
 // 截图证据收集测试
 // ========================================
 test.describe('截图证据收集', () => {
-
     test('桌面端甘特图完整截图', async ({ page }) => {
         await page.setViewportSize({ width: 1920, height: 1080 });
         await page.goto('/');
@@ -486,7 +498,7 @@ test.describe('截图证据收集', () => {
 
         await page.screenshot({
             path: 'doc/testdoc/screenshots/desktop-gantt-full.png',
-            fullPage: false
+            fullPage: false,
         });
     });
 
@@ -498,7 +510,7 @@ test.describe('截图证据收集', () => {
 
         await page.screenshot({
             path: 'doc/testdoc/screenshots/mobile-gantt.png',
-            fullPage: false
+            fullPage: false,
         });
     });
 
@@ -508,9 +520,9 @@ test.describe('截图证据收集', () => {
         await page.waitForTimeout(1000);
 
         const toolbar = page.locator('.toolbar, .gantt-toolbar, header');
-        if (await toolbar.count() > 0) {
+        if ((await toolbar.count()) > 0) {
             await toolbar.screenshot({
-                path: 'doc/testdoc/screenshots/toolbar.png'
+                path: 'doc/testdoc/screenshots/toolbar.png',
             });
         }
     });

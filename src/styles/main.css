@@ -1,4 +1,4 @@
-@import "tailwindcss";
+@import 'tailwindcss';
 @import './responsive/mobile.css';
 @import '../features/ai/styles/ai-theme.css';
 @import '../features/ai/styles/diff-confirm-modal.css';
@@ -9,62 +9,61 @@
 
 /* 基础样式层 */
 @layer base {
-
     /*
      * 设计系统 tokens - 单一真实来源
      * 所有颜色值来自 tailwind.config.js 中的 DaisyUI 主题配置
      */
     :root {
         /* 主色系 - 蓝色主题 */
-        --color-primary: #0EA5E9;
-        --color-primary-hover: #0284C7;
-        --color-primary-soft: #E0F2FE;
-        --color-primary-strong: #0369A1;
+        --color-primary: #0ea5e9;
+        --color-primary-hover: #0284c7;
+        --color-primary-soft: #e0f2fe;
+        --color-primary-strong: #0369a1;
 
         /* 中性色系 */
-        --color-secondary: #F1F5F9;
-        --color-accent: #50E3C2;
-        --color-background: #F7F8FA;
-        --color-surface: #F8FAFC;
-        --color-surface-2: #EEF2F6;
-        --color-card: #FFFFFF;
-        --color-foreground: #0F172A;
-        --color-muted-foreground: #64748B;
-        --color-border: #E2E8F0;
+        --color-secondary: #f1f5f9;
+        --color-accent: #50e3c2;
+        --color-background: #f7f8fa;
+        --color-surface: #f8fafc;
+        --color-surface-2: #eef2f6;
+        --color-card: #ffffff;
+        --color-foreground: #0f172a;
+        --color-muted-foreground: #64748b;
+        --color-border: #e2e8f0;
 
         /* 语义色 */
-        --color-danger: #DC2626;
-        --color-danger-soft: #FEE2E2;
-        --color-success: #22C55E;
-        --color-warning: #F59E0B;
-        --color-error: #EF4444;
+        --color-danger: #dc2626;
+        --color-danger-soft: #fee2e2;
+        --color-success: #22c55e;
+        --color-warning: #f59e0b;
+        --color-error: #ef4444;
 
         /* 设计规范 */
         --radius-m: 12px;
         --radius-pill: 999px;
         --shadow-modal: 0 12px 40px rgba(15, 23, 42, 0.18);
-        --backdrop-color: #0F172A4D;
+        --backdrop-color: #0f172a4d;
 
         /* 字体规范 */
         --font-family-base: 'Source Sans 3', 'Source Han Sans CN', sans-serif;
 
         /* 兼容旧代码的别名变量 - 逐步迁移后可删除 */
-        --primary-color: #0EA5E9;
-        --accent-color: #50E3C2;
-        --text-primary: #0F172A;
-        --text-secondary: #64748B;
-        --border-color: #E2E8F0;
-        --background-gray: #F7F8FA;
-        --background-hover-gray: #F1F5F9;
-        --background-white: #FFFFFF;
-        --primary-hover: #0284C7;
-        --success-color: #22C55E;
-        --warning-color: #F59E0B;
-        --danger-color: #DC2626;
-        --text-color: #0F172A;
-        --background-color: #F8FAFC;
+        --primary-color: #0ea5e9;
+        --accent-color: #50e3c2;
+        --text-primary: #0f172a;
+        --text-secondary: #64748b;
+        --border-color: #e2e8f0;
+        --background-gray: #f7f8fa;
+        --background-hover-gray: #f1f5f9;
+        --background-white: #ffffff;
+        --primary-hover: #0284c7;
+        --success-color: #22c55e;
+        --warning-color: #f59e0b;
+        --danger-color: #dc2626;
+        --text-color: #0f172a;
+        --background-color: #f8fafc;
         --white: #fff;
-        --task-bar-bg: #BAE6FD;
+        --task-bar-bg: #bae6fd;
         --font-size-body: 14px;
         --font-size-small: 12px;
         --border-radius-small: 4px;
@@ -157,7 +156,9 @@
     background: var(--color-secondary);
     color: var(--color-foreground);
     cursor: pointer;
-    transition: background 0.2s ease, color 0.2s ease;
+    transition:
+        background 0.2s ease,
+        color 0.2s ease;
     white-space: nowrap;
 }
 
@@ -177,7 +178,7 @@
 
 .toolbar-pill.toolbar-primary {
     background: var(--color-primary);
-    color: #FFFFFF;
+    color: #ffffff;
 }
 
 .toolbar-pill.toolbar-primary:hover {
@@ -195,13 +196,26 @@
     justify-content: center;
     color: var(--color-muted-foreground);
     cursor: pointer;
-    transition: background 0.2s ease, color 0.2s ease;
+    transition:
+        background 0.2s ease,
+        color 0.2s ease;
     vertical-align: middle;
 }
 
 .toolbar-icon-btn:hover {
     color: var(--color-foreground);
     background: var(--color-secondary);
+}
+
+.toolbar-icon-btn.feedback-recording-active {
+    color: #dc2626;
+    background: rgba(220, 38, 38, 0.1);
+    box-shadow: inset 0 0 0 1px rgba(220, 38, 38, 0.2);
+}
+
+.toolbar-icon-btn.feedback-recording-active:hover {
+    color: #b91c1c;
+    background: rgba(220, 38, 38, 0.16);
 }
 
 .toolbar-icon-btn:disabled {
@@ -219,7 +233,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-
     *,
     ::before,
     ::after {
@@ -241,7 +254,7 @@
     display: flex;
     align-items: stretch;
     height: 36px;
-    background: var(--color-surface-2, #EEF2F6);
+    background: var(--color-surface-2, #eef2f6);
     border-radius: var(--radius-m, 12px) var(--radius-m, 12px) 0 0;
     overflow: hidden;
     flex-shrink: 0;
@@ -267,7 +280,7 @@
     flex: 1 1 0;
     min-width: 0;
     margin-left: 0 !important; /* JS 不再用 margin-left，直接 flex */
-    border-left: 1px solid var(--color-border, #E2E8F0);
+    border-left: 1px solid var(--color-border, #e2e8f0);
 }
 
 .split-panel-bar-inner {
@@ -281,20 +294,20 @@
     width: 14px;
     height: 14px;
     flex-shrink: 0;
-    color: var(--color-muted-foreground, #64748B);
+    color: var(--color-muted-foreground, #64748b);
     stroke-width: 1.8;
 }
 
 .split-panel-title {
     font-size: 12px;
     font-weight: 600;
-    color: var(--color-foreground, #0F172A);
+    color: var(--color-foreground, #0f172a);
     white-space: nowrap;
 }
 
 .split-panel-meta {
     font-size: 11px;
-    color: var(--color-muted-foreground, #64748B);
+    color: var(--color-muted-foreground, #64748b);
     white-space: nowrap;
     flex-shrink: 0;
 }
@@ -392,7 +405,9 @@
 .gantt_row.row-drop-indicator-before,
 .row-drop-indicator-before,
 .gantt_row.row-drop-indicator-after,
-.row-drop-indicator-after {
+.row-drop-indicator-after,
+.gantt_row.row-drop-indicator-child,
+.row-drop-indicator-child {
     position: relative;
 }
 .gantt_row.row-drop-indicator-before::before,
@@ -413,4 +428,29 @@
 .gantt_row.row-drop-indicator-after::before,
 .row-drop-indicator-after::before {
     bottom: -1px;
+}
+.gantt_row.row-drop-indicator-child,
+.row-drop-indicator-child {
+    background: rgba(16, 185, 129, 0.1) !important;
+    box-shadow:
+        inset 4px 0 0 #10b981,
+        inset 0 0 0 1px rgba(16, 185, 129, 0.35);
+}
+.gantt_row.row-drop-indicator-child::after,
+.row-drop-indicator-child::after {
+    content: '子任务';
+    position: absolute;
+    right: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    height: 22px;
+    line-height: 22px;
+    padding: 0 8px;
+    border-radius: 999px;
+    background: #d1fae5;
+    color: #047857;
+    font-size: 12px;
+    font-weight: 600;
+    pointer-events: none;
+    box-shadow: 0 1px 3px rgba(4, 120, 87, 0.18);
 }

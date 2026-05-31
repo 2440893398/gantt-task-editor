@@ -3,25 +3,25 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const { streamTextMock } = vi.hoisted(() => ({
     streamTextMock: vi.fn(() => ({
         fullStream: (async function* () {})(),
-        usage: Promise.resolve({ promptTokens: 0, completionTokens: 0 })
-    }))
+        usage: Promise.resolve({ promptTokens: 0, completionTokens: 0 }),
+    })),
 }));
 
 vi.mock('ai', () => ({
     streamText: streamTextMock,
-    stepCountIs: vi.fn(() => 5)
+    stepCountIs: vi.fn(() => 5),
 }));
 
 vi.mock('../../../../src/features/ai/skills/registry.js', () => ({
     loadSkill: vi.fn(async (skillId) => ({
         name: skillId,
         allowedTools: [],
-        content: '# skill'
-    }))
+        content: '# skill',
+    })),
 }));
 
 vi.mock('../../../../src/features/ai/tools/registry.js', () => ({
-    getToolsForSkill: vi.fn(() => ({}))
+    getToolsForSkill: vi.fn(() => ({})),
 }));
 
 import { executeSkill, executeGeneralChat } from '../../../../src/features/ai/agent/executor.js';
@@ -33,7 +33,11 @@ describe('executor import-analysis guidance', () => {
     });
 
     it('injects import guidance and schema for import-analysis skill', async () => {
-        await executeSkill('import-analysis', [{ role: 'user', content: 'please parse attachment' }], { modelId: 'mock' });
+        await executeSkill(
+            'import-analysis',
+            [{ role: 'user', content: 'please parse attachment' }],
+            { modelId: 'mock' }
+        );
 
         expect(streamTextMock).toHaveBeenCalledTimes(1);
         const args = streamTextMock.mock.calls[0][0];

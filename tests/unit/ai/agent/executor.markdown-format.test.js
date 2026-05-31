@@ -3,25 +3,25 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const { streamTextMock } = vi.hoisted(() => ({
     streamTextMock: vi.fn(() => ({
         fullStream: (async function* () {})(),
-        usage: Promise.resolve({ promptTokens: 0, completionTokens: 0 })
-    }))
+        usage: Promise.resolve({ promptTokens: 0, completionTokens: 0 }),
+    })),
 }));
 
 vi.mock('ai', () => ({
     streamText: streamTextMock,
-    stepCountIs: vi.fn(() => 5)
+    stepCountIs: vi.fn(() => 5),
 }));
 
 vi.mock('../../../../src/features/ai/skills/registry.js', () => ({
     loadSkill: vi.fn(async (skillId) => ({
         name: skillId,
         allowedTools: [],
-        content: '# mock skill content'
-    }))
+        content: '# mock skill content',
+    })),
 }));
 
 vi.mock('../../../../src/features/ai/tools/registry.js', () => ({
-    getToolsForSkill: vi.fn(() => ({}))
+    getToolsForSkill: vi.fn(() => ({})),
 }));
 
 import { executeSkill } from '../../../../src/features/ai/agent/executor.js';
@@ -33,7 +33,9 @@ describe('executeSkill markdown formatting rules', () => {
     });
 
     it('allows markdown formatting for non field-info skills', async () => {
-        await executeSkill('task-query', [{ role: 'user', content: 'test' }], { modelId: 'mock-model' });
+        await executeSkill('task-query', [{ role: 'user', content: 'test' }], {
+            modelId: 'mock-model',
+        });
 
         expect(streamTextMock).toHaveBeenCalledTimes(1);
         const args = streamTextMock.mock.calls[0][0];

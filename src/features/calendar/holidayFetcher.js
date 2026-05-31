@@ -28,7 +28,7 @@ async function fetchChinaHolidays(year) {
     const res = await fetch(url);
     if (!res.ok) throw new Error(`holiday-cn fetch failed: ${res.status}`);
     const data = await res.json();
-    return (data.days ?? []).map(d => ({
+    return (data.days ?? []).map((d) => ({
         date: d.date,
         name: d.name,
         isOffDay: d.isOffDay,
@@ -44,7 +44,7 @@ async function fetchNagerHolidays(year, countryCode) {
     const res = await fetch(url);
     if (!res.ok) throw new Error(`Nager fetch failed: ${res.status}`);
     const data = await res.json();
-    return data.map(d => ({
+    return data.map((d) => ({
         date: d.date,
         name: d.localName ?? d.name,
         isOffDay: true,
@@ -89,7 +89,10 @@ export async function ensureHolidaysCached(year, countryCodeOverride = null) {
 
         console.log(`[Calendar] fetched ${holidays.length} holidays for ${year}/${countryCode}`);
     } catch (e) {
-        console.warn(`[Calendar] failed to fetch holidays for ${year}/${countryCode}, falling back to weekends only:`, e.message);
+        console.warn(
+            `[Calendar] failed to fetch holidays for ${year}/${countryCode}, falling back to weekends only:`,
+            e.message
+        );
     }
 }
 

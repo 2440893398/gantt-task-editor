@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "image-annotator": {
-      "command": "node",
-      "args": ["C:/Users/24408/IdeaProjects/image-annotator-mcp/server.js"]
-    }
-  }
-}

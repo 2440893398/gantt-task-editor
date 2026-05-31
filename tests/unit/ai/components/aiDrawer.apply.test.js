@@ -4,24 +4,24 @@ vi.mock('../../../../src/utils/i18n.js', () => ({
     i18n: {
         t: vi.fn(() => null),
         refresh: vi.fn(),
-        getLanguage: vi.fn(() => 'en-US')
-    }
+        getLanguage: vi.fn(() => 'en-US'),
+    },
 }));
 
 vi.mock('../../../../src/utils/toast.js', () => ({
-    showToast: vi.fn()
+    showToast: vi.fn(),
 }));
 
 vi.mock('../../../../src/features/ai/prompts/agentRegistry.js', () => ({
-    getAgentName: vi.fn(() => 'AI Chat')
+    getAgentName: vi.fn(() => 'AI Chat'),
 }));
 
 vi.mock('../../../../src/features/ai/components/AiConfigModal.js', () => ({
-    openAiConfigModal: vi.fn()
+    openAiConfigModal: vi.fn(),
 }));
 
 vi.mock('../../../../src/components/common/confirm-dialog.js', () => ({
-    showConfirmDialog: vi.fn()
+    showConfirmDialog: vi.fn(),
 }));
 
 describe('AiDrawer apply button visibility', () => {
@@ -41,7 +41,7 @@ describe('AiDrawer apply button visibility', () => {
         AiDrawer.openDrawer({
             title: 'AI Chat',
             context: 'hello',
-            agentId: 'chat'
+            agentId: 'chat',
         });
         AiDrawer.addMessage('assistant', 'assistant reply');
 
@@ -56,7 +56,7 @@ describe('AiDrawer apply button visibility', () => {
             title: 'Task Refine',
             context: 'task text',
             agentId: 'task_refine',
-            onApply: vi.fn()
+            onApply: vi.fn(),
         });
         AiDrawer.addMessage('assistant', 'assistant reply');
 
@@ -71,7 +71,7 @@ describe('AiDrawer apply button visibility', () => {
             title: 'AI Chat',
             context: 'hello',
             agentId: 'chat',
-            onApply: vi.fn()
+            onApply: vi.fn(),
         });
         AiDrawer.addMessage('assistant', 'assistant reply');
 
@@ -105,7 +105,7 @@ describe('AiDrawer apply button visibility', () => {
             title: 'Task Refine',
             context: 'task text',
             agentId: 'task_refine',
-            onApply: vi.fn()
+            onApply: vi.fn(),
         });
 
         const msgId = AiDrawer.startStreaming();
@@ -131,11 +131,11 @@ describe('AiDrawer apply button visibility', () => {
         expect(typeof parser).toBe('function');
         expect(parser('{"type":"task_split","subtasks":[]}')).toEqual({
             type: 'task_split',
-            subtasks: []
+            subtasks: [],
         });
         expect(parser('{"type":"task_diff","changes":[]}')).toEqual({
             type: 'task_diff',
-            changes: []
+            changes: [],
         });
         expect(parser('{"type":"unknown_type","foo":"bar"}')).toBeNull();
     });
@@ -148,7 +148,7 @@ describe('AiDrawer apply button visibility', () => {
             title: 'Task Refine',
             context: 'task text',
             agentId: 'task_refine',
-            onApply: vi.fn()
+            onApply: vi.fn(),
         });
 
         const msgId = AiDrawer.startStreaming();
@@ -171,7 +171,7 @@ describe('AiDrawer apply button visibility', () => {
         AiDrawer.openDrawer({
             title: 'AI Chat',
             context: 'hello',
-            agentId: 'chat'
+            agentId: 'chat',
         });
 
         const backdrop = document.getElementById('ai_drawer_backdrop');

@@ -19,9 +19,15 @@ describe('Baseline Store', () => {
     it('should save baseline snapshot', async () => {
         const snapshot = {
             data: [
-                { id: 1, text: 'Task 1', start_date: '2026-01-01', end_date: '2026-01-05', duration: 5 }
+                {
+                    id: 1,
+                    text: 'Task 1',
+                    start_date: '2026-01-01',
+                    end_date: '2026-01-05',
+                    duration: 5,
+                },
             ],
-            links: []
+            links: [],
         };
 
         await scope.saveBaseline({ snapshot, savedAt: new Date().toISOString() });
@@ -33,8 +39,14 @@ describe('Baseline Store', () => {
     });
 
     it('should overwrite existing baseline', async () => {
-        await scope.saveBaseline({ snapshot: { data: [{ id: 1, text: 'Old' }], links: [] }, savedAt: new Date().toISOString() });
-        await scope.saveBaseline({ snapshot: { data: [{ id: 1, text: 'New' }], links: [] }, savedAt: new Date().toISOString() });
+        await scope.saveBaseline({
+            snapshot: { data: [{ id: 1, text: 'Old' }], links: [] },
+            savedAt: new Date().toISOString(),
+        });
+        await scope.saveBaseline({
+            snapshot: { data: [{ id: 1, text: 'New' }], links: [] },
+            savedAt: new Date().toISOString(),
+        });
 
         const saved = await scope.getBaseline();
         expect(saved.snapshot.data[0].text).toBe('New');
@@ -42,7 +54,10 @@ describe('Baseline Store', () => {
 
     it('should check if baseline exists', async () => {
         expect(await scope.hasBaseline()).toBe(false);
-        await scope.saveBaseline({ snapshot: { data: [], links: [] }, savedAt: new Date().toISOString() });
+        await scope.saveBaseline({
+            snapshot: { data: [], links: [] },
+            savedAt: new Date().toISOString(),
+        });
         expect(await scope.hasBaseline()).toBe(true);
     });
 });

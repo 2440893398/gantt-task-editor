@@ -20,7 +20,7 @@ vi.mock('../../src/core/store.js', () => ({
 
 vi.mock('../../src/utils/i18n.js', () => ({
     i18n: {
-        t: vi.fn(key => key),
+        t: vi.fn((key) => key),
     },
 }));
 
@@ -42,7 +42,8 @@ describe('ProjectPicker', () => {
     });
 
     it('renders current project name', async () => {
-        const { renderProjectPicker } = await import('../../src/features/projects/ProjectPicker.js');
+        const { renderProjectPicker } =
+            await import('../../src/features/projects/ProjectPicker.js');
         const mount = document.getElementById('mount');
 
         renderProjectPicker(mount);
@@ -51,7 +52,8 @@ describe('ProjectPicker', () => {
     });
 
     it('switches project when another project item is clicked', async () => {
-        const { renderProjectPicker } = await import('../../src/features/projects/ProjectPicker.js');
+        const { renderProjectPicker } =
+            await import('../../src/features/projects/ProjectPicker.js');
         const mount = document.getElementById('mount');
 
         renderProjectPicker(mount);
@@ -69,7 +71,8 @@ describe('ProjectPicker', () => {
         ];
         mockState.currentProjectId = 'prj_a';
 
-        const { renderProjectPicker } = await import('../../src/features/projects/ProjectPicker.js');
+        const { renderProjectPicker } =
+            await import('../../src/features/projects/ProjectPicker.js');
         const mount = document.getElementById('mount');
 
         renderProjectPicker(mount);

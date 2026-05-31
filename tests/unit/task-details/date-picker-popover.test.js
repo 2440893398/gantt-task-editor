@@ -9,8 +9,8 @@ const holidayRows = [];
 
 const yearQuery = {
     equals: vi.fn(() => ({
-        toArray: vi.fn(async () => holidayRows)
-    }))
+        toArray: vi.fn(async () => holidayRows),
+    })),
 };
 
 vi.mock('../../../src/core/storage.js', () => ({
@@ -18,28 +18,28 @@ vi.mock('../../../src/core/storage.js', () => ({
     getAllCustomDays: getAllCustomDaysMock,
     db: {
         calendar_holidays: {
-            where: vi.fn(() => yearQuery)
-        }
-    }
+            where: vi.fn(() => yearQuery),
+        },
+    },
 }));
 
 vi.mock('../../../src/features/calendar/holidayFetcher.js', () => ({
-    ensureHolidaysCached: ensureHolidaysCachedMock
+    ensureHolidaysCached: ensureHolidaysCachedMock,
 }));
 
 vi.mock('../../../src/features/calendar/mini-calendar.js', () => ({
-    renderMiniCalendar: renderMiniCalendarMock
+    renderMiniCalendar: renderMiniCalendarMock,
 }));
 
 vi.mock('../../../src/features/calendar/locale-country.js', () => ({
-    resolveCountryByLocale: vi.fn((settings) => ({ countryCode: settings.countryCode || 'CN' }))
+    resolveCountryByLocale: vi.fn((settings) => ({ countryCode: settings.countryCode || 'CN' })),
 }));
 
 vi.mock('../../../src/utils/i18n.js', () => ({
     i18n: {
         getLanguage: vi.fn(() => 'zh-CN'),
-        t: vi.fn((key) => key)
-    }
+        t: vi.fn((key) => key),
+    },
 }));
 
 describe('date picker popover', () => {
@@ -50,7 +50,7 @@ describe('date picker popover', () => {
 
         getCalendarSettingsMock.mockResolvedValue({
             countryCode: 'CN',
-            workdaysOfWeek: [1, 2, 3, 4, 5]
+            workdaysOfWeek: [1, 2, 3, 4, 5],
         });
         getAllCustomDaysMock.mockResolvedValue([]);
     });
@@ -64,21 +64,22 @@ describe('date picker popover', () => {
         );
         getAllCustomDaysMock.mockResolvedValue([
             { id: 'c1', date: '2026-02-02', isOffDay: false },
-            { id: 'c2', date: '2026-02-05', isOffDay: true }
+            { id: 'c2', date: '2026-02-05', isOffDay: true },
         ]);
 
         renderMiniCalendarMock.mockImplementation(({ onDayClick }) => {
             onDayClick('2026-02-06');
         });
 
-        const { openTaskDatePickerPopover } = await import('../../../src/features/task-details/date-picker-popover.js');
+        const { openTaskDatePickerPopover } =
+            await import('../../../src/features/task-details/date-picker-popover.js');
 
         const anchor = document.createElement('button');
         document.body.appendChild(anchor);
         await openTaskDatePickerPopover({
             anchorEl: anchor,
             selectedDate: '2026-02-01',
-            onSelect
+            onSelect,
         });
 
         const call = renderMiniCalendarMock.mock.calls[0][0];
@@ -96,18 +97,22 @@ describe('date picker popover', () => {
         const originalRemoveEventListener = document.removeEventListener.bind(document);
         const activeClickListeners = new Set();
 
-        const addListenerSpy = vi.spyOn(document, 'addEventListener').mockImplementation((type, listener, options) => {
-            if (type === 'click' && typeof listener === 'function') {
-                activeClickListeners.add(listener);
-            }
-            return originalAddEventListener(type, listener, options);
-        });
-        const removeListenerSpy = vi.spyOn(document, 'removeEventListener').mockImplementation((type, listener, options) => {
-            if (type === 'click' && typeof listener === 'function') {
-                activeClickListeners.delete(listener);
-            }
-            return originalRemoveEventListener(type, listener, options);
-        });
+        const addListenerSpy = vi
+            .spyOn(document, 'addEventListener')
+            .mockImplementation((type, listener, options) => {
+                if (type === 'click' && typeof listener === 'function') {
+                    activeClickListeners.add(listener);
+                }
+                return originalAddEventListener(type, listener, options);
+            });
+        const removeListenerSpy = vi
+            .spyOn(document, 'removeEventListener')
+            .mockImplementation((type, listener, options) => {
+                if (type === 'click' && typeof listener === 'function') {
+                    activeClickListeners.delete(listener);
+                }
+                return originalRemoveEventListener(type, listener, options);
+            });
 
         try {
             renderMiniCalendarMock.mockImplementation(() => {});
@@ -118,21 +123,22 @@ describe('date picker popover', () => {
             });
             getCalendarSettingsMock.mockReturnValueOnce(delayedSettingsPromise);
 
-            const { openTaskDatePickerPopover, closeTaskDatePickerPopover } = await import('../../../src/features/task-details/date-picker-popover.js');
+            const { openTaskDatePickerPopover, closeTaskDatePickerPopover } =
+                await import('../../../src/features/task-details/date-picker-popover.js');
 
             const anchor = document.createElement('button');
             document.body.appendChild(anchor);
 
             const firstOpenPromise = openTaskDatePickerPopover({
                 anchorEl: anchor,
-                selectedDate: '2026-02-01'
+                selectedDate: '2026-02-01',
             });
 
             closeTaskDatePickerPopover();
 
             resolveSettings({
                 countryCode: 'CN',
-                workdaysOfWeek: [1, 2, 3, 4, 5]
+                workdaysOfWeek: [1, 2, 3, 4, 5],
             });
 
             await firstOpenPromise;
@@ -141,7 +147,7 @@ describe('date picker popover', () => {
 
             await openTaskDatePickerPopover({
                 anchorEl: anchor,
-                selectedDate: '2026-02-02'
+                selectedDate: '2026-02-02',
             });
             expect(activeClickListeners.size).toBe(1);
             expect(document.querySelector('.task-date-picker-popover')).not.toBeNull();

@@ -10,30 +10,31 @@ function setupGantt(tasks = [], links = []) {
     mockLinks = links;
     globalThis.gantt = {
         eachTask: (fn) => mockTasks.forEach(fn),
-        getTask: (id) => mockTasks.find(t => t.id === id) || null,
+        getTask: (id) => mockTasks.find((t) => t.id === id) || null,
         getParent: (id) => {
-            const t = mockTasks.find(t => t.id === id);
+            const t = mockTasks.find((t) => t.id === id);
             return t?._parent || null;
         },
-        getChildren: (id) => mockTasks.filter(t => t._parent === id).map(t => t.id),
+        getChildren: (id) => mockTasks.filter((t) => t._parent === id).map((t) => t.id),
         getLinks: () => mockLinks,
-        getLink: (id) => mockLinks.find(l => l.id === id) || null,
+        getLink: (id) => mockLinks.find((l) => l.id === id) || null,
         config: {
             columns: [
                 { name: 'text', label: '任务名称', width: 200 },
                 { name: 'start_date', label: '开始日期', width: 120 },
                 { name: 'duration', label: '工期', width: 80 },
-                { name: 'priority', label: '优先级', width: 80 }
-            ]
+                { name: 'priority', label: '优先级', width: 80 },
+            ],
         },
         serverList: (name) => {
-            if (name === 'priority') return [
-                { key: 'high', label: '高' },
-                { key: 'medium', label: '中' },
-                { key: 'low', label: '低' }
-            ];
+            if (name === 'priority')
+                return [
+                    { key: 'high', label: '高' },
+                    { key: 'medium', label: '中' },
+                    { key: 'low', label: '低' },
+                ];
             return [];
-        }
+        },
     };
 }
 
@@ -70,11 +71,11 @@ describe('analysisTools', () => {
                 [
                     { id: 1, text: 'Task A' },
                     { id: 2, text: 'Task B' },
-                    { id: 3, text: 'Task C' }
+                    { id: 3, text: 'Task C' },
                 ],
                 [
                     { id: 'l1', source: 1, target: 2, type: '0' },
-                    { id: 'l2', source: 2, target: 3, type: '0' }
+                    { id: 'l2', source: 2, target: 3, type: '0' },
                 ]
             );
             const result = await analysisTools.get_task_dependencies.execute({ task_id: 2 });
@@ -90,12 +91,27 @@ describe('analysisTools', () => {
 
     describe('get_critical_path', () => {
         it('returns critical path tasks', async () => {
-            setupGantt([
-                { id: 1, text: 'Task A', start_date: new Date('2026-01-01'), end_date: new Date('2026-01-05'), duration: 4, progress: 0 },
-                { id: 2, text: 'Task B', start_date: new Date('2026-01-05'), end_date: new Date('2026-01-10'), duration: 5, progress: 0 }
-            ], [
-                { id: 'l1', source: 1, target: 2, type: '0' }
-            ]);
+            setupGantt(
+                [
+                    {
+                        id: 1,
+                        text: 'Task A',
+                        start_date: new Date('2026-01-01'),
+                        end_date: new Date('2026-01-05'),
+                        duration: 4,
+                        progress: 0,
+                    },
+                    {
+                        id: 2,
+                        text: 'Task B',
+                        start_date: new Date('2026-01-05'),
+                        end_date: new Date('2026-01-10'),
+                        duration: 5,
+                        progress: 0,
+                    },
+                ],
+                [{ id: 'l1', source: 1, target: 2, type: '0' }]
+            );
             const result = await analysisTools.get_critical_path.execute();
             expect(result.critical_path).toBeDefined();
             expect(Array.isArray(result.critical_path)).toBe(true);
@@ -107,7 +123,7 @@ describe('analysisTools', () => {
             setupGantt([
                 { id: 1, text: 'Task A', assignee: 'Alice', duration: 3 },
                 { id: 2, text: 'Task B', assignee: 'Alice', duration: 5 },
-                { id: 3, text: 'Task C', assignee: 'Bob', duration: 2 }
+                { id: 3, text: 'Task C', assignee: 'Bob', duration: 2 },
             ]);
             const result = await analysisTools.get_resource_workload.execute();
             expect(result.workload).toBeDefined();
@@ -122,7 +138,7 @@ describe('analysisTools', () => {
             setupGantt([
                 { id: 1, text: 'Task A', assignee: 'Alice' },
                 { id: 2, text: 'Task B', assignee: 'Bob' },
-                { id: 3, text: 'Task C', assignee: 'Alice' }
+                { id: 3, text: 'Task C', assignee: 'Alice' },
             ]);
             const result = await analysisTools.get_tasks_by_assignee.execute({ assignee: 'Alice' });
             expect(result.tasks).toHaveLength(2);
@@ -133,9 +149,27 @@ describe('analysisTools', () => {
     describe('get_resource_conflicts', () => {
         it('detects overlapping tasks for same assignee', async () => {
             setupGantt([
-                { id: 1, text: 'Task A', assignee: 'Alice', start_date: new Date('2026-01-01'), end_date: new Date('2026-01-10') },
-                { id: 2, text: 'Task B', assignee: 'Alice', start_date: new Date('2026-01-05'), end_date: new Date('2026-01-15') },
-                { id: 3, text: 'Task C', assignee: 'Bob', start_date: new Date('2026-01-01'), end_date: new Date('2026-01-05') }
+                {
+                    id: 1,
+                    text: 'Task A',
+                    assignee: 'Alice',
+                    start_date: new Date('2026-01-01'),
+                    end_date: new Date('2026-01-10'),
+                },
+                {
+                    id: 2,
+                    text: 'Task B',
+                    assignee: 'Alice',
+                    start_date: new Date('2026-01-05'),
+                    end_date: new Date('2026-01-15'),
+                },
+                {
+                    id: 3,
+                    text: 'Task C',
+                    assignee: 'Bob',
+                    start_date: new Date('2026-01-01'),
+                    end_date: new Date('2026-01-05'),
+                },
             ]);
             const result = await analysisTools.get_resource_conflicts.execute();
             expect(result.conflicts).toBeDefined();
@@ -146,17 +180,32 @@ describe('analysisTools', () => {
     describe('get_tasks_in_range', () => {
         it('returns tasks within date range', async () => {
             setupGantt([
-                { id: 1, text: 'Task A', start_date: new Date('2026-01-01'), end_date: new Date('2026-01-05') },
-                { id: 2, text: 'Task B', start_date: new Date('2026-02-01'), end_date: new Date('2026-02-10') },
-                { id: 3, text: 'Task C', start_date: new Date('2026-01-03'), end_date: new Date('2026-01-08') }
+                {
+                    id: 1,
+                    text: 'Task A',
+                    start_date: new Date('2026-01-01'),
+                    end_date: new Date('2026-01-05'),
+                },
+                {
+                    id: 2,
+                    text: 'Task B',
+                    start_date: new Date('2026-02-01'),
+                    end_date: new Date('2026-02-10'),
+                },
+                {
+                    id: 3,
+                    text: 'Task C',
+                    start_date: new Date('2026-01-03'),
+                    end_date: new Date('2026-01-08'),
+                },
             ]);
             const result = await analysisTools.get_tasks_in_range.execute({
                 start: '2026-01-01',
-                end: '2026-01-10'
+                end: '2026-01-10',
             });
             expect(result.tasks).toHaveLength(2);
-            expect(result.tasks.map(t => t.id)).toContain(1);
-            expect(result.tasks.map(t => t.id)).toContain(3);
+            expect(result.tasks.map((t) => t.id)).toContain(1);
+            expect(result.tasks.map((t) => t.id)).toContain(3);
         });
     });
 
@@ -171,7 +220,7 @@ describe('analysisTools', () => {
             setupGantt([
                 { id: 1, text: 'Task A', end_date: soon, progress: 0 },
                 { id: 2, text: 'Task B', end_date: far, progress: 0 },
-                { id: 3, text: 'Task C', end_date: soon, progress: 1 } // completed
+                { id: 3, text: 'Task C', end_date: soon, progress: 1 }, // completed
             ]);
             const result = await analysisTools.get_upcoming_deadlines.execute({ days: 7 });
             expect(result.tasks).toHaveLength(1); // Only Task A
@@ -182,8 +231,20 @@ describe('analysisTools', () => {
     describe('get_baseline_deviation', () => {
         it('returns deviation info', async () => {
             setupGantt([
-                { id: 1, text: 'Task A', end_date: new Date('2026-01-10'), planned_end: new Date('2026-01-08'), progress: 0.5 },
-                { id: 2, text: 'Task B', end_date: new Date('2026-01-15'), planned_end: new Date('2026-01-15'), progress: 0 }
+                {
+                    id: 1,
+                    text: 'Task A',
+                    end_date: new Date('2026-01-10'),
+                    planned_end: new Date('2026-01-08'),
+                    progress: 0.5,
+                },
+                {
+                    id: 2,
+                    text: 'Task B',
+                    end_date: new Date('2026-01-15'),
+                    planned_end: new Date('2026-01-15'),
+                    progress: 0,
+                },
             ]);
             const result = await analysisTools.get_baseline_deviation.execute();
             expect(result.deviations).toBeDefined();
@@ -194,7 +255,16 @@ describe('analysisTools', () => {
     describe('get_task_detail', () => {
         it('returns detailed info for a task', async () => {
             setupGantt([
-                { id: 1, text: 'Task A', priority: 'high', status: 'in_progress', progress: 0.5, start_date: new Date('2026-01-01'), end_date: new Date('2026-01-10'), assignee: 'Alice' }
+                {
+                    id: 1,
+                    text: 'Task A',
+                    priority: 'high',
+                    status: 'in_progress',
+                    progress: 0.5,
+                    start_date: new Date('2026-01-01'),
+                    end_date: new Date('2026-01-10'),
+                    assignee: 'Alice',
+                },
             ]);
             const result = await analysisTools.get_task_detail.execute({ task_id: 1 });
             expect(result.task).toBeDefined();
@@ -215,7 +285,7 @@ describe('analysisTools', () => {
                 { id: 1, text: 'Parent' },
                 { id: 2, text: 'Child A', _parent: 1 },
                 { id: 3, text: 'Child B', _parent: 1 },
-                { id: 4, text: 'Other' }
+                { id: 4, text: 'Other' },
             ]);
             const result = await analysisTools.get_subtasks.execute({ task_id: 1 });
             expect(result.subtasks).toHaveLength(2);
@@ -245,7 +315,15 @@ describe('analysisTools', () => {
     describe('get_custom_fields', () => {
         it('returns custom field values for a task', async () => {
             setupGantt([
-                { id: 1, text: 'Task A', custom_field_1: 'val1', custom_field_2: 42, priority: 'high', status: 'pending', progress: 0 }
+                {
+                    id: 1,
+                    text: 'Task A',
+                    custom_field_1: 'val1',
+                    custom_field_2: 42,
+                    priority: 'high',
+                    status: 'pending',
+                    progress: 0,
+                },
             ]);
             const result = await analysisTools.get_custom_fields.execute({ task_id: 1 });
             expect(result.fields).toBeDefined();
@@ -257,7 +335,7 @@ describe('analysisTools', () => {
             setupGantt([
                 { id: 1, text: 'A', priority: 'high' },
                 { id: 2, text: 'B', priority: 'high' },
-                { id: 3, text: 'C', priority: 'low' }
+                { id: 3, text: 'C', priority: 'low' },
             ]);
             const result = await analysisTools.get_field_statistics.execute({ field: 'priority' });
             expect(result.statistics).toBeDefined();

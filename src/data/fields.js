@@ -3,9 +3,25 @@
  * 注意：options 使用内部值 (如 high, pending)，显示时根据 i18n 翻译
  */
 export const defaultCustomFields = [
-    { name: "priority", label: "优先级", type: "select", options: ["high", "medium", "low"], width: 90, required: false, i18nKey: "enums.priority" },
-    { name: "assignee", label: "负责人", type: "text", width: 120, required: true },
-    { name: "status", label: "状态", type: "select", options: ["pending", "in_progress", "completed", "suspended"], width: 130, required: false, i18nKey: "enums.status" }
+    {
+        name: 'priority',
+        label: '优先级',
+        type: 'select',
+        options: ['high', 'medium', 'low'],
+        width: 90,
+        required: false,
+        i18nKey: 'enums.priority',
+    },
+    { name: 'assignee', label: '负责人', type: 'text', width: 120, required: true },
+    {
+        name: 'status',
+        label: '状态',
+        type: 'select',
+        options: ['pending', 'in_progress', 'completed', 'suspended'],
+        width: 130,
+        required: false,
+        i18nKey: 'enums.status',
+    },
 ];
 
 /**
@@ -13,7 +29,17 @@ export const defaultCustomFields = [
  * description 列直接展示富文本摘要（悬浮 tooltip 预览完整内容）
  * end_date 紧跟 start_date（canDisable:false，始终展示）
  */
-export const defaultFieldOrder = ["text", "priority", "assignee", "status", "description", "start_date", "end_date", "duration", "progress"];
+export const defaultFieldOrder = [
+    'text',
+    'priority',
+    'assignee',
+    'status',
+    'description',
+    'start_date',
+    'end_date',
+    'duration',
+    'progress',
+];
 
 /**
  * System field configuration
@@ -25,28 +51,28 @@ export const SYSTEM_FIELD_CONFIG = {
         type: 'text',
         canDisable: false,
         allowedTypes: ['text'],
-        linkedGroup: null
+        linkedGroup: null,
     },
     description: {
         i18nKey: 'task.description',
         type: 'text',
         canDisable: false,
         allowedTypes: ['text'],
-        linkedGroup: null
+        linkedGroup: null,
     },
     priority: {
         i18nKey: 'columns.priority',
         type: 'select',
         canDisable: false,
         allowedTypes: ['select'],
-        linkedGroup: null
+        linkedGroup: null,
     },
     assignee: {
         i18nKey: 'columns.assignee',
-        type: 'text',  // Default is text, can be changed to select/multiselect
+        type: 'text', // Default is text, can be changed to select/multiselect
         canDisable: false,
         allowedTypes: ['text', 'select', 'multiselect'],
-        linkedGroup: null
+        linkedGroup: null,
     },
 
     start_date: {
@@ -54,63 +80,71 @@ export const SYSTEM_FIELD_CONFIG = {
         type: 'date',
         canDisable: false,
         allowedTypes: ['date', 'datetime'],
-        linkedGroup: null
+        linkedGroup: null,
     },
     end_date: {
         i18nKey: 'taskDetails.planEnd',
         type: 'date',
         canDisable: false,
         allowedTypes: ['date', 'datetime'],
-        linkedGroup: null
+        linkedGroup: null,
     },
     status: {
         i18nKey: 'columns.status',
         type: 'select',
         canDisable: true,
         allowedTypes: ['select'],
-        linkedGroup: null
+        linkedGroup: null,
     },
     progress: {
         i18nKey: 'columns.progress',
         type: 'number',
         canDisable: true,
         allowedTypes: ['number'],
-        linkedGroup: null
+        linkedGroup: null,
     },
     duration: {
         i18nKey: 'columns.duration',
         type: 'number',
         canDisable: true,
         allowedTypes: ['number'],
-        linkedGroup: null
+        linkedGroup: null,
     },
     actual_start: {
         i18nKey: 'taskDetails.actualStart',
         type: 'date',
         canDisable: true,
         allowedTypes: ['date', 'datetime'],
-        linkedGroup: 'actual'
+        linkedGroup: 'actual',
     },
     actual_end: {
         i18nKey: 'taskDetails.actualEnd',
         type: 'date',
         canDisable: true,
         allowedTypes: ['date', 'datetime'],
-        linkedGroup: 'actual'
+        linkedGroup: 'actual',
     },
     actual_hours: {
         i18nKey: 'taskDetails.actualHours',
         type: 'number',
         canDisable: true,
         allowedTypes: ['number'],
-        linkedGroup: 'actual'
-    }
+        linkedGroup: 'actual',
+    },
 };
 
 /**
  * Internal fields that should never be shown in field management
  */
 export const INTERNAL_FIELDS = [
-    'summary', 'parent', 'id', 'open', 'type', 'render',
-    '$level', '$open', '$virtual', 'estimated_hours'
+    'summary',
+    'parent',
+    'id',
+    'open',
+    'type',
+    'render',
+    '$level',
+    '$open',
+    '$virtual',
+    'estimated_hours',
 ];

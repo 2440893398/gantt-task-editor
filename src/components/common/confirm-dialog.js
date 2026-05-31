@@ -11,27 +11,29 @@
 import { escapeHtml } from '../../utils/dom.js';
 
 const ICONS = {
-    'trash-2': '<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>',
-    'alert-triangle': '<path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
-    info: '<circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>'
+    'trash-2':
+        '<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>',
+    'alert-triangle':
+        '<path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
+    info: '<circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>',
 };
 
 const COLOR_MAP = {
     danger: {
         iconBgClass: 'bg-error/10',
         iconColorClass: 'text-error',
-        btnClass: 'btn btn-error'
+        btnClass: 'btn btn-error',
     },
     primary: {
         iconBgClass: 'bg-primary/10',
         iconColorClass: 'text-primary',
-        btnClass: 'btn btn-primary'
+        btnClass: 'btn btn-primary',
     },
     warning: {
         iconBgClass: 'bg-warning/10',
         iconColorClass: 'text-warning',
-        btnClass: 'btn btn-warning'
-    }
+        btnClass: 'btn btn-warning',
+    },
 };
 
 let activeDialog = null;
@@ -44,8 +46,8 @@ export function showConfirmDialog({
     message = '',
     confirmText = '确认',
     cancelText = '取消',
-    onConfirm = () => { },
-    onCancel = () => { }
+    onConfirm = () => {},
+    onCancel = () => {},
 }) {
     closeConfirmDialog();
 
@@ -140,4 +142,3 @@ export function closeConfirmDialog() {
     activeDialog = null;
     setTimeout(() => el.remove(), 200);
 }
-

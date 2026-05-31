@@ -21,7 +21,7 @@ import {
     addWorkDays,
     detectCycle,
     calculateWBS,
-    updateParentDates
+    updateParentDates,
 } from '../../src/features/gantt/scheduler.js';
 
 // ========================================
@@ -30,7 +30,6 @@ import {
 // Default: workdaysOfWeek = [1,2,3,4,5] (Mon-Fri), countryCode = 'CN'
 // ========================================
 describe('工作日历模块 (Work Calendar)', () => {
-
     // SCHED-007: 验证周六被正确识别为非工作日
     test('SCHED-007: 周六应被识别为非工作日', async () => {
         // 2026-01-17 是周六
@@ -108,11 +107,10 @@ describe('工作日历模块 (Work Calendar)', () => {
 // 2.5 循环检测测试 (SCHED-020 ~ SCHED-024)
 // ========================================
 describe('循环检测模块 (Cycle Detection)', () => {
-
     beforeEach(() => {
         // Mock gantt.getLinks
         global.gantt = {
-            getLinks: vi.fn()
+            getLinks: vi.fn(),
         };
     });
 
@@ -127,9 +125,7 @@ describe('循环检测模块 (Cycle Detection)', () => {
     // SCHED-020: 验证直接循环依赖被阻止
     test('SCHED-020: 直接循环依赖 (A->B, B->A) 应被检测', () => {
         // 已存在 A -> B
-        global.gantt.getLinks.mockReturnValue([
-            { source: 1, target: 2 }
-        ]);
+        global.gantt.getLinks.mockReturnValue([{ source: 1, target: 2 }]);
 
         // 尝试创建 B -> A
         const hasCycle = detectCycle(2, 1);
@@ -141,7 +137,7 @@ describe('循环检测模块 (Cycle Detection)', () => {
         // 已存在 A -> B -> C
         global.gantt.getLinks.mockReturnValue([
             { source: 1, target: 2 },
-            { source: 2, target: 3 }
+            { source: 2, target: 3 },
         ]);
 
         // 尝试创建 C -> A
@@ -156,7 +152,7 @@ describe('循环检测模块 (Cycle Detection)', () => {
             { source: 1, target: 2 },
             { source: 2, target: 3 },
             { source: 3, target: 4 },
-            { source: 4, target: 5 }
+            { source: 4, target: 5 },
         ]);
 
         // 尝试创建 E -> A
@@ -167,9 +163,7 @@ describe('循环检测模块 (Cycle Detection)', () => {
     // SCHED-024: 验证合法依赖链可正常创建
     test('SCHED-024: 合法依赖链 (A->B, B->C) 应通过检测', () => {
         // 已存在 A -> B
-        global.gantt.getLinks.mockReturnValue([
-            { source: 1, target: 2 }
-        ]);
+        global.gantt.getLinks.mockReturnValue([{ source: 1, target: 2 }]);
 
         // 创建 B -> C (合法)
         const hasCycle = detectCycle(2, 3);
@@ -190,12 +184,11 @@ describe('循环检测模块 (Cycle Detection)', () => {
 // 2.3 父任务自动聚合测试 (SCHED-010 ~ SCHED-015)
 // ========================================
 describe('父任务自动聚合模块 (WBS Calculation)', () => {
-
     beforeEach(() => {
         // Mock gantt 对象
         global.gantt = {
             getChildren: vi.fn(),
-            getTask: vi.fn()
+            getTask: vi.fn(),
         };
     });
 
@@ -207,7 +200,7 @@ describe('父任务自动聚合模块 (WBS Calculation)', () => {
             const tasks = {
                 1: { id: 1, start_date: new Date('2026-01-05'), end_date: new Date('2026-01-10') },
                 2: { id: 2, start_date: new Date('2026-01-01'), end_date: new Date('2026-01-08') },
-                3: { id: 3, start_date: new Date('2026-01-08'), end_date: new Date('2026-01-15') }
+                3: { id: 3, start_date: new Date('2026-01-08'), end_date: new Date('2026-01-15') },
             };
             return tasks[id];
         });
@@ -227,7 +220,7 @@ describe('父任务自动聚合模块 (WBS Calculation)', () => {
             const tasks = {
                 1: { id: 1, start_date: new Date('2026-01-05'), end_date: new Date('2026-01-10') },
                 2: { id: 2, start_date: new Date('2026-01-01'), end_date: new Date('2026-01-08') },
-                3: { id: 3, start_date: new Date('2026-01-08'), end_date: new Date('2026-01-15') }
+                3: { id: 3, start_date: new Date('2026-01-08'), end_date: new Date('2026-01-15') },
             };
             return tasks[id];
         });
@@ -251,7 +244,7 @@ describe('父任务自动聚合模块 (WBS Calculation)', () => {
         global.gantt.getTask.mockImplementation(() => ({
             id: 1,
             start_date: new Date('2026-01-10'),
-            end_date: new Date('2026-01-20')
+            end_date: new Date('2026-01-20'),
         }));
 
         const result = calculateWBS(0);
@@ -265,7 +258,6 @@ describe('父任务自动聚合模块 (WBS Calculation)', () => {
 // 边界条件和异常处理测试
 // ========================================
 describe('边界条件测试', () => {
-
     test('isWorkDay 应正确处理跨年日期', async () => {
         // 2025-12-31 是周三
         const dec31 = new Date(2025, 11, 31);
@@ -296,7 +288,7 @@ describe('父任务字段联动 (Parent Field Rollup)', () => {
             status: 'pending',
             assignee: '',
             estimated_hours: 0,
-            actual_hours: 0
+            actual_hours: 0,
         };
 
         const child1 = {
@@ -308,7 +300,7 @@ describe('父任务字段联动 (Parent Field Rollup)', () => {
             progress: 1,
             assignee: '张三',
             estimated_hours: 8,
-            actual_hours: 6
+            actual_hours: 6,
         };
 
         const child2 = {
@@ -320,14 +312,14 @@ describe('父任务字段联动 (Parent Field Rollup)', () => {
             progress: 0.5,
             assignee: '张三',
             estimated_hours: 4,
-            actual_hours: 3
+            actual_hours: 3,
         };
 
         global.gantt = {
-            getTask: vi.fn((id) => ({ 1: child1, 2: child2, 100: parent }[id])),
+            getTask: vi.fn((id) => ({ 1: child1, 2: child2, 100: parent })[id]),
             getChildren: vi.fn((id) => (id === 100 ? [1, 2] : [])),
             calculateDuration: vi.fn(() => 4),
-            updateTask: vi.fn()
+            updateTask: vi.fn(),
         };
 
         updateParentDates(1);
@@ -353,7 +345,7 @@ describe('父任务字段联动 (Parent Field Rollup)', () => {
             status: 'pending',
             assignee: '项目经理',
             estimated_hours: 0,
-            actual_hours: 0
+            actual_hours: 0,
         };
 
         const child = {
@@ -364,14 +356,14 @@ describe('父任务字段联动 (Parent Field Rollup)', () => {
             status: 'in_progress',
             assignee: '张三',
             estimated_hours: 2,
-            actual_hours: 1
+            actual_hours: 1,
         };
 
         global.gantt = {
-            getTask: vi.fn((id) => ({ 3: child, 200: parent }[id])),
+            getTask: vi.fn((id) => ({ 3: child, 200: parent })[id]),
             getChildren: vi.fn((id) => (id === 200 ? [3] : [])),
             calculateDuration: vi.fn(() => 1),
-            updateTask: vi.fn()
+            updateTask: vi.fn(),
         };
 
         updateParentDates(3);

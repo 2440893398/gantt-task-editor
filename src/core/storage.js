@@ -18,8 +18,8 @@ const db = new Dexie('GanttDB');
 db.version(2).stores({
     tasks: '++id, priority, status, start_date, parent',
     links: '++id, source, target, type',
-    history: '++id, timestamp, action',  // 可选：操作历史
-    baselines: 'id'
+    history: '++id, timestamp, action', // 可选：操作历史
+    baselines: 'id',
 });
 
 db.version(3).stores({
@@ -32,51 +32,56 @@ db.version(3).stores({
     calendar_holidays: 'date, year, countryCode',
     calendar_custom: 'id, date',
     person_leaves: 'id, assignee, startDate, endDate',
-    calendar_meta: 'year'
+    calendar_meta: 'year',
 });
 
 // v4: 新增 projects 表，给各表索引加 project_id；
 //     同时将 calendar_holidays 和 calendar_meta 设为 null（旧主键无法在线变更），
 //     由 v5 重建为新复合主键。
-db.version(4).stores({
-    projects:          'id, name, createdAt, updatedAt',
-    tasks:             '++id, project_id, priority, status, start_date, parent',
-    links:             '++id, project_id, source, target, type',
-    history:           '++id, project_id, timestamp, action',
-    baselines:         'id, project_id',
-    calendar_settings: '++id, project_id',
-    calendar_holidays: null,   // 主键从 date 变为复合键，需先删除再重建（v5）
-    calendar_custom:   'id, date, project_id',
-    person_leaves:     'id, project_id, assignee, startDate, endDate',
-    calendar_meta:     null,   // 主键从 year 变为复合键，需先删除再重建（v5）
-}).upgrade(async tx => {
-    const now = new Date().toISOString();
+db.version(4)
+    .stores({
+        projects: 'id, name, createdAt, updatedAt',
+        tasks: '++id, project_id, priority, status, start_date, parent',
+        links: '++id, project_id, source, target, type',
+        history: '++id, project_id, timestamp, action',
+        baselines: 'id, project_id',
+        calendar_settings: '++id, project_id',
+        calendar_holidays: null, // 主键从 date 变为复合键，需先删除再重建（v5）
+        calendar_custom: 'id, date, project_id',
+        person_leaves: 'id, project_id, assignee, startDate, endDate',
+        calendar_meta: null, // 主键从 year 变为复合键，需先删除再重建（v5）
+    })
+    .upgrade(async (tx) => {
+        const now = new Date().toISOString();
 
-    // 1. 新建默认项目记录
-    await tx.table('projects').add({
-        id: DEFAULT_PROJECT_ID,
-        name: '默认项目',
-        color: '#4f46e5',
-        description: '',
-        createdAt: now,
-        updatedAt: now,
+        // 1. 新建默认项目记录
+        await tx.table('projects').add({
+            id: DEFAULT_PROJECT_ID,
+            name: '默认项目',
+            color: '#4f46e5',
+            description: '',
+            createdAt: now,
+            updatedAt: now,
+        });
+
+        // 2. 给已有数据补写 project_id
+        await tx.table('tasks').toCollection().modify({ project_id: DEFAULT_PROJECT_ID });
+        await tx.table('links').toCollection().modify({ project_id: DEFAULT_PROJECT_ID });
+        await tx.table('baselines').toCollection().modify({ project_id: DEFAULT_PROJECT_ID });
+        await tx
+            .table('calendar_settings')
+            .toCollection()
+            .modify({ project_id: DEFAULT_PROJECT_ID });
+        await tx.table('calendar_custom').toCollection().modify({ project_id: DEFAULT_PROJECT_ID });
+        await tx.table('person_leaves').toCollection().modify({ project_id: DEFAULT_PROJECT_ID });
+        await tx.table('history').toCollection().modify({ project_id: DEFAULT_PROJECT_ID });
+        // calendar_holidays 和 calendar_meta 是 API 缓存数据，清空后会自动重新拉取，无需迁移
     });
-
-    // 2. 给已有数据补写 project_id
-    await tx.table('tasks').toCollection().modify({ project_id: DEFAULT_PROJECT_ID });
-    await tx.table('links').toCollection().modify({ project_id: DEFAULT_PROJECT_ID });
-    await tx.table('baselines').toCollection().modify({ project_id: DEFAULT_PROJECT_ID });
-    await tx.table('calendar_settings').toCollection().modify({ project_id: DEFAULT_PROJECT_ID });
-    await tx.table('calendar_custom').toCollection().modify({ project_id: DEFAULT_PROJECT_ID });
-    await tx.table('person_leaves').toCollection().modify({ project_id: DEFAULT_PROJECT_ID });
-    await tx.table('history').toCollection().modify({ project_id: DEFAULT_PROJECT_ID });
-    // calendar_holidays 和 calendar_meta 是 API 缓存数据，清空后会自动重新拉取，无需迁移
-});
 
 // v5: 以新复合主键重建 v4 中删除的两张缓存表
 db.version(5).stores({
     calendar_holidays: '[date+countryCode], year, countryCode',
-    calendar_meta:     '[year+project_id]',
+    calendar_meta: '[year+project_id]',
 });
 
 // ========================================
@@ -101,7 +106,7 @@ const STORAGE_KEYS = {
     // System field settings
     SYSTEM_FIELD_SETTINGS: 'gantt_system_field_settings',
     // View mode
-    VIEW_MODE: 'gantt_view_mode'
+    VIEW_MODE: 'gantt_view_mode',
 };
 
 // ========================================
@@ -421,14 +426,18 @@ export function projectScope(projectId = DEFAULT_PROJECT_ID) {
     return {
         async saveTasks(tasks) {
             try {
-                const tasksToSave = (tasks ?? []).map(task => encodeTaskForProject(task, scopedProjectId));
+                const tasksToSave = (tasks ?? []).map((task) =>
+                    encodeTaskForProject(task, scopedProjectId)
+                );
                 await db.transaction('rw', db.tasks, async () => {
                     await db.tasks.where('project_id').equals(scopedProjectId).delete();
                     if (tasksToSave.length > 0) {
                         await db.tasks.bulkAdd(tasksToSave);
                     }
                 });
-                console.log(`[Storage] Saved ${tasksToSave.length} tasks to IndexedDB (project: ${scopedProjectId})`);
+                console.log(
+                    `[Storage] Saved ${tasksToSave.length} tasks to IndexedDB (project: ${scopedProjectId})`
+                );
             } catch (e) {
                 console.error('[Storage] Failed to save tasks:', e);
                 throw e;
@@ -437,9 +446,12 @@ export function projectScope(projectId = DEFAULT_PROJECT_ID) {
 
         async getTasks() {
             try {
-                const tasks = (await db.tasks.where('project_id').equals(scopedProjectId).toArray())
-                    .map(task => decodeTaskForProject(task, scopedProjectId));
-                console.log(`[Storage] Loaded ${tasks.length} tasks from IndexedDB (project: ${scopedProjectId})`);
+                const tasks = (
+                    await db.tasks.where('project_id').equals(scopedProjectId).toArray()
+                ).map((task) => decodeTaskForProject(task, scopedProjectId));
+                console.log(
+                    `[Storage] Loaded ${tasks.length} tasks from IndexedDB (project: ${scopedProjectId})`
+                );
                 return tasks;
             } catch (e) {
                 console.error('[Storage] Failed to load tasks:', e);
@@ -449,14 +461,18 @@ export function projectScope(projectId = DEFAULT_PROJECT_ID) {
 
         async saveLinks(links) {
             try {
-                const linksToSave = (links ?? []).map(link => encodeLinkForProject(link, scopedProjectId));
+                const linksToSave = (links ?? []).map((link) =>
+                    encodeLinkForProject(link, scopedProjectId)
+                );
                 await db.transaction('rw', db.links, async () => {
                     await db.links.where('project_id').equals(scopedProjectId).delete();
                     if (linksToSave.length > 0) {
                         await db.links.bulkAdd(linksToSave);
                     }
                 });
-                console.log(`[Storage] Saved ${linksToSave.length} links to IndexedDB (project: ${scopedProjectId})`);
+                console.log(
+                    `[Storage] Saved ${linksToSave.length} links to IndexedDB (project: ${scopedProjectId})`
+                );
             } catch (e) {
                 console.error('[Storage] Failed to save links:', e);
                 throw e;
@@ -465,9 +481,12 @@ export function projectScope(projectId = DEFAULT_PROJECT_ID) {
 
         async getLinks() {
             try {
-                const links = (await db.links.where('project_id').equals(scopedProjectId).toArray())
-                    .map(link => decodeLinkForProject(link, scopedProjectId));
-                console.log(`[Storage] Loaded ${links.length} links from IndexedDB (project: ${scopedProjectId})`);
+                const links = (
+                    await db.links.where('project_id').equals(scopedProjectId).toArray()
+                ).map((link) => decodeLinkForProject(link, scopedProjectId));
+                console.log(
+                    `[Storage] Loaded ${links.length} links from IndexedDB (project: ${scopedProjectId})`
+                );
                 return links;
             } catch (e) {
                 console.error('[Storage] Failed to load links:', e);
@@ -479,8 +498,10 @@ export function projectScope(projectId = DEFAULT_PROJECT_ID) {
             try {
                 const taskRows = (ganttData?.data ?? [])
                     .map(serializeTaskDates)
-                    .map(task => encodeTaskForProject(task, scopedProjectId));
-                const linkRows = (ganttData?.links ?? []).map(link => encodeLinkForProject(link, scopedProjectId));
+                    .map((task) => encodeTaskForProject(task, scopedProjectId));
+                const linkRows = (ganttData?.links ?? []).map((link) =>
+                    encodeLinkForProject(link, scopedProjectId)
+                );
 
                 await db.transaction('rw', [db.tasks, db.links], async () => {
                     await db.tasks.where('project_id').equals(scopedProjectId).delete();
@@ -495,7 +516,9 @@ export function projectScope(projectId = DEFAULT_PROJECT_ID) {
                     }
                 });
 
-                console.log(`[Storage] Saved gantt data: ${taskRows.length} tasks, ${linkRows.length} links (project: ${scopedProjectId})`);
+                console.log(
+                    `[Storage] Saved gantt data: ${taskRows.length} tasks, ${linkRows.length} links (project: ${scopedProjectId})`
+                );
             } catch (e) {
                 console.error('[Storage] Failed to save gantt data:', e);
                 throw e;
@@ -508,9 +531,15 @@ export function projectScope(projectId = DEFAULT_PROJECT_ID) {
                     db.tasks.where('project_id').equals(scopedProjectId).toArray(),
                     db.links.where('project_id').equals(scopedProjectId).toArray(),
                 ]);
-                const decodedTasks = tasks.map(task => decodeTaskForProject(task, scopedProjectId));
-                const decodedLinks = links.map(link => decodeLinkForProject(link, scopedProjectId));
-                console.log(`[Storage] Loaded gantt data: ${tasks.length} tasks, ${links.length} links (project: ${scopedProjectId})`);
+                const decodedTasks = tasks.map((task) =>
+                    decodeTaskForProject(task, scopedProjectId)
+                );
+                const decodedLinks = links.map((link) =>
+                    decodeLinkForProject(link, scopedProjectId)
+                );
+                console.log(
+                    `[Storage] Loaded gantt data: ${tasks.length} tasks, ${links.length} links (project: ${scopedProjectId})`
+                );
                 return { data: decodedTasks, links: decodedLinks };
             } catch (e) {
                 console.error('[Storage] Failed to load gantt data:', e);
@@ -530,7 +559,10 @@ export function projectScope(projectId = DEFAULT_PROJECT_ID) {
 
         async getBaseline() {
             try {
-                const baselines = await db.baselines.where('project_id').equals(scopedProjectId).toArray();
+                const baselines = await db.baselines
+                    .where('project_id')
+                    .equals(scopedProjectId)
+                    .toArray();
                 return baselines.length > 0 ? baselines[0] : null;
             } catch (e) {
                 console.error('[Storage] Failed to load baseline:', e);
@@ -547,7 +579,7 @@ export function projectScope(projectId = DEFAULT_PROJECT_ID) {
                         savedAt,
                         id: buildScopedBaselineId(scopedProjectId, savedAt),
                     },
-                    scopedProjectId,
+                    scopedProjectId
                 );
 
                 await db.transaction('rw', db.baselines, async () => {
@@ -562,7 +594,10 @@ export function projectScope(projectId = DEFAULT_PROJECT_ID) {
 
         async hasBaseline() {
             try {
-                const count = await db.baselines.where('project_id').equals(scopedProjectId).count();
+                const count = await db.baselines
+                    .where('project_id')
+                    .equals(scopedProjectId)
+                    .count();
                 return count > 0;
             } catch (e) {
                 console.error('[Storage] Failed to check baseline:', e);
@@ -645,34 +680,38 @@ export async function hasCachedData() {
 export async function clearAllCache() {
     try {
         // 清除 localStorage
-        Object.values(STORAGE_KEYS).forEach(key => {
+        Object.values(STORAGE_KEYS).forEach((key) => {
             removeLocalStorage(key);
         });
 
         // 清除 IndexedDB（包含所有表）
-        await db.transaction('rw', [
-            db.tasks,
-            db.links,
-            db.history,
-            db.projects,
-            db.baselines,
-            db.calendar_settings,
-            db.calendar_holidays,
-            db.calendar_custom,
-            db.person_leaves,
-            db.calendar_meta,
-        ], async () => {
-            await db.tasks.clear();
-            await db.links.clear();
-            await db.history.clear();
-            await db.projects.clear();
-            await db.baselines.clear();
-            await db.calendar_settings.clear();
-            await db.calendar_holidays.clear();
-            await db.calendar_custom.clear();
-            await db.person_leaves.clear();
-            await db.calendar_meta.clear();
-        });
+        await db.transaction(
+            'rw',
+            [
+                db.tasks,
+                db.links,
+                db.history,
+                db.projects,
+                db.baselines,
+                db.calendar_settings,
+                db.calendar_holidays,
+                db.calendar_custom,
+                db.person_leaves,
+                db.calendar_meta,
+            ],
+            async () => {
+                await db.tasks.clear();
+                await db.links.clear();
+                await db.history.clear();
+                await db.projects.clear();
+                await db.baselines.clear();
+                await db.calendar_settings.clear();
+                await db.calendar_holidays.clear();
+                await db.calendar_custom.clear();
+                await db.person_leaves.clear();
+                await db.calendar_meta.clear();
+            }
+        );
 
         console.log('[Storage] All cache cleared');
     } catch (e) {
@@ -723,7 +762,7 @@ export async function getStorageStatus() {
 
         // 估算 localStorage 使用量
         let localStorageSize = 0;
-        Object.values(STORAGE_KEYS).forEach(key => {
+        Object.values(STORAGE_KEYS).forEach((key) => {
             const value = localStorage.getItem(key);
             if (value) {
                 localStorageSize += key.length + value.length;
@@ -733,12 +772,12 @@ export async function getStorageStatus() {
         return {
             indexedDB: {
                 tasks: tasksCount,
-                links: linksCount
+                links: linksCount,
             },
             localStorage: {
                 sizeBytes: localStorageSize * 2, // UTF-16 编码
-                sizeKB: Math.round((localStorageSize * 2) / 1024 * 100) / 100
-            }
+                sizeKB: Math.round(((localStorageSize * 2) / 1024) * 100) / 100,
+            },
         };
     } catch (e) {
         console.error('[Storage] Failed to get storage status:', e);
@@ -754,7 +793,7 @@ export async function checkStorageAvailability() {
     const result = {
         localStorage: false,
         indexedDB: false,
-        errors: []
+        errors: [],
     };
 
     // 检测 localStorage
@@ -791,7 +830,7 @@ export function saveAiConfig(config) {
     const safeConfig = {
         apiKey: config.apiKey || '',
         baseUrl: config.baseUrl || 'https://api.openai.com/v1',
-        model: config.model || 'gpt-3.5-turbo'
+        model: config.model || 'gpt-3.5-turbo',
     };
     setLocalStorage(STORAGE_KEYS.AI_CONFIG, safeConfig);
 }
@@ -804,7 +843,7 @@ export function getAiConfig() {
     return getLocalStorage(STORAGE_KEYS.AI_CONFIG, {
         apiKey: '',
         baseUrl: 'https://api.openai.com/v1',
-        model: 'gpt-3.5-turbo'
+        model: 'gpt-3.5-turbo',
     });
 }
 
@@ -834,7 +873,7 @@ export { db };
 /** 获取/保存全局日历设置 */
 export async function getCalendarSettings() {
     const row = await db.calendar_settings.toCollection().first();
-    return row ?? { countryCode: 'CN', workdaysOfWeek: [1,2,3,4,5], hoursPerDay: 8 };
+    return row ?? { countryCode: 'CN', workdaysOfWeek: [1, 2, 3, 4, 5], hoursPerDay: 8 };
 }
 
 export async function saveCalendarSettings(settings) {
@@ -865,15 +904,12 @@ export async function clearHolidaysByYear(year, countryCode) {
         await db.calendar_holidays
             .where('year')
             .equals(year)
-            .and(holiday => holiday.countryCode === countryCode)
+            .and((holiday) => holiday.countryCode === countryCode)
             .delete();
         return;
     }
 
-    await db.calendar_holidays
-        .where('year')
-        .equals(year)
-        .delete();
+    await db.calendar_holidays.where('year').equals(year).delete();
 }
 
 /** 缓存元数据 */
@@ -914,10 +950,8 @@ export async function deleteCustomDay(id) {
 
 /** 人员请假 */
 export async function isPersonOnLeave(assignee, dateStr) {
-    const leaves = await db.person_leaves
-        .where('assignee').equals(assignee)
-        .toArray();
-    return leaves.some(l => l.startDate <= dateStr && dateStr <= l.endDate);
+    const leaves = await db.person_leaves.where('assignee').equals(assignee).toArray();
+    return leaves.some((l) => l.startDate <= dateStr && dateStr <= l.endDate);
 }
 
 export async function getAllLeaves() {

@@ -39,20 +39,20 @@ export function renderPriorityBadge(value) {
  */
 export function renderStatusBadge(value) {
     if (!value) return '';
-    
+
     // 状态配置映射
     const statusConfig = {
-        'in_progress': { dotColor: '#0EA5E9' },
-        'pending': { dotColor: '#94A3B8' },
-        'completed': { dotColor: '#10B981' },
-        'suspended': { dotColor: '#F59E0B' },
-        'paused': { dotColor: '#F59E0B' }
+        in_progress: { dotColor: '#0EA5E9' },
+        pending: { dotColor: '#94A3B8' },
+        completed: { dotColor: '#10B981' },
+        suspended: { dotColor: '#F59E0B' },
+        paused: { dotColor: '#F59E0B' },
     };
-    
+
     const badgeClass = STATUS_COLORS[value] || 'status-pending';
     const config = statusConfig[value] || statusConfig['pending'];
     const displayValue = getLocalizedEnumValue('status', value);
-    
+
     return `<span class="status-badge-gantt ${badgeClass}" title="${displayValue}"><span class="status-dot-gantt" style="background-color: ${config.dotColor};"></span>${displayValue}</span>`;
 }
 

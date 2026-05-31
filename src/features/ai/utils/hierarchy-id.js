@@ -24,9 +24,7 @@ export function buildHierarchyMap(eachTask, getParent, getChildren) {
 
         // 拼接父级层级
         const parentHierarchy = parentId ? map.get(parentId) : null;
-        const hierarchyId = parentHierarchy
-            ? `${parentHierarchy}.${counter}`
-            : `#${counter}`;
+        const hierarchyId = parentHierarchy ? `${parentHierarchy}.${counter}` : `#${counter}`;
 
         map.set(task.id, hierarchyId);
     });
@@ -50,9 +48,9 @@ export function attachHierarchyIds(tasks) {
             (id) => gantt.getChildren(id)
         );
 
-        return tasks.map(t => ({
+        return tasks.map((t) => ({
             ...t,
-            hierarchy_id: map.get(t.id) || `#${t.id}`
+            hierarchy_id: map.get(t.id) || `#${t.id}`,
         }));
     } catch (e) {
         console.warn('[hierarchy-id] Failed to build hierarchy map:', e);
@@ -82,7 +80,7 @@ export function getAllTasksWithHierarchy() {
                 hierarchy_id: map.get(task.id) || `#${task.id}`,
                 status: task.status || 'pending',
                 priority: task.priority || 'medium',
-                progress: Math.round((task.progress || 0) * 100)
+                progress: Math.round((task.progress || 0) * 100),
             });
         });
 

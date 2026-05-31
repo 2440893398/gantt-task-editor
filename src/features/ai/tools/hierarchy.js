@@ -27,7 +27,7 @@ const TOOL_DISPLAY_NAMES = {
     get_subtasks: '子任务列表',
     get_field_config: '字段配置',
     get_custom_fields: '自定义字段',
-    get_field_statistics: '字段统计'
+    get_field_statistics: '字段统计',
 };
 
 /**
@@ -136,5 +136,9 @@ function escapeHtml(text) {
         div.textContent = text || '';
         return div.innerHTML;
     }
-    return String(text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    return String(text || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
 }

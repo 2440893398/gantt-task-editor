@@ -94,8 +94,17 @@ describe('ensureHolidaysCached: 30天内缓存新鲜时跳过 fetch', () => {
     });
 
     it('meta 新鲜且 countryCode 匹配时，fetch 不被调用', async () => {
-        await saveCalendarSettings({ countryCode: 'CN', workdaysOfWeek: [1,2,3,4,5], hoursPerDay: 8 });
-        await saveCalendarMeta({ year: YEAR, countryCode: 'CN', fetchedAt: freshAt(), source: 'holiday-cn' });
+        await saveCalendarSettings({
+            countryCode: 'CN',
+            workdaysOfWeek: [1, 2, 3, 4, 5],
+            hoursPerDay: 8,
+        });
+        await saveCalendarMeta({
+            year: YEAR,
+            countryCode: 'CN',
+            fetchedAt: freshAt(),
+            source: 'holiday-cn',
+        });
 
         const mockFetch = vi.fn();
         vi.stubGlobal('fetch', mockFetch);
@@ -122,12 +131,19 @@ describe('ensureHolidaysCached: 缓存过期时重新拉取', () => {
     });
 
     it('meta 过期时触发 fetch 并写入 DB', async () => {
-        await saveCalendarSettings({ countryCode: 'CN', workdaysOfWeek: [1,2,3,4,5], hoursPerDay: 8 });
-        await saveCalendarMeta({ year: YEAR, countryCode: 'CN', fetchedAt: staleAt(), source: 'holiday-cn' });
+        await saveCalendarSettings({
+            countryCode: 'CN',
+            workdaysOfWeek: [1, 2, 3, 4, 5],
+            hoursPerDay: 8,
+        });
+        await saveCalendarMeta({
+            year: YEAR,
+            countryCode: 'CN',
+            fetchedAt: staleAt(),
+            source: 'holiday-cn',
+        });
 
-        const cnDays = [
-            { date: `${YEAR}-01-01`, name: '元旦', isOffDay: true },
-        ];
+        const cnDays = [{ date: `${YEAR}-01-01`, name: '元旦', isOffDay: true }];
         vi.stubGlobal('fetch', mockFetchOk(cnApiBody(cnDays)));
 
         await ensureHolidaysCached(YEAR);
@@ -138,12 +154,14 @@ describe('ensureHolidaysCached: 缓存过期时重新拉取', () => {
     });
 
     it('没有 meta 时触发 fetch', async () => {
-        await saveCalendarSettings({ countryCode: 'CN', workdaysOfWeek: [1,2,3,4,5], hoursPerDay: 8 });
+        await saveCalendarSettings({
+            countryCode: 'CN',
+            workdaysOfWeek: [1, 2, 3, 4, 5],
+            hoursPerDay: 8,
+        });
         // 不写入 meta
 
-        const cnDays = [
-            { date: `${YEAR}-05-01`, name: '劳动节', isOffDay: true },
-        ];
+        const cnDays = [{ date: `${YEAR}-05-01`, name: '劳动节', isOffDay: true }];
         vi.stubGlobal('fetch', mockFetchOk(cnApiBody(cnDays)));
 
         await ensureHolidaysCached(YEAR);
@@ -153,7 +171,11 @@ describe('ensureHolidaysCached: 缓存过期时重新拉取', () => {
     });
 
     it('fetch 成功后更新 calendar_meta 的 fetchedAt', async () => {
-        await saveCalendarSettings({ countryCode: 'CN', workdaysOfWeek: [1,2,3,4,5], hoursPerDay: 8 });
+        await saveCalendarSettings({
+            countryCode: 'CN',
+            workdaysOfWeek: [1, 2, 3, 4, 5],
+            hoursPerDay: 8,
+        });
 
         vi.stubGlobal('fetch', mockFetchOk(cnApiBody([])));
 
@@ -185,21 +207,33 @@ describe('ensureHolidaysCached: fetch 失败时静默降级', () => {
     });
 
     it('HTTP 500 时不抛错', async () => {
-        await saveCalendarSettings({ countryCode: 'CN', workdaysOfWeek: [1,2,3,4,5], hoursPerDay: 8 });
+        await saveCalendarSettings({
+            countryCode: 'CN',
+            workdaysOfWeek: [1, 2, 3, 4, 5],
+            hoursPerDay: 8,
+        });
         vi.stubGlobal('fetch', mockFetchFail());
 
         await expect(ensureHolidaysCached(YEAR)).resolves.not.toThrow();
     });
 
     it('网络异常（fetch reject）时不抛错', async () => {
-        await saveCalendarSettings({ countryCode: 'CN', workdaysOfWeek: [1,2,3,4,5], hoursPerDay: 8 });
+        await saveCalendarSettings({
+            countryCode: 'CN',
+            workdaysOfWeek: [1, 2, 3, 4, 5],
+            hoursPerDay: 8,
+        });
         vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Network error')));
 
         await expect(ensureHolidaysCached(YEAR)).resolves.not.toThrow();
     });
 
     it('fetch 失败时数据库中没有写入新节假日', async () => {
-        await saveCalendarSettings({ countryCode: 'CN', workdaysOfWeek: [1,2,3,4,5], hoursPerDay: 8 });
+        await saveCalendarSettings({
+            countryCode: 'CN',
+            workdaysOfWeek: [1, 2, 3, 4, 5],
+            hoursPerDay: 8,
+        });
         vi.stubGlobal('fetch', mockFetchFail());
 
         await ensureHolidaysCached(YEAR);
@@ -209,7 +243,11 @@ describe('ensureHolidaysCached: fetch 失败时静默降级', () => {
     });
 
     it('fetch 失败时 meta 不被写入（不记录失败的缓存状态）', async () => {
-        await saveCalendarSettings({ countryCode: 'CN', workdaysOfWeek: [1,2,3,4,5], hoursPerDay: 8 });
+        await saveCalendarSettings({
+            countryCode: 'CN',
+            workdaysOfWeek: [1, 2, 3, 4, 5],
+            hoursPerDay: 8,
+        });
         vi.stubGlobal('fetch', mockFetchFail());
 
         await ensureHolidaysCached(YEAR);
@@ -236,13 +274,20 @@ describe('ensureHolidaysCached: countryCode 切换后重新拉取', () => {
 
     it('meta.countryCode 与当前设置不同时，即使 meta 新鲜也重新 fetch', async () => {
         // 之前缓存的是 CN 的数据
-        await saveCalendarMeta({ year: YEAR, countryCode: 'CN', fetchedAt: freshAt(), source: 'holiday-cn' });
+        await saveCalendarMeta({
+            year: YEAR,
+            countryCode: 'CN',
+            fetchedAt: freshAt(),
+            source: 'holiday-cn',
+        });
         // 现在设置切换成了 JP
-        await saveCalendarSettings({ countryCode: 'JP', workdaysOfWeek: [1,2,3,4,5], hoursPerDay: 8 });
+        await saveCalendarSettings({
+            countryCode: 'JP',
+            workdaysOfWeek: [1, 2, 3, 4, 5],
+            hoursPerDay: 8,
+        });
 
-        const jpDays = [
-            { date: `${YEAR}-01-01`, localName: '元日', name: "New Year's Day" },
-        ];
+        const jpDays = [{ date: `${YEAR}-01-01`, localName: '元日', name: "New Year's Day" }];
         const mockFetch = mockFetchOk(nagerApiBody(jpDays));
         vi.stubGlobal('fetch', mockFetch);
 
@@ -256,8 +301,17 @@ describe('ensureHolidaysCached: countryCode 切换后重新拉取', () => {
     });
 
     it('切换到 JP 后 meta.countryCode 更新为 JP', async () => {
-        await saveCalendarMeta({ year: YEAR, countryCode: 'CN', fetchedAt: freshAt(), source: 'holiday-cn' });
-        await saveCalendarSettings({ countryCode: 'JP', workdaysOfWeek: [1,2,3,4,5], hoursPerDay: 8 });
+        await saveCalendarMeta({
+            year: YEAR,
+            countryCode: 'CN',
+            fetchedAt: freshAt(),
+            source: 'holiday-cn',
+        });
+        await saveCalendarSettings({
+            countryCode: 'JP',
+            workdaysOfWeek: [1, 2, 3, 4, 5],
+            hoursPerDay: 8,
+        });
         vi.stubGlobal('fetch', mockFetchOk(nagerApiBody([])));
 
         await ensureHolidaysCached(YEAR);
@@ -283,7 +337,11 @@ describe('ensureHolidaysCached: 选择正确的数据源', () => {
     });
 
     it('CN 时调用 jsDelivr CDN URL', async () => {
-        await saveCalendarSettings({ countryCode: 'CN', workdaysOfWeek: [1,2,3,4,5], hoursPerDay: 8 });
+        await saveCalendarSettings({
+            countryCode: 'CN',
+            workdaysOfWeek: [1, 2, 3, 4, 5],
+            hoursPerDay: 8,
+        });
 
         const mockFetch = mockFetchOk(cnApiBody([]));
         vi.stubGlobal('fetch', mockFetch);
@@ -296,7 +354,11 @@ describe('ensureHolidaysCached: 选择正确的数据源', () => {
     });
 
     it('JP 时调用 Nager API URL', async () => {
-        await saveCalendarSettings({ countryCode: 'JP', workdaysOfWeek: [1,2,3,4,5], hoursPerDay: 8 });
+        await saveCalendarSettings({
+            countryCode: 'JP',
+            workdaysOfWeek: [1, 2, 3, 4, 5],
+            hoursPerDay: 8,
+        });
 
         const mockFetch = mockFetchOk(nagerApiBody([]));
         vi.stubGlobal('fetch', mockFetch);
@@ -309,7 +371,11 @@ describe('ensureHolidaysCached: 选择正确的数据源', () => {
     });
 
     it('KR 时调用 Nager API URL 含 KR', async () => {
-        await saveCalendarSettings({ countryCode: 'KR', workdaysOfWeek: [1,2,3,4,5], hoursPerDay: 8 });
+        await saveCalendarSettings({
+            countryCode: 'KR',
+            workdaysOfWeek: [1, 2, 3, 4, 5],
+            hoursPerDay: 8,
+        });
 
         const mockFetch = mockFetchOk(nagerApiBody([]));
         vi.stubGlobal('fetch', mockFetch);

@@ -12,7 +12,7 @@ vi.mock('../../../src/utils/i18n.js', () => ({
             if (key === 'duration.format.hoursOnly') return '{hours} 小时';
             if (key === 'duration.format.full') return '{days} 天 {hours} 小时';
             return null;
-        })
+        }),
     },
     default: {
         t: vi.fn((key) => {
@@ -21,35 +21,35 @@ vi.mock('../../../src/utils/i18n.js', () => ({
             if (key === 'duration.format.full') return '{days} 天 {hours} 小时';
             return null;
         }),
-        getLanguage: vi.fn(() => 'zh-CN')
-    }
+        getLanguage: vi.fn(() => 'zh-CN'),
+    },
 }));
 
 vi.mock('../../../src/core/store.js', () => ({
     state: { customFields: [] },
     isFieldEnabled: vi.fn(() => true),
     getFieldType: vi.fn(() => 'text'),
-    getSystemFieldOptions: vi.fn(() => [])
+    getSystemFieldOptions: vi.fn(() => []),
 }));
 
 vi.mock('../../../src/features/ai/services/undoManager.js', () => ({
     default: {
         saveState: saveStateMock,
-        isApplyingHistoryOperation: vi.fn(() => false)
-    }
+        isApplyingHistoryOperation: vi.fn(() => false),
+    },
 }));
 
 vi.mock('../../../src/utils/toast.js', () => ({
-    showToast: showToastMock
+    showToast: showToastMock,
 }));
 
 vi.mock('../../../src/utils/dom.js', () => ({
-    escapeAttr: vi.fn((v) => String(v ?? ''))
+    escapeAttr: vi.fn((v) => String(v ?? '')),
 }));
 
 vi.mock('../../../src/components/common/dropdown.js', () => ({
     renderSelectHTML: renderSelectHTMLMock,
-    setupSelect: setupSelectMock
+    setupSelect: setupSelectMock,
 }));
 
 describe('right-section schedule mode selector', () => {
@@ -62,12 +62,13 @@ describe('right-section schedule mode selector', () => {
             hasChild: vi.fn(() => false),
             updateTask: vi.fn(),
             calculateEndDate: vi.fn(() => new Date('2026-03-08')),
-            calculateDuration: vi.fn(() => 5)
+            calculateDuration: vi.fn(() => 5),
         };
     });
 
     it('renders compact selector and normalizes default mode to start_duration', async () => {
-        const { renderRightSection } = await import('../../../src/features/task-details/right-section.js');
+        const { renderRightSection } =
+            await import('../../../src/features/task-details/right-section.js');
 
         const html = renderRightSection({
             id: 1,
@@ -76,7 +77,7 @@ describe('right-section schedule mode selector', () => {
             end_date: new Date('2026-03-08'),
             duration: 5,
             progress: 0,
-            schedule_mode: 'unexpected'
+            schedule_mode: 'unexpected',
         });
 
         expect(html).toContain('task-schedule-mode-trigger');
@@ -85,13 +86,14 @@ describe('right-section schedule mode selector', () => {
             'start_duration',
             expect.any(Array),
             expect.objectContaining({
-                width: 'w-32'
+                width: 'w-32',
             })
         );
     });
 
     it('persists schedule mode changes in non-draft mode', async () => {
-        const { bindRightSectionEvents } = await import('../../../src/features/task-details/right-section.js');
+        const { bindRightSectionEvents } =
+            await import('../../../src/features/task-details/right-section.js');
 
         const panel = document.createElement('div');
         const task = {
@@ -100,12 +102,14 @@ describe('right-section schedule mode selector', () => {
             start_date: new Date('2026-03-01'),
             end_date: new Date('2026-03-08'),
             duration: 5,
-            progress: 0
+            progress: 0,
         };
 
         bindRightSectionEvents(panel, task);
 
-        const scheduleModeCall = setupSelectMock.mock.calls.find(([id]) => id === 'task-schedule-mode');
+        const scheduleModeCall = setupSelectMock.mock.calls.find(
+            ([id]) => id === 'task-schedule-mode'
+        );
         expect(scheduleModeCall).toBeTruthy();
 
         const onChange = scheduleModeCall[3];
@@ -118,7 +122,8 @@ describe('right-section schedule mode selector', () => {
     });
 
     it('updates draft only and normalizes invalid value in draft mode', async () => {
-        const { bindRightSectionEvents } = await import('../../../src/features/task-details/right-section.js');
+        const { bindRightSectionEvents } =
+            await import('../../../src/features/task-details/right-section.js');
 
         const panel = document.createElement('div');
         const task = {
@@ -128,17 +133,19 @@ describe('right-section schedule mode selector', () => {
             start_date: new Date('2026-03-01'),
             end_date: new Date('2026-03-08'),
             duration: 5,
-            progress: 0
+            progress: 0,
         };
         const draftTask = { ...task };
 
         bindRightSectionEvents(panel, task, {
             isDraftMode: true,
             draftTask,
-            onDraftMutated: (mutator) => mutator(draftTask)
+            onDraftMutated: (mutator) => mutator(draftTask),
         });
 
-        const scheduleModeCall = setupSelectMock.mock.calls.find(([id]) => id === 'task-schedule-mode');
+        const scheduleModeCall = setupSelectMock.mock.calls.find(
+            ([id]) => id === 'task-schedule-mode'
+        );
         expect(scheduleModeCall).toBeTruthy();
 
         const onChange = scheduleModeCall[3];

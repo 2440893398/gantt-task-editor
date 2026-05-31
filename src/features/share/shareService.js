@@ -8,7 +8,8 @@ import { state } from '../../core/store.js';
 import { projectScope, db } from '../../core/storage.js';
 
 function getShareApiBase() {
-    const base = import.meta.env.VITE_SHARE_API_URL || 'https://gantt-share.your-worker.workers.dev';
+    const base =
+        import.meta.env.VITE_SHARE_API_URL || 'https://gantt-share.your-worker.workers.dev';
     return base.replace(/\/+$/, '');
 }
 
@@ -22,16 +23,13 @@ function cloneSnapshotData(data) {
  * @returns {Promise<Object>}
  */
 export async function serializeProject(projectId) {
-    const project = state.projects.find(item => item.id === projectId);
+    const project = state.projects.find((item) => item.id === projectId);
     if (!project) {
         throw new Error(`Project ${projectId} not found`);
     }
 
     const scope = projectScope(projectId);
-    const [ganttData, baseline] = await Promise.all([
-        scope.getGanttData(),
-        scope.getBaseline(),
-    ]);
+    const [ganttData, baseline] = await Promise.all([scope.getGanttData(), scope.getBaseline()]);
 
     const [calendarSettings, customDays, leaves] = await Promise.all([
         db.calendar_settings.where('project_id').equals(projectId).first(),

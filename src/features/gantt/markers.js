@@ -1,6 +1,6 @@
 /**
  * 甘特图时间标记模块
- * 
+ *
  * 添加今日竖线标记和其他时间标记
  */
 
@@ -57,14 +57,14 @@ export function addTodayMarker() {
     try {
         todayMarkerId = gantt.addMarker({
             start_date: today,
-            css: "today-marker",
-            text: "今天",
+            css: 'today-marker',
+            text: '今天',
             title: today.toLocaleDateString('zh-CN', {
                 year: 'numeric',
                 month: 'long',
                 day: 'numeric',
-                weekday: 'long'
-            })
+                weekday: 'long',
+            }),
         });
         console.log('📍 今日标记已添加:', todayMarkerId);
     } catch (e) {
@@ -80,7 +80,7 @@ export function addTodayMarker() {
  */
 function addTodayMarkerFallback() {
     // 使用 gantt 渲染事件在每次渲染后添加今日线
-    gantt.attachEvent("onGanttRender", function () {
+    gantt.attachEvent('onGanttRender', function () {
         addTodayLineElement();
     });
 

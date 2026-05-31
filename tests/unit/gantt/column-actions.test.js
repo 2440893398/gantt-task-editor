@@ -6,54 +6,56 @@ vi.mock('../../../src/core/store.js', () => ({
     state: {
         selectedTasks: new Set(),
         fieldOrder: ['text', 'start_date', 'duration'],
-        customFields: []
+        customFields: [],
     },
     isFieldEnabled: vi.fn(() => true),
-    getViewMode: vi.fn(() => 'split')
+    getViewMode: vi.fn(() => 'split'),
 }));
 
 vi.mock('../../../src/data/fields.js', () => ({
     INTERNAL_FIELDS: [],
-    SYSTEM_FIELD_CONFIG: {}
+    SYSTEM_FIELD_CONFIG: {},
 }));
 
 vi.mock('../../../src/features/gantt/templates.js', () => ({
     renderPriorityBadge: vi.fn(() => '<span>priority</span>'),
     renderStatusBadge: vi.fn(() => '<span>status</span>'),
     renderAssignee: vi.fn(() => '<span>assignee</span>'),
-    renderProgressBar: vi.fn(() => '<span>progress</span>')
+    renderProgressBar: vi.fn(() => '<span>progress</span>'),
 }));
 
 vi.mock('../../../src/utils/dom.js', () => ({
     extractPlainText: vi.fn((v) => String(v || '')),
-    escapeAttr: vi.fn((v) => String(v ?? '')
-        .replace(/&/g, '&amp;')
-        .replace(/"/g, '&quot;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;'))
+    escapeAttr: vi.fn((v) =>
+        String(v ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+    ),
 }));
 
 vi.mock('../../../src/utils/time-formatter.js', () => ({
     formatDuration: vi.fn((v) => `${v}d`),
     exclusiveToInclusive: vi.fn((v) => v),
-    isDayPrecision: vi.fn(() => true)
+    isDayPrecision: vi.fn(() => true),
 }));
 
 vi.mock('../../../src/features/gantt/column-widths.js', () => ({
     applySavedColumnWidths: vi.fn((cols) => cols),
-    loadColumnWidthPrefs: vi.fn(() => ({}))
+    loadColumnWidthPrefs: vi.fn(() => ({})),
 }));
 
 vi.mock('../../../src/utils/i18n.js', () => ({
-    i18n: { t: vi.fn((key) => key) }
+    i18n: { t: vi.fn((key) => key) },
 }));
 
 vi.mock('../../../src/components/common/confirm-dialog.js', () => ({
-    showConfirmDialog: vi.fn()
+    showConfirmDialog: vi.fn(),
 }));
 
 vi.mock('../../../src/utils/toast.js', () => ({
-    showToast: vi.fn()
+    showToast: vi.fn(),
 }));
 
 describe('gantt columns actions', () => {
@@ -61,14 +63,14 @@ describe('gantt columns actions', () => {
         document.body.innerHTML = '';
         global.gantt = {
             config: {
-                columns: []
+                columns: [],
             },
             $container: document.createElement('div'),
             render: vi.fn(),
             hasChild: vi.fn(() => false),
             templates: {
-                date_grid: vi.fn(() => '2026-03-04')
-            }
+                date_grid: vi.fn(() => '2026-03-04'),
+            },
         };
     });
 
@@ -101,10 +103,12 @@ describe('gantt columns actions', () => {
         const textCol = global.gantt.config.columns.find((col) => col.name === 'text');
         const html = textCol.template({
             id: 7,
-            text: 'Unsafe \"quote\" <img src=x onerror=alert(1)>'
+            text: 'Unsafe \"quote\" <img src=x onerror=alert(1)>',
         });
 
-        expect(html).toContain('title="Unsafe &quot;quote&quot; &lt;img src=x onerror=alert(1)&gt;"');
+        expect(html).toContain(
+            'title="Unsafe &quot;quote&quot; &lt;img src=x onerror=alert(1)&gt;"'
+        );
         expect(html).not.toContain('title="Unsafe "quote" <img src=x onerror=alert(1)>"');
     });
 

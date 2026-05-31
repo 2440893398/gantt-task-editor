@@ -33,14 +33,18 @@ export function calculateCustomFieldsHeight() {
  * 注册自定义字段表单块
  */
 export function registerCustomFieldsBlock() {
-    gantt.form_blocks["custom_fields"] = {
+    gantt.form_blocks['custom_fields'] = {
         render: function (sns) {
             const height = calculateCustomFieldsHeight();
-            return "<div class='gantt_cal_ltext gantt_custom_fields_container' style='height:" + height + "px;'></div>";
+            return (
+                "<div class='gantt_cal_ltext gantt_custom_fields_container' style='height:" +
+                height +
+                "px;'></div>"
+            );
         },
         set_value: function (node, value, task, section) {
             // Filter out disabled fields
-            const visibleFields = state.customFields.filter(field => isFieldEnabled(field.name));
+            const visibleFields = state.customFields.filter((field) => isFieldEnabled(field.name));
             const fieldCount = visibleFields.length;
             let layoutClass = 'single-column';
 
@@ -50,26 +54,32 @@ export function registerCustomFieldsBlock() {
                 layoutClass = 'two-column scrollable';
             }
 
-            let html = '<div class="custom-fields-section" style="padding: 16px; height: 100%; box-sizing: border-box;">';
+            let html =
+                '<div class="custom-fields-section" style="padding: 16px; height: 100%; box-sizing: border-box;">';
 
             // 标题和管理字段按钮
-            html += '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">';
+            html +=
+                '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">';
             html += `<h4 style="margin: 0; color: #1F2937; font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px;">${i18n.t('lightbox.customFields')}</h4>`;
             html += `<button id="manage-fields-btn" type="button" style="padding: 6px 12px; background: transparent; color: #9810FA; border: 1px solid #9810FA; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; transition: all 0.2s;">⚙ ${i18n.t('lightbox.manageFields')}</button>`;
             html += '</div>';
 
             html += `<div class="fields-grid ${layoutClass}" style="max-height: ${fieldCount > 6 ? 'calc(100% - 60px)' : 'auto'}; overflow-y: ${fieldCount > 6 ? 'auto' : 'visible'};">`;
 
-            visibleFields.forEach(field => {
+            visibleFields.forEach((field) => {
                 const fieldValue = task[field.name] || '';
-                const requiredMark = field.required ? '<span style="color: #EF4444; margin-left: 4px;">*</span>' : '';
+                const requiredMark = field.required
+                    ? '<span style="color: #EF4444; margin-left: 4px;">*</span>'
+                    : '';
                 const fieldIcon = FIELD_ICONS[field.name] || FIELD_ICONS['default'];
 
                 html += `<div class="custom-field-item" style="margin-bottom: 16px;">`;
                 html += `<label style="display: flex; align-items: center; gap: 6px; margin-bottom: 5px; font-weight: 500; color: #374151; font-size: 13px;"><span style="color: #9810FA;">${fieldIcon}</span> ${field.label}${requiredMark}:</label>`;
 
-                const inputStyle = 'width: 100%; padding: 10px 12px; border: 1px solid #D1D5DB; border-radius: 8px; font-size: 13px; box-sizing: border-box; transition: border-color 0.2s;';
-                const focusEvents = 'onfocus="this.style.borderColor=\'#4A90E2\'; this.style.borderWidth=\'2px\'" onblur="this.style.borderColor=\'#D1D5DB\'; this.style.borderWidth=\'1px\'"';
+                const inputStyle =
+                    'width: 100%; padding: 10px 12px; border: 1px solid #D1D5DB; border-radius: 8px; font-size: 13px; box-sizing: border-box; transition: border-color 0.2s;';
+                const focusEvents =
+                    "onfocus=\"this.style.borderColor='#4A90E2'; this.style.borderWidth='2px'\" onblur=\"this.style.borderColor='#D1D5DB'; this.style.borderWidth='1px'\"";
 
                 // Get effective type (considering system field type overrides)
                 const effectiveType = getFieldType(field.name);
@@ -85,7 +95,7 @@ export function registerCustomFieldsBlock() {
                 } else if (effectiveType === 'select') {
                     html += `<select name="${field.name}" ${field.required ? 'required' : ''} style="${inputStyle}" ${focusEvents}>`;
                     html += `<option value="">${i18n.t('lightbox.pleaseSelect')}</option>`;
-                    effectiveOptions.forEach(option => {
+                    effectiveOptions.forEach((option) => {
                         const selected = fieldValue === option ? 'selected' : '';
                         // 如果字段有 i18nKey，则翻译选项值
                         let displayValue = option;
@@ -99,9 +109,13 @@ export function registerCustomFieldsBlock() {
                     });
                     html += `</select>`;
                 } else if (effectiveType === 'multiselect') {
-                    const selectedValues = Array.isArray(fieldValue) ? fieldValue : (fieldValue ? fieldValue.split(',') : []);
+                    const selectedValues = Array.isArray(fieldValue)
+                        ? fieldValue
+                        : fieldValue
+                          ? fieldValue.split(',')
+                          : [];
                     html += `<select name="${field.name}" multiple ${field.required ? 'required' : ''} style="${inputStyle} min-height: 80px;" ${focusEvents}>`;
-                    effectiveOptions.forEach(option => {
+                    effectiveOptions.forEach((option) => {
                         const selected = selectedValues.includes(option) ? 'selected' : '';
                         // 如果字段有 i18nKey，则翻译选项值
                         let displayValue = option;
@@ -117,7 +131,6 @@ export function registerCustomFieldsBlock() {
                 } else if (effectiveType === 'date') {
                     html += `<input type="date" name="${field.name}" value="${fieldValue}" ${field.required ? 'required' : ''} style="${inputStyle}" ${focusEvents}>`;
                 }
-
 
                 html += `<div class="field-error" data-field="${field.name}" style="color: #EF4444; font-size: 12px; margin-top: 4px; display: none;"></div>`;
                 html += `</div>`;
@@ -142,17 +155,21 @@ export function registerCustomFieldsBlock() {
             const errors = [];
 
             // Filter out disabled fields
-            const visibleFields = state.customFields.filter(field => isFieldEnabled(field.name));
+            const visibleFields = state.customFields.filter((field) => isFieldEnabled(field.name));
 
-            visibleFields.forEach(field => {
-                const input = node.querySelector(`input[name="${field.name}"], select[name="${field.name}"]`);
+            visibleFields.forEach((field) => {
+                const input = node.querySelector(
+                    `input[name="${field.name}"], select[name="${field.name}"]`
+                );
                 const errorDiv = node.querySelector(`.field-error[data-field="${field.name}"]`);
 
                 if (input) {
                     let value = '';
 
                     if (field.type === 'multiselect') {
-                        const selectedOptions = Array.from(input.selectedOptions).map(option => option.value);
+                        const selectedOptions = Array.from(input.selectedOptions).map(
+                            (option) => option.value
+                        );
                         value = selectedOptions.join(',');
                         task[field.name] = value;
                     } else {
@@ -186,7 +203,9 @@ export function registerCustomFieldsBlock() {
                     showToast(errors[0].message, 'error', 3000);
                 }, 100);
 
-                const firstErrorField = node.querySelector(`input[name="${errors[0].field}"], select[name="${errors[0].field}"]`);
+                const firstErrorField = node.querySelector(
+                    `input[name="${errors[0].field}"], select[name="${errors[0].field}"]`
+                );
                 if (firstErrorField) {
                     firstErrorField.scrollIntoView({ behavior: 'smooth', block: 'center' });
                     firstErrorField.focus();
@@ -199,7 +218,7 @@ export function registerCustomFieldsBlock() {
         focus: function (node) {
             const firstInput = node.querySelector('input, select');
             if (firstInput) firstInput.focus();
-        }
+        },
     };
 }
 
@@ -209,10 +228,15 @@ export function registerCustomFieldsBlock() {
  */
 export function configureLightbox() {
     gantt.config.lightbox.sections = [
-        { name: "description", height: 40, map_to: "text", type: "textarea", focus: true },  // 改为单行，高度减少
-        { name: "summary", height: 60, map_to: "summary", type: "textarea" },  // F-112
-        { name: "time", height: 72, type: "duration", map_to: "auto" },
-        { name: "custom_fields", height: calculateCustomFieldsHeight(), type: "custom_fields", map_to: "custom_fields" }
+        { name: 'description', height: 40, map_to: 'text', type: 'textarea', focus: true }, // 改为单行，高度减少
+        { name: 'summary', height: 60, map_to: 'summary', type: 'textarea' }, // F-112
+        { name: 'time', height: 72, type: 'duration', map_to: 'auto' },
+        {
+            name: 'custom_fields',
+            height: calculateCustomFieldsHeight(),
+            type: 'custom_fields',
+            map_to: 'custom_fields',
+        },
     ];
 
     // 修改 section 标签: 描述 → 任务名
@@ -243,12 +267,13 @@ export function registerNameInput() {
     document.head.appendChild(style);
 
     // 为 description 添加100字符限制
-    gantt.attachEvent("onLightbox", function (id) {
+    gantt.attachEvent('onLightbox', function (id) {
         setTimeout(() => {
             const descSection = document.querySelector('.gantt_section_description textarea');
             if (descSection) {
                 descSection.maxLength = 100;
-                descSection.placeholder = i18n.t('task.namePlaceholder') || '请输入任务名称（最多100字符）';
+                descSection.placeholder =
+                    i18n.t('task.namePlaceholder') || '请输入任务名称（最多100字符）';
                 // 监听输入防止换行
                 descSection.addEventListener('keydown', (e) => {
                     if (e.key === 'Enter') {

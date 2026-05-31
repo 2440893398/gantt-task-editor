@@ -113,13 +113,20 @@ This project builds a comprehensive and interactive project management system ba
    npm run dev
    ```
 
-   访问 `http://localhost:5173` 即可查看项目。
+   访问 `http://localhost:5273` 即可查看项目。
 
 3. **构建生产版本 | Build for Production**
 
    ```bash
    npm run build
    ```
+
+### 代码检查 | Verification
+
+```bash
+npm run check
+npm run test
+```
 
 ## 项目结构 | Project Structure
 

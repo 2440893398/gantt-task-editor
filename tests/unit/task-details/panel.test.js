@@ -6,37 +6,37 @@ const saveStateMock = vi.fn();
 
 vi.mock('../../../src/utils/i18n.js', () => ({
     i18n: {
-        t: vi.fn(() => null)
-    }
+        t: vi.fn(() => null),
+    },
 }));
 
 vi.mock('../../../src/utils/toast.js', () => ({
-    showToast: showToastMock
+    showToast: showToastMock,
 }));
 
 vi.mock('../../../src/components/common/confirm-dialog.js', () => ({
-    showConfirmDialog: showConfirmDialogMock
+    showConfirmDialog: showConfirmDialogMock,
 }));
 
 vi.mock('../../../src/components/rich-text-editor.js', () => ({
-    destroyRichTextEditor: vi.fn()
+    destroyRichTextEditor: vi.fn(),
 }));
 
 vi.mock('../../../src/features/task-details/left-section.js', () => ({
     renderLeftSection: vi.fn(() => '<div id="left-mock"></div>'),
-    bindLeftSectionEvents: vi.fn()
+    bindLeftSectionEvents: vi.fn(),
 }));
 
 vi.mock('../../../src/features/task-details/right-section.js', () => ({
     renderRightSection: vi.fn(() => '<div id="right-mock"></div>'),
-    bindRightSectionEvents: vi.fn()
+    bindRightSectionEvents: vi.fn(),
 }));
 
 vi.mock('../../../src/features/ai/services/undoManager.js', () => ({
     default: {
         saveState: saveStateMock,
-        isApplyingHistoryOperation: vi.fn(() => false)
-    }
+        isApplyingHistoryOperation: vi.fn(() => false),
+    },
 }));
 
 describe('task-details panel draft workflow', () => {
@@ -54,8 +54,8 @@ describe('task-details panel draft workflow', () => {
                 start_date: new Date('2026-03-01'),
                 end_date: new Date('2026-03-02'),
                 duration: 1,
-                progress: 0
-            }
+                progress: 0,
+            },
         };
 
         global.gantt = {
@@ -64,12 +64,12 @@ describe('task-details panel draft workflow', () => {
                 const createdId = 2;
                 taskStore[createdId] = {
                     id: createdId,
-                    ...payload
+                    ...payload,
                 };
                 return createdId;
             }),
             updateTask: vi.fn(),
-            deleteTask: vi.fn()
+            deleteTask: vi.fn(),
         };
     });
 
@@ -83,6 +83,17 @@ describe('task-details panel draft workflow', () => {
 
         expect(global.gantt.updateTask).not.toHaveBeenCalled();
         expect(global.gantt.getTask(1).text).toBe('Old title');
+    });
+
+    it('does not call gantt.getTask when opening details without a task id', async () => {
+        const panel = await import('../../../src/features/task-details/panel.js');
+
+        const result = panel.openTaskDetailsPanel(null);
+
+        expect(result).toBe(false);
+        expect(global.gantt.getTask).not.toHaveBeenCalled();
+        expect(showToastMock).toHaveBeenCalledWith(null, 'error');
+        expect(document.getElementById('task-details-overlay')).toBeNull();
     });
 
     it('commits draft once when confirm save is clicked', async () => {
@@ -135,8 +146,8 @@ describe('task-details panel draft workflow', () => {
                 start_date: new Date('2026-03-06'),
                 duration: 1,
                 progress: 0,
-                parent: 0
-            }
+                parent: 0,
+            },
         });
 
         panel.__test__.updateCurrentDraft((draft) => {

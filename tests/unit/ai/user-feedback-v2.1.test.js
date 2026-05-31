@@ -9,31 +9,30 @@ vi.mock('../../../src/utils/i18n.js', () => ({
     i18n: {
         t: (k) => k,
         refresh: vi.fn(),
-        getLanguage: vi.fn(() => 'zh-CN')
-    }
+        getLanguage: vi.fn(() => 'zh-CN'),
+    },
 }));
 vi.mock('../../../src/utils/toast.js', () => ({
-    showToast: vi.fn()
+    showToast: vi.fn(),
 }));
 vi.mock('../../../src/core/store.js', () => ({
-    checkAiConfigured: vi.fn().mockReturnValue(true)
+    checkAiConfigured: vi.fn().mockReturnValue(true),
 }));
 vi.mock('../../../src/features/ai/api/client.js', () => ({
-    runAgentStream: vi.fn()
+    runAgentStream: vi.fn(),
 }));
 vi.mock('../../../src/features/ai/prompts/agentRegistry.js', () => ({
     getAgent: vi.fn().mockReturnValue({ id: 'test-agent' }),
-    getAgentName: vi.fn().mockReturnValue('Test Agent')
+    getAgentName: vi.fn().mockReturnValue('Test Agent'),
 }));
 vi.mock('../../../src/features/ai/components/AiConfigModal.js', () => ({
-    openAiConfigModal: vi.fn()
+    openAiConfigModal: vi.fn(),
 }));
 vi.mock('../../../src/features/ai/services/errorHandler.js', () => ({
-    handleAiError: vi.fn().mockReturnValue({ message: 'Mock Error' })
+    handleAiError: vi.fn().mockReturnValue({ message: 'Mock Error' }),
 }));
 
 describe('User Feedback Optimization v2.1', () => {
-
     // Setup DOM environment for AiDrawer
     beforeEach(() => {
         document.body.innerHTML = '';
@@ -87,7 +86,7 @@ describe('User Feedback Optimization v2.1', () => {
             expect(history).toHaveLength(2); // user message + AI placeholder
             expect(history[0].content).toBe('New Context');
             expect(history[0].role).toBe('user');
-            expect(history.find(m => m.content === 'Old Message')).toBeUndefined();
+            expect(history.find((m) => m.content === 'Old Message')).toBeUndefined();
         });
     });
 
@@ -97,7 +96,7 @@ describe('User Feedback Optimization v2.1', () => {
             const updateTaskSpy = vi.fn();
             global.gantt = {
                 getTask: vi.fn().mockReturnValue({ id: '1', text: 'Old Text' }),
-                updateTask: updateTaskSpy
+                updateTask: updateTaskSpy,
             };
 
             const taskId = '1';

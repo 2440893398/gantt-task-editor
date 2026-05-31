@@ -1,0 +1,4 @@
+interface:
+  display_name: "Project Quality Autoconfig"
+  short_description: "Set up repo quality gates and hooks."
+  default_prompt: "Use $project-quality-autoconfig to analyze this repository and configure appropriate quality gates and hooks."

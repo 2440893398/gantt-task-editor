@@ -2,21 +2,21 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../../../src/core/store.js', () => ({
     getAiConfigState: vi.fn(),
-    setAiStatus: vi.fn()
+    setAiStatus: vi.fn(),
 }));
 
 vi.mock('@ai-sdk/openai', () => ({
-    createOpenAI: vi.fn()
+    createOpenAI: vi.fn(),
 }));
 
 vi.mock('../../../../src/features/ai/agent/router.js', () => ({
     quickRoute: vi.fn(),
-    routeToSkill: vi.fn()
+    routeToSkill: vi.fn(),
 }));
 
 vi.mock('../../../../src/features/ai/agent/executor.js', () => ({
     executeSkill: vi.fn(),
-    executeGeneralChat: vi.fn()
+    executeGeneralChat: vi.fn(),
 }));
 
 import { runSmartChat } from '../../../../src/features/ai/api/client.js';
@@ -31,7 +31,7 @@ describe('runSmartChat stream error propagation', () => {
         getAiConfigState.mockReturnValue({
             apiKey: 'test-key',
             baseUrl: '',
-            model: 'gpt-4'
+            model: 'gpt-4',
         });
         createOpenAI.mockReturnValue((model) => `openai-${model}`);
         quickRoute.mockReturnValue(null);
@@ -39,14 +39,16 @@ describe('runSmartChat stream error propagation', () => {
     });
 
     it('surfaces API error from fullStream error part instead of NoOutput wrapper', async () => {
-        const apiError = new Error('This token is not enabled (tid: 2026020712001069300011984354875)');
+        const apiError = new Error(
+            'This token is not enabled (tid: 2026020712001069300011984354875)'
+        );
         apiError.name = 'AI_APICallError';
 
         executeGeneralChat.mockResolvedValue({
             fullStream: (async function* () {
                 yield { type: 'error', error: apiError };
             })(),
-            usage: Promise.resolve({ promptTokens: 0, completionTokens: 0, totalTokens: 0 })
+            usage: Promise.resolve({ promptTokens: 0, completionTokens: 0, totalTokens: 0 }),
         });
 
         const onError = vi.fn();

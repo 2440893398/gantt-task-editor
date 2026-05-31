@@ -35,9 +35,7 @@ function buildDeleteConfirmText(projectName, taskCount) {
         return fallback;
     }
 
-    return localized
-        .replace('{name}', projectName)
-        .replace('{count}', String(taskCount));
+    return localized.replace('{name}', projectName).replace('{count}', String(taskCount));
 }
 
 function sanitizeColor(value) {
@@ -68,16 +66,19 @@ function closeModalDialog(modal) {
 }
 
 function confirmProjectDelete(message) {
-    return new Promise(resolve => {
+    return new Promise((resolve) => {
         showConfirmDialog({
             icon: 'trash-2',
             variant: 'danger',
-            title: getI18nText('project.deleteTitle', getI18nText('message.confirmDeleteTitle', '删除项目')),
+            title: getI18nText(
+                'project.deleteTitle',
+                getI18nText('message.confirmDeleteTitle', '删除项目')
+            ),
             message,
             confirmText: getI18nText('form.delete', '删除'),
             cancelText: getI18nText('form.cancel', '取消'),
             onConfirm: () => resolve(true),
-            onCancel: () => resolve(false)
+            onCancel: () => resolve(false),
         });
     });
 }
@@ -94,38 +95,46 @@ export function openProjectModal() {
         document.body.appendChild(modal);
     }
 
-    renderModal(modal).then(() => {
-        openModalDialog(modal);
-    }).catch(error => {
-        console.error('[Projects] Failed to render project modal:', error);
-        showToast(i18n.t('common.operationFailed') || '操作失败', 'error');
-    });
+    renderModal(modal)
+        .then(() => {
+            openModalDialog(modal);
+        })
+        .catch((error) => {
+            console.error('[Projects] Failed to render project modal:', error);
+            showToast(i18n.t('common.operationFailed') || '操作失败', 'error');
+        });
 }
 
 async function renderModal(modal) {
     const counts = await Promise.all(
-        state.projects.map(async project => {
+        state.projects.map(async (project) => {
             try {
                 return await getProjectTaskCount(project.id);
             } catch (error) {
                 console.warn('[Projects] Failed to load project task count:', error);
                 return 0;
             }
-        }),
+        })
     );
 
-    const rows = state.projects.map((project, index) => {
-        const projectColor = sanitizeColor(project.color);
-        const projectName = escapeHtml(project.name || i18n.t('project.unnamed') || 'Untitled Project');
-        const projectId = escapeHtml(project.id);
-        const createdAt = project.createdAt ? new Date(project.createdAt).toLocaleDateString() : '-';
+    const rows = state.projects
+        .map((project, index) => {
+            const projectColor = sanitizeColor(project.color);
+            const projectName = escapeHtml(
+                project.name || i18n.t('project.unnamed') || 'Untitled Project'
+            );
+            const projectId = escapeHtml(project.id);
+            const createdAt = project.createdAt
+                ? new Date(project.createdAt).toLocaleDateString()
+                : '-';
 
-        return `
+            return `
             <tr data-project-row-id="${projectId}" class="${project.id === state.currentProjectId ? 'bg-primary/10' : ''}">
                 <td>
                     <div class="flex items-center gap-3">
                         <div class="color-picker flex gap-1">
-                            ${COLORS.map(color => `
+                            ${COLORS.map(
+                                (color) => `
                                 <button
                                     type="button"
                                     class="w-2 h-2 rounded-full cursor-pointer transition-transform hover:scale-125 ${color === projectColor ? 'ring-1 ring-offset-1 ring-gray-400' : ''}"
@@ -133,7 +142,8 @@ async function renderModal(modal) {
                                     data-color="${color}"
                                     data-color-project-id="${projectId}"
                                 ></button>
-                            `).join('')}
+                            `
+                            ).join('')}
                         </div>
                         <input class="input input-sm w-40 bg-transparent border-0 focus:border-b focus:border-primary focus:outline-none focus:bg-base-200/50 rounded-none px-1"
                                value="${projectName}"
@@ -155,7 +165,8 @@ async function renderModal(modal) {
                 </td>
             </tr>
         `;
-    }).join('');
+        })
+        .join('');
 
     modal.innerHTML = `
         <div class="modal-box max-w-xl">
@@ -182,14 +193,16 @@ async function renderModal(modal) {
                         <td>
                             <div class="flex items-center gap-3">
                                 <div class="color-picker flex gap-1" id="inline-create-color-picker">
-                                    ${COLORS.map((color, i) => `
+                                    ${COLORS.map(
+                                        (color, i) => `
                                         <button
                                             type="button"
                                             class="w-2 h-2 rounded-full cursor-pointer transition-transform hover:scale-125 ${i === 0 ? 'ring-1 ring-offset-1 ring-gray-400' : ''}"
                                             style="background:${color}"
                                             data-inline-color="${color}"
                                         ></button>
-                                    `).join('')}
+                                    `
+                                    ).join('')}
                                 </div>
                                 <input
                                     id="project-inline-create-input"
@@ -237,7 +250,7 @@ async function renderModal(modal) {
 }
 
 function bindModalEvents(modal) {
-    modal.querySelectorAll('[data-color-project-id]').forEach(button => {
+    modal.querySelectorAll('[data-color-project-id]').forEach((button) => {
         button.addEventListener('click', async () => {
             const projectId = button.dataset.colorProjectId;
             const color = button.dataset.color;
@@ -254,11 +267,11 @@ function bindModalEvents(modal) {
         });
     });
 
-    modal.querySelectorAll('[data-name-project-id]').forEach(input => {
+    modal.querySelectorAll('[data-name-project-id]').forEach((input) => {
         input.addEventListener('blur', async () => {
             const projectId = input.dataset.nameProjectId;
             const name = input.value.trim();
-            const currentProject = state.projects.find(project => project.id === projectId);
+            const currentProject = state.projects.find((project) => project.id === projectId);
             if (!name) {
                 input.value = currentProject?.name || '';
                 showToast(i18n.t('validation.required') || 'This field is required', 'warning');
@@ -280,10 +293,10 @@ function bindModalEvents(modal) {
         });
     });
 
-    modal.querySelectorAll('[data-delete-project-id]').forEach(button => {
+    modal.querySelectorAll('[data-delete-project-id]').forEach((button) => {
         button.addEventListener('click', async () => {
             const projectId = button.dataset.deleteProjectId;
-            const project = state.projects.find(item => item.id === projectId);
+            const project = state.projects.find((item) => item.id === projectId);
             const projectName = project?.name || i18n.t('project.unnamed') || 'Untitled Project';
 
             let taskCount = 0;
@@ -328,10 +341,10 @@ function bindCreateRow(modal) {
     let selectedColor = COLORS[0];
 
     // 颜色选择
-    modal.querySelectorAll('[data-inline-color]').forEach(btn => {
+    modal.querySelectorAll('[data-inline-color]').forEach((btn) => {
         btn.addEventListener('click', () => {
             selectedColor = btn.dataset.inlineColor;
-            modal.querySelectorAll('[data-inline-color]').forEach(b => {
+            modal.querySelectorAll('[data-inline-color]').forEach((b) => {
                 b.classList.toggle('ring-1', b.dataset.inlineColor === selectedColor);
                 b.classList.toggle('ring-offset-1', b.dataset.inlineColor === selectedColor);
                 b.classList.toggle('ring-gray-400', b.dataset.inlineColor === selectedColor);
@@ -370,7 +383,10 @@ function bindCreateRow(modal) {
             openModalDialog(modal);
         } catch (renderError) {
             console.warn('[Projects] Project created but failed to refresh display:', renderError);
-            showToast(i18n.t('project.createdButRefreshFailed') || '项目已创建，请刷新页面', 'warning');
+            showToast(
+                i18n.t('project.createdButRefreshFailed') || '项目已创建，请刷新页面',
+                'warning'
+            );
         }
     };
 

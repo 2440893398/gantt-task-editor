@@ -20,7 +20,7 @@ export default {
         viewTable: '표',
         viewGantt: '간트',
         criticalPath: '크리티컬 패스',
-        lag: '지연(일)'
+        lag: '지연(일)',
     },
 
     // 보기
@@ -33,7 +33,7 @@ export default {
         zoomOut: '축소',
         zoomIn: '확대',
         tablePanel: '작업 표',
-        ganttPanel: '간트 차트'
+        ganttPanel: '간트 차트',
     },
 
     // 열 이름 (테이블 헤더)
@@ -49,22 +49,22 @@ export default {
         assignee: '담당자',
         status: '상태',
         summary: '요약',
-        description: '설명'
+        description: '설명',
     },
 
     // 열거값 (내부값 → 로컬라이즈된 표시값)
     enums: {
         priority: {
-            'high': '높음',
-            'medium': '중간',
-            'low': '낮음'
+            high: '높음',
+            medium: '중간',
+            low: '낮음',
         },
         status: {
-            'pending': '대기중',
-            'in_progress': '진행중',
-            'completed': '완료',
-            'suspended': '취소'
-        }
+            pending: '대기중',
+            in_progress: '진행중',
+            completed: '완료',
+            suspended: '취소',
+        },
     },
 
     // 작업
@@ -74,7 +74,7 @@ export default {
         duration: '기간',
         progress: '진행률',
         parent: '상위 작업',
-        description: '설명'
+        description: '설명',
     },
 
     // 툴팁
@@ -87,7 +87,7 @@ export default {
         priority: '우선순위',
         status: '상태',
         duration: '기간',
-        days: '일'
+        days: '일',
     },
 
     // 폼
@@ -97,7 +97,7 @@ export default {
         cancel: '취소',
         delete: '삭제',
         confirm: '확인',
-        selectPlaceholder: '선택하세요'
+        selectPlaceholder: '선택하세요',
     },
 
     // 메시지
@@ -119,7 +119,7 @@ export default {
         cacheCleared: '캐시가 삭제되었습니다',
         dataRestored: '{{count}}개의 작업이 복원되었습니다',
         updateSuccess: '{{count}}개의 작업이 업데이트되었습니다',
-        comingSoon: '기능 개발 중'
+        comingSoon: '기능 개발 중',
     },
 
     // 단축키 패널
@@ -143,7 +143,7 @@ export default {
         completed: '완료',
         incomplete: '미완료',
         dependency: '종속성',
-        close: '닫기'
+        close: '닫기',
     },
 
     // 일괄 편집
@@ -154,7 +154,7 @@ export default {
         selectField: '수정할 필드 선택',
         fieldValue: '필드 값',
         apply: '변경 적용',
-        clear: '선택 해제'
+        clear: '선택 해제',
     },
 
     // 필드 관리
@@ -209,7 +209,7 @@ export default {
         filterEnabled: '활성화됨',
         filterDisabled: '비활성화됨',
         fieldCount: '{{count}}개 필드',
-        editField: '편집'
+        editField: '편집',
     },
 
     // Field types
@@ -219,14 +219,14 @@ export default {
         date: '날짜',
         datetime: '날짜 시간',
         select: '단일 선택',
-        multiselect: '다중 선택'
+        multiselect: '다중 선택',
     },
 
     // Lightbox
     lightbox: {
         customFields: '사용자 정의 필드',
         manageFields: '필드 관리',
-        pleaseSelect: '선택하세요'
+        pleaseSelect: '선택하세요',
     },
 
     // 유효성 검사
@@ -236,7 +236,7 @@ export default {
         invalidInput: '잘못된 입력',
         selectFromList: '목록에서 선택하세요',
         numberRequired: '유효한 숫자를 입력하세요',
-        progressRange: '진행률은 0에서 100 사이여야 합니다'
+        progressRange: '진행률은 0에서 100 사이여야 합니다',
     },
 
     // Duration format (v1.5)
@@ -244,13 +244,13 @@ export default {
         format: {
             full: '{days}일 {hours}시간',
             daysOnly: '{days}일',
-            hoursOnly: '{hours}시간'
-        }
+            hoursOnly: '{hours}시간',
+        },
     },
 
     // Excel
     excel: {
-        sheetName: '작업 목록'
+        sheetName: '작업 목록',
     },
 
     // DHTMLX Gantt 라벨
@@ -275,8 +275,8 @@ export default {
             link_to: '종료',
             type_task: '작업',
             type_project: '프로젝트',
-            type_milestone: '마일스톤'
-        }
+            type_milestone: '마일스톤',
+        },
     },
 
     // 작업 세부정보 패널
@@ -332,7 +332,7 @@ export default {
         deleteSubtaskTitle: '하위 작업 삭제',
         deleteSubtaskConfirm: '이 하위 작업을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.',
         subtaskDeleted: '하위 작업이 삭제되었습니다',
-        openSubtask: '세부정보 열기'
+        openSubtask: '세부정보 열기',
     },
 
     // 새 작업 모달
@@ -344,20 +344,20 @@ export default {
         assigneePlaceholder: '담당자 선택',
         cancel: '취소',
         create: '생성',
-        nameRequired: '작업 이름은 필수입니다'
+        nameRequired: '작업 이름은 필수입니다',
     },
 
     // 요약 필드
     summary: {
         viewFull: '전체 요약 보기',
-        empty: '요약 없음'
+        empty: '요약 없음',
     },
 
     // AI 어시스턴트
     ai: {
         // 플로팅 버튼
         floatingBtn: {
-            label: 'AI 어시스턴트 열기'
+            label: 'AI 어시스턴트 열기',
         },
         // 설정 모달
         config: {
@@ -390,22 +390,29 @@ export default {
             skillTaskQueryName: 'Task Query',
             skillTaskQueryDesc: '작업/진행률 데이터를 조회합니다(툴 호출 지원)',
             skillProgressAnalysisName: 'Progress Analysis',
-            skillProgressAnalysisDesc: '작업 데이터를 기반으로 진행 보고서와 병목 힌트를 제공합니다',
+            skillProgressAnalysisDesc:
+                '작업 데이터를 기반으로 진행 보고서와 병목 힌트를 제공합니다',
             compatibilityNotSupportedTitle: '⚠️ 함수 호출을 지원하지 않습니다',
-            compatibilityNotSupportedMessage: '이 API/모델은 함수 호출을 지원하지 않아 AI가 실시간 작업 데이터를 가져올 수 없습니다.',
+            compatibilityNotSupportedMessage:
+                '이 API/모델은 함수 호출을 지원하지 않아 AI가 실시간 작업 데이터를 가져올 수 없습니다.',
             compatibilityUnknownTitle: 'ℹ️ 함수 호출 지원 여부를 알 수 없습니다',
-            compatibilityUnknownMessage: '함수 호출 지원 여부를 확인할 수 없습니다. 저장 후 오류가 발생하면 다른 모델로 전환하세요.',
-            savedWithCompatibilityWarning: '설정이 저장되었습니다 - ⚠️ 이 구성은 함수 호출을 지원하지 않습니다',
-            savedWithCompatibilityUnknown: '설정이 저장되었습니다 - ℹ️ 연결 테스트로 함수 호출 지원 여부를 확인하세요',
+            compatibilityUnknownMessage:
+                '함수 호출 지원 여부를 확인할 수 없습니다. 저장 후 오류가 발생하면 다른 모델로 전환하세요.',
+            savedWithCompatibilityWarning:
+                '설정이 저장되었습니다 - ⚠️ 이 구성은 함수 호출을 지원하지 않습니다',
+            savedWithCompatibilityUnknown:
+                '설정이 저장되었습니다 - ℹ️ 연결 테스트로 함수 호출 지원 여부를 확인하세요',
             reasoningNoToolCall: 'Reasoning 모델은 일반적으로 함수 호출을 지원하지 않습니다',
             toolTestTimeout: '툴 호출 테스트가 시간 초과되어 지원 여부를 확인할 수 없습니다',
-            toolChoiceRequiredNoCall: 'toolChoice를 required로 설정해도 모델이 툴을 호출하지 않았습니다',
+            toolChoiceRequiredNoCall:
+                'toolChoice를 required로 설정해도 모델이 툴을 호출하지 않았습니다',
             connectionSuccess: '연결 성공',
             connectionSuccessNoToolCall: '✓ 연결 성공, 하지만 함수 호출은 지원되지 않습니다',
             connectionSuccessWithToolCall: '✓ 연결 성공, 함수 호출을 지원합니다',
             connectionSuccessUnknownToolCall: '✓ 연결 성공, 함수 호출 지원 여부는 알 수 없습니다',
-            connection404Details: '연결 실패 (404): 엔드포인트 경로가 잘못되었습니다\n\nbaseURL: {{baseUrl}}\nmodel: {{model}}\n\n가능한 원인:\n1. baseURL 경로가 올바르지 않음(/v1 포함 여부 확인)\n2. 모델 이름으로 인해 잘못된 엔드포인트가 선택됨\n3. API가 해당 엔드포인트를 지원하지 않음',
-            connectionFailed: '연결 실패, 설정을 확인해 주세요'
+            connection404Details:
+                '연결 실패 (404): 엔드포인트 경로가 잘못되었습니다\n\nbaseURL: {{baseUrl}}\nmodel: {{model}}\n\n가능한 원인:\n1. baseURL 경로가 올바르지 않음(/v1 포함 여부 확인)\n2. 모델 이름으로 인해 잘못된 엔드포인트가 선택됨\n3. API가 해당 엔드포인트를 지원하지 않음',
+            connectionFailed: '연결 실패, 설정을 확인해 주세요',
         },
         // 드로어
         drawer: {
@@ -430,8 +437,9 @@ export default {
             chatHint: 'Enter 전송, Shift+Enter 줄바꿈',
             attach: '첨부',
             callingTool: '{{name}} 호출 중',
-            taskNotFound: '해당 작업을 찾을 수 없습니다. 삭제되었거나 계층이 변경되었을 수 있습니다.',
-            taskPanelUnavailable: '작업 상세 패널을 사용할 수 없습니다'
+            taskNotFound:
+                '해당 작업을 찾을 수 없습니다. 삭제되었거나 계층이 변경되었을 수 있습니다.',
+            taskPanelUnavailable: '작업 상세 패널을 사용할 수 없습니다',
         },
         suggestions: {
             todayTasks: '오늘 작업 조회',
@@ -439,14 +447,14 @@ export default {
             progressOverview: '진행 개요 확인',
             todayTasksPrompt: '오늘 해야 할 작업은 무엇인가요?',
             overdueTasksPrompt: '어떤 작업이 지연되었나요?',
-            progressOverviewPrompt: '프로젝트 전체 진행률은 어떤가요?'
+            progressOverviewPrompt: '프로젝트 전체 진행률은 어떤가요?',
         },
         // 에이전트
         agents: {
             taskRefine: '작업 개선',
             bugReport: '버그 리포트',
             taskBreakdown: '작업 분해',
-            timeEstimate: '시간 추정'
+            timeEstimate: '시간 추정',
         },
         // 오류
         error: {
@@ -460,8 +468,8 @@ export default {
             network: '네트워크 오류. 연결을 확인하세요',
             unknown: '알 수 없는 오류가 발생했습니다',
             viewDetails: '자세히 보기',
-            originalError: '원본 오류 정보'
-        }
+            originalError: '원본 오류 정보',
+        },
     },
     baseline: {
         save: '기준선 저장',
@@ -469,14 +477,14 @@ export default {
         saveConfirm: '현재 프로젝트 상태를 기준선으로 저장할까요? 이전 기준선은 덮어씁니다',
         saved: '기준선이 저장되었습니다',
         delayed: '지연',
-        ahead: '앞당김'
+        ahead: '앞당김',
     },
     resource: {
         overload: '리소스 과부하',
         on: '일자',
         workload: '작업량',
         hours: '시간',
-        overloadAmount: '초과'
+        overloadAmount: '초과',
     },
     export: {
         title: '내보내기',
@@ -494,12 +502,12 @@ export default {
         apiNotAvailable: '내보내기 서비스를 사용할 수 없습니다. 네트워크를 확인하세요',
         success: '내보내기 성공',
         error: '내보내기 실패',
-        fail: '내보내기 실패'
+        fail: '내보내기 실패',
     },
     snapping: {
         today: '오늘',
         startOf: '시작',
-        endOf: '끝'
+        endOf: '끝',
     },
     calendar: {
         title: '근무 달력',
@@ -515,7 +523,7 @@ export default {
             GB: '영국',
             DE: '독일',
             FR: '프랑스',
-            SG: '싱가포르'
+            SG: '싱가포르',
         },
         weekdays: { 0: '일', 1: '월', 2: '화', 3: '수', 4: '목', 5: '금', 6: '토' },
         hoursPerDay: '1일 근무 시간',
@@ -559,7 +567,7 @@ export default {
         endDate: '종료일',
         noLeaveThatDay: '해당 날짜의 휴가 기록이 없습니다',
         noSpecialDays: '특별 근무일 없음',
-        noLeaves: '「휴가 추가」를 클릭하세요'
+        noLeaves: '「휴가 추가」를 클릭하세요',
     },
 
     // 프로젝트 관리
@@ -574,7 +582,7 @@ export default {
         taskCount: '작업 수',
         createdAt: '생성일',
         deleted: '프로젝트가 삭제되었습니다',
-        deleteTitle: '프로젝트 삭제'
+        deleteTitle: '프로젝트 삭제',
     },
 
     // 공유
@@ -602,7 +610,50 @@ export default {
         importReplaceHint: '현재 프로젝트의 모든 데이터 교체, 취소 불가',
         confirmImport: '가져오기 확인',
         importSuccess: '가져오기 성공: {{count}}개 작업',
-        importedProject: '가져온 프로젝트'
+        importedProject: '가져온 프로젝트',
+    },
+
+    // 피드백
+    feedback: {
+        title: '피드백',
+        subtitle:
+            '문제를 설명하고 스크린샷이나 녹화를 첨부하세요. 필요한 디버그 정보도 함께 전송됩니다.',
+        type: '유형',
+        typeBug: 'Bug',
+        typeSuggestion: '제안',
+        typeQuestion: '질문',
+        contact: '연락처 (선택)',
+        contactPlaceholder: '이메일 / 전화 / 계정',
+        issueTitle: '짧은 요약',
+        titlePlaceholder: '예: 프로젝트 전환 후 간트 차트가 갱신되지 않음',
+        description: '설명 / 재현 단계',
+        descriptionPlaceholder:
+            '무슨 일이 있었나요? 기대한 동작은 무엇인가요? 가능하면 재현 단계를 적어주세요.',
+        addAttachment: '이미지/동영상 추가',
+        startRecording: '재현 녹화',
+        stopRecording: '녹화 중지',
+        replayAutoHint: '재현 추적 자동 기록 중',
+        startReplayRecording: '재현 기록',
+        replayIdleStatus: '재현 기록 없음',
+        replayRecordingStatus: '재현 기록 중',
+        replayReadyStatus: '{{count}}개 이벤트 기록됨',
+        replayRecordingTitle: '재현 기록 중',
+        replayRecordingHint:
+            '계속 시스템을 사용하세요. 재현이 끝나면 종료하여 피드백 창으로 돌아갑니다.',
+        finishReplayRecording: '종료하고 피드백 작성',
+        previewReplay: '재현 미리보기',
+        previewTitle: '재현 기록 미리보기',
+        previewSubtitle: '{{count}}개 이벤트가 기록되었습니다.',
+        previewHint: '미리보기는 로컬 확인용입니다. 제출 시 rrweb JSON이 업로드됩니다.',
+        attachmentHint: '첨부 파일은 각각 4MB 이하여야 하며, 붙여넣기 이미지도 지원합니다.',
+        contextHint: '페이지 URL, 브라우저 정보, 현재 프로젝트 요약, 최근 콘솔 로그가 포함됩니다.',
+        submit: '피드백 제출',
+        submitting: '제출 중...',
+        submitSuccess: '피드백이 제출되었습니다',
+        submitFailed: '제출 실패, 나중에 다시 시도하세요',
+        attachmentTooLarge: '첨부 파일이 너무 큽니다',
+        attachmentFailed: '첨부 파일을 읽을 수 없습니다',
+        recordingFailed: '녹화를 시작하지 못했습니다',
     },
 
     // 공통
@@ -619,6 +670,6 @@ export default {
         noData: '데이터 없음',
         success: '성공',
         error: '오류',
-        warning: '경고'
-    }
+        warning: '경고',
+    },
 };

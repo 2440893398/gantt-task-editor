@@ -22,7 +22,7 @@ export function openShareDialog(projectId = state.currentProjectId) {
 }
 
 function renderShareDialog(modal, projectId) {
-    const project = state.projects.find(p => p.id === projectId);
+    const project = state.projects.find((p) => p.id === projectId);
     const projectColor = project?.color || '#4f46e5';
     const lastKey = localStorage.getItem(LAST_KEY_STORAGE_PREFIX + projectId) || '';
 
@@ -136,7 +136,10 @@ function renderShareDialog(modal, projectId) {
             btn.textContent = i18n.t('share.regenerate') || '重新生成';
         } catch (error) {
             console.error('[Share] Upload failed:', error);
-            showToast(i18n.t('share.uploadFailed') || '上传失败，请检查网络或使用文件导出', 'error');
+            showToast(
+                i18n.t('share.uploadFailed') || '上传失败，请检查网络或使用文件导出',
+                'error'
+            );
         } finally {
             btn.disabled = false;
         }

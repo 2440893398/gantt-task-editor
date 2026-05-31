@@ -9,7 +9,7 @@ describe('task details schedule mode translations', () => {
         'zh-CN': zhCN,
         'en-US': enUS,
         'ja-JP': jaJP,
-        'ko-KR': koKR
+        'ko-KR': koKR,
     };
 
     const requiredKeys = ['scheduleMode', 'scheduleModeStartDuration', 'scheduleModeStartEnd'];

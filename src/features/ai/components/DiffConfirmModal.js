@@ -4,7 +4,7 @@ import { showToast } from '../../../utils/toast.js';
 const OP_LABELS = {
     add: '新增',
     update: '修改',
-    delete: '删除'
+    delete: '删除',
 };
 
 const SECTION_ORDER = ['add', 'update', 'delete'];
@@ -123,7 +123,7 @@ function normalizeRow(change, index) {
         include: true,
         level: 0,
         parentNodeId: null,
-        children: []
+        children: [],
     };
 }
 
@@ -179,7 +179,7 @@ export function normalizeDiffPayload(payload) {
             source: ensureString(payload?.source || ''),
             questions: Array.isArray(payload?.questions) ? payload.questions : [],
             counts: { add: 0, update: 0, delete: 0 },
-            flatRows: []
+            flatRows: [],
         };
     }
 
@@ -198,7 +198,7 @@ export function normalizeDiffPayload(payload) {
         questions: Array.isArray(payload?.questions) ? payload.questions : [],
         raw: payload,
         counts,
-        flatRows
+        flatRows,
     };
 }
 
@@ -286,7 +286,9 @@ function getTaskExists(ganttApi, taskId) {
 }
 
 function resolveExistingTaskId(row, createdTaskMap, ganttApi) {
-    const candidates = [row.taskId, row.data?.id].filter((value) => value !== null && value !== undefined);
+    const candidates = [row.taskId, row.data?.id].filter(
+        (value) => value !== null && value !== undefined
+    );
     for (const candidate of candidates) {
         const key = String(candidate);
         const mapped = createdTaskMap.get(key);
@@ -319,9 +321,7 @@ function normalizeApplyOrder(rows) {
     const adds = included
         .filter((row) => row.op === 'add')
         .sort((a, b) => a.level - b.level || a.index - b.index);
-    const updates = included
-        .filter((row) => row.op === 'update')
-        .sort((a, b) => a.index - b.index);
+    const updates = included.filter((row) => row.op === 'update').sort((a, b) => a.index - b.index);
     const deletes = included
         .filter((row) => row.op === 'delete')
         .sort((a, b) => b.level - a.level || a.index - b.index);
@@ -336,15 +336,21 @@ export function applySelectedChanges(rows, options = {}) {
         return {
             ok: false,
             error: 'empty_rows',
-            applied: { add: 0, update: 0, delete: 0, skipped: 0, failed: 0 }
+            applied: { add: 0, update: 0, delete: 0, skipped: 0, failed: 0 },
         };
     }
 
-    if (!ganttApi || typeof ganttApi.getTask !== 'function' || typeof ganttApi.addTask !== 'function' || typeof ganttApi.updateTask !== 'function' || typeof ganttApi.deleteTask !== 'function') {
+    if (
+        !ganttApi ||
+        typeof ganttApi.getTask !== 'function' ||
+        typeof ganttApi.addTask !== 'function' ||
+        typeof ganttApi.updateTask !== 'function' ||
+        typeof ganttApi.deleteTask !== 'function'
+    ) {
         return {
             ok: false,
             error: 'gantt_unavailable',
-            applied: { add: 0, update: 0, delete: 0, skipped: 0, failed: 0 }
+            applied: { add: 0, update: 0, delete: 0, skipped: 0, failed: 0 },
         };
     }
 
@@ -435,13 +441,13 @@ export function applySelectedChanges(rows, options = {}) {
     return {
         ok: errors.length === 0,
         applied,
-        errors
+        errors,
     };
 }
 
 export function renderTaskDiffSummaryCard(payload, options = {}) {
     const normalized = reconcileRowsWithExistingTasks(normalizeDiffPayload(payload), {
-        ganttApi: options.ganttApi || globalThis.gantt
+        ganttApi: options.ganttApi || globalThis.gantt,
     });
     const sourceText = normalized.source || '导入结果';
 
@@ -522,7 +528,9 @@ function renderRightPanel(state) {
     }
 
     const data = selected.data || {};
-    const childRows = state.normalized.flatRows.filter((row) => row.parentNodeId === selected.nodeId);
+    const childRows = state.normalized.flatRows.filter(
+        (row) => row.parentNodeId === selected.nodeId
+    );
 
     return `
         <div class="diff-detail-header">
@@ -535,14 +543,18 @@ function renderRightPanel(state) {
                 <button type="button" class="btn btn-xs btn-primary" data-detail-action="confirm">确认此条</button>
             </div>
         </div>
-        ${selected.op === 'delete' && childRows.length ? `
+        ${
+            selected.op === 'delete' && childRows.length
+                ? `
             <div class="diff-delete-warning">
                 删除父任务将影响以下子任务：
                 <ul>
                     ${childRows.map((row) => `<li>${escapeHtml(row.data?.text || row.taskId || '未命名子任务')}</li>`).join('')}
                 </ul>
             </div>
-        ` : ''}
+        `
+                : ''
+        }
         <div class="diff-fields">
             <div class="diff-detail-block-title">基本信息</div>
             ${renderDetailRow('任务名称', 'text', data.text || '', '📝')}
@@ -604,7 +616,7 @@ function closeModal() {
 
 export function openDiffConfirmModal(payload, options = {}) {
     const normalized = reconcileRowsWithExistingTasks(normalizeDiffPayload(payload), {
-        ganttApi: options.ganttApi
+        ganttApi: options.ganttApi,
     });
     if (!normalized.isValid || normalized.flatRows.length === 0) {
         showToast('未检测到可执行的任务变更', 'warning');
@@ -619,7 +631,7 @@ export function openDiffConfirmModal(payload, options = {}) {
     const state = {
         normalized,
         selectedNodeId,
-        options
+        options,
     };
 
     modalRootEl = document.createElement('div');
@@ -629,7 +641,9 @@ export function openDiffConfirmModal(payload, options = {}) {
 
     modalRootEl.addEventListener('click', (event) => {
         const target = event.target;
-        const actionEl = target.closest('[data-action], [data-detail-action], .diff-row-main, .diff-row-checkbox');
+        const actionEl = target.closest(
+            '[data-action], [data-detail-action], .diff-row-main, .diff-row-checkbox'
+        );
         if (!actionEl) return;
 
         const rowEl = target.closest('.diff-row');
@@ -669,7 +683,7 @@ export function openDiffConfirmModal(payload, options = {}) {
         if (action === 'confirm-all') {
             const result = applySelectedChanges(state.normalized.flatRows, {
                 ganttApi: state.options.ganttApi,
-                undoApi: state.options.undoApi
+                undoApi: state.options.undoApi,
             });
 
             if (!result.ok && result.error === 'gantt_unavailable') {
@@ -691,7 +705,9 @@ export function openDiffConfirmModal(payload, options = {}) {
         const fieldEl = event.target.closest('[data-field]');
         if (!fieldEl) return;
 
-        const selected = state.normalized.flatRows.find((row) => row.nodeId === state.selectedNodeId);
+        const selected = state.normalized.flatRows.find(
+            (row) => row.nodeId === state.selectedNodeId
+        );
         if (!selected) return;
 
         const key = fieldEl.dataset.field;
@@ -700,7 +716,7 @@ export function openDiffConfirmModal(payload, options = {}) {
 
     return {
         close: closeModal,
-        getState: () => state
+        getState: () => state,
     };
 }
 
@@ -709,5 +725,5 @@ export const __test__ = {
     reconcileRowsWithExistingTasks,
     setNodeInclude,
     countIncludedRows,
-    applySelectedChanges
+    applySelectedChanges,
 };

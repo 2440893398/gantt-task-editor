@@ -4,7 +4,7 @@ import { test, expect } from '@playwright/test';
 test.describe('Gantt v1.5 Features', () => {
     test.beforeEach(async ({ page }) => {
         // Check console for errors
-        page.on('console', msg => {
+        page.on('console', (msg) => {
             if (msg.type() === 'error') {
                 console.error(`Page Error: ${msg.text()}`);
             }
@@ -41,10 +41,10 @@ test.describe('Gantt v1.5 Features', () => {
         await page.evaluate(() => {
             gantt.addTask({
                 id: 9999,
-                text: "Short Task",
+                text: 'Short Task',
                 start_date: new Date(),
                 duration: 0.125, // 1 hour
-                parent: 0
+                parent: 0,
             });
             gantt.render();
         });
@@ -61,10 +61,22 @@ test.describe('Gantt v1.5 Features', () => {
         // Add conflicting tasks
         await page.evaluate(() => {
             const today = new Date();
-            gantt.addTask({ id: 8001, text: "Task A", start_date: today, duration: 8, assignee: "Alice" });
-            gantt.addTask({ id: 8002, text: "Task B", start_date: today, duration: 8, assignee: "Alice" });
+            gantt.addTask({
+                id: 8001,
+                text: 'Task A',
+                start_date: today,
+                duration: 8,
+                assignee: 'Alice',
+            });
+            gantt.addTask({
+                id: 8002,
+                text: 'Task B',
+                start_date: today,
+                duration: 8,
+                assignee: 'Alice',
+            });
             // Trigger detection
-            gantt.callEvent("onAfterTaskAdd", []);
+            gantt.callEvent('onAfterTaskAdd', []);
         });
 
         // Wait for detection debounce (500ms)
@@ -83,12 +95,11 @@ test.describe('Gantt v1.5 Features', () => {
         const config = await page.evaluate(() => {
             return {
                 round: gantt.config.round_dnd_dates,
-                step: gantt.config.duration_step
+                step: gantt.config.duration_step,
             };
         });
 
         expect(config.round).toBe(true);
         expect(config.step).toBe(1);
     });
-
 });

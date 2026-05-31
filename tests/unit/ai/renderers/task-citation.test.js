@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
     extractTaskCitations,
-    replaceTaskCitationsWithChips
+    replaceTaskCitationsWithChips,
 } from '../../../../src/features/ai/renderers/task-citation.js';
 import { renderTaskCitationChip } from '../../../../src/features/ai/renderers/task-ui.js';
 

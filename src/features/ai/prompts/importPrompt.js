@@ -22,9 +22,9 @@ export const DIFF_JSON_SCHEMA = {
                             duration: { type: 'number' },
                             assignee: { type: 'string' },
                             priority: { type: 'string', enum: ['high', 'medium', 'low'] },
-                            status: { type: 'string' }
+                            status: { type: 'string' },
                         },
-                        additionalProperties: true
+                        additionalProperties: true,
                     },
                     diff: {
                         type: 'object',
@@ -32,24 +32,24 @@ export const DIFF_JSON_SCHEMA = {
                             type: 'object',
                             properties: {
                                 from: { type: ['string', 'number', 'boolean', 'null'] },
-                                to: { type: ['string', 'number', 'boolean', 'null'] }
+                                to: { type: ['string', 'number', 'boolean', 'null'] },
                             },
                             required: ['to'],
-                            additionalProperties: true
-                        }
-                    }
+                            additionalProperties: true,
+                        },
+                    },
                 },
                 required: ['op', 'data'],
-                additionalProperties: true
-            }
+                additionalProperties: true,
+            },
         },
         questions: {
             type: 'array',
-            items: { type: 'string' }
-        }
+            items: { type: 'string' },
+        },
     },
     required: ['type', 'changes'],
-    additionalProperties: true
+    additionalProperties: true,
 };
 
 export const IMPORT_SYSTEM_PROMPT = [
@@ -67,5 +67,5 @@ export const IMPORT_SYSTEM_PROMPT = [
     '- 日期格式统一为 YYYY-MM-DD',
     '- 工期单位为工作日',
     '- 如有父子关系，优先输出父任务，再输出子任务（通过 parentId 表示）',
-    '- 不确定字段不要猜测，保留空值并提出问题'
+    '- 不确定字段不要猜测，保留空值并提出问题',
 ].join('\n');

@@ -9,12 +9,11 @@ const EXPECTED_TOOL_NAMES = [
     'get_tasks_by_priority',
     'get_progress_summary',
     'get_calendar_info',
-    'get_assignee_workload'
+    'get_assignee_workload',
 ];
 
 describe('AI Tools Registry', () => {
-    beforeEach(() => {
-    });
+    beforeEach(() => {});
 
     describe('allTools export', () => {
         it('should contain required tool names', () => {

@@ -1,18 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { quickRoute, routeToSkill, routeWithCache } from '../../../../src/features/ai/agent/router.js';
+import {
+    quickRoute,
+    routeToSkill,
+    routeWithCache,
+} from '../../../../src/features/ai/agent/router.js';
 import { generateObject } from 'ai';
 import { getSkillDescriptions } from '../../../../src/features/ai/skills/registry.js';
 
 vi.mock('ai', () => ({
     generateObject: vi.fn(),
-    tool: vi.fn((def) => def)
+    tool: vi.fn((def) => def),
 }));
 
 vi.mock('../../../../src/features/ai/skills/registry.js', () => ({
     getSkillDescriptions: vi.fn(() => [
         { name: 'task-query', description: '查询任务数据', allowedTools: [] },
-        { name: 'progress-analysis', description: '分析项目进度', allowedTools: [] }
-    ])
+        { name: 'progress-analysis', description: '分析项目进度', allowedTools: [] },
+    ]),
 }));
 
 describe('AI Router', () => {
@@ -33,18 +37,15 @@ describe('AI Router', () => {
                 '待办理事项',
                 '未完成的工作',
                 '高优先级的任务',
-                '按优先级排列'
+                '按优先级排列',
             ];
 
-            it.each(taskQueryInputs)(
-                'returns task-query for message: "%s"',
-                (message) => {
-                    const result = quickRoute(message);
-                    expect(result).not.toBeNull();
-                    expect(result.skill).toBe('task-query');
-                    expect(result.method).toBe('keyword');
-                }
-            );
+            it.each(taskQueryInputs)('returns task-query for message: "%s"', (message) => {
+                const result = quickRoute(message);
+                expect(result).not.toBeNull();
+                expect(result.skill).toBe('task-query');
+                expect(result.method).toBe('keyword');
+            });
         });
 
         describe('progress-analysis keyword patterns', () => {
@@ -54,41 +55,31 @@ describe('AI Router', () => {
                 '项目整体情况',
                 '项目概况总结',
                 '有什么风险',
-                '总体进展如何'
+                '总体进展如何',
             ];
 
-            it.each(progressInputs)(
-                'returns progress-analysis for message: "%s"',
-                (message) => {
-                    const result = quickRoute(message);
-                    expect(result).not.toBeNull();
-                    expect(result.skill).toBe('progress-analysis');
-                    expect(result.method).toBe('keyword');
-                }
-            );
+            it.each(progressInputs)('returns progress-analysis for message: "%s"', (message) => {
+                const result = quickRoute(message);
+                expect(result).not.toBeNull();
+                expect(result.skill).toBe('progress-analysis');
+                expect(result.method).toBe('keyword');
+            });
         });
 
         describe('unmatched messages', () => {
-            const unmatchedInputs = [
-                'hello',
-                '你好',
-                'random text'
-            ];
+            const unmatchedInputs = ['hello', '你好', 'random text'];
 
-            it.each(unmatchedInputs)(
-                'returns null for unmatched message: "%s"',
-                (message) => {
-                    const result = quickRoute(message);
-                    expect(result).toBeNull();
-                }
-            );
+            it.each(unmatchedInputs)('returns null for unmatched message: "%s"', (message) => {
+                const result = quickRoute(message);
+                expect(result).toBeNull();
+            });
         });
 
         it('returns correct structure with skill and method keyword', () => {
             const result = quickRoute('今天的任务');
             expect(result).toEqual({
                 skill: 'task-query',
-                method: 'keyword'
+                method: 'keyword',
             });
         });
     });
@@ -102,7 +93,7 @@ describe('AI Router', () => {
 
         it('calls generateObject with correct parameters', async () => {
             generateObject.mockResolvedValueOnce({
-                object: { skill: 'task-query', confidence: 0.95, reasoning: '用户在查询任务' }
+                object: { skill: 'task-query', confidence: 0.95, reasoning: '用户在查询任务' },
             });
 
             await routeToSkill('今天有什么任务', mockOpenai, mockModel);
@@ -119,7 +110,11 @@ describe('AI Router', () => {
         });
 
         it('returns the object from generateObject result', async () => {
-            const expectedObject = { skill: 'progress-analysis', confidence: 0.88, reasoning: '用户在询问进度' };
+            const expectedObject = {
+                skill: 'progress-analysis',
+                confidence: 0.88,
+                reasoning: '用户在询问进度',
+            };
             generateObject.mockResolvedValueOnce({ object: expectedObject });
 
             const result = await routeToSkill('项目进展如何', mockOpenai, mockModel);
@@ -141,7 +136,7 @@ describe('AI Router', () => {
             expect(result).toEqual({
                 skill: 'task-query',
                 confidence: 0.9,
-                method: 'keyword'
+                method: 'keyword',
             });
             expect(generateObject).not.toHaveBeenCalled();
         });
@@ -155,7 +150,7 @@ describe('AI Router', () => {
             expect(generateObject).toHaveBeenCalledTimes(1);
             expect(result).toEqual({
                 ...aiResult,
-                method: 'ai'
+                method: 'ai',
             });
         });
 
@@ -169,7 +164,7 @@ describe('AI Router', () => {
             expect(result).toEqual({
                 skill: null,
                 confidence: 0,
-                method: 'fallback'
+                method: 'fallback',
             });
 
             warnSpy.mockRestore();

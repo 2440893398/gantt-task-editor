@@ -38,7 +38,7 @@ function formatTaskDataForDisplay(taskData) {
         const priorityMap = {
             high: `🔴 ${t('enums.priority.high', 'High')}`,
             medium: `🟡 ${t('enums.priority.medium', 'Medium')}`,
-            low: `🟢 ${t('enums.priority.low', 'Low')}`
+            low: `🟢 ${t('enums.priority.low', 'Low')}`,
         };
         basicInfo.push(priorityMap[taskData.priority] || taskData.priority);
     }
@@ -47,7 +47,7 @@ function formatTaskDataForDisplay(taskData) {
             pending: t('enums.status.pending', 'Pending'),
             in_progress: t('enums.status.in_progress', 'In Progress'),
             completed: t('enums.status.completed', 'Completed'),
-            suspended: t('enums.status.suspended', 'Cancelled')
+            suspended: t('enums.status.suspended', 'Cancelled'),
         };
         basicInfo.push(statusMap[taskData.status] || taskData.status);
     }
@@ -67,7 +67,9 @@ function formatTaskDataForDisplay(taskData) {
         timeInfo.push(`${t('taskDetails.planEnd', 'Due')}: ${taskData.end_date}`);
     }
     if (taskData.duration) {
-        timeInfo.push(`${t('tooltip.duration', 'Duration')}: ${taskData.duration}${t('tooltip.days', 'days')}`);
+        timeInfo.push(
+            `${t('tooltip.duration', 'Duration')}: ${taskData.duration}${t('tooltip.days', 'days')}`
+        );
     }
     if (taskData.progress !== undefined && taskData.progress !== null) {
         timeInfo.push(`${t('tooltip.progress', 'Progress')}: ${taskData.progress}%`);
@@ -87,11 +89,12 @@ function formatTaskDataForDisplay(taskData) {
                 const statusMap = {
                     pending: t('enums.status.pending', 'Pending'),
                     in_progress: t('enums.status.in_progress', 'In Progress'),
-                    completed: t('enums.status.completed', 'Completed')
+                    completed: t('enums.status.completed', 'Completed'),
                 };
                 subMeta.push(statusMap[sub.status] || sub.status);
             }
-            if (sub.progress !== undefined && sub.progress !== null) subMeta.push(`${sub.progress}%`);
+            if (sub.progress !== undefined && sub.progress !== null)
+                subMeta.push(`${sub.progress}%`);
             if (subMeta.length > 0) {
                 subInfo.push(`(${subMeta.join(', ')})`);
             }
@@ -113,11 +116,13 @@ function resolveInputBubbleMode(agentId) {
 const TASK_SNAPSHOT_LIMITS = {
     maxTasks: 120,
     maxChars: 6000,
-    maxTextLength: 80
+    maxTextLength: 80,
 };
 
 function sanitizeSnapshotValue(value, fallback = '-') {
-    const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+    const text = String(value ?? '')
+        .replace(/\s+/g, ' ')
+        .trim();
     return text || fallback;
 }
 
@@ -145,9 +150,13 @@ function buildCurrentTaskSnapshotBlock() {
     try {
         gantt.eachTask((task) => {
             if (!task || task.id === undefined || task.id === null) return;
-            const text = sanitizeSnapshotValue(task.text || task.name || '-', '-')
-                .slice(0, TASK_SNAPSHOT_LIMITS.maxTextLength);
-            const parent = task.parent ?? (typeof gantt.getParent === 'function' ? gantt.getParent(task.id) : 0);
+            const text = sanitizeSnapshotValue(task.text || task.name || '-', '-').slice(
+                0,
+                TASK_SNAPSHOT_LIMITS.maxTextLength
+            );
+            const parent =
+                task.parent ??
+                (typeof gantt.getParent === 'function' ? gantt.getParent(task.id) : 0);
 
             tasks.push({
                 id: String(task.id),
@@ -157,7 +166,7 @@ function buildCurrentTaskSnapshotBlock() {
                 assignee: sanitizeSnapshotValue(task.assignee, '-'),
                 status: sanitizeSnapshotValue(task.status, '-'),
                 priority: sanitizeSnapshotValue(task.priority, '-'),
-                parent: sanitizeSnapshotValue(parent, '0')
+                parent: sanitizeSnapshotValue(parent, '0'),
             });
         });
     } catch {
@@ -172,14 +181,15 @@ function buildCurrentTaskSnapshotBlock() {
     });
 
     const sampled = tasks.slice(0, TASK_SNAPSHOT_LIMITS.maxTasks);
-    const lines = sampled.map((task) => (
-        `- id=${task.id}; text=${task.text}; start=${task.start_date}; end=${task.end_date}; assignee=${task.assignee}; status=${task.status}; priority=${task.priority}; parent=${task.parent}`
-    ));
+    const lines = sampled.map(
+        (task) =>
+            `- id=${task.id}; text=${task.text}; start=${task.start_date}; end=${task.end_date}; assignee=${task.assignee}; status=${task.status}; priority=${task.priority}; parent=${task.parent}`
+    );
 
     let block = [
         '[Current Task Snapshot]',
         `total=${tasks.length}, sampled=${sampled.length}`,
-        ...lines
+        ...lines,
     ].join('\n');
 
     if (block.length > TASK_SNAPSHOT_LIMITS.maxChars) {
@@ -236,7 +246,11 @@ function enrichMessageWithReferences(message, referencedTasks = [], attachmentCo
 function toModelMessage(msg) {
     return {
         role: msg.role,
-        content: enrichMessageWithReferences(msg.content, msg.referencedTasks, msg.attachmentContext)
+        content: enrichMessageWithReferences(
+            msg.content,
+            msg.referencedTasks,
+            msg.attachmentContext
+        ),
     };
 }
 
@@ -246,7 +260,7 @@ function buildImportGuidanceBlock() {
         IMPORT_SYSTEM_PROMPT,
         '',
         '[DIFF_JSON_SCHEMA]',
-        JSON.stringify(DIFF_JSON_SCHEMA, null, 2)
+        JSON.stringify(DIFF_JSON_SCHEMA, null, 2),
     ].join('\n');
 }
 
@@ -263,7 +277,7 @@ let currentContext = {
     agentId: null,
     text: '',
     taskId: null,
-    onApply: null
+    onApply: null,
 };
 
 /**
@@ -302,14 +316,14 @@ export async function invokeAgent(agentId, context = {}) {
         text: context.text || '', // 允许为空
         taskId: context.taskId,
         taskData: context.taskData, // 保存完整任务数据（用于任务分解等场景）
-        onApply: context.onApply
+        onApply: context.onApply,
     };
 
     // 打开抽屉
     // 如果有完整任务数据，使用格式化后的展示文本；否则使用原始文本
     const displayContext = context.taskData
         ? formatTaskDataForDisplay(context.taskData)
-        : (context.text || '');
+        : context.text || '';
 
     AiDrawer.open({
         title: getAgentName(agentId),
@@ -321,7 +335,7 @@ export async function invokeAgent(agentId, context = {}) {
             if (context.onApply) {
                 context.onApply(result);
             }
-        }
+        },
     });
 
     // 如果有文本，开始流式输出；否则等待用户输入
@@ -332,17 +346,20 @@ export async function invokeAgent(agentId, context = {}) {
             let hasStartedAssistant = true;
             const toolStatusById = new Map();
 
-            const modelMessage = prependImportGuidanceForAttachment(context.text, context.attachmentContext);
+            const modelMessage = prependImportGuidanceForAttachment(
+                context.text,
+                context.attachmentContext
+            );
 
             await runSmartChat(modelMessage, [], {
                 onToolCall: (toolCalls = []) => {
-                    toolCalls.forEach(tc => {
+                    toolCalls.forEach((tc) => {
                         const el = AiDrawer.showToolCall(tc);
                         toolStatusById.set(tc.id, el);
                     });
                 },
                 onToolResult: (toolResults = []) => {
-                    toolResults.forEach(tr => {
+                    toolResults.forEach((tr) => {
                         const el = toolStatusById.get(tr.id);
                         AiDrawer.showToolResult(tr, el);
                     });
@@ -359,7 +376,7 @@ export async function invokeAgent(agentId, context = {}) {
                 },
                 onError: (error) => {
                     handleError(error);
-                }
+                },
             });
             return;
         }
@@ -375,7 +392,7 @@ export async function invokeAgent(agentId, context = {}) {
             {
                 text: context.text,
                 taskData: context.taskData, // 传递完整任务数据（用于任务分解等场景）
-                additionalInfo: additionalInstruction || context.additionalInfo  // F-109: 合并附加指令
+                additionalInfo: additionalInstruction || context.additionalInfo, // F-109: 合并附加指令
             },
             // onChunk
             (text) => {
@@ -411,7 +428,7 @@ export async function retryCurrentAgent(messageId) {
             taskId: currentContext.taskId,
             taskData: currentContext.taskData, // 保留完整任务数据
             onApply: currentContext.onApply,
-            additionalInfo: currentContext.additionalInfo
+            additionalInfo: currentContext.additionalInfo,
         });
     }
 }
@@ -451,7 +468,7 @@ export async function continueConversation(userMessage, messageId = null, option
 
     // 如果指定了重试的消息ID，需要截断历史记录到该消息之前
     if (messageId) {
-        const index = history.findIndex(m => m.id === messageId);
+        const index = history.findIndex((m) => m.id === messageId);
         if (index !== -1) {
             // 保留该消息之前的历史
             history = history.slice(0, index);
@@ -465,13 +482,17 @@ export async function continueConversation(userMessage, messageId = null, option
 
     const referencedTasks = Array.isArray(options.referencedTasks) ? options.referencedTasks : [];
     const attachmentContext = options.attachmentContext || null;
-    const enrichedUserMessage = enrichMessageWithReferences(userMessage, referencedTasks, attachmentContext);
+    const enrichedUserMessage = enrichMessageWithReferences(
+        userMessage,
+        referencedTasks,
+        attachmentContext
+    );
 
     // 如果是新消息（非重试），添加到历史
     if (userMessage) {
         messages.push({
             role: 'user',
-            content: enrichedUserMessage
+            content: enrichedUserMessage,
         });
         // UI 上显示用户消息
         AiDrawer.addMessage('user', userMessage, { referencedTasks, attachmentContext });
@@ -486,7 +507,7 @@ export async function continueConversation(userMessage, messageId = null, option
     // 构建上下文对象，包含 messages
     const context = {
         messages: messages,
-        additionalInfo: additionalInstruction
+        additionalInfo: additionalInstruction,
     };
 
     // chat agent：走 runSmartChat（带工具 + 路由）
@@ -501,7 +522,7 @@ export async function continueConversation(userMessage, messageId = null, option
         let effectiveAttachmentContext = attachmentContext;
         let effectiveHistory = history;
         if (!effectiveMessage) {
-            const lastUserIndex = [...history].map(m => m.role).lastIndexOf('user');
+            const lastUserIndex = [...history].map((m) => m.role).lastIndexOf('user');
             if (lastUserIndex >= 0) {
                 effectiveMessage = history[lastUserIndex].content || '';
                 effectiveReferencedTasks = history[lastUserIndex].referencedTasks || [];
@@ -520,21 +541,31 @@ export async function continueConversation(userMessage, messageId = null, option
             }
             return {
                 ...modelMsg,
-                content: prependImportGuidanceForAttachment(modelMsg.content, msg.attachmentContext)
+                content: prependImportGuidanceForAttachment(
+                    modelMsg.content,
+                    msg.attachmentContext
+                ),
             };
         });
-        const baseModelMessage = enrichMessageWithReferences(effectiveMessage, effectiveReferencedTasks, effectiveAttachmentContext);
-        const modelMessage = prependImportGuidanceForAttachment(baseModelMessage, effectiveAttachmentContext);
+        const baseModelMessage = enrichMessageWithReferences(
+            effectiveMessage,
+            effectiveReferencedTasks,
+            effectiveAttachmentContext
+        );
+        const modelMessage = prependImportGuidanceForAttachment(
+            baseModelMessage,
+            effectiveAttachmentContext
+        );
 
         await runSmartChat(modelMessage, modelHistory, {
             onToolCall: (toolCalls = []) => {
-                toolCalls.forEach(tc => {
+                toolCalls.forEach((tc) => {
                     const el = AiDrawer.showToolCall(tc);
                     toolStatusById.set(tc.id, el);
                 });
             },
             onToolResult: (toolResults = []) => {
-                toolResults.forEach(tr => {
+                toolResults.forEach((tr) => {
                     const el = toolStatusById.get(tr.id);
                     AiDrawer.showToolResult(tr, el);
                 });
@@ -547,7 +578,7 @@ export async function continueConversation(userMessage, messageId = null, option
                 AiDrawer.appendText(text);
             },
             onFinish: (usage) => AiDrawer.finishStreaming(usage),
-            onError: (error) => handleError(error)
+            onError: (error) => handleError(error),
         });
 
         return;
@@ -593,7 +624,7 @@ export function getSelectedTaskContext() {
 
     return {
         text: task.text || '',
-        taskId: selectedId
+        taskId: selectedId,
     };
 }
 
@@ -609,7 +640,7 @@ export function getActiveInputContext() {
         if (text.trim()) {
             return {
                 text,
-                element: activeEl
+                element: activeEl,
             };
         }
     }
@@ -628,7 +659,7 @@ export function getSmartContext() {
     if (selection && selection.toString().trim()) {
         return {
             text: selection.toString().trim(),
-            source: 'selection'
+            source: 'selection',
         };
     }
 
@@ -638,7 +669,7 @@ export function getSmartContext() {
         return {
             text: inputContext.text,
             element: inputContext.element,
-            source: 'input'
+            source: 'input',
         };
     }
 
@@ -648,7 +679,7 @@ export function getSmartContext() {
         return {
             text: taskContext.text,
             taskId: taskContext.taskId,
-            source: 'task'
+            source: 'task',
         };
     }
 
@@ -729,5 +760,5 @@ export default {
     applyToTask,
     applyToInput,
     undoInput,
-    undoManager
+    undoManager,
 };

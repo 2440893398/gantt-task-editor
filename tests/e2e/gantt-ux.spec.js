@@ -11,8 +11,6 @@ test.describe('Gantt Chart UX Optimization', () => {
 
     // ===== 3.1 缩放控件功能测试 (TC-015, TC-016) =====
     test('TC-015: Zoom In and Zoom Out buttons should work', async ({ page }) => {
-
-
         const zoomInBtn = page.locator('#zoom-in-btn');
         const zoomOutBtn = page.locator('#zoom-out-btn');
         const viewSelector = page.locator('#view-selector');
@@ -22,8 +20,6 @@ test.describe('Gantt Chart UX Optimization', () => {
 
         // Test Zoom Out (should go to Month)
         await zoomOutBtn.dispatchEvent('click');
-
-
 
         await expect(viewSelector).toHaveValue('month');
 
@@ -108,7 +104,7 @@ test.describe('Gantt Chart UX Optimization', () => {
         // 检查导航部分
         await expect(panel.getByText('导航')).toBeVisible();
 
-        // 检查任务操作部分  
+        // 检查任务操作部分
         await expect(panel.getByText('任务操作')).toBeVisible();
 
         // 检查图例部分
@@ -122,7 +118,9 @@ test.describe('Gantt Chart UX Optimization', () => {
     });
 
     // ===== 3.4 工具栏按钮优化测试 (TC-011, TC-012, TC-013, TC-014) =====
-    test('TC-011: Primary toolbar buttons should be visible and have correct labels', async ({ page }) => {
+    test('TC-011: Primary toolbar buttons should be visible and have correct labels', async ({
+        page,
+    }) => {
         // Check primary buttons with correct IDs
         const editFieldsBtn = page.locator('#add-field-btn');
         const batchEditBtn = page.locator('#batch-edit-btn');
@@ -218,9 +216,9 @@ test.describe('Gantt Chart UX Optimization', () => {
 
     // ===== 3.6 空格键拖动导航测试 (TC-004) =====
     /**
-    * TC-004: 空格键拖动模式光标样式
-    * 修复方案: 使用Playwright原生键盘API，并确保页面获得焦点
-    */
+     * TC-004: 空格键拖动模式光标样式
+     * 修复方案: 使用Playwright原生键盘API，并确保页面获得焦点
+     */
     test('TC-004: 空格键拖动光标样式', async ({ page }) => {
         const ganttContainer = page.locator('#gantt_here');
 
@@ -234,7 +232,7 @@ test.describe('Gantt Chart UX Optimization', () => {
             code: 'Space',
             keyCode: 32,
             which: 32,
-            bubbles: true
+            bubbles: true,
         });
 
         await page.waitForTimeout(200);
@@ -259,7 +257,7 @@ test.describe('Gantt Chart UX Optimization', () => {
             code: 'Space',
             keyCode: 32,
             which: 32,
-            bubbles: true
+            bubbles: true,
         });
 
         await page.waitForTimeout(100);
@@ -294,7 +292,7 @@ test.describe('Gantt Chart UX Optimization', () => {
         await expect(zoomInBtn).toBeDisabled();
 
         // 验证按钮有禁用样式
-        const opacity = await zoomInBtn.evaluate(el => window.getComputedStyle(el).opacity);
+        const opacity = await zoomInBtn.evaluate((el) => window.getComputedStyle(el).opacity);
         expect(parseFloat(opacity)).toBeLessThanOrEqual(0.5);
     });
 
@@ -323,7 +321,7 @@ test.describe('Gantt Chart UX Optimization', () => {
         await expect(zoomOutBtn).toBeDisabled();
 
         // 验证按钮有禁用样式
-        const opacity = await zoomOutBtn.evaluate(el => window.getComputedStyle(el).opacity);
+        const opacity = await zoomOutBtn.evaluate((el) => window.getComputedStyle(el).opacity);
         expect(parseFloat(opacity)).toBeLessThanOrEqual(0.5);
     });
 });

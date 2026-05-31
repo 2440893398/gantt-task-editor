@@ -1,10 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('../../../../src/utils/i18n.js', () => ({
-    i18n: { t: vi.fn((key) => null) }
+    i18n: { t: vi.fn((key) => null) },
 }));
 
-import { registerRenderer, getRenderer, renderResult } from '../../../../src/features/ai/renderers/index.js';
+import {
+    registerRenderer,
+    getRenderer,
+    renderResult,
+} from '../../../../src/features/ai/renderers/index.js';
 
 // ============================================
 // 1. registerRenderer & getRenderer
@@ -103,7 +107,7 @@ describe('built-in renderers', () => {
             const html = renderResult({
                 type: 'task_refine',
                 original: 'old task text',
-                optimized: 'improved task text'
+                optimized: 'improved task text',
             });
 
             expect(html).toContain('old task text');
@@ -116,7 +120,7 @@ describe('built-in renderers', () => {
                 type: 'task_refine',
                 original: 'original',
                 optimized: 'optimized',
-                reasoning: 'because clarity matters'
+                reasoning: 'because clarity matters',
             });
 
             expect(html).toContain('because clarity matters');
@@ -127,7 +131,7 @@ describe('built-in renderers', () => {
             const html = renderResult({
                 type: 'task_refine',
                 original: 'old',
-                optimized: 'new'
+                optimized: 'new',
             });
 
             expect(html).toContain('ai-result-apply');
@@ -139,7 +143,7 @@ describe('built-in renderers', () => {
                 {
                     type: 'task_refine',
                     original: 'old',
-                    optimized: 'new'
+                    optimized: 'new',
                 },
                 { canApply: false }
             );
@@ -153,7 +157,7 @@ describe('built-in renderers', () => {
                 {
                     type: 'task_refine',
                     original: 'old',
-                    optimized: 'new'
+                    optimized: 'new',
                 },
                 { applied: true }
             );
@@ -175,7 +179,7 @@ describe('built-in renderers', () => {
             const html = renderResult({
                 type: 'task_split',
                 original: 'big task',
-                subtasks: ['subtask A', 'subtask B', 'subtask C']
+                subtasks: ['subtask A', 'subtask B', 'subtask C'],
             });
 
             expect(html).toContain('data-type="task_split"');
@@ -190,7 +194,7 @@ describe('built-in renderers', () => {
             const html = renderResult({
                 type: 'task_split',
                 original: 'parent task',
-                subtasks: ['child 1']
+                subtasks: ['child 1'],
             });
 
             expect(html).toContain('ai-result-apply-subtasks');
@@ -204,9 +208,9 @@ describe('built-in renderers', () => {
                 subtasks: [
                     {
                         text: '子任务A',
-                        description: '这是更详细的执行说明'
-                    }
-                ]
+                        description: '这是更详细的执行说明',
+                    },
+                ],
             });
 
             expect(html).toContain('子任务A');
@@ -218,7 +222,7 @@ describe('built-in renderers', () => {
                 {
                     type: 'task_split',
                     original: 'parent task',
-                    subtasks: ['child 1']
+                    subtasks: ['child 1'],
                 },
                 { canApply: false }
             );

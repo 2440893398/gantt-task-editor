@@ -23,8 +23,8 @@ export function createRichTextPreview(container, html = '', options = {}) {
         theme: 'snow',
         readOnly: true,
         modules: {
-            toolbar: options.toolbar || false
-        }
+            toolbar: options.toolbar || false,
+        },
     };
 
     container.innerHTML = '';
@@ -57,10 +57,10 @@ export function initRichTextEditor(containerId, options = {}) {
     // 默认工具栏配置
     const defaultToolbar = [
         ['bold', 'italic'],
-        [{ 'header': [1, 2, 3, false] }],
-        [{ 'list': 'ordered' }, { 'list': 'bullet' }],
+        [{ header: [1, 2, 3, false] }],
+        [{ list: 'ordered' }, { list: 'bullet' }],
         ['blockquote', 'code-block'],
-        ['clean']
+        ['clean'],
     ];
 
     // 合并配置
@@ -68,9 +68,9 @@ export function initRichTextEditor(containerId, options = {}) {
         theme: 'snow',
         placeholder: options.placeholder || '输入详细描述...',
         modules: {
-            toolbar: options.toolbar || defaultToolbar
+            toolbar: options.toolbar || defaultToolbar,
         },
-        ...options
+        ...options,
     };
 
     // 销毁已有实例
@@ -149,7 +149,7 @@ export function destroyRichTextEditor() {
 export function markdownToHtml(markdown) {
     if (!markdown) return '';
 
-    let html = markdown
+    const html = markdown
         // 标题
         .replace(/^### (.*$)/gm, '<h3>$1</h3>')
         .replace(/^## (.*$)/gm, '<h2>$1</h2>')

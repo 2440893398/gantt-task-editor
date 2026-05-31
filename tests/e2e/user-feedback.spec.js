@@ -21,7 +21,10 @@ test.describe('用户反馈优化测试套件', () => {
         await expect(page.locator('#scroll-to-today-btn')).toBeVisible({ timeout: 15000 });
         // 等待甘特图数据渲染完成
         await expect(page.locator('.gantt_grid_data .gantt_row')).toHaveCount(
-            await page.locator('.gantt_grid_data .gantt_row').count().then(c => c > 0 ? c : 1),
+            await page
+                .locator('.gantt_grid_data .gantt_row')
+                .count()
+                .then((c) => (c > 0 ? c : 1)),
             { timeout: 10000 }
         );
     });
@@ -63,7 +66,7 @@ test.describe('用户反馈优化测试套件', () => {
             // 获取甘特图区域的任务条
             const taskBar = page.locator('.gantt_task_content').first();
 
-            if (await taskBar.count() > 0) {
+            if ((await taskBar.count()) > 0) {
                 // 确保鼠标移动到任务条上触发 tooltip
                 // 先force hover一下body或者其他地方重置状态
                 await page.mouse.move(0, 0);
@@ -110,13 +113,13 @@ test.describe('用户反馈优化测试套件', () => {
             // 找到工期单元格
             const durationCell = page.locator('.gantt_cell[data-column-name="duration"]').first();
 
-            if (await durationCell.count() > 0) {
+            if ((await durationCell.count()) > 0) {
                 await durationCell.dblclick();
                 await page.waitForTimeout(300);
 
                 // 工期编辑器是 number 类型
                 const editor = page.locator('.gantt-inline-editor');
-                if (await editor.count() > 0) {
+                if ((await editor.count()) > 0) {
                     await editor.fill('5');
                     await page.keyboard.press('Enter');
                     await page.waitForTimeout(300);
@@ -129,13 +132,13 @@ test.describe('用户反馈优化测试套件', () => {
             // 找到进度单元格
             const progressCell = page.locator('.gantt_cell[data-column-name="progress"]').first();
 
-            if (await progressCell.count() > 0) {
+            if ((await progressCell.count()) > 0) {
                 await progressCell.dblclick(); // Added dblclick
                 await page.waitForTimeout(300);
 
                 // 进度编辑器是 number 类型
                 const editor = page.locator('.gantt-inline-editor');
-                if (await editor.count() > 0) {
+                if ((await editor.count()) > 0) {
                     await editor.fill('75');
                     await page.keyboard.press('Enter');
                     await page.waitForTimeout(300);
@@ -148,7 +151,7 @@ test.describe('用户反馈优化测试套件', () => {
             // 找到任务名称单元格
             const textCell = page.locator('.gantt_cell[data-column-name="text"]').first();
 
-            if (await textCell.count() > 0) {
+            if ((await textCell.count()) > 0) {
                 // 获取原始值
                 const originalText = await textCell.textContent();
 
@@ -157,7 +160,7 @@ test.describe('用户反馈优化测试套件', () => {
                 await page.waitForTimeout(300);
 
                 const editor = page.locator('.gantt-inline-editor');
-                if (await editor.count() > 0) {
+                if ((await editor.count()) > 0) {
                     // 修改内容
                     await editor.fill('临时修改内容');
 
@@ -351,7 +354,7 @@ test.describe('用户反馈优化测试套件', () => {
         test('TC-BD-03: 进度值边界-0%', async ({ page }) => {
             const progressCell = page.locator('.gantt_cell[data-column-name="progress"]').first();
 
-            if (await progressCell.count() > 0) {
+            if ((await progressCell.count()) > 0) {
                 await progressCell.click();
                 await page.waitForTimeout(100);
                 await progressCell.dblclick({ force: true });
@@ -359,7 +362,7 @@ test.describe('用户反馈优化测试套件', () => {
 
                 // 进度编辑器是 number 类型
                 const editor = page.locator('.gantt-inline-editor');
-                if (await editor.count() > 0) {
+                if ((await editor.count()) > 0) {
                     await editor.fill('0');
                     await page.keyboard.press('Enter');
                     await page.waitForTimeout(300);
@@ -371,7 +374,7 @@ test.describe('用户反馈优化测试套件', () => {
         test('TC-BD-04: 进度值边界-100%', async ({ page }) => {
             const progressCell = page.locator('.gantt_cell[data-column-name="progress"]').first();
 
-            if (await progressCell.count() > 0) {
+            if ((await progressCell.count()) > 0) {
                 await progressCell.click();
                 await page.waitForTimeout(100);
                 await progressCell.dblclick({ force: true });
@@ -379,7 +382,7 @@ test.describe('用户反馈优化测试套件', () => {
 
                 // 进度编辑器是 number 类型
                 const editor = page.locator('.gantt-inline-editor');
-                if (await editor.count() > 0) {
+                if ((await editor.count()) > 0) {
                     await editor.fill('100');
                     await page.keyboard.press('Enter');
                     await page.waitForTimeout(300);
@@ -452,12 +455,12 @@ test.describe('用户反馈优化测试套件', () => {
         test('TC-EX-08: 特殊字符输入XSS测试', async ({ page }) => {
             const textCell = page.locator('.gantt_cell[data-column-name="text"]').first();
 
-            if (await textCell.count() > 0) {
+            if ((await textCell.count()) > 0) {
                 await textCell.dblclick();
                 await page.waitForTimeout(300);
 
                 const editor = page.locator('.gantt-inline-editor');
-                if (await editor.count() > 0) {
+                if ((await editor.count()) > 0) {
                     // 输入XSS测试字符串
                     await editor.fill('<script>alert(1)</script>');
                     await page.keyboard.press('Enter');

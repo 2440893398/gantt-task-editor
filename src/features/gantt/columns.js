@@ -5,9 +5,18 @@
 import { state, isFieldEnabled, getViewMode } from '../../core/store.js';
 import { INTERNAL_FIELDS, SYSTEM_FIELD_CONFIG } from '../../data/fields.js';
 
-import { renderPriorityBadge, renderStatusBadge, renderAssignee, renderProgressBar } from './templates.js';
+import {
+    renderPriorityBadge,
+    renderStatusBadge,
+    renderAssignee,
+    renderProgressBar,
+} from './templates.js';
 import { extractPlainText, escapeAttr } from '../../utils/dom.js';
-import { formatDuration, exclusiveToInclusive, isDayPrecision } from '../../utils/time-formatter.js';
+import {
+    formatDuration,
+    exclusiveToInclusive,
+    isDayPrecision,
+} from '../../utils/time-formatter.js';
 import { applySavedColumnWidths, loadColumnWidthPrefs } from './column-widths.js';
 import { buildNewTaskPayload, getTaskByAnyId } from './new-task-payload.js';
 import { i18n } from '../../utils/i18n.js';
@@ -17,9 +26,10 @@ import { showToast } from '../../utils/toast.js';
 let taskActionHandlersBound = false;
 
 const TASK_ACTION_ICONS = {
-    addChild: '<svg class="gantt-task-action-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>',
+    addChild:
+        '<svg class="gantt-task-action-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>',
     edit: '<svg class="gantt-task-action-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M11.7 2.3a1 1 0 0 1 1.4 0l.6.6a1 1 0 0 1 0 1.4l-7.7 7.7-2.8.8.8-2.8zM9.9 4.1l2 2"/></svg>',
-    delete: '<svg class="gantt-task-action-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 4.5h9M6.2 4.5V3.2h3.6v1.3M5.2 6.2v5.6M8 6.2v5.6M10.8 6.2v5.6M4.8 4.5l.6 8.5h5.2l.6-8.5"/></svg>'
+    delete: '<svg class="gantt-task-action-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 4.5h9M6.2 4.5V3.2h3.6v1.3M5.2 6.2v5.6M8 6.2v5.6M10.8 6.2v5.6M4.8 4.5l.6 8.5h5.2l.6-8.5"/></svg>',
 };
 
 /**
@@ -51,11 +61,10 @@ function getColumnLabel(key, customFieldLabel = null) {
         priority: '优先级',
         assignee: '负责人',
         status: '状态',
-        description: '描述'
+        description: '描述',
     };
     return defaults[key] || key;
 }
-
 
 /**
  * HTML 转义
@@ -90,11 +99,13 @@ function richContentScore(value) {
 }
 
 function resolveRichTextField(task, preferredField) {
-    const candidateFields = Array.from(new Set([
-        preferredField,
-        preferredField === 'summary' ? 'description' : 'summary',
-        preferredField === 'description' ? 'summary' : 'description'
-    ]));
+    const candidateFields = Array.from(
+        new Set([
+            preferredField,
+            preferredField === 'summary' ? 'description' : 'summary',
+            preferredField === 'description' ? 'summary' : 'description',
+        ])
+    );
 
     let bestField = preferredField;
     let bestHtml = String(task?.[preferredField] || '');
@@ -195,7 +206,7 @@ function ensureTaskActionHandlersBound() {
                 startDate: parentTask.start_date,
                 text: '',
                 duration: 1,
-                progress: 0
+                progress: 0,
             });
 
             if (typeof window.openNewTaskDetailsPanel === 'function') {
@@ -223,7 +234,7 @@ function ensureTaskActionHandlersBound() {
                 startDate: baseTask.start_date,
                 text: '',
                 duration: 1,
-                progress: 0
+                progress: 0,
             });
 
             if (typeof window.openNewTaskDetailsPanel === 'function') {
@@ -254,7 +265,7 @@ function ensureTaskActionHandlersBound() {
                 onConfirm: () => {
                     gantt.deleteTask(task.id);
                     showToast(i18n.t('message.deleteSuccess') || '删除成功', 'success');
-                }
+                },
             });
         }
     });
@@ -268,11 +279,15 @@ function renderTaskActionsCell(task) {
     const deleteLabel = i18n.t('form.delete') || '删除';
     const taskId = escapeAttr(task.id);
     const shouldShowAddChild = shouldRenderAddChildAction();
-    const labels = shouldShowAddChild ? `${addChildLabel}/${editLabel}/${deleteLabel}` : `${editLabel}/${deleteLabel}`;
+    const labels = shouldShowAddChild
+        ? `${addChildLabel}/${editLabel}/${deleteLabel}`
+        : `${editLabel}/${deleteLabel}`;
     return `<div class="gantt-task-actions-cell" role="group" aria-label="${labels}">
-        ${shouldShowAddChild
-        ? `<button type="button" class="gantt-task-action-btn gantt-task-action-add-child" data-action="add-child" data-task-id="${taskId}" title="${addChildLabel}" aria-label="${addChildLabel}">${TASK_ACTION_ICONS.addChild}</button>`
-        : ''}
+        ${
+            shouldShowAddChild
+                ? `<button type="button" class="gantt-task-action-btn gantt-task-action-add-child" data-action="add-child" data-task-id="${taskId}" title="${addChildLabel}" aria-label="${addChildLabel}">${TASK_ACTION_ICONS.addChild}</button>`
+                : ''
+        }
         <button type="button" class="gantt-task-action-btn gantt-task-action-edit" data-action="edit" data-task-id="${taskId}" title="${editLabel}" aria-label="${editLabel}">${TASK_ACTION_ICONS.edit}</button>
         <button type="button" class="gantt-task-action-btn gantt-task-action-delete" data-action="delete" data-task-id="${taskId}" title="${deleteLabel}" aria-label="${deleteLabel}">${TASK_ACTION_ICONS.delete}</button>
     </div>`;
@@ -292,29 +307,29 @@ export function updateGanttColumns() {
 
     // Checkbox 选择列 - 宽度38px匹配设计稿
     columns.push({
-        name: "buttons",
+        name: 'buttons',
         label: '<input type="checkbox" id="select-all-checkbox" style="cursor: pointer;">',
         width: 38,
-        align: "center",
+        align: 'center',
         template: function (task) {
-            const checked = state.selectedTasks.has(task.id) ? "checked" : "";
+            const checked = state.selectedTasks.has(task.id) ? 'checked' : '';
             return `<input type="checkbox" class="gantt-checkbox-selection" data-task-id="${task.id}" ${checked} style="cursor: pointer;">`;
-        }
+        },
     });
 
     // Filter out disabled system fields and internal fields
-    const visibleFields = state.fieldOrder.filter(fieldName => {
+    const visibleFields = state.fieldOrder.filter((fieldName) => {
         if (INTERNAL_FIELDS.includes(fieldName)) return false;
         return isFieldEnabled(fieldName);
     });
 
-    visibleFields.forEach(fieldName => {
-        if (fieldName === "text") {
+    visibleFields.forEach((fieldName) => {
+        if (fieldName === 'text') {
             columns.push({
-                name: "text",
-                label: getColumnLabel("text"),
+                name: 'text',
+                label: getColumnLabel('text'),
                 tree: true,
-                width: "*",
+                width: '*',
                 min_width: 240,
                 resize: true,
                 template: function (task) {
@@ -333,13 +348,13 @@ export function updateGanttColumns() {
                     // Add title attribute for tooltip on hover
                     html += `<span title="${escapeAttr(text)}">${escapeHtml(text)}</span>`;
                     return html;
-                }
+                },
             });
-        } else if (fieldName === "start_date") {
+        } else if (fieldName === 'start_date') {
             columns.push({
-                name: "start_date",
-                label: getColumnLabel("start_date"),
-                align: "center",
+                name: 'start_date',
+                label: getColumnLabel('start_date'),
+                align: 'center',
                 width: 80,
                 min_width: 80,
                 resize: true,
@@ -348,13 +363,13 @@ export function updateGanttColumns() {
                     if (!date) return '<span class="text-base-content/40">—</span>';
                     const formatted = formatGridDate(date);
                     return `<span title="${formatted}">${formatted}</span>`;
-                }
+                },
             });
-        } else if (fieldName === "duration") {
+        } else if (fieldName === 'duration') {
             columns.push({
-                name: "duration",
-                label: getColumnLabel("duration"),
-                align: "center",
+                name: 'duration',
+                label: getColumnLabel('duration'),
+                align: 'center',
                 width: 56,
                 min_width: 56,
                 resize: true,
@@ -362,30 +377,35 @@ export function updateGanttColumns() {
                     const duration = task.duration || 0;
                     const formatted = formatDuration(duration);
                     return `<span title="${formatted}">${formatted}</span>`;
-                }
+                },
             });
-        } else if (fieldName === "progress") {
+        } else if (fieldName === 'progress') {
             columns.push({
-                name: "progress", label: getColumnLabel("progress"), align: "center", width: 100, min_width: 84, resize: true,
+                name: 'progress',
+                label: getColumnLabel('progress'),
+                align: 'center',
+                width: 100,
+                min_width: 84,
+                resize: true,
                 template: function (task) {
                     return renderProgressBar(task);
-                }
+                },
             });
-        } else if (fieldName === "description") {
+        } else if (fieldName === 'description') {
             // 描述字段：显示富文本摘要，悬浮展示完整 tooltip 预览
             columns.push({
-                name: "description",
-                label: getColumnLabel("description"),
+                name: 'description',
+                label: getColumnLabel('description'),
                 width: 100,
                 min_width: 100,
                 resize: true,
                 template: function (task) {
                     return renderRichTextPreviewCell(task, 'description');
-                }
+                },
             });
         } else {
             // Check if it's a custom field first
-            const customField = state.customFields.find(f => f.name === fieldName);
+            const customField = state.customFields.find((f) => f.name === fieldName);
             // Check if it's a system field
             const systemFieldConfig = SYSTEM_FIELD_CONFIG[fieldName];
 
@@ -428,11 +448,11 @@ export function updateGanttColumns() {
                 columns.push({
                     name: fieldName,
                     label: label,
-                    align: "center",
+                    align: 'center',
                     width: width,
                     min_width: Math.max(Math.min(width, 100), 72),
                     resize: true,
-                    template: templateFn
+                    template: templateFn,
                 });
             } else if (systemFieldConfig) {
                 // Handle system field (actual_start, actual_end, actual_hours, etc.)
@@ -454,7 +474,10 @@ export function updateGanttColumns() {
                     templateFn = function (task) {
                         let value = task[fieldName];
                         if (!value) return '<span class="text-base-content/40">—</span>';
-                        if (isExclusiveEnd) value = exclusiveToInclusive(value instanceof Date ? value : new Date(value));
+                        if (isExclusiveEnd)
+                            value = exclusiveToInclusive(
+                                value instanceof Date ? value : new Date(value)
+                            );
                         const formatted = formatGridDate(value);
                         if (!formatted) return '<span class="text-base-content/40">—</span>';
                         return `<span title="${formatted}">${formatted}</span>`;
@@ -463,7 +486,8 @@ export function updateGanttColumns() {
                     // Number fields
                     templateFn = function (task) {
                         const value = task[fieldName];
-                        if (value === undefined || value === null) return '<span class="text-base-content/40">—</span>';
+                        if (value === undefined || value === null)
+                            return '<span class="text-base-content/40">—</span>';
                         return `<span title="${value}">${value}</span>`;
                     };
                 } else {
@@ -481,15 +505,14 @@ export function updateGanttColumns() {
                 columns.push({
                     name: fieldName,
                     label: label,
-                    align: "center",
+                    align: 'center',
                     width: 72,
                     min_width: 72,
                     resize: true,
-                    template: templateFn
+                    template: templateFn,
                 });
             }
         }
-
     });
 
     // 添加列 - 打开草稿编辑面板（不立即创建）
@@ -502,7 +525,7 @@ export function updateGanttColumns() {
             const taskId = escapeAttr(task.id);
             const addLabel = i18n.t('taskDetails.addSubtask') || '添加';
             return `<button type="button" class="gantt-task-action-btn gantt-grid-add-btn" data-action="quick-add" data-task-id="${taskId}" title="${addLabel}" aria-label="${addLabel}">${TASK_ACTION_ICONS.addChild}</button>`;
-        }
+        },
     });
 
     columns.push({
@@ -514,7 +537,7 @@ export function updateGanttColumns() {
         resize: false,
         template: function (task) {
             return renderTaskActionsCell(task);
-        }
+        },
     });
 
     gantt.config.columns = applySavedColumnWidths(columns, loadColumnWidthPrefs());
@@ -531,10 +554,10 @@ export function updateGanttColumns() {
 export function setGanttOnlyColumns() {
     gantt.config.columns = [
         {
-            name: "text",
-            label: getColumnLabel("text"),
+            name: 'text',
+            label: getColumnLabel('text'),
             tree: true,
-            width: "*",
+            width: '*',
             min_width: 180,
             resize: true,
             template: function (task) {
@@ -546,7 +569,7 @@ export function setGanttOnlyColumns() {
                 }
                 html += `<span title="${escapeAttr(text)}">${escapeHtml(text)}</span>`;
                 return html;
-            }
+            },
         },
         {
             name: 'actions',
@@ -557,8 +580,8 @@ export function setGanttOnlyColumns() {
             resize: false,
             template: function (task) {
                 return renderTaskActionsCell(task);
-            }
-        }
+            },
+        },
     ];
 
     gantt.config.columns = applySavedColumnWidths(gantt.config.columns, loadColumnWidthPrefs());

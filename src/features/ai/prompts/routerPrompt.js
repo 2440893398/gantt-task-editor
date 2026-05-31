@@ -11,7 +11,7 @@ export function buildRouterPrompt(skills) {
     return `你是一个意图路由器。根据用户消息判断应该使用哪个 Skill。
 
 可用 Skills:
-${skills.map(s => `- ${s.name}: ${s.description}`).join('\n')}
+${skills.map((s) => `- ${s.name}: ${s.description}`).join('\n')}
 
 规则:
 1. 如果用户问题明确匹配某个 Skill，返回该 Skill ID

@@ -18,45 +18,45 @@ const standardTestData = {
     data: [
         {
             id: 1,
-            text: "项目A - Project Alpha",
-            start_date: "2023-06-01",
+            text: '项目A - Project Alpha',
+            start_date: '2023-06-01',
             duration: 10,
             progress: 0.3,
-            priority: "high",
-            status: "in_progress",
-            assignee: "张三",
-            open: true
+            priority: 'high',
+            status: 'in_progress',
+            assignee: '张三',
+            open: true,
         },
         {
             id: 2,
-            text: "子任务1 - Subtask",
-            start_date: "2023-06-01",
+            text: '子任务1 - Subtask',
+            start_date: '2023-06-01',
             duration: 5,
             progress: 0.5,
-            priority: "medium",
-            status: "in_progress",
-            parent: 1
+            priority: 'medium',
+            status: 'in_progress',
+            parent: 1,
         },
         {
             id: 3,
-            text: "孙任务α🎯",
-            start_date: "2023-06-02",
+            text: '孙任务α🎯',
+            start_date: '2023-06-02',
             duration: 2,
             progress: 1.0,
-            priority: "low",
-            status: "completed",
-            parent: 2
+            priority: 'low',
+            status: 'completed',
+            parent: 2,
         },
         {
             id: 4,
-            text: "独立任务",
-            start_date: "2023-06-15",
+            text: '独立任务',
+            start_date: '2023-06-15',
             duration: 3,
             progress: 0,
-            priority: "high",
-            status: "pending"
-        }
-    ]
+            priority: 'high',
+            status: 'pending',
+        },
+    ],
 };
 
 // 辅助函数：解析Excel文件
@@ -67,7 +67,7 @@ function parseExcelFile(filePath) {
     return {
         headers: XLSX.utils.sheet_to_json(ws, { header: 1 })[0],
         rows: XLSX.utils.sheet_to_json(ws, { header: 1 }).slice(1),
-        json: XLSX.utils.sheet_to_json(ws)
+        json: XLSX.utils.sheet_to_json(ws),
     };
 }
 
@@ -76,7 +76,7 @@ async function importExcelFile(page, filePath) {
     await page.click('#more-actions-dropdown .more-btn');
     const [fileChooser] = await Promise.all([
         page.waitForEvent('filechooser'),
-        page.click('#dropdown-import-excel')
+        page.click('#dropdown-import-excel'),
     ]);
     await fileChooser.setFiles(filePath);
     await page.waitForTimeout(2000);
@@ -87,7 +87,7 @@ async function exportExcelFile(page, fileName) {
     const filePath = path.join(downloadPath, fileName);
     const [download] = await Promise.all([
         page.waitForEvent('download'),
-        page.click('#config-export-btn')
+        page.click('#config-export-btn'),
     ]);
     await download.saveAs(filePath);
     return filePath;
@@ -95,7 +95,7 @@ async function exportExcelFile(page, fileName) {
 
 test.describe('Gantt Chart UI Tests', () => {
     test.beforeEach(async ({ page }) => {
-        page.on('console', msg => console.log(`BROWSER: ${msg.text()}`));
+        page.on('console', (msg) => console.log(`BROWSER: ${msg.text()}`));
         await page.goto('/');
         await page.waitForSelector('.gantt_task', { timeout: 10000 });
     });
@@ -193,15 +193,17 @@ test.describe('Excel Export Tests', () => {
         await page.evaluate(() => {
             gantt.clearAll();
             gantt.parse({
-                data: [{
-                    id: 1,
-                    text: "测试任务",
-                    start_date: "2023-05-15",
-                    duration: 7,
-                    progress: 0.5,
-                    priority: "high",
-                    status: "in_progress"
-                }]
+                data: [
+                    {
+                        id: 1,
+                        text: '测试任务',
+                        start_date: '2023-05-15',
+                        duration: 7,
+                        progress: 0.5,
+                        priority: 'high',
+                        status: 'in_progress',
+                    },
+                ],
             });
         });
 
@@ -226,14 +228,14 @@ test.describe('Excel Export Tests', () => {
         const { json, headers } = parseExcelFile(filePath);
 
         const hierarchyKey = headers[0]; // 层级列
-        const hierarchies = json.map(row => row[hierarchyKey]);
+        const hierarchies = json.map((row) => row[hierarchyKey]);
         console.log('Hierarchies:', hierarchies);
 
         // 验证层级格式
-        expect(hierarchies).toContain('1');     // 顶级任务
-        expect(hierarchies).toContain('1.1');   // 二级任务
+        expect(hierarchies).toContain('1'); // 顶级任务
+        expect(hierarchies).toContain('1.1'); // 二级任务
         expect(hierarchies).toContain('1.1.1'); // 三级任务
-        expect(hierarchies).toContain('2');     // 另一个顶级任务
+        expect(hierarchies).toContain('2'); // 另一个顶级任务
     });
 });
 
@@ -249,9 +251,25 @@ test.describe('Excel Import Tests - Basic', () => {
         // 准备原始数据
         const originalData = {
             data: [
-                { id: 1, text: "Parent Task", start_date: "2023-07-01", duration: 5, progress: 0.3, priority: "high", open: true },
-                { id: 2, text: "Child Task", start_date: "2023-07-02", duration: 3, progress: 0.6, priority: "medium", parent: 1 }
-            ]
+                {
+                    id: 1,
+                    text: 'Parent Task',
+                    start_date: '2023-07-01',
+                    duration: 5,
+                    progress: 0.3,
+                    priority: 'high',
+                    open: true,
+                },
+                {
+                    id: 2,
+                    text: 'Child Task',
+                    start_date: '2023-07-02',
+                    duration: 3,
+                    progress: 0.6,
+                    priority: 'medium',
+                    parent: 1,
+                },
+            ],
         };
 
         await page.evaluate((data) => {
@@ -272,8 +290,8 @@ test.describe('Excel Import Tests - Basic', () => {
 
         expect(tasks.length).toBe(2);
 
-        const parent = tasks.find(t => t.text === "Parent Task");
-        const child = tasks.find(t => t.text === "Child Task");
+        const parent = tasks.find((t) => t.text === 'Parent Task');
+        const child = tasks.find((t) => t.text === 'Child Task');
 
         expect(parent).toBeDefined();
         expect(child).toBeDefined();
@@ -297,15 +315,17 @@ test.describe('Excel Import Tests - Basic', () => {
         await page.evaluate(() => {
             gantt.clearAll();
             gantt.parse({
-                data: [{
-                    id: 1,
-                    text: "中文测试任务",
-                    start_date: "2023-08-01",
-                    duration: 4,
-                    progress: 0.75,
-                    priority: "high",
-                    status: "in_progress"
-                }]
+                data: [
+                    {
+                        id: 1,
+                        text: '中文测试任务',
+                        start_date: '2023-08-01',
+                        duration: 4,
+                        progress: 0.75,
+                        priority: 'high',
+                        status: 'in_progress',
+                    },
+                ],
             });
         });
 
@@ -336,9 +356,9 @@ test.describe('Excel Import Tests - Basic', () => {
 
         // **关键验证**: 列名映射是否正确工作
         expect(task.text).toBe('中文测试任务'); // 任务名称正确导入
-        expect(task.duration).toBe(4);          // 工期正确导入
+        expect(task.duration).toBe(4); // 工期正确导入
         expect(Math.round(task.progress * 100)).toBe(75); // 进度正确导入
-        expect(task.priority).toBe('high');     // 优先级映射为内部值
+        expect(task.priority).toBe('high'); // 优先级映射为内部值
         expect(task.status).toBe('in_progress'); // 状态映射为内部值
     });
 
@@ -350,16 +370,18 @@ test.describe('Excel Import Tests - Basic', () => {
         await page.evaluate(() => {
             gantt.clearAll();
             gantt.parse({
-                data: [{
-                    id: 1,
-                    text: "测试任务α🎯<>&特殊字符",
-                    start_date: "2023-09-01",
-                    duration: 5,
-                    progress: 0.5,
-                    priority: "high",
-                    status: "in_progress",
-                    assignee: "张三"
-                }]
+                data: [
+                    {
+                        id: 1,
+                        text: '测试任务α🎯<>&特殊字符',
+                        start_date: '2023-09-01',
+                        duration: 5,
+                        progress: 0.5,
+                        priority: 'high',
+                        status: 'in_progress',
+                        assignee: '张三',
+                    },
+                ],
             });
         });
 
@@ -397,15 +419,17 @@ test.describe('Excel Import Tests - Basic', () => {
         await page.evaluate(() => {
             gantt.clearAll();
             gantt.parse({
-                data: [{
-                    id: 1,
-                    text: "English Task",
-                    start_date: "2023-10-01",
-                    duration: 6,
-                    progress: 0.4,
-                    priority: "low",
-                    status: "pending"
-                }]
+                data: [
+                    {
+                        id: 1,
+                        text: 'English Task',
+                        start_date: '2023-10-01',
+                        duration: 6,
+                        progress: 0.4,
+                        priority: 'low',
+                        status: 'pending',
+                    },
+                ],
             });
         });
 
@@ -439,10 +463,17 @@ test.describe('Excel Import Tests - Basic', () => {
             gantt.clearAll();
             gantt.parse({
                 data: [
-                    { id: 1, text: "Level 1", start_date: "2023-11-01", duration: 10, open: true },
-                    { id: 2, text: "Level 2", start_date: "2023-11-01", duration: 5, parent: 1, open: true },
-                    { id: 3, text: "Level 3", start_date: "2023-11-01", duration: 2, parent: 2 }
-                ]
+                    { id: 1, text: 'Level 1', start_date: '2023-11-01', duration: 10, open: true },
+                    {
+                        id: 2,
+                        text: 'Level 2',
+                        start_date: '2023-11-01',
+                        duration: 5,
+                        parent: 1,
+                        open: true,
+                    },
+                    { id: 3, text: 'Level 3', start_date: '2023-11-01', duration: 2, parent: 2 },
+                ],
             });
         });
 
@@ -454,9 +485,9 @@ test.describe('Excel Import Tests - Basic', () => {
         const tasks = await page.evaluate(() => gantt.serialize().data);
         console.log('Hierarchy Import:', JSON.stringify(tasks, null, 2));
 
-        const level1 = tasks.find(t => t.text === "Level 1");
-        const level2 = tasks.find(t => t.text === "Level 2");
-        const level3 = tasks.find(t => t.text === "Level 3");
+        const level1 = tasks.find((t) => t.text === 'Level 1');
+        const level2 = tasks.find((t) => t.text === 'Level 2');
+        const level3 = tasks.find((t) => t.text === 'Level 3');
 
         expect(level1).toBeDefined();
         expect(level2).toBeDefined();
@@ -479,7 +510,7 @@ test.describe('Excel Import Tests - Boundary', () => {
         const wb = XLSX.utils.book_new();
         const ws = XLSX.utils.aoa_to_sheet([
             ['Hierarchy', 'Task Name', 'Start Date', 'Duration (days)'],
-            ['1', '', '2023-12-01', 5]
+            ['1', '', '2023-12-01', 5],
         ]);
         XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
         const filePath = path.join(downloadPath, 'empty_name.xlsx');
@@ -503,7 +534,7 @@ test.describe('Excel Import Tests - Boundary', () => {
         const wb = XLSX.utils.book_new();
         const ws = XLSX.utils.aoa_to_sheet([
             ['Hierarchy', 'Task Name', 'Duration (days)'],
-            ['1', 'Zero Duration Task', 0]
+            ['1', 'Zero Duration Task', 0],
         ]);
         XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
         const filePath = path.join(downloadPath, 'zero_duration.xlsx');
@@ -526,7 +557,7 @@ test.describe('Excel Import Tests - Boundary', () => {
         const wb = XLSX.utils.book_new();
         const ws = XLSX.utils.aoa_to_sheet([
             ['Hierarchy', 'Task Name', 'Duration (days)'],
-            ['1', specialName, 3]
+            ['1', specialName, 3],
         ]);
         XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
         const filePath = path.join(downloadPath, 'special_chars.xlsx');
@@ -550,7 +581,7 @@ test.describe('Excel Import Tests - Boundary', () => {
         const wb = XLSX.utils.book_new();
         const ws = XLSX.utils.aoa_to_sheet([
             ['层级', '任务名称'],
-            ['1', '简单任务']
+            ['1', '简单任务'],
         ]);
         XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
         const filePath = path.join(downloadPath, 'partial_columns.xlsx');
@@ -604,9 +635,7 @@ test.describe('Excel Import Tests - Error Handling', () => {
 
     test('TC-IM-E02: Headers Only - No Data Rows', async ({ page }) => {
         const wb = XLSX.utils.book_new();
-        const ws = XLSX.utils.aoa_to_sheet([
-            ['Hierarchy', 'Task Name', 'Duration (days)']
-        ]);
+        const ws = XLSX.utils.aoa_to_sheet([['Hierarchy', 'Task Name', 'Duration (days)']]);
         XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
         const filePath = path.join(downloadPath, 'headers_only.xlsx');
         XLSX.writeFile(wb, filePath);
@@ -625,7 +654,7 @@ test.describe('Excel Import Tests - Error Handling', () => {
         const wb = XLSX.utils.book_new();
         const ws = XLSX.utils.aoa_to_sheet([
             ['Hierarchy', 'Duration', 'Progress'],
-            ['1', 5, 50]
+            ['1', 5, 50],
         ]);
         XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
         const filePath = path.join(downloadPath, 'missing_name_column.xlsx');
@@ -656,7 +685,7 @@ test.describe('Excel Import Tests - Localization', () => {
             ['层级', '任务名称', '优先级', '状态'],
             ['1', '高优先级任务', '高', '进行中'],
             ['2', '中优先级任务', '中', '待开始'],
-            ['3', '低优先级任务', '低', '已完成']
+            ['3', '低优先级任务', '低', '已完成'],
         ]);
         XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
         const filePath = path.join(downloadPath, 'zh_enum_values.xlsx');
@@ -671,9 +700,9 @@ test.describe('Excel Import Tests - Localization', () => {
 
         expect(tasks.length).toBe(3);
 
-        const highTask = tasks.find(t => t.text === '高优先级任务');
-        const medTask = tasks.find(t => t.text === '中优先级任务');
-        const lowTask = tasks.find(t => t.text === '低优先级任务');
+        const highTask = tasks.find((t) => t.text === '高优先级任务');
+        const medTask = tasks.find((t) => t.text === '中优先级任务');
+        const lowTask = tasks.find((t) => t.text === '低优先级任务');
 
         // 验证枚举值映射为内部值
         expect(highTask.priority).toBe('high');
@@ -690,7 +719,7 @@ test.describe('Excel Import Tests - Localization', () => {
         const ws = XLSX.utils.aoa_to_sheet([
             ['Hierarchy', 'Task Name', 'Priority', 'Status'],
             ['1', 'High Priority', 'High', 'In Progress'],
-            ['2', 'Low Priority', 'Low', 'Pending']
+            ['2', 'Low Priority', 'Low', 'Pending'],
         ]);
         XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
         const filePath = path.join(downloadPath, 'en_enum_values.xlsx');
@@ -714,7 +743,7 @@ test.describe('Excel Import Tests - Localization', () => {
             ['Hierarchy', 'Task Name', 'Priority'],
             ['1', 'Mixed 1', '高'],
             ['2', 'Mixed 2', 'Low'],
-            ['3', 'Mixed 3', 'medium']
+            ['3', 'Mixed 3', 'medium'],
         ]);
         XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
         const filePath = path.join(downloadPath, 'mixed_enum.xlsx');
@@ -729,9 +758,9 @@ test.describe('Excel Import Tests - Localization', () => {
 
         expect(tasks.length).toBe(3);
         // 所有不同格式的枚举值都应正确映射
-        expect(tasks.find(t => t.text === 'Mixed 1').priority).toBe('high');
-        expect(tasks.find(t => t.text === 'Mixed 2').priority).toBe('low');
-        expect(tasks.find(t => t.text === 'Mixed 3').priority).toBe('medium');
+        expect(tasks.find((t) => t.text === 'Mixed 1').priority).toBe('high');
+        expect(tasks.find((t) => t.text === 'Mixed 2').priority).toBe('low');
+        expect(tasks.find((t) => t.text === 'Mixed 3').priority).toBe('medium');
     });
 });
 
@@ -744,53 +773,81 @@ const multiLangTestData = {
     data: [
         {
             id: 1,
-            text: "多语言项目 - Multilingual - 多言語 - 다국어",
-            start_date: "2023-06-01",
+            text: '多语言项目 - Multilingual - 多言語 - 다국어',
+            start_date: '2023-06-01',
             duration: 10,
             progress: 0.3,
-            priority: "high",
-            status: "in_progress",
-            assignee: "张三/John/田中/김철수",
-            open: true
+            priority: 'high',
+            status: 'in_progress',
+            assignee: '张三/John/田中/김철수',
+            open: true,
         },
         {
             id: 2,
-            text: "子任务🎯Subtask",
-            start_date: "2023-06-03",
+            text: '子任务🎯Subtask',
+            start_date: '2023-06-03',
             duration: 5,
             progress: 0.5,
-            priority: "medium",
-            status: "in_progress",
-            parent: 1
+            priority: 'medium',
+            status: 'in_progress',
+            parent: 1,
         },
         {
             id: 3,
-            text: "已完成タスク완료",
-            start_date: "2023-06-05",
+            text: '已完成タスク완료',
+            start_date: '2023-06-05',
             duration: 2,
             progress: 1.0,
-            priority: "low",
-            status: "completed",
-            parent: 2
+            priority: 'low',
+            status: 'completed',
+            parent: 2,
         },
         {
             id: 4,
-            text: "待开始任务",
-            start_date: "2023-06-20",
+            text: '待开始任务',
+            start_date: '2023-06-20',
             duration: 7,
             progress: 0,
-            priority: "high",
-            status: "pending"
-        }
-    ]
+            priority: 'high',
+            status: 'pending',
+        },
+    ],
 };
 
 // 语言配置
 const LANGUAGES = [
-    { code: 'zh-CN', name: '中文', hierarchyHeader: '层级', taskHeader: '任务名称', priorityHigh: '高', statusPending: '待开始' },
-    { code: 'en-US', name: 'English', hierarchyHeader: 'Hierarchy', taskHeader: 'Task Name', priorityHigh: 'High', statusPending: 'Pending' },
-    { code: 'ja-JP', name: '日本語', hierarchyHeader: '階層', taskHeader: 'タスク名', priorityHigh: '高', statusPending: '未着手' },
-    { code: 'ko-KR', name: '한국어', hierarchyHeader: '계층', taskHeader: '작업 이름', priorityHigh: '높음', statusPending: '대기중' }
+    {
+        code: 'zh-CN',
+        name: '中文',
+        hierarchyHeader: '层级',
+        taskHeader: '任务名称',
+        priorityHigh: '高',
+        statusPending: '待开始',
+    },
+    {
+        code: 'en-US',
+        name: 'English',
+        hierarchyHeader: 'Hierarchy',
+        taskHeader: 'Task Name',
+        priorityHigh: 'High',
+        statusPending: 'Pending',
+    },
+    {
+        code: 'ja-JP',
+        name: '日本語',
+        hierarchyHeader: '階層',
+        taskHeader: 'タスク名',
+        priorityHigh: '高',
+        statusPending: '未着手',
+    },
+    {
+        code: 'ko-KR',
+        name: '한국어',
+        hierarchyHeader: '계층',
+        taskHeader: '작업 이름',
+        priorityHigh: '높음',
+        statusPending: '대기중',
+    },
 ];
 
 // 截图目录
@@ -803,15 +860,14 @@ if (!fs.existsSync(screenshotPath)) {
 async function getGanttRenderData(page) {
     return await page.evaluate(() => {
         const tasks = gantt.serialize().data;
-        const taskBars = Array.from(document.querySelectorAll('.gantt_task_line')).map(bar => ({
+        const taskBars = Array.from(document.querySelectorAll('.gantt_task_line')).map((bar) => ({
             left: bar.offsetLeft,
             width: bar.offsetWidth,
-            top: bar.offsetTop
+            top: bar.offsetTop,
         }));
         return { tasks, taskBars };
     });
 }
-
 
 test.describe('Multi-Language Visual Consistency Tests - Same Language Round Trip', () => {
     test.beforeEach(async ({ page }) => {
@@ -820,7 +876,9 @@ test.describe('Multi-Language Visual Consistency Tests - Same Language Round Tri
     });
 
     for (const lang of LANGUAGES) {
-        test(`TC-ML-00${LANGUAGES.indexOf(lang) + 1}: ${lang.name} Environment Round Trip`, async ({ page }) => {
+        test(`TC-ML-00${LANGUAGES.indexOf(lang) + 1}: ${lang.name} Environment Round Trip`, async ({
+            page,
+        }) => {
             // Step 1: 设置语言环境
             await page.evaluate((langCode) => window.i18n.setLanguage(langCode), lang.code);
             await page.waitForTimeout(500);
@@ -835,14 +893,23 @@ test.describe('Multi-Language Visual Consistency Tests - Same Language Round Tri
             // Step 3: 截图 - 导出前
             await page.screenshot({
                 path: path.join(screenshotPath, `${lang.code}_before_export.png`),
-                fullPage: true
+                fullPage: true,
             });
 
             // Step 4: 获取导出前数据
             const beforeData = await getGanttRenderData(page);
-            console.log(`${lang.name} - Before Export:`, JSON.stringify(beforeData.tasks.map(t => ({
-                text: t.text, priority: t.priority, status: t.status
-            })), null, 2));
+            console.log(
+                `${lang.name} - Before Export:`,
+                JSON.stringify(
+                    beforeData.tasks.map((t) => ({
+                        text: t.text,
+                        priority: t.priority,
+                        status: t.status,
+                    })),
+                    null,
+                    2
+                )
+            );
 
             // Step 5: 导出Excel
             const filePath = await exportExcelFile(page, `ml_${lang.code}_roundtrip.xlsx`);
@@ -855,7 +922,11 @@ test.describe('Multi-Language Visual Consistency Tests - Same Language Round Tri
             expect(headers).toContain(lang.taskHeader);
 
             // Step 7: 验证导出的枚举值本地化
-            const highPriorityTask = json.find(row => row[lang.taskHeader]?.includes('待开始') || row[lang.taskHeader]?.includes('pending'));
+            const highPriorityTask = json.find(
+                (row) =>
+                    row[lang.taskHeader]?.includes('待开始') ||
+                    row[lang.taskHeader]?.includes('pending')
+            );
             if (highPriorityTask) {
                 console.log(`${lang.name} - High Priority Display:`, highPriorityTask);
             }
@@ -868,27 +939,38 @@ test.describe('Multi-Language Visual Consistency Tests - Same Language Round Tri
             // Step 9: 截图 - 导入后
             await page.screenshot({
                 path: path.join(screenshotPath, `${lang.code}_after_import.png`),
-                fullPage: true
+                fullPage: true,
             });
 
             // Step 10: 获取导入后数据
             const afterData = await getGanttRenderData(page);
-            console.log(`${lang.name} - After Import:`, JSON.stringify(afterData.tasks.map(t => ({
-                text: t.text, priority: t.priority, status: t.status
-            })), null, 2));
+            console.log(
+                `${lang.name} - After Import:`,
+                JSON.stringify(
+                    afterData.tasks.map((t) => ({
+                        text: t.text,
+                        priority: t.priority,
+                        status: t.status,
+                    })),
+                    null,
+                    2
+                )
+            );
 
             // Step 11: 验证数据完整性
             expect(afterData.tasks.length).toBe(beforeData.tasks.length);
 
             // 逐任务验证
             for (const origTask of beforeData.tasks) {
-                const importedTask = afterData.tasks.find(t => t.text === origTask.text);
+                const importedTask = afterData.tasks.find((t) => t.text === origTask.text);
                 expect(importedTask).toBeDefined();
                 expect(importedTask.duration).toBe(origTask.duration);
                 expect(importedTask.progress).toBeCloseTo(origTask.progress, 2);
                 // 优先级和状态应该是内部值
                 expect(['high', 'medium', 'low']).toContain(importedTask.priority);
-                expect(['pending', 'in_progress', 'completed', 'suspended']).toContain(importedTask.status);
+                expect(['pending', 'in_progress', 'completed', 'suspended']).toContain(
+                    importedTask.status
+                );
             }
         });
     }
@@ -922,9 +1004,14 @@ test.describe('Multi-Language Visual Consistency Tests - Cross Language Import',
 
     for (const testCase of keyTests) {
         const testNum = keyTests.indexOf(testCase) + 5;
-        test(`TC-ML-00${testNum}: Cross-Language ${testCase.source.name} -> ${testCase.target.name}`, async ({ page }) => {
+        test(`TC-ML-00${testNum}: Cross-Language ${testCase.source.name} -> ${testCase.target.name}`, async ({
+            page,
+        }) => {
             // Step 1: 源语言环境创建数据
-            await page.evaluate((langCode) => window.i18n.setLanguage(langCode), testCase.source.code);
+            await page.evaluate(
+                (langCode) => window.i18n.setLanguage(langCode),
+                testCase.source.code
+            );
             await page.waitForTimeout(500);
 
             await page.evaluate((testData) => {
@@ -935,16 +1022,25 @@ test.describe('Multi-Language Visual Consistency Tests - Cross Language Import',
 
             // Step 2: 截图 - 源语言
             await page.screenshot({
-                path: path.join(screenshotPath, `cross_${testCase.source.code}_to_${testCase.target.code}_source.png`),
-                fullPage: true
+                path: path.join(
+                    screenshotPath,
+                    `cross_${testCase.source.code}_to_${testCase.target.code}_source.png`
+                ),
+                fullPage: true,
             });
 
             // Step 3: 导出Excel
-            const filePath = await exportExcelFile(page, `cross_${testCase.source.code}_to_${testCase.target.code}.xlsx`);
+            const filePath = await exportExcelFile(
+                page,
+                `cross_${testCase.source.code}_to_${testCase.target.code}.xlsx`
+            );
 
             // Step 4: 验证源语言Excel列名
             const { headers: sourceHeaders } = parseExcelFile(filePath);
-            console.log(`${testCase.source.name} -> ${testCase.target.name} | Source Headers:`, sourceHeaders);
+            console.log(
+                `${testCase.source.name} -> ${testCase.target.name} | Source Headers:`,
+                sourceHeaders
+            );
             expect(sourceHeaders[0]).toBe(testCase.source.hierarchyHeader);
 
             // Step 5: 切换到目标语言并导入
@@ -959,20 +1055,29 @@ test.describe('Multi-Language Visual Consistency Tests - Cross Language Import',
 
             // Step 6: 截图 - 目标语言
             await page.screenshot({
-                path: path.join(screenshotPath, `cross_${testCase.source.code}_to_${testCase.target.code}_target.png`),
-                fullPage: true
+                path: path.join(
+                    screenshotPath,
+                    `cross_${testCase.source.code}_to_${testCase.target.code}_target.png`
+                ),
+                fullPage: true,
             });
 
             // Step 7: 验证导入数据
             const tasks = await page.evaluate(() => gantt.serialize().data);
-            console.log(`${testCase.source.name} -> ${testCase.target.name} | Imported Tasks:`,
-                JSON.stringify(tasks.map(t => ({ text: t.text, priority: t.priority, status: t.status })), null, 2));
+            console.log(
+                `${testCase.source.name} -> ${testCase.target.name} | Imported Tasks:`,
+                JSON.stringify(
+                    tasks.map((t) => ({ text: t.text, priority: t.priority, status: t.status })),
+                    null,
+                    2
+                )
+            );
 
             expect(tasks.length).toBe(multiLangTestData.data.length);
 
             // 验证任务数据完整性
             for (const origTask of multiLangTestData.data) {
-                const importedTask = tasks.find(t => t.text === origTask.text);
+                const importedTask = tasks.find((t) => t.text === origTask.text);
                 expect(importedTask).toBeDefined();
                 expect(importedTask.duration).toBe(origTask.duration);
                 expect(importedTask.progress).toBeCloseTo(origTask.progress, 2);
@@ -1002,10 +1107,28 @@ test.describe('Multi-Language Visual Rendering Tests', () => {
                 gantt.clearAll();
                 gantt.parse({
                     data: [
-                        { id: 1, text: "High Priority", start_date: "2023-06-01", duration: 5, priority: "high" },
-                        { id: 2, text: "Medium Priority", start_date: "2023-06-01", duration: 5, priority: "medium" },
-                        { id: 3, text: "Low Priority", start_date: "2023-06-01", duration: 5, priority: "low" }
-                    ]
+                        {
+                            id: 1,
+                            text: 'High Priority',
+                            start_date: '2023-06-01',
+                            duration: 5,
+                            priority: 'high',
+                        },
+                        {
+                            id: 2,
+                            text: 'Medium Priority',
+                            start_date: '2023-06-01',
+                            duration: 5,
+                            priority: 'medium',
+                        },
+                        {
+                            id: 3,
+                            text: 'Low Priority',
+                            start_date: '2023-06-01',
+                            duration: 5,
+                            priority: 'low',
+                        },
+                    ],
                 });
             });
             await page.waitForTimeout(500);
@@ -1013,7 +1136,7 @@ test.describe('Multi-Language Visual Rendering Tests', () => {
             // 获取任务条颜色
             const taskColors = await page.evaluate(() => {
                 const bars = document.querySelectorAll('.gantt_task_line');
-                return Array.from(bars).map(bar => {
+                return Array.from(bars).map((bar) => {
                     const style = window.getComputedStyle(bar);
                     return style.backgroundColor;
                 });
@@ -1035,8 +1158,14 @@ test.describe('Multi-Language Visual Rendering Tests', () => {
             gantt.clearAll();
             gantt.parse({
                 data: [
-                    { id: 1, text: "50% Progress", start_date: "2023-06-01", duration: 10, progress: 0.5 }
-                ]
+                    {
+                        id: 1,
+                        text: '50% Progress',
+                        start_date: '2023-06-01',
+                        duration: 10,
+                        progress: 0.5,
+                    },
+                ],
             });
         });
         await page.waitForTimeout(500);
@@ -1072,10 +1201,17 @@ test.describe('Multi-Language Visual Rendering Tests', () => {
             gantt.clearAll();
             gantt.parse({
                 data: [
-                    { id: 1, text: "Level 1", start_date: "2023-06-01", duration: 10, open: true },
-                    { id: 2, text: "Level 2", start_date: "2023-06-01", duration: 5, parent: 1, open: true },
-                    { id: 3, text: "Level 3", start_date: "2023-06-01", duration: 2, parent: 2 }
-                ]
+                    { id: 1, text: 'Level 1', start_date: '2023-06-01', duration: 10, open: true },
+                    {
+                        id: 2,
+                        text: 'Level 2',
+                        start_date: '2023-06-01',
+                        duration: 5,
+                        parent: 1,
+                        open: true,
+                    },
+                    { id: 3, text: 'Level 3', start_date: '2023-06-01', duration: 2, parent: 2 },
+                ],
             });
         });
         await page.waitForTimeout(500);
@@ -1085,7 +1221,7 @@ test.describe('Multi-Language Visual Rendering Tests', () => {
             const tasks = gantt.getTaskByTime();
             // 按在甘特图中显示的顺序排序
             tasks.sort((a, b) => a.$index - b.$index);
-            return tasks.map(t => t.$level);
+            return tasks.map((t) => t.$level);
         });
 
         const filePath = await exportExcelFile(page, 'indent_test.xlsx');
@@ -1098,7 +1234,7 @@ test.describe('Multi-Language Visual Rendering Tests', () => {
         const afterLevels = await page.evaluate(() => {
             const tasks = gantt.getTaskByTime();
             tasks.sort((a, b) => a.$index - b.$index);
-            return tasks.map(t => t.$level);
+            return tasks.map((t) => t.$level);
         });
 
         console.log(`Levels - Before: ${beforeLevels}, After: ${afterLevels}`);
@@ -1112,7 +1248,7 @@ test.describe('Multi-Language Visual Rendering Tests', () => {
             'zh-CN': '今天',
             'en-US': 'Today',
             'ja-JP': '今日',
-            'ko-KR': '오늘'
+            'ko-KR': '오늘',
         };
 
         for (const lang of LANGUAGES) {
@@ -1122,7 +1258,7 @@ test.describe('Multi-Language Visual Rendering Tests', () => {
             // 截图工具栏
             await page.screenshot({
                 path: path.join(screenshotPath, `toolbar_${lang.code}.png`),
-                clip: { x: 0, y: 0, width: 1920, height: 60 }
+                clip: { x: 0, y: 0, width: 1920, height: 60 },
             });
 
             // 验证今日按钮文字
@@ -1144,7 +1280,7 @@ test.describe('Multi-Language Special Characters Tests', () => {
     });
 
     test('TC-ML-S01: CJK Mixed Task Name', async ({ page }) => {
-        const mixedName = "项目α-プロジェクト-프로젝트-Project";
+        const mixedName = '项目α-プロジェクト-프로젝트-Project';
 
         for (const lang of LANGUAGES) {
             await page.evaluate((langCode) => window.i18n.setLanguage(langCode), lang.code);
@@ -1153,7 +1289,7 @@ test.describe('Multi-Language Special Characters Tests', () => {
             await page.evaluate((taskName) => {
                 gantt.clearAll();
                 gantt.parse({
-                    data: [{ id: 1, text: taskName, start_date: "2023-06-01", duration: 5 }]
+                    data: [{ id: 1, text: taskName, start_date: '2023-06-01', duration: 5 }],
                 });
             }, mixedName);
 
@@ -1171,7 +1307,7 @@ test.describe('Multi-Language Special Characters Tests', () => {
     });
 
     test('TC-ML-S02: Emoji Task Name Multi-Language', async ({ page }) => {
-        const emojiName = "🎯任务🚀Task✅完了";
+        const emojiName = '🎯任务🚀Task✅完了';
 
         for (const lang of LANGUAGES) {
             await page.evaluate((langCode) => window.i18n.setLanguage(langCode), lang.code);
@@ -1180,7 +1316,7 @@ test.describe('Multi-Language Special Characters Tests', () => {
             await page.evaluate((taskName) => {
                 gantt.clearAll();
                 gantt.parse({
-                    data: [{ id: 1, text: taskName, start_date: "2023-06-01", duration: 3 }]
+                    data: [{ id: 1, text: taskName, start_date: '2023-06-01', duration: 3 }],
                 });
             }, emojiName);
 

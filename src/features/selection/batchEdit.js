@@ -34,7 +34,7 @@ export function openBatchEditPanel() {
     const select = document.getElementById('batch-field-select');
     select.innerHTML = `<option value="">${i18n.t('form.selectPlaceholder')}</option>`;
 
-    state.customFields.forEach(field => {
+    state.customFields.forEach((field) => {
         select.innerHTML += `<option value="${field.name}">${field.label}</option>`;
     });
 }
@@ -58,13 +58,15 @@ export function applyBatchEdit() {
         return;
     }
 
-    const field = state.customFields.find(f => f.name === fieldName);
+    const field = state.customFields.find((f) => f.name === fieldName);
     const inputContainer = document.getElementById('batch-field-input');
     let value;
 
     if (field.type === 'multiselect') {
         const select = inputContainer.querySelector('select');
-        value = Array.from(select.selectedOptions).map(o => o.value).join(',');
+        value = Array.from(select.selectedOptions)
+            .map((o) => o.value)
+            .join(',');
     } else {
         const input = inputContainer.querySelector('input, select');
         value = input ? input.value : '';
@@ -72,7 +74,7 @@ export function applyBatchEdit() {
 
     // 应用到所有选中的任务
     let updateCount = 0;
-    state.selectedTasks.forEach(taskId => {
+    state.selectedTasks.forEach((taskId) => {
         const task = gantt.getTask(taskId);
         task[fieldName] = value;
         gantt.updateTask(taskId);
@@ -112,7 +114,7 @@ export function initBatchEdit() {
             return;
         }
 
-        const field = state.customFields.find(f => f.name === fieldName);
+        const field = state.customFields.find((f) => f.name === fieldName);
         label.textContent = field.label;
         container.style.display = 'block';
 
@@ -124,7 +126,7 @@ export function initBatchEdit() {
             inputHTML = `<input type="number" class="form-control" placeholder="${field.label}">`;
         } else if (field.type === 'select') {
             inputHTML = `<select class="form-control"><option value="">${i18n.t('form.selectPlaceholder')}</option>`;
-            field.options.forEach(option => {
+            field.options.forEach((option) => {
                 // 如果字段有 i18nKey，则翻译选项值
                 let displayValue = option;
                 if (field.i18nKey) {
@@ -138,7 +140,7 @@ export function initBatchEdit() {
             inputHTML += `</select>`;
         } else if (field.type === 'multiselect') {
             inputHTML = `<select class="form-control" multiple style="min-height: 100px;">`;
-            field.options.forEach(option => {
+            field.options.forEach((option) => {
                 // 如果字段有 i18nKey，则翻译选项值
                 let displayValue = option;
                 if (field.i18nKey) {

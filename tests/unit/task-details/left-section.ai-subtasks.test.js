@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../../src/utils/i18n.js', () => ({
-    i18n: { t: vi.fn(() => null) }
+    i18n: { t: vi.fn(() => null) },
 }));
 
 vi.mock('../../../src/utils/toast.js', () => ({
-    showToast: vi.fn()
+    showToast: vi.fn(),
 }));
 
 vi.mock('../../../src/components/rich-text-editor.js', () => ({
@@ -14,15 +14,15 @@ vi.mock('../../../src/components/rich-text-editor.js', () => ({
     getEditorText: vi.fn(),
     onContentChange: vi.fn(),
     setEditorContent: vi.fn(),
-    markdownToHtml: vi.fn((text) => text)
+    markdownToHtml: vi.fn((text) => text),
 }));
 
 vi.mock('../../../src/features/ai/services/aiService.js', () => ({
-    default: { invokeAgent: vi.fn() }
+    default: { invokeAgent: vi.fn() },
 }));
 
 vi.mock('../../../src/features/task-details/panel.js', () => ({
-    refreshTaskDetailsPanel: vi.fn()
+    refreshTaskDetailsPanel: vi.fn(),
 }));
 
 describe('left-section subtasks normalization and apply', () => {
@@ -35,7 +35,7 @@ describe('left-section subtasks normalization and apply', () => {
             addTask: vi.fn(),
             getTask: vi.fn((id) => ({ id, text: id })),
             updateTask: vi.fn(),
-            calculateEndDate: vi.fn(() => new Date('2026-02-10'))
+            calculateEndDate: vi.fn(() => new Date('2026-02-10')),
         };
     });
 
@@ -49,17 +49,17 @@ describe('left-section subtasks normalization and apply', () => {
                 {
                     text: '拆分任务A',
                     description: '详细说明A',
-                    duration: 2
-                }
-            ]
+                    duration: 2,
+                },
+            ],
         });
 
         expect(result).toEqual([
             expect.objectContaining({
                 text: '拆分任务A',
                 description: '详细说明A',
-                duration: 2
-            })
+                duration: 2,
+            }),
         ]);
     });
 
@@ -67,22 +67,21 @@ describe('left-section subtasks normalization and apply', () => {
         const mod = await import('../../../src/features/task-details/left-section.js');
         const { createSubtasks } = mod.__test__;
 
-        createSubtasks(
-            { id: 'parent-1', start_date: new Date('2026-02-01') },
-            [
-                { text: '新子任务1', description: '描述1', duration: 2 },
-                { text: '新子任务2', description: '描述2', duration: 1 }
-            ]
-        );
+        createSubtasks({ id: 'parent-1', start_date: new Date('2026-02-01') }, [
+            { text: '新子任务1', description: '描述1', duration: 2 },
+            { text: '新子任务2', description: '描述2', duration: 1 },
+        ]);
 
         expect(global.gantt.deleteTask).toHaveBeenCalledTimes(2);
         expect(global.gantt.deleteTask).toHaveBeenNthCalledWith(1, 's1');
         expect(global.gantt.deleteTask).toHaveBeenNthCalledWith(2, 's2');
         expect(global.gantt.addTask).toHaveBeenCalledTimes(2);
-        expect(global.gantt.addTask).toHaveBeenCalledWith(expect.objectContaining({
-            parent: 'parent-1',
-            text: '新子任务1',
-            description: '描述1'
-        }));
+        expect(global.gantt.addTask).toHaveBeenCalledWith(
+            expect.objectContaining({
+                parent: 'parent-1',
+                text: '新子任务1',
+                description: '描述1',
+            })
+        );
     });
 });

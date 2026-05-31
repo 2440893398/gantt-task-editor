@@ -16,7 +16,7 @@ let currentTaskId = null;
 let currentDraftTask = null;
 let initialDraftTask = null;
 let isFullscreen = false;
-let parentTaskStack = [];
+const parentTaskStack = [];
 let isCreatingNewTask = false;
 let pendingNewTaskPayload = null;
 
@@ -55,15 +55,56 @@ function deepEqual(a, b) {
     return true;
 }
 
+function getTaskSafely(taskId) {
+    if (taskId == null || !gantt || typeof gantt.getTask !== 'function') {
+        return null;
+    }
+
+    const rawId = typeof taskId === 'string' ? taskId.trim() : taskId;
+    if (rawId === '') {
+        return null;
+    }
+
+    const candidates = [rawId];
+    const numericId = Number(rawId);
+    if (!Number.isNaN(numericId) && !candidates.includes(numericId)) {
+        candidates.push(numericId);
+    }
+    const stringId = String(rawId);
+    if (!candidates.includes(stringId)) {
+        candidates.push(stringId);
+    }
+
+    for (const candidate of candidates) {
+        try {
+            if (typeof gantt.isTaskExists === 'function' && !gantt.isTaskExists(candidate)) {
+                continue;
+            }
+            const task = gantt.getTask(candidate);
+            if (task) return task;
+        } catch {
+            continue;
+        }
+    }
+
+    return null;
+}
+
+function closeCurrentPanelImmediately() {
+    if (!currentPanel) return;
+
+    const overlay = document.getElementById('task-details-overlay');
+    destroyRichTextEditor();
+    if (overlay) overlay.remove();
+    currentPanel = null;
+    document.removeEventListener('keydown', handleEscKey);
+}
+
 function getCurrentSourceTask() {
-    if (currentTaskId == null || !gantt || typeof gantt.getTask !== 'function') {
+    if (currentTaskId == null) {
         return null;
     }
-    try {
-        return gantt.getTask(currentTaskId);
-    } catch {
-        return null;
-    }
+    return getTaskSafely(currentTaskId);
 }
 
 function hasDraftChanges(sourceTask, draftTask) {
@@ -123,7 +164,7 @@ function getBindingContext(panel) {
             if (panelTitle && currentDraftTask) {
                 panelTitle.textContent = currentDraftTask.text || i18n.t('taskDetails.newTask');
             }
-        }
+        },
     };
 }
 
@@ -146,21 +187,17 @@ export function getCurrentTaskId() {
  * @param {string|number} taskId - 任务ID
  */
 export function openTaskDetailsPanel(taskId) {
-    if (currentPanel) {
-        const overlay = document.getElementById('task-details-overlay');
-        destroyRichTextEditor();
-        if (overlay) overlay.remove();
-        currentPanel = null;
-        document.removeEventListener('keydown', handleEscKey);
-    }
-
-    const task = gantt.getTask(taskId);
+    const task = getTaskSafely(taskId);
     if (!task) {
         showToast(i18n.t('message.error'), 'error');
-        return;
+        return false;
     }
 
-    currentTaskId = taskId;
+    if (currentPanel) {
+        closeCurrentPanelImmediately();
+    }
+
+    currentTaskId = task.id ?? taskId;
     isCreatingNewTask = false;
     pendingNewTaskPayload = null;
     currentDraftTask = cloneValue(task);
@@ -168,7 +205,8 @@ export function openTaskDetailsPanel(taskId) {
 
     const overlay = document.createElement('div');
     overlay.id = 'task-details-overlay';
-    overlay.className = 'fixed inset-0 bg-black/50 z-[5999] transition-opacity duration-300 opacity-0 flex items-center justify-center';
+    overlay.className =
+        'fixed inset-0 bg-black/50 z-[5999] transition-opacity duration-300 opacity-0 flex items-center justify-center';
     overlay.addEventListener('click', (e) => {
         if (e.target === overlay) {
             closeTaskDetailsPanel();
@@ -201,6 +239,7 @@ export function openTaskDetailsPanel(taskId) {
 
     document.addEventListener('keydown', handleEscKey);
     document.body.style.overflow = 'hidden';
+    return true;
 }
 
 function buildDraftTaskFromPayload(payload = {}) {
@@ -224,7 +263,7 @@ function buildDraftTaskFromPayload(payload = {}) {
         status: defaults.status || 'not_started',
         priority: defaults.priority || 'medium',
         assignee: defaults.assignee || '',
-        schedule_mode: defaults.schedule_mode || 'start_duration'
+        schedule_mode: defaults.schedule_mode || 'start_duration',
     };
 }
 
@@ -246,7 +285,8 @@ export function openNewTaskDetailsPanel(payload = {}) {
 
     const overlay = document.createElement('div');
     overlay.id = 'task-details-overlay';
-    overlay.className = 'fixed inset-0 bg-black/50 z-[5999] transition-opacity duration-300 opacity-0 flex items-center justify-center';
+    overlay.className =
+        'fixed inset-0 bg-black/50 z-[5999] transition-opacity duration-300 opacity-0 flex items-center justify-center';
     overlay.addEventListener('click', (e) => {
         if (e.target === overlay) {
             closeTaskDetailsPanel();
@@ -369,13 +409,17 @@ function buildPanelHTML(task) {
  * 绑定面板事件
  */
 function bindPanelEvents(panel, task) {
-    panel.querySelector('#btn-close-panel')?.addEventListener('click', () => closeTaskDetailsPanel());
+    panel
+        .querySelector('#btn-close-panel')
+        ?.addEventListener('click', () => closeTaskDetailsPanel());
     panel.querySelector('#btn-fullscreen')?.addEventListener('click', toggleFullscreen);
     panel.querySelector('#btn-delete-task')?.addEventListener('click', () => {
         showDeleteConfirmModal(task);
     });
     panel.querySelector('#btn-confirm-save')?.addEventListener('click', handleConfirmSave);
-    panel.querySelector('#btn-cancel-edit')?.addEventListener('click', () => closeTaskDetailsPanel());
+    panel
+        .querySelector('#btn-cancel-edit')
+        ?.addEventListener('click', () => closeTaskDetailsPanel());
 
     const context = getBindingContext(panel);
     bindLeftSectionEvents(panel, task, context);
@@ -442,11 +486,29 @@ function toggleFullscreen() {
     isFullscreen = !isFullscreen;
 
     if (isFullscreen) {
-        currentPanel.classList.remove('w-[1000px]', 'max-w-[92vw]', 'h-[88vh]', 'max-h-[850px]', 'rounded-xl');
+        currentPanel.classList.remove(
+            'w-[1000px]',
+            'max-w-[92vw]',
+            'h-[88vh]',
+            'max-h-[850px]',
+            'rounded-xl'
+        );
         currentPanel.classList.add('w-full', 'h-full', 'max-w-full', 'max-h-full', 'rounded-none');
     } else {
-        currentPanel.classList.remove('w-full', 'h-full', 'max-w-full', 'max-h-full', 'rounded-none');
-        currentPanel.classList.add('w-[1000px]', 'max-w-[92vw]', 'h-[88vh]', 'max-h-[850px]', 'rounded-xl');
+        currentPanel.classList.remove(
+            'w-full',
+            'h-full',
+            'max-w-full',
+            'max-h-full',
+            'rounded-none'
+        );
+        currentPanel.classList.add(
+            'w-[1000px]',
+            'max-w-[92vw]',
+            'h-[88vh]',
+            'max-h-[850px]',
+            'rounded-xl'
+        );
     }
 }
 
@@ -464,7 +526,7 @@ export function closeTaskDetailsPanel(options = {}) {
             message: i18n.t('taskDetails.unsavedMessage') || '你有未保存的修改，确定要关闭吗？',
             confirmText: i18n.t('form.confirm') || '放弃修改',
             cancelText: i18n.t('form.cancel') || '继续编辑',
-            onConfirm: () => closeTaskDetailsPanel({ force: true })
+            onConfirm: () => closeTaskDetailsPanel({ force: true }),
         });
         return;
     }
@@ -508,7 +570,7 @@ export function refreshTaskDetailsPanel() {
         return;
     }
 
-    const task = gantt.getTask(currentTaskId);
+    const task = getTaskSafely(currentTaskId);
     if (!task) {
         closeTaskDetailsPanel({ force: true });
         return;
@@ -558,7 +620,7 @@ function showDeleteConfirmModal(task) {
             gantt.deleteTask(task.id);
             closeTaskDetailsPanel({ force: true });
             showToast(i18n.t('message.deleteSuccess') || '删除成功', 'success');
-        }
+        },
     });
 }
 
@@ -571,5 +633,5 @@ export const __test__ = {
     getDraftTask: () => currentDraftTask,
     setDraftTask: (value) => {
         currentDraftTask = value;
-    }
+    },
 };

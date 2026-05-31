@@ -6,8 +6,8 @@ async function dragResizer(page, deltaX) {
     const box = await resizer.boundingBox();
     expect(box).toBeTruthy();
 
-    const startX = box.x + (box.width / 2);
-    const startY = box.y + (box.height / 2);
+    const startX = box.x + box.width / 2;
+    const startY = box.y + box.height / 2;
 
     await page.mouse.move(startX, startY);
     await page.mouse.down();
@@ -18,39 +18,47 @@ async function dragResizer(page, deltaX) {
 
 async function waitForGanttData(page) {
     await expect(page.locator('#gantt_here')).toBeVisible();
-    await expect.poll(async () => {
-        return page.evaluate(() => window.gantt?.serialize?.()?.data?.length ?? 0);
-    }).toBeGreaterThan(0);
+    await expect
+        .poll(async () => {
+            return page.evaluate(() => window.gantt?.serialize?.()?.data?.length ?? 0);
+        })
+        .toBeGreaterThan(0);
 }
 
 async function configureOverflowingGrid(page) {
     await page.evaluate(() => {
-        localStorage.setItem('gantt_field_order', JSON.stringify([
-            'text',
-            'priority',
-            'assignee',
-            'status',
-            'description',
-            'start_date',
-            'end_date',
-            'duration',
-            'progress',
-            'actual_start',
-            'actual_end',
-            'actual_hours'
-        ]));
+        localStorage.setItem(
+            'gantt_field_order',
+            JSON.stringify([
+                'text',
+                'priority',
+                'assignee',
+                'status',
+                'description',
+                'start_date',
+                'end_date',
+                'duration',
+                'progress',
+                'actual_start',
+                'actual_end',
+                'actual_hours',
+            ])
+        );
 
-        localStorage.setItem('gantt_system_field_settings', JSON.stringify({
-            enabled: {
-                status: true,
-                progress: true,
-                duration: true,
-                actual_start: true,
-                actual_end: true,
-                actual_hours: true
-            },
-            typeOverrides: {}
-        }));
+        localStorage.setItem(
+            'gantt_system_field_settings',
+            JSON.stringify({
+                enabled: {
+                    status: true,
+                    progress: true,
+                    duration: true,
+                    actual_start: true,
+                    actual_end: true,
+                    actual_hours: true,
+                },
+                typeOverrides: {},
+            })
+        );
 
         localStorage.setItem('gantt_grid_width', JSON.stringify(220));
         localStorage.setItem('gantt_view_mode', JSON.stringify('split'));
@@ -68,12 +76,16 @@ test.describe('table grid behavior regressions', () => {
         await page.locator('[data-view="split"]').click();
     });
 
-    test('after widening split grid, columns should still fill width without right blank area', async ({ page }) => {
+    test('after widening split grid, columns should still fill width without right blank area', async ({
+        page,
+    }) => {
         await dragResizer(page, 700);
 
         const gap = await page.evaluate(() => {
             const grid = document.querySelector('.gantt_grid');
-            const actionsHead = document.querySelector('.gantt_grid_head_cell[data-column-name="actions"]');
+            const actionsHead = document.querySelector(
+                '.gantt_grid_head_cell[data-column-name="actions"]'
+            );
             if (!grid || !actionsHead) return Number.POSITIVE_INFINITY;
             const gridRect = grid.getBoundingClientRect();
             const actionsRect = actionsHead.getBoundingClientRect();
@@ -83,13 +95,17 @@ test.describe('table grid behavior regressions', () => {
         expect(gap).toBeLessThanOrEqual(8);
     });
 
-    test('actions column should keep row action buttons visible on right without horizontal scroll-to-end', async ({ page }) => {
+    test('actions column should keep row action buttons visible on right without horizontal scroll-to-end', async ({
+        page,
+    }) => {
         await dragResizer(page, -700);
 
         const visibility = await page.evaluate(() => {
             const grid = document.querySelector('.gantt_grid');
             const gridData = document.querySelector('.gantt_grid_data');
-            const actionsHead = document.querySelector('.gantt_grid_head_cell[data-column-name="actions"]');
+            const actionsHead = document.querySelector(
+                '.gantt_grid_head_cell[data-column-name="actions"]'
+            );
             const firstRow = document.querySelector('.gantt_grid_data .gantt_row');
             const actionCell = firstRow?.querySelector('.gantt_cell.gantt_last_cell') || null;
             if (!grid || !gridData || !actionsHead || !actionCell) {
@@ -102,8 +118,10 @@ test.describe('table grid behavior regressions', () => {
             const gridRect = grid.getBoundingClientRect();
             const headerRect = actionsHead.getBoundingClientRect();
             const cellRect = actionCell.getBoundingClientRect();
-            const headerVisible = headerRect.right <= gridRect.right + 1 && headerRect.left >= gridRect.left - 1;
-            const cellVisible = cellRect.right <= gridRect.right + 1 && cellRect.left >= gridRect.left - 1;
+            const headerVisible =
+                headerRect.right <= gridRect.right + 1 && headerRect.left >= gridRect.left - 1;
+            const cellVisible =
+                cellRect.right <= gridRect.right + 1 && cellRect.left >= gridRect.left - 1;
             const btnCount = actionCell.querySelectorAll('.gantt-task-action-btn').length;
 
             return { headerVisible, cellVisible, btnCount, overflow };
@@ -114,18 +132,26 @@ test.describe('table grid behavior regressions', () => {
         expect(visibility.cellVisible).toBe(true);
     });
 
-    test('gantt-only mode keeps the actions column pinned to the far right after widening the grid', async ({ page }) => {
+    test('gantt-only mode keeps the actions column pinned to the far right after widening the grid', async ({
+        page,
+    }) => {
         await page.locator('[data-view="gantt"]').click();
         await dragResizer(page, 420);
 
         const layout = await page.evaluate(() => {
             const grid = document.querySelector('.gantt_grid');
-            const actionsHead = document.querySelector('.gantt_grid_head_cell[data-column-name="actions"]');
+            const actionsHead = document.querySelector(
+                '.gantt_grid_head_cell[data-column-name="actions"]'
+            );
             const firstRow = document.querySelector('.gantt_grid_data .gantt_row');
             const actionCell = firstRow?.querySelector('.gantt_cell.gantt_last_cell') || null;
 
             if (!grid || !actionsHead || !actionCell) {
-                return { gap: Number.POSITIVE_INFINITY, cellGap: Number.POSITIVE_INFINITY, btnCount: 0 };
+                return {
+                    gap: Number.POSITIVE_INFINITY,
+                    cellGap: Number.POSITIVE_INFINITY,
+                    btnCount: 0,
+                };
             }
 
             const gridRect = grid.getBoundingClientRect();
@@ -135,7 +161,7 @@ test.describe('table grid behavior regressions', () => {
             return {
                 gap: Math.round(gridRect.right - headerRect.right),
                 cellGap: Math.round(gridRect.right - cellRect.right),
-                btnCount: actionCell.querySelectorAll('.gantt-task-action-btn').length
+                btnCount: actionCell.querySelectorAll('.gantt-task-action-btn').length,
             };
         });
 
@@ -144,20 +170,32 @@ test.describe('table grid behavior regressions', () => {
         expect(layout.cellGap).toBeLessThanOrEqual(2);
     });
 
-    test('split mode keeps actions cells aligned after dragging the real bottom scrollbar', async ({ page }) => {
+    test('split mode keeps actions cells aligned after dragging the real bottom scrollbar', async ({
+        page,
+    }) => {
         await configureOverflowingGrid(page);
 
         const alignment = await page.evaluate(() => {
             const bottomScrollbar = document.querySelector('.gantt_hor_scroll');
             if (!bottomScrollbar) {
-                return { maxScroll: 0, scrollLeft: 0, diffLeft: Number.POSITIVE_INFINITY, diffRight: Number.POSITIVE_INFINITY };
+                return {
+                    maxScroll: 0,
+                    scrollLeft: 0,
+                    diffLeft: Number.POSITIVE_INFINITY,
+                    diffRight: Number.POSITIVE_INFINITY,
+                };
             }
 
-            bottomScrollbar.scrollLeft = Math.max(0, bottomScrollbar.scrollWidth - bottomScrollbar.clientWidth);
+            bottomScrollbar.scrollLeft = Math.max(
+                0,
+                bottomScrollbar.scrollWidth - bottomScrollbar.clientWidth
+            );
             bottomScrollbar.dispatchEvent(new Event('scroll', { bubbles: true }));
 
             const grid = document.querySelector('.gantt_grid');
-            const actionsHead = document.querySelector('.gantt_grid_head_cell[data-column-name="actions"]');
+            const actionsHead = document.querySelector(
+                '.gantt_grid_head_cell[data-column-name="actions"]'
+            );
             const firstRow = document.querySelector('.gantt_grid_data .gantt_row');
             const actionCell = firstRow?.querySelector('.gantt_cell.gantt_last_cell') || null;
 
@@ -166,7 +204,7 @@ test.describe('table grid behavior regressions', () => {
                     maxScroll: bottomScrollbar.scrollWidth - bottomScrollbar.clientWidth,
                     scrollLeft: bottomScrollbar.scrollLeft,
                     diffLeft: Number.POSITIVE_INFINITY,
-                    diffRight: Number.POSITIVE_INFINITY
+                    diffRight: Number.POSITIVE_INFINITY,
                 };
             }
 
@@ -177,7 +215,7 @@ test.describe('table grid behavior regressions', () => {
                 maxScroll: bottomScrollbar.scrollWidth - bottomScrollbar.clientWidth,
                 scrollLeft: bottomScrollbar.scrollLeft,
                 diffLeft: Math.round(cellRect.left - headerRect.left),
-                diffRight: Math.round(cellRect.right - headerRect.right)
+                diffRight: Math.round(cellRect.right - headerRect.right),
             };
         });
 
@@ -197,18 +235,28 @@ test.describe('table grid behavior regressions', () => {
 
             const grid = document.querySelector('.gantt_grid');
             const firstRow = document.querySelector('.gantt_grid_data .gantt_row');
-            const actionBtn = firstRow?.querySelector('.gantt_cell.gantt_last_cell .gantt-task-action-btn') || null;
+            const actionBtn =
+                firstRow?.querySelector('.gantt_cell.gantt_last_cell .gantt-task-action-btn') ||
+                null;
             if (!grid || !actionBtn) {
-                return { btnVisible: false, offset: getComputedStyle(document.documentElement).getPropertyValue('--gantt-grid-scroll-left').trim() };
+                return {
+                    btnVisible: false,
+                    offset: getComputedStyle(document.documentElement)
+                        .getPropertyValue('--gantt-grid-scroll-left')
+                        .trim(),
+                };
             }
 
             const gridRect = grid.getBoundingClientRect();
             const btnRect = actionBtn.getBoundingClientRect();
-            const btnVisible = btnRect.left >= gridRect.left - 1 && btnRect.right <= gridRect.right + 1;
+            const btnVisible =
+                btnRect.left >= gridRect.left - 1 && btnRect.right <= gridRect.right + 1;
 
             return {
                 btnVisible,
-                offset: getComputedStyle(document.documentElement).getPropertyValue('--gantt-grid-scroll-left').trim()
+                offset: getComputedStyle(document.documentElement)
+                    .getPropertyValue('--gantt-grid-scroll-left')
+                    .trim(),
             };
         });
 

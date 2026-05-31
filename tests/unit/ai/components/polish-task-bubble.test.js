@@ -7,7 +7,6 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { renderUserMessageContent } from '../../../../src/features/ai/components/AiDrawer.js';
 
 describe('polish agent task input bubble', () => {
-
     it('renders plain text when no inputBubble metadata', () => {
         const message = { content: '任务标题：测试任务' };
         const html = renderUserMessageContent(message);
@@ -27,10 +26,10 @@ describe('polish agent task input bubble', () => {
                     status: 'pending',
                     progress: 0,
                     start_date: '2026-02-01',
-                    end_date: '2026-02-15'
+                    end_date: '2026-02-15',
                 },
-                mode: 'polish'
-            }
+                mode: 'polish',
+            },
         };
         const html = renderUserMessageContent(message);
 
@@ -47,10 +46,10 @@ describe('polish agent task input bubble', () => {
                     text: '组织机构管理',
                     priority: 'medium',
                     status: 'in_progress',
-                    progress: 30
+                    progress: 30,
                 },
-                mode: 'polish'
-            }
+                mode: 'polish',
+            },
         };
         const html = renderUserMessageContent(message);
 
@@ -71,10 +70,10 @@ describe('polish agent task input bubble', () => {
                     status: 'in_progress',
                     progress: 60,
                     start_date: '2026-01-10',
-                    end_date: '2026-02-10'
+                    end_date: '2026-02-10',
                 },
-                mode: 'polish'
-            }
+                mode: 'polish',
+            },
         };
         const html = renderUserMessageContent(message);
 

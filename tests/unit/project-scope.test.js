@@ -27,10 +27,7 @@ describe('projectScope storage isolation', () => {
         await scope.saveTasks([{ id: 1, text: 'Task A' }]);
         await scope.saveLinks([{ id: 1, source: 1, target: 2, type: '0' }]);
 
-        const [tasks, links] = await Promise.all([
-            db.tasks.toArray(),
-            db.links.toArray(),
-        ]);
+        const [tasks, links] = await Promise.all([db.tasks.toArray(), db.links.toArray()]);
 
         expect(tasks).toHaveLength(1);
         expect(tasks[0].project_id).toBe('project_alpha');
@@ -129,8 +126,14 @@ describe('projectScope storage isolation', () => {
         const alphaScope = projectScope('project_alpha');
         const betaScope = projectScope('project_beta');
 
-        await alphaScope.saveBaseline({ id: 'shared-baseline-id', snapshot: { data: [], links: [] } });
-        await betaScope.saveBaseline({ id: 'shared-baseline-id', snapshot: { data: [], links: [] } });
+        await alphaScope.saveBaseline({
+            id: 'shared-baseline-id',
+            snapshot: { data: [], links: [] },
+        });
+        await betaScope.saveBaseline({
+            id: 'shared-baseline-id',
+            snapshot: { data: [], links: [] },
+        });
 
         const [rawRows, alphaBaseline, betaBaseline] = await Promise.all([
             db.baselines.orderBy('project_id').toArray(),

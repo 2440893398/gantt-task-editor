@@ -37,7 +37,7 @@ async function renderTab2View(container) {
     `;
 
     // 子视图切换
-    container.querySelectorAll('.calendar-panel__sub-btn').forEach(btn => {
+    container.querySelectorAll('.calendar-panel__sub-btn').forEach((btn) => {
         btn.addEventListener('click', () => {
             currentView = btn.dataset.view;
             renderTab2View(container);
@@ -59,13 +59,13 @@ async function renderTab2Calendar(el, customs, parentContainer) {
 
     // 法定假日/补班日
     try {
-        const holidays = await db.calendar_holidays
-            .where('year').equals(currentYear)
-            .toArray();
-        for (const h of holidays.filter(item => item.countryCode === currentCountryCode)) {
+        const holidays = await db.calendar_holidays.where('year').equals(currentYear).toArray();
+        for (const h of holidays.filter((item) => item.countryCode === currentCountryCode)) {
             highlights.set(h.date, {
                 type: h.isOffDay ? 'holiday' : 'makeupday',
-                label: h.isOffDay ? (i18n.t('calendar.publicHoliday') || 'Public Holiday') : (i18n.t('calendar.makeupDay') || 'Makeup Day'),
+                label: h.isOffDay
+                    ? i18n.t('calendar.publicHoliday') || 'Public Holiday'
+                    : i18n.t('calendar.makeupDay') || 'Makeup Day',
             });
         }
     } catch (e) {
@@ -76,7 +76,9 @@ async function renderTab2Calendar(el, customs, parentContainer) {
     for (const c of customs) {
         highlights.set(c.date, {
             type: c.isOffDay ? 'companyday' : 'overtime',
-            label: c.isOffDay ? (i18n.t('calendar.companyHolidayShort') || 'Company') : (i18n.t('calendar.overtimeShort') || 'Overtime'),
+            label: c.isOffDay
+                ? i18n.t('calendar.companyHolidayShort') || 'Company'
+                : i18n.t('calendar.overtimeShort') || 'Overtime',
         });
     }
 
@@ -116,7 +118,7 @@ function showSpecialDayPopup(dateStr, dayEl, customs, parentContainer, event) {
     // 关闭已有弹窗
     document.querySelector('.cal-popup')?.remove();
 
-    const existing = customs.find(c => c.date === dateStr);
+    const existing = customs.find((c) => c.date === dateStr);
 
     const popup = document.createElement('div');
     popup.className = 'cal-popup';
@@ -155,9 +157,11 @@ function showSpecialDayPopup(dateStr, dayEl, customs, parentContainer, event) {
     positionPopupNearDay(popup, dayEl);
 
     // 类型切换
-    popup.querySelectorAll('.cal-popup__type-btn').forEach(btn => {
+    popup.querySelectorAll('.cal-popup__type-btn').forEach((btn) => {
         btn.addEventListener('click', () => {
-            popup.querySelectorAll('.cal-popup__type-btn').forEach(b => b.classList.remove('active'));
+            popup
+                .querySelectorAll('.cal-popup__type-btn')
+                .forEach((b) => b.classList.remove('active'));
             btn.classList.add('active');
         });
     });
@@ -178,7 +182,8 @@ function showSpecialDayPopup(dateStr, dayEl, customs, parentContainer, event) {
 
     // 确认
     popup.querySelector('.cal-popup__btn--confirm').addEventListener('click', async () => {
-        const isOffDay = popup.querySelector('.cal-popup__type-btn.active')?.dataset.type === 'companyday';
+        const isOffDay =
+            popup.querySelector('.cal-popup__type-btn.active')?.dataset.type === 'companyday';
         const note = popup.querySelector('.cal-popup__input').value;
         const record = {
             id: existing?.id ?? crypto.randomUUID(),
@@ -239,26 +244,31 @@ function renderTab2List(el, customs, parentContainer) {
                 <span style="flex:1">${i18n.t('calendar.col.note') || 'Note'}</span>
                 <span style="width:60px">${i18n.t('calendar.col.action') || 'Action'}</span>
             </div>
-            ${customs.length === 0
-                ? `<div class="cal-list__empty"><span>${i18n.t('calendar.noSpecialDays') || 'No special workday configuration'}</span></div>`
-                : customs.map(c => `
+            ${
+                customs.length === 0
+                    ? `<div class="cal-list__empty"><span>${i18n.t('calendar.noSpecialDays') || 'No special workday configuration'}</span></div>`
+                    : customs
+                          .map(
+                              (c) => `
                     <div class="cal-list__row" data-id="${c.id}" style="gap:0">
                         <span style="width:130px;font-weight:600">${c.date}</span>
                         <span style="width:110px">
                             <span class="cal-list__badge cal-list__badge--${c.isOffDay ? 'companyday' : 'overtime'}">
-                                ${c.isOffDay ? (i18n.t('calendar.companyHoliday') || 'Company Holiday') : (i18n.t('calendar.overtime') || 'Overtime Day')}
+                                ${c.isOffDay ? i18n.t('calendar.companyHoliday') || 'Company Holiday' : i18n.t('calendar.overtime') || 'Overtime Day'}
                             </span>
                         </span>
                         <span style="flex:1;color:#64748B">${c.note || ''}</span>
                         <button class="cal-list__del-btn" data-id="${c.id}">&#128465;</button>
                     </div>
-                `).join('')
+                `
+                          )
+                          .join('')
             }
         </div>
     `;
 
     // 删除
-    el.querySelectorAll('.cal-list__del-btn').forEach(btn => {
+    el.querySelectorAll('.cal-list__del-btn').forEach((btn) => {
         btn.addEventListener('click', async () => {
             await deleteCustomDay(btn.dataset.id);
             await refreshHolidayHighlightCache();

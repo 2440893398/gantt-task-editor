@@ -46,7 +46,7 @@ function _syncPanelBarWidth(gridWidth) {
  * 初始化自定义 Resizer
  */
 export function initResizer() {
-    const resizer = document.getElementById("custom-resizer");
+    const resizer = document.getElementById('custom-resizer');
     if (!resizer) return;
 
     // 避免重复绑定
@@ -84,8 +84,8 @@ export function initResizer() {
         }
 
         function onMouseUp() {
-            document.removeEventListener("mousemove", onMouseMove);
-            document.removeEventListener("mouseup", onMouseUp);
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', onMouseUp);
 
             resizer.style.background = '';
             document.body.style.cursor = '';
@@ -105,7 +105,7 @@ export function initResizer() {
             setTimeout(applySelectionStyles, 100);
         }
 
-        document.addEventListener("mousemove", onMouseMove);
-        document.addEventListener("mouseup", onMouseUp);
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
     };
 }

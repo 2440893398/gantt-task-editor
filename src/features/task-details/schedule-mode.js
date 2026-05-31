@@ -10,7 +10,7 @@ export function deriveFromStartAndDuration(startDate, duration, deps = {}) {
     return {
         start_date: startDate,
         duration,
-        end_date: deps.calculateEndDate(startDate, duration)
+        end_date: deps.calculateEndDate(startDate, duration),
     };
 }
 
@@ -22,6 +22,6 @@ export function deriveFromStartAndEnd(startDate, endDate, deps = {}) {
     return {
         start_date: startDate,
         end_date: endDate,
-        duration: deps.calculateDuration(startDate, endDate)
+        duration: deps.calculateDuration(startDate, endDate),
     };
 }

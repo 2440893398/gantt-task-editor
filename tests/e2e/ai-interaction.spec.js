@@ -1,26 +1,30 @@
-
 import { test, expect } from '@playwright/test';
 
 test.describe('AI Agent Interaction', () => {
-
     test.beforeEach(async ({ page }) => {
         // Pre-configure AI to avoid modal blocking
         await page.addInitScript(() => {
-            localStorage.setItem('gantt_ai_config', JSON.stringify({
-                apiKey: 'sk-test-key',
-                baseUrl: 'https://api.openai.com/v1',
-                model: 'gpt-3.5-turbo'
-            }));
+            localStorage.setItem(
+                'gantt_ai_config',
+                JSON.stringify({
+                    apiKey: 'sk-test-key',
+                    baseUrl: 'https://api.openai.com/v1',
+                    model: 'gpt-3.5-turbo',
+                })
+            );
         });
 
         // Mock OpenAI API for streaming responses
-        await page.route('https://api.openai.com/v1/chat/completions', async route => {
+        await page.route('https://api.openai.com/v1/chat/completions', async (route) => {
             const request = route.request();
             const postData = request.postDataJSON();
 
             // Verify request structure
             if (!postData.messages || !postData.model) {
-                return route.fulfill({ status: 400, body: JSON.stringify({ error: 'Invalid request' }) });
+                return route.fulfill({
+                    status: 400,
+                    body: JSON.stringify({ error: 'Invalid request' }),
+                });
             }
 
             // Simulate streaming response
@@ -29,14 +33,16 @@ test.describe('AI Agent Interaction', () => {
                 object: 'chat.completion.chunk',
                 created: Date.now(),
                 model: 'gpt-3.5-turbo',
-                choices: [{ index: 0, delta: { content: 'AI Response Message' }, finish_reason: null }]
+                choices: [
+                    { index: 0, delta: { content: 'AI Response Message' }, finish_reason: null },
+                ],
             };
             const finishBody = {
                 id: 'chatcmpl-mock',
                 object: 'chat.completion.chunk',
                 created: Date.now(),
                 model: 'gpt-3.5-turbo',
-                choices: [{ index: 0, delta: {}, finish_reason: 'stop' }]
+                choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
             };
 
             // Return stream
@@ -46,7 +52,7 @@ test.describe('AI Agent Interaction', () => {
             await route.fulfill({
                 status: 200,
                 contentType: 'text/event-stream',
-                body: stream0 + stream1
+                body: stream0 + stream1,
             });
         });
 

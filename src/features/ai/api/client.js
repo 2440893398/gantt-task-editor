@@ -19,40 +19,51 @@ const originalFetch = globalThis.fetch;
 
 function enableFetchInterceptor() {
     if (fetchInterceptorEnabled) return;
-    
+
     globalThis.fetch = async (url, options) => {
-        if (typeof url === 'string' && (url.includes('/chat/completions') || url.includes('/responses'))) {
+        if (
+            typeof url === 'string' &&
+            (url.includes('/chat/completions') || url.includes('/responses'))
+        ) {
             console.log('[Fetch Interceptor] API Request:', {
                 url,
                 method: options?.method || 'GET',
-                headers: options?.headers ? Object.fromEntries(
-                    Object.entries(options.headers).filter(([k]) => k !== 'Authorization')
-                ) : {}
+                headers: options?.headers
+                    ? Object.fromEntries(
+                          Object.entries(options.headers).filter(([k]) => k !== 'Authorization')
+                      )
+                    : {},
             });
         }
-        
+
         try {
             const response = await originalFetch(url, options);
-            if (typeof url === 'string' && (url.includes('/chat/completions') || url.includes('/responses'))) {
+            if (
+                typeof url === 'string' &&
+                (url.includes('/chat/completions') || url.includes('/responses'))
+            ) {
                 console.log('[Fetch Interceptor] API Response:', {
                     url,
                     status: response.status,
                     statusText: response.statusText,
-                    ok: response.ok
+                    ok: response.ok,
                 });
             }
             return response;
         } catch (error) {
-            if (typeof url === 'string' && (url.includes('/chat/completions') || url.includes('/responses'))) {
+            if (
+                typeof url === 'string' &&
+                (url.includes('/chat/completions') || url.includes('/responses'))
+            ) {
                 console.error('[Fetch Interceptor] API Error:', {
                     url,
-                    error: error.message
+                    error: error.message,
                 });
             }
             throw error;
         }
     };
-    
+
     fetchInterceptorEnabled = true;
     console.log('[Fetch Interceptor] Enabled');
 }
@@ -64,13 +75,12 @@ function disableFetchInterceptor() {
     console.log('[Fetch Interceptor] Disabled');
 }
 
-
 /**
  * 根据 baseURL 智能选择 compatibility 模式
- * 
+ *
  * @param {string} baseUrl - API 端点 URL
  * @returns {'strict' | 'compatible'} - 兼容模式
- * 
+ *
  * 规则：
  * - OpenAI 官方端点 (api.openai.com, openai.azure.com) → 'strict'
  * - 第三方兼容端点 (aihubmix.com, deepseek, 本地等) → 'compatible'
@@ -81,41 +91,41 @@ function getCompatibilityMode(baseUrl) {
     if (!baseUrl) {
         return 'strict';
     }
-    
+
     // 标准化 URL（去除协议、路径、尾部斜杠）
     const normalizedUrl = baseUrl
         .toLowerCase()
         .replace(/^https?:\/\//, '')
         .replace(/\/.*$/, '')
         .replace(/\/$/, '');
-    
+
     // OpenAI 官方端点列表
     const officialEndpoints = [
         'api.openai.com',
-        'openai.azure.com'  // Azure OpenAI Service
+        'openai.azure.com', // Azure OpenAI Service
     ];
-    
+
     // 检查是否为官方端点
-    const isOfficial = officialEndpoints.some(endpoint => 
-        normalizedUrl === endpoint || normalizedUrl.endsWith(`.${endpoint}`)
+    const isOfficial = officialEndpoints.some(
+        (endpoint) => normalizedUrl === endpoint || normalizedUrl.endsWith(`.${endpoint}`)
     );
-    
+
     const mode = isOfficial ? 'strict' : 'compatible';
-    
+
     // 开发环境日志
     if (import.meta.env.DEV) {
         console.log(`[AI Client] Using compatibility mode: ${mode} for ${baseUrl || 'default'}`);
     }
-    
+
     return mode;
 }
 
 /**
  * 判断是否应该使用 /chat/completions 端点而非 /responses
- * 
+ *
  * AI SDK 3.0+ 默认使用 /responses 端点（OpenAI Responses API）
  * 但第三方 API（如 DeepSeek, AiHubMix 等）只支持 /chat/completions
- * 
+ *
  * @param {string} baseUrl - API 端点 URL
  * @returns {boolean} - true = 使用 .chat()，false = 使用默认（responses）
  */
@@ -124,35 +134,35 @@ function shouldUseChatEndpoint(baseUrl) {
     if (!baseUrl) {
         return false;
     }
-    
+
     // 标准化 URL
     const normalizedUrl = baseUrl
         .toLowerCase()
         .replace(/^https?:\/\//, '')
         .replace(/\/.*$/, '')
         .replace(/\/$/, '');
-    
+
     // 支持 /responses 端点的 API（目前只有 OpenAI 官方）
-    const responsesApiSupported = [
-        'api.openai.com'
-    ];
-    
-    const supportsResponses = responsesApiSupported.some(endpoint => 
-        normalizedUrl === endpoint || normalizedUrl.endsWith(`.${endpoint}`)
+    const responsesApiSupported = ['api.openai.com'];
+
+    const supportsResponses = responsesApiSupported.some(
+        (endpoint) => normalizedUrl === endpoint || normalizedUrl.endsWith(`.${endpoint}`)
     );
-    
+
     const useChatEndpoint = !supportsResponses;
-    
+
     if (import.meta.env.DEV) {
-        console.log(`[AI Client] Endpoint selection: ${useChatEndpoint ? '/chat/completions' : '/responses'} for ${baseUrl}`);
+        console.log(
+            `[AI Client] Endpoint selection: ${useChatEndpoint ? '/chat/completions' : '/responses'} for ${baseUrl}`
+        );
     }
-    
+
     return useChatEndpoint;
 }
 
 /**
  * 创建模型实例，根据 API 端点自动选择正确的调用方式
- * 
+ *
  * @param {ReturnType<typeof createOpenAI>} openaiProvider - OpenAI provider 实例
  * @param {string} modelId - 模型 ID
  * @param {string} baseUrl - API 端点 URL
@@ -198,11 +208,11 @@ export async function runAgentStream(agentConfig, userContext, onChunk, onFinish
         const openai = createOpenAI({
             apiKey: apiKey,
             baseURL: baseUrl,
-            compatibility: getCompatibilityMode(baseUrl)
+            compatibility: getCompatibilityMode(baseUrl),
         });
 
         // 执行流式调用
-        let streamOptions = {
+        const streamOptions = {
             model: createModel(openai, model || 'gpt-3.5-turbo', baseUrl),
             system: agentConfig.system,
         };
@@ -212,15 +222,14 @@ export async function runAgentStream(agentConfig, userContext, onChunk, onFinish
             streamOptions.messages = userContext.messages;
         } else {
             // 单轮 prompt
-            const userPrompt = typeof agentConfig.userPrompt === 'function'
-                ? agentConfig.userPrompt(userContext)
-                : agentConfig.userPrompt;
+            const userPrompt =
+                typeof agentConfig.userPrompt === 'function'
+                    ? agentConfig.userPrompt(userContext)
+                    : agentConfig.userPrompt;
             streamOptions.prompt = userPrompt;
         }
 
         const result = streamText(streamOptions);
-
-
 
         // 使用 textStream 获取文本流，更稳定
         for await (const textPart of result.textStream) {
@@ -232,7 +241,6 @@ export async function runAgentStream(agentConfig, userContext, onChunk, onFinish
 
         setAiStatus('idle');
         onFinish && onFinish(usage);
-
     } catch (error) {
         console.error('[AI Client] Stream error:', error);
         setAiStatus('error');
@@ -265,16 +273,19 @@ export async function runSmartChat(userMessage, history, callbacks = {}) {
         const openai = createOpenAI({
             apiKey: apiKey,
             baseURL: baseUrl,
-            compatibility: getCompatibilityMode(baseUrl)
+            compatibility: getCompatibilityMode(baseUrl),
         });
         const messages = [
-            ...(Array.isArray(history) ? history.map(m => ({ role: m.role, content: m.content })) : []),
-            { role: 'user', content: userMessage }
+            ...(Array.isArray(history)
+                ? history.map((m) => ({ role: m.role, content: m.content }))
+                : []),
+            { role: 'user', content: userMessage },
         ];
 
         // Phase 1: route
         let skillId = null;
-        const hasAttachmentContext = typeof userMessage === 'string' && userMessage.includes('[Attachment Context]');
+        const hasAttachmentContext =
+            typeof userMessage === 'string' && userMessage.includes('[Attachment Context]');
 
         // Prefer import-analysis when attachment context is present
         if (hasAttachmentContext) {
@@ -303,7 +314,7 @@ export async function runSmartChat(userMessage, history, callbacks = {}) {
             result = await executeSkill(skillId, messages, openai, resolvedModel, {
                 onToolCall,
                 onToolResult,
-                onSkillStart
+                onSkillStart,
             });
         } else {
             result = await executeGeneralChat(messages, openai, resolvedModel);
@@ -330,7 +341,7 @@ export async function runSmartChat(userMessage, history, callbacks = {}) {
                 continue;
             }
             // console.log('[SmartChat] Stream part:', part.type, part);
-            
+
             if (part.type === 'text-delta') {
                 // AI SDK 6: 属性名是 text 或 textDelta，需要兼容两种
                 const textContent = part.text ?? part.textDelta;
@@ -380,33 +391,33 @@ export async function testConnection(config = null) {
     const { apiKey, baseUrl, model } = config || getAiConfigState();
 
     if (!apiKey) {
-        return { 
-            success: false, 
+        return {
+            success: false,
             message: i18n.t('ai.config.apiKeyRequired'),
-            toolCallSupported: false
+            toolCallSupported: false,
         };
     }
 
     try {
         const compatibilityMode = getCompatibilityMode(baseUrl);
-        
+
         // Enable fetch interceptor to see actual endpoints
         enableFetchInterceptor();
-        
+
         // Debug: Log configuration
         console.log('[Test Connection] Starting with config:', {
             baseURL: baseUrl || '(default: api.openai.com)',
             model: model || 'gpt-3.5-turbo',
             compatibility: compatibilityMode,
-            hasApiKey: !!apiKey
+            hasApiKey: !!apiKey,
         });
-        
+
         const openai = createOpenAI({
             apiKey: apiKey,
             baseURL: baseUrl,
-            compatibility: compatibilityMode
+            compatibility: compatibilityMode,
         });
-        
+
         // 创建正确端点的模型实例
         const modelInstance = createModel(openai, model || 'gpt-3.5-turbo', baseUrl);
 
@@ -415,24 +426,24 @@ export async function testConnection(config = null) {
         const basicTest = streamText({
             model: modelInstance,
             prompt: 'Hi',
-            maxTokens: 5
+            maxTokens: 5,
         });
 
         // 只需要确认能接收到响应
         for await (const _ of basicTest.textStream) {
             break; // 收到第一个 chunk 即可
         }
-        
+
         console.log('[Test Connection] Step 1: ✓ Basic connection successful');
 
         // 第二步：测试函数调用支持
         console.log('[Test Connection] Step 2: Testing function calling support...');
         let toolCallSupported = false;
         let toolCallError = null;
-        
+
         try {
             const { tool, jsonSchema } = await import('ai');
-            
+
             // 使用 jsonSchema + inputSchema（AI SDK 6 正确用法）
             // 注意：AI SDK 6 使用 inputSchema 而非 parameters！
             const weatherSchema = jsonSchema({
@@ -440,34 +451,37 @@ export async function testConnection(config = null) {
                 properties: {
                     location: {
                         type: 'string',
-                        description: 'The city name'
-                    }
+                        description: 'The city name',
+                    },
                 },
                 required: ['location'],
-                additionalProperties: false
+                additionalProperties: false,
             });
-            
+
             // 创建测试工具
             const testTool = tool({
                 description: 'Get the current weather for a given location',
                 inputSchema: weatherSchema,
-                execute: async ({ location }) => ({ 
-                    temperature: 20, 
+                execute: async ({ location }) => ({
+                    temperature: 20,
                     condition: 'sunny',
-                    location: location
-                })
+                    location: location,
+                }),
             });
-            
+
             console.log('[Test Connection] Step 2: Calling streamText with tool...');
-            
+
             // 为 reasoning 模型添加超时保护
-            const isReasoningModel = (model || '').toLowerCase().includes('reasoner') || 
-                                     (model || '').toLowerCase().includes('o1') ||
-                                     (model || '').toLowerCase().includes('o3');
-            
+            const isReasoningModel =
+                (model || '').toLowerCase().includes('reasoner') ||
+                (model || '').toLowerCase().includes('o1') ||
+                (model || '').toLowerCase().includes('o3');
+
             if (isReasoningModel) {
                 // Reasoning 模型通常不支持工具调用，跳过测试
-                console.log('[Test Connection] Step 2: ⚠ Reasoning model detected, skipping tool call test');
+                console.log(
+                    '[Test Connection] Step 2: ⚠ Reasoning model detected, skipping tool call test'
+                );
                 toolCallSupported = false;
                 toolCallError = i18n.t('ai.config.reasoningNoToolCall');
             } else {
@@ -475,33 +489,38 @@ export async function testConnection(config = null) {
                 // 这样可以准确测试 API 是否支持函数调用
                 const toolTest = streamText({
                     model: modelInstance,
-                    messages: [
-                        { role: 'user', content: 'What is the weather in Beijing?' }
-                    ],
+                    messages: [{ role: 'user', content: 'What is the weather in Beijing?' }],
                     tools: { get_weather: testTool },
-                    toolChoice: 'required',  // 强制调用工具
-                    maxSteps: 1,  // 只需要一步，不需要多轮
-                    maxTokens: 100
+                    toolChoice: 'required', // 强制调用工具
+                    maxSteps: 1, // 只需要一步，不需要多轮
+                    maxTokens: 100,
                 });
-                
+
                 console.log('[Test Connection] Step 2: Consuming stream (toolChoice: required)...');
-                
+
                 // 必须先消费 stream 才能获取 response/usage
                 // 使用 Promise.race 添加超时保护
                 const TOOL_TEST_TIMEOUT = 30000; // 30 秒超时
-                
+
                 const consumeStream = async () => {
                     let textContent = '';
                     let toolCallDetected = false;
                     let finishReason = null;
-                    
+
                     // 消费 fullStream 以获取完整信息（包括 tool-call 和 tool-result）
                     for await (const part of toolTest.fullStream) {
                         if (part.type === 'tool-call') {
                             toolCallDetected = true;
-                            console.log('[Test Connection] Step 2: Tool call detected:', part.toolName, part.args);
+                            console.log(
+                                '[Test Connection] Step 2: Tool call detected:',
+                                part.toolName,
+                                part.args
+                            );
                         } else if (part.type === 'tool-result') {
-                            console.log('[Test Connection] Step 2: Tool result received:', part.result);
+                            console.log(
+                                '[Test Connection] Step 2: Tool result received:',
+                                part.result
+                            );
                         } else if (part.type === 'text-delta') {
                             textContent += part.textDelta;
                         } else if (part.type === 'finish') {
@@ -509,17 +528,20 @@ export async function testConnection(config = null) {
                             console.log('[Test Connection] Step 2: Finish reason:', finishReason);
                         }
                     }
-                    
+
                     return { toolCallDetected, textContent, finishReason };
                 };
-                
+
                 const timeoutPromise = new Promise((_, reject) => {
                     setTimeout(() => reject(new Error('Tool test timeout')), TOOL_TEST_TIMEOUT);
                 });
-                
+
                 try {
-                    const { toolCallDetected, finishReason } = await Promise.race([consumeStream(), timeoutPromise]);
-                    
+                    const { toolCallDetected, finishReason } = await Promise.race([
+                        consumeStream(),
+                        timeoutPromise,
+                    ]);
+
                     if (toolCallDetected || finishReason === 'tool-calls') {
                         toolCallSupported = true;
                         console.log('[Test Connection] Step 2: ✓ Tool calling supported');
@@ -528,7 +550,9 @@ export async function testConnection(config = null) {
                         // 可能是 API 不支持 toolChoice，我们认为支持是未知的
                         toolCallSupported = null;
                         toolCallError = i18n.t('ai.config.toolChoiceRequiredNoCall');
-                        console.log('[Test Connection] Step 2: ⚠ Cannot determine - no tool call with required choice');
+                        console.log(
+                            '[Test Connection] Step 2: ⚠ Cannot determine - no tool call with required choice'
+                        );
                     }
                 } catch (streamError) {
                     if (streamError.message === 'Tool test timeout') {
@@ -540,7 +564,6 @@ export async function testConnection(config = null) {
                     }
                 }
             }
-            
         } catch (toolError) {
             toolCallError = toolError.message;
             console.error('[Test Connection] Step 2: Tool call test failed:', {
@@ -548,16 +571,20 @@ export async function testConnection(config = null) {
                 status: toolError.status,
                 statusText: toolError.statusText,
                 url: toolError.url,
-                stack: toolError.stack
+                stack: toolError.stack,
             });
-            
+
             // 检查是否是 schema 错误
-            if (toolError.message?.includes('Invalid schema') || 
+            if (
+                toolError.message?.includes('Invalid schema') ||
                 toolError.message?.includes('type: "None"') ||
                 toolError.message?.includes('does not support') ||
-                toolError.message?.includes('not supported')) {
+                toolError.message?.includes('not supported')
+            ) {
                 toolCallSupported = false;
-                console.log('[Test Connection] Step 2: ✗ Schema error detected - function calling not supported');
+                console.log(
+                    '[Test Connection] Step 2: ✗ Schema error detected - function calling not supported'
+                );
             } else if (toolError.status === 404) {
                 // 404 错误 - 可能是端点问题
                 toolCallSupported = null;
@@ -565,7 +592,9 @@ export async function testConnection(config = null) {
             } else {
                 // 其他错误可能不是不支持，而是配置问题
                 toolCallSupported = null; // 未知
-                console.warn('[Test Connection] Step 2: ⚠ Unknown error - cannot determine support');
+                console.warn(
+                    '[Test Connection] Step 2: ⚠ Unknown error - cannot determine support'
+                );
             }
         }
 
@@ -573,9 +602,9 @@ export async function testConnection(config = null) {
         const result = {
             success: true,
             message: i18n.t('ai.config.connectionSuccess'),
-            toolCallSupported: toolCallSupported
+            toolCallSupported: toolCallSupported,
         };
-        
+
         // 添加详细说明
         if (toolCallSupported === false) {
             result.message = i18n.t('ai.config.connectionSuccessNoToolCall');
@@ -586,41 +615,40 @@ export async function testConnection(config = null) {
             result.message = i18n.t('ai.config.connectionSuccessUnknownToolCall');
             result.warning = i18n.t('ai.config.compatibilityUnknownMessage');
         }
-        
+
         // Disable fetch interceptor
         disableFetchInterceptor();
-        
-        return result;
 
+        return result;
     } catch (error) {
         // Disable fetch interceptor on error
         disableFetchInterceptor();
-        
+
         console.error('[Test Connection] Failed:', {
             message: error.message,
             status: error.status,
             statusText: error.statusText,
             url: error.url,
             cause: error.cause,
-            stack: error.stack
+            stack: error.stack,
         });
-        
+
         // If it's a 404 error, provide more specific message
         if (error.status === 404) {
             return {
                 success: false,
                 message: i18n.t('ai.config.connection404Details', {
                     baseUrl: baseUrl || '(default)',
-                    model: model || 'gpt-3.5-turbo'
+                    model: model || 'gpt-3.5-turbo',
                 }),
-                toolCallSupported: false
+                toolCallSupported: false,
             };
         }
-        
+
         return {
             success: false,
             message: error.message || i18n.t('ai.config.connectionFailed'),
-            toolCallSupported: false
+            toolCallSupported: false,
         };
     }
 }
@@ -634,10 +662,12 @@ export function isLocalUrl(url) {
     if (!url) return false;
     try {
         const parsed = new URL(url);
-        return parsed.hostname === 'localhost' ||
+        return (
+            parsed.hostname === 'localhost' ||
             parsed.hostname === '127.0.0.1' ||
             parsed.hostname.startsWith('192.168.') ||
-            parsed.hostname.startsWith('10.');
+            parsed.hostname.startsWith('10.')
+        );
     } catch {
         return false;
     }
@@ -645,14 +675,14 @@ export function isLocalUrl(url) {
 
 /**
  * 计算字符串的简单哈希值
- * @param {string} str 
+ * @param {string} str
  * @returns {string}
  */
 function simpleHash(str) {
     let hash = 0;
     for (let i = 0; i < str.length; i++) {
         const char = str.charCodeAt(i);
-        hash = ((hash << 5) - hash) + char;
+        hash = (hash << 5) - hash + char;
         hash = hash & hash;
     }
     return Math.abs(hash).toString(16);
@@ -660,7 +690,7 @@ function simpleHash(str) {
 
 /**
  * 获取模型列表缓存键
- * @param {string} baseUrl 
+ * @param {string} baseUrl
  * @returns {string}
  */
 function getModelCacheKey(baseUrl) {
@@ -677,7 +707,12 @@ export async function fetchModelList(forceRefresh = false) {
     const { apiKey, baseUrl } = getAiConfigState();
 
     if (!apiKey && !isLocalUrl(baseUrl)) {
-        return { success: false, models: [], fromCache: false, error: i18n.t('ai.config.apiKeyRequired') };
+        return {
+            success: false,
+            models: [],
+            fromCache: false,
+            error: i18n.t('ai.config.apiKeyRequired'),
+        };
     }
 
     const cacheKey = getModelCacheKey(baseUrl);
@@ -700,14 +735,16 @@ export async function fetchModelList(forceRefresh = false) {
 
     // 请求模型列表
     try {
-        const modelsUrl = baseUrl ? `${baseUrl.replace(/\/$/, '')}/models` : 'https://api.openai.com/v1/models';
+        const modelsUrl = baseUrl
+            ? `${baseUrl.replace(/\/$/, '')}/models`
+            : 'https://api.openai.com/v1/models';
 
         const response = await fetch(modelsUrl, {
             method: 'GET',
             headers: {
-                'Authorization': `Bearer ${apiKey}`,
-                'Content-Type': 'application/json'
-            }
+                Authorization: `Bearer ${apiKey}`,
+                'Content-Type': 'application/json',
+            },
         });
 
         if (!response.ok) {
@@ -716,11 +753,11 @@ export async function fetchModelList(forceRefresh = false) {
         }
 
         const data = await response.json();
-        const models = (data.data || []).map(m => ({
+        const models = (data.data || []).map((m) => ({
             id: m.id,
             name: m.id,
             owned_by: m.owned_by || 'unknown',
-            created: m.created
+            created: m.created,
         }));
 
         // 按名称排序
@@ -728,16 +765,18 @@ export async function fetchModelList(forceRefresh = false) {
 
         // 缓存结果
         try {
-            localStorage.setItem(cacheKey, JSON.stringify({
-                models,
-                timestamp: Date.now()
-            }));
+            localStorage.setItem(
+                cacheKey,
+                JSON.stringify({
+                    models,
+                    timestamp: Date.now(),
+                })
+            );
         } catch (e) {
             console.warn('[AI Client] Cache write error:', e);
         }
 
         return { success: true, models, fromCache: false };
-
     } catch (error) {
         console.error('[AI Client] Fetch models error:', error);
         return { success: false, models: [], fromCache: false, error: error.message };
@@ -746,7 +785,7 @@ export async function fetchModelList(forceRefresh = false) {
 
 /**
  * 检查模型缓存是否过期
- * @param {string} baseUrl 
+ * @param {string} baseUrl
  * @returns {boolean}
  */
 export function isModelCacheExpired(baseUrl) {
@@ -762,4 +801,3 @@ export function isModelCacheExpired(baseUrl) {
         return true;
     }
 }
-

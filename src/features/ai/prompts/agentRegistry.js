@@ -21,8 +21,9 @@ export const AGENTS = {
 3. 提供改进建议
 
 请简明扼要地回答。`,
-        userPrompt: (ctx) => `${ctx.text}${ctx.additionalInfo ? `\n\n附加指令：${ctx.additionalInfo}` : ''}`,
-        contextType: 'text'
+        userPrompt: (ctx) =>
+            `${ctx.text}${ctx.additionalInfo ? `\n\n附加指令：${ctx.additionalInfo}` : ''}`,
+        contextType: 'text',
     },
 
     // 任务润色助手
@@ -42,7 +43,7 @@ JSON 格式要求：
         userPrompt: (ctx) => `请优化以下任务描述：
 ${ctx.text}
 ${ctx.additionalInfo ? `\n附加要求：${ctx.additionalInfo}` : ''}`,
-        contextType: 'text'
+        contextType: 'text',
     },
 
     // Bug 报告专家
@@ -63,7 +64,7 @@ JSON 格式要求：
         userPrompt: (ctx) => `请转化以下问题描述：
 ${ctx.text}
 ${ctx.additionalInfo ? `\n附加要求：${ctx.additionalInfo}` : ''}`,
-        contextType: 'text'
+        contextType: 'text',
     },
 
     // 任务分解助手
@@ -129,7 +130,7 @@ ${ctx.additionalInfo ? `\n附加要求：${ctx.additionalInfo}` : ''}
 ${ctx.text}
 ${ctx.additionalInfo ? `\n附加要求：${ctx.additionalInfo}` : ''}`;
         },
-        contextType: 'task'
+        contextType: 'task',
     },
 
     // 工时估算助手
@@ -149,8 +150,8 @@ JSON 格式要求：
         userPrompt: (ctx) => `请估算任务工时：
 ${ctx.text}
 ${ctx.additionalInfo ? `\n附加信息：${ctx.additionalInfo}` : ''}`,
-        contextType: 'text'
-    }
+        contextType: 'text',
+    },
 };
 
 /**
@@ -159,7 +160,7 @@ ${ctx.additionalInfo ? `\n附加信息：${ctx.additionalInfo}` : ''}`,
  * @returns {Object|null}
  */
 export function getAgent(agentId) {
-    return Object.values(AGENTS).find(agent => agent.id === agentId) || null;
+    return Object.values(AGENTS).find((agent) => agent.id === agentId) || null;
 }
 
 /**
@@ -167,10 +168,10 @@ export function getAgent(agentId) {
  * @returns {Array<{id: string, name: string, icon: string}>}
  */
 export function getAgentList() {
-    return Object.values(AGENTS).map(agent => ({
+    return Object.values(AGENTS).map((agent) => ({
         id: agent.id,
         name: i18n.t(agent.nameKey) || agent.id,
-        icon: agent.icon
+        icon: agent.icon,
     }));
 }
 

@@ -7,7 +7,11 @@ import { showToast } from '../../utils/toast.js';
 import { defaultTasks } from '../../data/tasks.js';
 import { updateGanttColumns } from './columns.js';
 import { initResizer } from './resizer.js';
-import { registerCustomFieldsBlock, configureLightbox, registerNameInput } from '../lightbox/customization.js';
+import {
+    registerCustomFieldsBlock,
+    configureLightbox,
+    registerNameInput,
+} from '../lightbox/customization.js';
 import { updateSelectedTasksUI, applySelectionStyles } from '../selection/selectionManager.js';
 import { initNavigation, refreshUndoRedoButtons } from './navigation.js';
 import { initMarkers } from './markers.js';
@@ -17,7 +21,11 @@ import { initResponsive } from './responsive.js';
 import { initInlineEdit, addInlineEditStyles } from './inline-edit.js';
 import { initCriticalPath } from './critical-path.js';
 import { i18n } from '../../utils/i18n.js';
-import { formatDuration, exclusiveToInclusive, isDayPrecision } from '../../utils/time-formatter.js';
+import {
+    formatDuration,
+    exclusiveToInclusive,
+    isDayPrecision,
+} from '../../utils/time-formatter.js';
 import undoManager from '../ai/services/undoManager.js';
 import { loadColumnWidthPrefs, saveColumnWidthPref } from './column-widths.js';
 
@@ -67,7 +75,7 @@ function resolveDateFromTimelineEvent(event) {
 
     const rect = taskData.getBoundingClientRect();
     const scrollLeft = taskData.scrollLeft || 0;
-    const x = (event.clientX - rect.left) + scrollLeft;
+    const x = event.clientX - rect.left + scrollLeft;
     if (!Number.isFinite(x)) return null;
 
     const date = gantt.dateFromPos(x);
@@ -85,14 +93,16 @@ export function bindTimelineEmptyAreaCreateAction() {
         const clickedDate = resolveDateFromTimelineEvent(event);
         if (!clickedDate) return true;
 
-        openNewTaskFlow(buildNewTaskPayload({
-            source: 'timeline-empty-area',
-            parentId: 0,
-            startDate: clickedDate,
-            text: '',
-            duration: 1,
-            progress: 0
-        }));
+        openNewTaskFlow(
+            buildNewTaskPayload({
+                source: 'timeline-empty-area',
+                parentId: 0,
+                startDate: clickedDate,
+                text: '',
+                duration: 1,
+                progress: 0,
+            })
+        );
         if (event?.preventDefault) event.preventDefault();
         return false;
     });
@@ -120,11 +130,7 @@ function richContentScore(value) {
 function pickBestRichContent(task, preferredField = 'summary') {
     if (!task) return { field: preferredField, html: '' };
 
-    const candidates = Array.from(new Set([
-        preferredField,
-        'summary',
-        'description'
-    ]));
+    const candidates = Array.from(new Set([preferredField, 'summary', 'description']));
 
     let bestField = preferredField;
     let bestHtml = String(task?.[preferredField] || '');
@@ -155,12 +161,14 @@ function syncFieldOrderFromColumns(columns) {
     state.fieldOrder = nextOrder;
     persistCustomFields();
 
-    document.dispatchEvent(new CustomEvent('fieldOrderChanged', {
-        detail: {
-            source: 'gantt-grid-reorder',
-            fieldOrder: [...nextOrder]
-        }
-    }));
+    document.dispatchEvent(
+        new CustomEvent('fieldOrderChanged', {
+            detail: {
+                source: 'gantt-grid-reorder',
+                fieldOrder: [...nextOrder],
+            },
+        })
+    );
 }
 
 function bindGridColumnReorderSync() {
@@ -212,9 +220,8 @@ function syncPinnedGridScrollState() {
     }
 
     const maxScroll = Math.max(0, (grid.scrollWidth || 0) - (grid.clientWidth || 0));
-    const nextScrollLeft = maxScroll > 0
-        ? Math.min(maxScroll, Math.max(0, Math.round(grid.scrollLeft || 0)))
-        : 0;
+    const nextScrollLeft =
+        maxScroll > 0 ? Math.min(maxScroll, Math.max(0, Math.round(grid.scrollLeft || 0))) : 0;
 
     root.style.setProperty('--gantt-grid-scroll-left', `${nextScrollLeft}px`);
     root.classList.toggle('gantt-grid-h-scrolled', nextScrollLeft > 0);
@@ -271,11 +278,11 @@ export function initGantt() {
     // OPT-001: 移除 tooltip 插件，用户反馈悬浮详情会干扰操作
     // 修正: 用户指出只需移除表格中的 tooltip，甘特图(时间轴)中仍需保留
     gantt.plugins({
-        tooltip: true,   // 启用悬浮详情 (通过事件控制仅在时间轴显示)
+        tooltip: true, // 启用悬浮详情 (通过事件控制仅在时间轴显示)
         marker: true,
         drag_timeline: true,
-        auto_scheduling: false,  // 已改为手动异步调度，禁用原生 auto_scheduling
-        undo: true       // F-201: 启用撤回功能
+        auto_scheduling: false, // 已改为手动异步调度，禁用原生 auto_scheduling
+        undo: true, // F-201: 启用撤回功能
     });
 
     // ========================================
@@ -301,32 +308,37 @@ export function initGantt() {
     // 设置工作时间 (周一至周五)
     gantt.setWorkTime({ day: 0, hours: false }); // 周日非工作日
     gantt.setWorkTime({ day: 6, hours: false }); // 周六非工作日
-    gantt.setWorkTime({ day: 1, hours: true });  // 周一工作日
-    gantt.setWorkTime({ day: 2, hours: true });  // 周二工作日
-    gantt.setWorkTime({ day: 3, hours: true });  // 周三工作日
-    gantt.setWorkTime({ day: 4, hours: true });  // 周四工作日
-    gantt.setWorkTime({ day: 5, hours: true });  // 周五工作日
+    gantt.setWorkTime({ day: 1, hours: true }); // 周一工作日
+    gantt.setWorkTime({ day: 2, hours: true }); // 周二工作日
+    gantt.setWorkTime({ day: 3, hours: true }); // 周三工作日
+    gantt.setWorkTime({ day: 4, hours: true }); // 周四工作日
+    gantt.setWorkTime({ day: 5, hours: true }); // 周五工作日
 
     // OPT-001: Tooltip 显示控制
     // 修正: 仅在甘特图(时间轴)区域显示 Tooltip，屏蔽表格区域
     // 保存鼠标位置信息
     let lastMouseEvent = null;
-    document.addEventListener('mousemove', function (e) {
-        lastMouseEvent = e;
-    }, true);
+    document.addEventListener(
+        'mousemove',
+        function (e) {
+            lastMouseEvent = e;
+        },
+        true
+    );
 
     // 使用tooltip模板控制显示（支持国际化，样式通过CSS类管理）
     gantt.templates.tooltip_text = function (start, end, task) {
         // 检查鼠标是否在表格区域
         if (lastMouseEvent) {
             const target = lastMouseEvent.target;
-            if (target && (
-                target.closest('.gantt_grid') ||
-                target.closest('.gantt_grid_data') ||
-                target.closest('.gantt_grid_scale') ||
-                target.closest('.gantt_row') ||
-                target.closest('.gantt_cell')
-            )) {
+            if (
+                target &&
+                (target.closest('.gantt_grid') ||
+                    target.closest('.gantt_grid_data') ||
+                    target.closest('.gantt_grid_scale') ||
+                    target.closest('.gantt_row') ||
+                    target.closest('.gantt_cell'))
+            ) {
                 // 在表格区域，不显示tooltip
                 return '';
             }
@@ -357,23 +369,33 @@ export function initGantt() {
 
         // 任务名称（优先显示任务名，避免只显示 ID）
         const taskTitle = String(task.text || '').trim() || `#${task.id}`;
-        lines.push(`<div class="gantt-tooltip-title">📋 ${i18n.t('tooltip.task')}: ${taskTitle}</div>`);
+        lines.push(
+            `<div class="gantt-tooltip-title">📋 ${i18n.t('tooltip.task')}: ${taskTitle}</div>`
+        );
 
         // 开始日期
-        lines.push(`<div class="gantt-tooltip-row">📅 <span class="gantt-tooltip-label">${i18n.t('tooltip.start')}:</span> ${formatDate(task.start_date)}</div>`);
+        lines.push(
+            `<div class="gantt-tooltip-row">📅 <span class="gantt-tooltip-label">${i18n.t('tooltip.start')}:</span> ${formatDate(task.start_date)}</div>`
+        );
 
         // 结束日期（DHTMLX 的 end 是 exclusive，需转为 inclusive 展示给用户）
         const displayEnd = isDayPrecision(end) ? exclusiveToInclusive(end) : end;
-        lines.push(`<div class="gantt-tooltip-row">📅 <span class="gantt-tooltip-label">${i18n.t('tooltip.end')}:</span> ${formatDate(displayEnd)}</div>`);
+        lines.push(
+            `<div class="gantt-tooltip-row">📅 <span class="gantt-tooltip-label">${i18n.t('tooltip.end')}:</span> ${formatDate(displayEnd)}</div>`
+        );
 
         // 负责人
         if (task.assignee) {
-            lines.push(`<div class="gantt-tooltip-row">👤 <span class="gantt-tooltip-label">${i18n.t('tooltip.assignee')}:</span> ${task.assignee}</div>`);
+            lines.push(
+                `<div class="gantt-tooltip-row">👤 <span class="gantt-tooltip-label">${i18n.t('tooltip.assignee')}:</span> ${task.assignee}</div>`
+            );
         }
 
         // 进度
         const progressPercent = Math.round((task.progress || 0) * 100);
-        lines.push(`<div class="gantt-tooltip-row">📊 <span class="gantt-tooltip-label">${i18n.t('tooltip.progress')}:</span> ${progressPercent}%</div>`);
+        lines.push(
+            `<div class="gantt-tooltip-row">📊 <span class="gantt-tooltip-label">${i18n.t('tooltip.progress')}:</span> ${progressPercent}%</div>`
+        );
 
         // 工期：优先从 start/end_date 实时计算（避免读取 task.duration 过时值）
         let displayDuration = task.duration || 0;
@@ -381,10 +403,14 @@ export function initGantt() {
             try {
                 const live = gantt.calculateDuration(task.start_date, task.end_date);
                 if (live > 0) displayDuration = live;
-            } catch (e) { /* 保留 task.duration */ }
+            } catch (e) {
+                /* 保留 task.duration */
+            }
         }
         const durationText = formatDuration(displayDuration);
-        lines.push(`<div class="gantt-tooltip-row">⏱️ <span class="gantt-tooltip-label">${i18n.t('tooltip.duration')}:</span> ${durationText}</div>`);
+        lines.push(
+            `<div class="gantt-tooltip-row">⏱️ <span class="gantt-tooltip-label">${i18n.t('tooltip.duration')}:</span> ${durationText}</div>`
+        );
 
         // Baseline deviation
         if (task.baseline_end && localStorage.getItem('show_baseline') === 'true') {
@@ -394,23 +420,39 @@ export function initGantt() {
 
             if (Math.abs(diffDays) > 0.01) {
                 if (diffDays > 0) {
-                    lines.push(`<div class="gantt-tooltip-row" style="color: #f59e0b;">⚠️ <span class="gantt-tooltip-label">${i18n.t('baseline.delayed')}:</span> ${formatDuration(diffDays)}</div>`);
+                    lines.push(
+                        `<div class="gantt-tooltip-row" style="color: #f59e0b;">⚠️ <span class="gantt-tooltip-label">${i18n.t('baseline.delayed')}:</span> ${formatDuration(diffDays)}</div>`
+                    );
                 } else {
-                    lines.push(`<div class="gantt-tooltip-row" style="color: #10b981;">✅ <span class="gantt-tooltip-label">${i18n.t('baseline.ahead')}:</span> ${formatDuration(Math.abs(diffDays))}</div>`);
+                    lines.push(
+                        `<div class="gantt-tooltip-row" style="color: #10b981;">✅ <span class="gantt-tooltip-label">${i18n.t('baseline.ahead')}:</span> ${formatDuration(Math.abs(diffDays))}</div>`
+                    );
                 }
             }
         }
 
         // 优先级
         if (task.priority) {
-            const priorityEmoji = task.priority === 'high' ? '🔴' : task.priority === 'medium' ? '🟡' : '🟢';
-            lines.push(`<div class="gantt-tooltip-row">${priorityEmoji} <span class="gantt-tooltip-label">${i18n.t('tooltip.priority')}:</span> ${getPriorityText(task.priority)}</div>`);
+            const priorityEmoji =
+                task.priority === 'high' ? '🔴' : task.priority === 'medium' ? '🟡' : '🟢';
+            lines.push(
+                `<div class="gantt-tooltip-row">${priorityEmoji} <span class="gantt-tooltip-label">${i18n.t('tooltip.priority')}:</span> ${getPriorityText(task.priority)}</div>`
+            );
         }
 
         // 状态
         if (task.status) {
-            const statusEmoji = task.status === 'completed' ? '✅' : task.status === 'in_progress' ? '🔄' : task.status === 'suspended' ? '❌' : '⏸️';
-            lines.push(`<div class="gantt-tooltip-row">${statusEmoji} <span class="gantt-tooltip-label">${i18n.t('tooltip.status')}:</span> ${getStatusText(task.status)}</div>`);
+            const statusEmoji =
+                task.status === 'completed'
+                    ? '✅'
+                    : task.status === 'in_progress'
+                      ? '🔄'
+                      : task.status === 'suspended'
+                        ? '❌'
+                        : '⏸️';
+            lines.push(
+                `<div class="gantt-tooltip-row">${statusEmoji} <span class="gantt-tooltip-label">${i18n.t('tooltip.status')}:</span> ${getStatusText(task.status)}</div>`
+            );
         }
 
         // Resource Conflict Warning
@@ -418,57 +460,69 @@ export function initGantt() {
             const conflicts = conflictDetails[task.id];
             if (conflicts && conflicts.length > 0) {
                 // Find worst overload
-                const worst = conflicts.reduce((max, c) => c.overload > max.overload ? c : max, conflicts[0]);
+                const worst = conflicts.reduce(
+                    (max, c) => (c.overload > max.overload ? c : max),
+                    conflicts[0]
+                );
 
-                lines.push(`<div style="color: #f59e0b; margin-top: 8px; border-top: 1px solid #fcd34d; padding-top: 8px;">`);
+                lines.push(
+                    `<div style="color: #f59e0b; margin-top: 8px; border-top: 1px solid #fcd34d; padding-top: 8px;">`
+                );
                 lines.push(`⚠️ ${i18n.t('resource.overload')}<br/>`);
                 lines.push(`${worst.assignee} ${i18n.t('resource.on')} ${worst.date}<br/>`);
-                lines.push(`${i18n.t('resource.workload')}: ${worst.totalHours.toFixed(1)} ${i18n.t('resource.hours')}<br/>`);
-                lines.push(`${i18n.t('resource.overloadAmount')}: ${worst.overload.toFixed(1)} ${i18n.t('resource.hours')}`);
+                lines.push(
+                    `${i18n.t('resource.workload')}: ${worst.totalHours.toFixed(1)} ${i18n.t('resource.hours')}<br/>`
+                );
+                lines.push(
+                    `${i18n.t('resource.overloadAmount')}: ${worst.overload.toFixed(1)} ${i18n.t('resource.hours')}`
+                );
                 lines.push(`</div>`);
             }
         }
 
         // F-112: 任务概述
         if (task.summary) {
-            const summaryText = task.summary.length > 50 ? task.summary.substring(0, 50) + '...' : task.summary;
-            lines.push(`<div class="gantt-tooltip-row">📝 <span class="gantt-tooltip-label">${i18n.t('columns.summary') || '概述'}:</span> ${summaryText}</div>`);
+            const summaryText =
+                task.summary.length > 50 ? task.summary.substring(0, 50) + '...' : task.summary;
+            lines.push(
+                `<div class="gantt-tooltip-row">📝 <span class="gantt-tooltip-label">${i18n.t('columns.summary') || '概述'}:</span> ${summaryText}</div>`
+            );
         }
 
         return `<div class="gantt-tooltip-container">${lines.join('')}</div>`;
     };
 
     // 设置语言
-    gantt.i18n.setLocale("cn");
+    gantt.i18n.setLocale('cn');
 
     // 日期格式
-    gantt.config.date_format = "%Y-%m-%d";
-    gantt.config.xml_date = "%Y-%m-%d";
+    gantt.config.date_format = '%Y-%m-%d';
+    gantt.config.xml_date = '%Y-%m-%d';
     gantt.config.lightbox_additional_height = 90;
 
     // 自定义时间显示模板
     gantt.templates.lightbox_header = function (start, end, task) {
-        return "新任务";
+        return '新任务';
     };
 
     gantt.templates.time_picker = function (date) {
-        return date.getFullYear() + "年" + (date.getMonth() + 1) + "月" + date.getDate() + "日";
+        return date.getFullYear() + '年' + (date.getMonth() + 1) + '月' + date.getDate() + '日';
     };
 
     // 时间刻度配置
     gantt.config.scales = [
         {
-            unit: "month",
+            unit: 'month',
             step: 1,
             format: function (date) {
-                return date.getFullYear() + "年" + (date.getMonth() + 1) + "月";
-            }
+                return date.getFullYear() + '年' + (date.getMonth() + 1) + '月';
+            },
         },
         {
-            unit: "day",
+            unit: 'day',
             step: 1,
             format: function (date) {
-                return (date.getMonth() + 1) + "月" + date.getDate() + "日";
+                return date.getMonth() + 1 + '月' + date.getDate() + '日';
             },
             css: function (date) {
                 const classes = [];
@@ -477,13 +531,13 @@ export function initGantt() {
                 // 节假日背景色通过全局缓存 Map 查询（由 initCalendarHighlightCache 填充）
                 const dateStr = toLocalDateStr(date);
                 const hlType = window.__calendarHighlightCache?.get(dateStr);
-                if (hlType === 'holiday')    classes.push('gantt-day-holiday');
+                if (hlType === 'holiday') classes.push('gantt-day-holiday');
                 if (hlType === 'makeupday') classes.push('gantt-day-makeupday');
-                if (hlType === 'overtime')  classes.push('gantt-day-overtime');
+                if (hlType === 'overtime') classes.push('gantt-day-overtime');
                 if (hlType === 'companyday') classes.push('gantt-day-companyday');
                 return classes.join(' ');
-            }
-        }
+            },
+        },
     ];
 
     // 任务文本模板 - 恢复内部显示
@@ -491,7 +545,7 @@ export function initGantt() {
         return task.text;
     };
     gantt.templates.rightside_text = function () {
-        return "";
+        return '';
     };
 
     // 树形缩进模板 — 每层 20px，保证层级清晰可辨
@@ -501,7 +555,7 @@ export function initGantt() {
 
     // 任务样式模板
     gantt.templates.task_class = function (start, end, task) {
-        let classes = [];
+        const classes = [];
 
         // Milestone
         if (task.type === 'milestone') {
@@ -522,10 +576,10 @@ export function initGantt() {
         //    classes.push("task_overdue");
         // }
         if (task.progress >= 1) {
-            classes.push("task_completed");
+            classes.push('task_completed');
         }
 
-        return classes.join(" ");
+        return classes.join(' ');
     };
 
     // 批量选择模板
@@ -543,16 +597,16 @@ export function initGantt() {
 
     gantt.templates.grid_row_class = function (start, end, task) {
         if (isTaskSelected(task.id)) {
-            return "gantt-selected";
+            return 'gantt-selected';
         }
-        return "";
+        return '';
     };
 
     gantt.templates.task_row_class = function (start, end, task) {
         if (isTaskSelected(task.id)) {
-            return "gantt-selected";
+            return 'gantt-selected';
         }
-        return "";
+        return '';
     };
 
     // 从 localStorage 恢复左侧宽度
@@ -576,37 +630,37 @@ export function initGantt() {
 
     // Layout 配置
     gantt.config.layout = {
-        css: "gantt_container",
+        css: 'gantt_container',
         cols: [
             {
                 width: savedGridWidth,
                 min_width: 200,
                 rows: [
-                    { view: "grid", scrollX: "gridScroll", scrollY: "scrollVer", scrollable: true },
-                    { view: "scrollbar", id: "gridScroll", group: "horizontal" }
-                ]
+                    { view: 'grid', scrollX: 'gridScroll', scrollY: 'scrollVer', scrollable: true },
+                    { view: 'scrollbar', id: 'gridScroll', group: 'horizontal' },
+                ],
             },
             {
                 width: 6,
-                html: "<div id='custom-resizer' style='width:100%;height:100%;background:#E5E7EB;cursor:col-resize;border-left:1px solid #D1D5DB;border-right:1px solid #D1D5DB;transition:background 0.2s;'></div>"
+                html: "<div id='custom-resizer' style='width:100%;height:100%;background:#E5E7EB;cursor:col-resize;border-left:1px solid #D1D5DB;border-right:1px solid #D1D5DB;transition:background 0.2s;'></div>",
             },
             {
                 rows: [
-                    { view: "timeline", scrollX: "scrollHor", scrollY: "scrollVer" },
-                    { view: "scrollbar", id: "scrollHor", group: "horizontal" }
-                ]
+                    { view: 'timeline', scrollX: 'scrollHor', scrollY: 'scrollVer' },
+                    { view: 'scrollbar', id: 'scrollHor', group: 'horizontal' },
+                ],
             },
-            { view: "scrollbar", id: "scrollVer" }
-        ]
+            { view: 'scrollbar', id: 'scrollVer' },
+        ],
     };
 
     // 保存网格宽度
-    gantt.attachEvent("onGridResizeEnd", function (old_width, new_width) {
+    gantt.attachEvent('onGridResizeEnd', function (old_width, new_width) {
         localStorage.setItem('gantt_grid_width', new_width);
         return true;
     });
 
-    gantt.attachEvent("onColumnResizeEnd", function (...args) {
+    gantt.attachEvent('onColumnResizeEnd', function (...args) {
         let column = null;
         let width = null;
 
@@ -628,7 +682,7 @@ export function initGantt() {
         const currentPrefs = loadColumnWidthPrefs();
         saveColumnWidthPref(currentPrefs, column.name, width, {
             minWidth: column.min_width,
-            maxWidth: column.max_width
+            maxWidth: column.max_width,
         });
 
         setTimeout(stretchTextColumnToGridWidth, 0);
@@ -637,7 +691,7 @@ export function initGantt() {
     });
 
     // 保存操作拦截和反馈
-    gantt.attachEvent("onLightboxSave", function (id, task, is_new) {
+    gantt.attachEvent('onLightboxSave', function (id, task, is_new) {
         if (task._validation_passed === false) {
             return false;
         }
@@ -649,7 +703,10 @@ export function initGantt() {
     });
 
     // F-112: 拦截所有 Lightbox 打开请求，改用任务详情面板
-    gantt.attachEvent("onBeforeLightbox", function (task_id) {
+    gantt.attachEvent('onBeforeLightbox', function (task_id) {
+        if (task_id == null || task_id === '') {
+            return false;
+        }
         // 打开任务详情面板
         if (window.openTaskDetailsPanel) {
             window.openTaskDetailsPanel(task_id);
@@ -659,25 +716,29 @@ export function initGantt() {
     });
 
     // Lightbox 打开后动态调整布局（保留作为备用，但正常情况下不会触发）
-    gantt.attachEvent("onLightbox", function (task_id) {
+    gantt.attachEvent('onLightbox', function (task_id) {
         setTimeout(function () {
             // 隐藏 custom_fields 区段标签
-            var sections = document.querySelectorAll('.gantt_cal_lsection');
+            const sections = document.querySelectorAll('.gantt_cal_lsection');
             sections.forEach(function (section) {
-                if (section.textContent.trim() === 'custom_fields' ||
-                    section.textContent.includes('custom_fields')) {
+                if (
+                    section.textContent.trim() === 'custom_fields' ||
+                    section.textContent.includes('custom_fields')
+                ) {
                     section.style.display = 'none';
                 }
             });
 
             // 重新排序时间选择器
-            var timeSelects = document.querySelector('.gantt_time_selects');
+            const timeSelects = document.querySelector('.gantt_time_selects');
             if (timeSelects) {
-                var selects = timeSelects.querySelectorAll('select');
+                const selects = timeSelects.querySelectorAll('select');
                 if (selects.length >= 3) {
-                    var yearSelect = null, monthSelect = null, daySelect = null;
+                    let yearSelect = null,
+                        monthSelect = null,
+                        daySelect = null;
                     selects.forEach(function (sel) {
-                        var label = sel.getAttribute('aria-label') || '';
+                        const label = sel.getAttribute('aria-label') || '';
                         if (label.includes('年')) yearSelect = sel;
                         else if (label.includes('月')) monthSelect = sel;
                         else if (label.includes('天') || label.includes('日')) daySelect = sel;
@@ -692,11 +753,11 @@ export function initGantt() {
             }
 
             // 修复按钮布局
-            var btnContainer = document.querySelector('.gantt_cal_light > div:last-child');
+            const btnContainer = document.querySelector('.gantt_cal_light > div:last-child');
             if (btnContainer) {
-                var deleteBtn = btnContainer.querySelector('.gantt_delete_btn_set');
-                var cancelBtn = btnContainer.querySelector('.gantt_cancel_btn_set');
-                var saveBtn = btnContainer.querySelector('.gantt_save_btn_set');
+                const deleteBtn = btnContainer.querySelector('.gantt_delete_btn_set');
+                const cancelBtn = btnContainer.querySelector('.gantt_cancel_btn_set');
+                const saveBtn = btnContainer.querySelector('.gantt_save_btn_set');
 
                 if (deleteBtn) {
                     deleteBtn.style.order = '-1';
@@ -716,7 +777,7 @@ export function initGantt() {
     });
 
     // 任务点击事件：仅复选框参与批量选择，点击行本身不改变选择状态
-    gantt.attachEvent("onTaskClick", function (id, e) {
+    gantt.attachEvent('onTaskClick', function (id, e) {
         if (e.target) {
             if (e.target.classList && e.target.classList.contains('gantt-checkbox-selection')) {
                 return true;
@@ -754,7 +815,7 @@ export function initGantt() {
     // 注册自定义字段表单块
     registerCustomFieldsBlock();
     configureLightbox();
-    registerNameInput();  // 任务名 100 字符限制
+    registerNameInput(); // 任务名 100 字符限制
     updateGanttColumns();
 
     // 动态调整图例位置
@@ -763,17 +824,17 @@ export function initGantt() {
         const resizerWidth = gantt.config.layout.cols[1].width || 6;
         const legend = document.getElementById('gantt-legend');
         if (legend) {
-            legend.style.left = (gridWidth + resizerWidth + 20) + 'px';
+            legend.style.left = gridWidth + resizerWidth + 20 + 'px';
         }
     }
 
-    gantt.attachEvent("onLayoutResize", updateLegendPosition);
-    gantt.attachEvent("onGanttReady", updateLegendPosition);
-    gantt.attachEvent("onGanttReady", bindGridColumnReorderSync);
+    gantt.attachEvent('onLayoutResize', updateLegendPosition);
+    gantt.attachEvent('onGanttReady', updateLegendPosition);
+    gantt.attachEvent('onGanttReady', bindGridColumnReorderSync);
     setTimeout(updateLegendPosition, 500);
 
     // 初始化甘特图
-    gantt.init("gantt_here");
+    gantt.init('gantt_here');
     gantt.parse(defaultTasks);
 
     // 描述字段富文本 Tooltip 事件绑定
@@ -870,7 +931,11 @@ export function initGantt() {
 
             const relatedTarget = e.relatedTarget;
             if (relatedTarget && cell.contains(relatedTarget)) return;
-            if (relatedTarget && relatedTarget.closest && relatedTarget.closest('#summary-popover')) {
+            if (
+                relatedTarget &&
+                relatedTarget.closest &&
+                relatedTarget.closest('#summary-popover')
+            ) {
                 return;
             }
 
@@ -920,7 +985,7 @@ export function initGantt() {
     });
 
     // 甘特图渲染后重新应用选中样式
-    gantt.attachEvent("onGanttRender", function () {
+    gantt.attachEvent('onGanttRender', function () {
         bindPinnedGridScrollSync();
         bindGridColumnReorderSync();
         if (state.selectedTasks.size > 0) {
@@ -932,7 +997,9 @@ export function initGantt() {
 
     // Export Events
     document.getElementById('export-excel-btn')?.addEventListener('click', exportToExcel);
-    document.getElementById('export-current-view-btn')?.addEventListener('click', exportCurrentView);
+    document
+        .getElementById('export-current-view-btn')
+        ?.addEventListener('click', exportCurrentView);
     document.getElementById('export-full-gantt-btn')?.addEventListener('click', exportFullGantt);
 }
 
@@ -951,11 +1018,11 @@ export function setupGlobalEvents() {
         if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) {
             // 检查焦点不在输入框中
             const activeEl = document.activeElement;
-            const isInputFocused = activeEl && (
-                activeEl.tagName === 'INPUT' ||
-                activeEl.tagName === 'TEXTAREA' ||
-                activeEl.isContentEditable
-            );
+            const isInputFocused =
+                activeEl &&
+                (activeEl.tagName === 'INPUT' ||
+                    activeEl.tagName === 'TEXTAREA' ||
+                    activeEl.isContentEditable);
 
             if (!isInputFocused) {
                 e.preventDefault();
@@ -973,13 +1040,16 @@ export function setupGlobalEvents() {
 
         // F-201: Ctrl+Y / Ctrl+Shift+Z 重做功能
         // 优先使用 undoManager，如果没有可重做的则回退到 gantt.redo
-        if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) {
+        if (
+            (e.ctrlKey || e.metaKey) &&
+            (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))
+        ) {
             const activeEl = document.activeElement;
-            const isInputFocused = activeEl && (
-                activeEl.tagName === 'INPUT' ||
-                activeEl.tagName === 'TEXTAREA' ||
-                activeEl.isContentEditable
-            );
+            const isInputFocused =
+                activeEl &&
+                (activeEl.tagName === 'INPUT' ||
+                    activeEl.tagName === 'TEXTAREA' ||
+                    activeEl.isContentEditable);
 
             if (!isInputFocused) {
                 e.preventDefault();
@@ -1013,7 +1083,11 @@ export function setupGlobalEvents() {
 
     // 复选框事件委托（绑定到 document，避免 gantt 重建 DOM 后监听失效）
     document.addEventListener('change', function (e) {
-        if (!e.target || !e.target.classList || !e.target.classList.contains('gantt-checkbox-selection')) {
+        if (
+            !e.target ||
+            !e.target.classList ||
+            !e.target.classList.contains('gantt-checkbox-selection')
+        ) {
             return;
         }
 
@@ -1021,10 +1095,10 @@ export function setupGlobalEvents() {
         const taskIds = getTaskIdVariants(rawTaskId);
 
         if (e.target.checked) {
-            taskIds.forEach(taskId => state.selectedTasks.delete(taskId));
+            taskIds.forEach((taskId) => state.selectedTasks.delete(taskId));
             state.selectedTasks.add(rawTaskId);
         } else {
-            taskIds.forEach(taskId => state.selectedTasks.delete(taskId));
+            taskIds.forEach((taskId) => state.selectedTasks.delete(taskId));
         }
         updateSelectedTasksUI();
         e.stopPropagation();
@@ -1037,10 +1111,10 @@ export function setupGlobalEvents() {
         }
 
         const allTaskIds = [];
-        gantt.eachTask(task => allTaskIds.push(task.id));
+        gantt.eachTask((task) => allTaskIds.push(task.id));
 
         if (e.target.checked) {
-            allTaskIds.forEach(id => state.selectedTasks.add(id));
+            allTaskIds.forEach((id) => state.selectedTasks.add(id));
         } else {
             state.selectedTasks.clear();
         }
@@ -1108,7 +1182,12 @@ export async function refreshHolidayHighlightCache() {
 
     // 重新构建高亮缓存，避免新增/删除公司假、加班日后缓存残留
     for (const [dateStr, type] of cache.entries()) {
-        if (type === 'holiday' || type === 'makeupday' || type === 'companyday' || type === 'overtime') {
+        if (
+            type === 'holiday' ||
+            type === 'makeupday' ||
+            type === 'companyday' ||
+            type === 'overtime'
+        ) {
             cache.delete(dateStr);
         }
     }
@@ -1122,12 +1201,14 @@ export async function refreshHolidayHighlightCache() {
     const thisYear = new Date().getFullYear();
     const { countryCode } = await getCalendarSettings();
     const holidays = await db.calendar_holidays
-        .where('year').anyOf([thisYear, thisYear + 1])
-        .filter(h => h.countryCode === countryCode)
+        .where('year')
+        .anyOf([thisYear, thisYear + 1])
+        .filter((h) => h.countryCode === countryCode)
         .toArray();
 
     for (const h of holidays) {
-        if (!cache.has(h.date)) { // 自定义日优先级更高，不覆盖
+        if (!cache.has(h.date)) {
+            // 自定义日优先级更高，不覆盖
             cache.set(h.date, h.isOffDay ? 'holiday' : 'makeupday');
         }
     }

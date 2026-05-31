@@ -55,13 +55,19 @@ export function normalizeToDayStart(value) {
     return date;
 }
 
-export function buildNewTaskDefaults({ parentId = 0, startDate = null, text = '', duration = 1, progress = 0 } = {}) {
+export function buildNewTaskDefaults({
+    parentId = 0,
+    startDate = null,
+    text = '',
+    duration = 1,
+    progress = 0,
+} = {}) {
     return {
         text,
         start_date: normalizeToDayStart(startDate),
         duration,
         progress,
-        parent: parentId
+        parent: parentId,
     };
 }
 
@@ -73,7 +79,7 @@ export function buildNewTaskPayload({
     startDate = null,
     text = '',
     duration = 1,
-    progress = 0
+    progress = 0,
 } = {}) {
     const resolvedParentId = parentTaskId ?? parentTask?.id ?? parentId;
     const defaults = buildNewTaskDefaults({
@@ -81,13 +87,13 @@ export function buildNewTaskPayload({
         startDate,
         text,
         duration,
-        progress
+        progress,
     });
 
     return {
         source,
         parentTaskId: resolvedParentId || null,
         parentTask,
-        defaults
+        defaults,
     };
 }

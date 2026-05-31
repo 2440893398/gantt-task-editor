@@ -22,7 +22,16 @@ function toLocalDateStr(value) {
 }
 
 // 为每个负责人分配一个固定颜色（按出现顺序）
-const PALETTE = ['#0EA5E9','#F59E0B','#10B981','#8B5CF6','#EF4444','#EC4899','#14B8A6','#F97316'];
+const PALETTE = [
+    '#0EA5E9',
+    '#F59E0B',
+    '#10B981',
+    '#8B5CF6',
+    '#EF4444',
+    '#EC4899',
+    '#14B8A6',
+    '#F97316',
+];
 const assigneeColorMap = new Map();
 function getAssigneeColor(name) {
     if (!assigneeColorMap.has(name)) {
@@ -51,7 +60,7 @@ async function renderTab3View(container) {
         <div class="calendar-panel__view calendar-panel__view--scroll ${currentView === 'list' ? 'active' : ''}" id="t3-list-view"></div>
     `;
 
-    container.querySelectorAll('.calendar-panel__sub-btn').forEach(btn => {
+    container.querySelectorAll('.calendar-panel__sub-btn').forEach((btn) => {
         btn.addEventListener('click', () => {
             currentView = btn.dataset.view;
             renderTab3View(container);
@@ -72,11 +81,11 @@ async function renderTab3Calendar(el, leaves, parentContainer) {
 
     for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
         const dateStr = toLocalDateStr(d);
-        const onLeaveToday = leaves.filter(l => l.startDate <= dateStr && dateStr <= l.endDate);
+        const onLeaveToday = leaves.filter((l) => l.startDate <= dateStr && dateStr <= l.endDate);
         if (onLeaveToday.length > 0) {
             highlights.set(dateStr, {
                 type: 'leave',
-                avatars: onLeaveToday.map(l => ({
+                avatars: onLeaveToday.map((l) => ({
                     initial: l.assignee.charAt(0),
                     color: getAssigneeColor(l.assignee),
                     name: l.assignee,
@@ -106,17 +115,21 @@ async function renderTab3Calendar(el, leaves, parentContainer) {
     });
 
     // 图例（按出现人员动态生成）
-    const uniqueAssignees = [...new Set(leaves.map(l => l.assignee))];
+    const uniqueAssignees = [...new Set(leaves.map((l) => l.assignee))];
     if (uniqueAssignees.length > 0) {
         const legend = document.createElement('div');
         legend.className = 'cal-mini__legend';
         legend.style.padding = '0 20px 12px';
-        legend.innerHTML = uniqueAssignees.map(name => `
+        legend.innerHTML = uniqueAssignees
+            .map(
+                (name) => `
             <div class="cal-mini__legend-item">
                 <div class="cal-mini__legend-dot" style="background:${getAssigneeColor(name)};border-radius:50%"></div>
                 ${name}
             </div>
-        `).join('');
+        `
+            )
+            .join('');
         el.appendChild(legend);
     }
 }
@@ -133,7 +146,7 @@ function renderAssigneeInput(config, inputId, selectId) {
         return `
             <select id="${selectId}" class="cal-popup__input">
                 <option value="">${i18n.t('calendar.selectAssignee') || 'Select assignee'}</option>
-                ${config.options.map(name => `<option value="${name}">${name}</option>`).join('')}
+                ${config.options.map((name) => `<option value="${name}">${name}</option>`).join('')}
             </select>
         `;
     }
@@ -162,7 +175,7 @@ function showLeavePopup(dateStr, dayEl, leaves, parentContainer, event) {
     };
 
     const assigneeFieldConfig = getAssigneeFieldConfig();
-    const dayLeaves = leaves.filter(l => l.startDate <= dateStr && dateStr <= l.endDate);
+    const dayLeaves = leaves.filter((l) => l.startDate <= dateStr && dateStr <= l.endDate);
 
     const popup = document.createElement('div');
     popup.className = 'cal-leave-popup';
@@ -172,9 +185,13 @@ function showLeavePopup(dateStr, dayEl, leaves, parentContainer, event) {
             <button class="cal-popup__close">✕</button>
         </div>
         <div style="padding:10px 14px;display:flex;flex-direction:column;gap:10px;max-height:300px;overflow-y:auto;">
-            ${dayLeaves.length > 0 ? `
+            ${
+                dayLeaves.length > 0
+                    ? `
                 <div style="display:flex;flex-direction:column;gap:6px;">
-                    ${dayLeaves.map(l => `
+                    ${dayLeaves
+                        .map(
+                            (l) => `
                         <div style="display:flex;align-items:center;gap:8px;height:28px;">
                             <div style="width:20px;height:20px;border-radius:50%;background:${getAssigneeColor(l.assignee)};display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:#fff;flex-shrink:0">
                                 ${l.assignee.charAt(0)}
@@ -185,9 +202,13 @@ function showLeavePopup(dateStr, dayEl, leaves, parentContainer, event) {
                             </span>
                             <button class="cal-list__del-btn" data-leave-id="${l.id}" title="${i18n.t('calendar.deleteLeave') || 'Delete leave'}">&#128465;</button>
                         </div>
-                    `).join('')}
+                    `
+                        )
+                        .join('')}
                 </div>
-            ` : `<div style="font-size:12px;color:#94A3B8;">${i18n.t('calendar.noLeaveThatDay') || 'No leave records for this day'}</div>`}
+            `
+                    : `<div style="font-size:12px;color:#94A3B8;">${i18n.t('calendar.noLeaveThatDay') || 'No leave records for this day'}</div>`
+            }
 
             <div style="height:1px;background:#E2E8F0"></div>
 
@@ -216,7 +237,7 @@ function showLeavePopup(dateStr, dayEl, leaves, parentContainer, event) {
 
     popup.querySelector('.cal-popup__close').addEventListener('click', () => popup.remove());
 
-    popup.querySelectorAll('[data-leave-id]').forEach(btn => {
+    popup.querySelectorAll('[data-leave-id]').forEach((btn) => {
         btn.addEventListener('click', async () => {
             await deleteLeave(btn.dataset.leaveId);
             popup.remove();
@@ -305,9 +326,12 @@ function renderTab3List(el, leaves, parentContainer) {
                 <span style="width:80px">${i18n.t('calendar.col.type') || 'Type'}</span>
                 <span style="width:50px">${i18n.t('calendar.col.action') || 'Action'}</span>
             </div>
-            ${leaves.length === 0
-                ? `<div class="cal-list__empty"><span>${i18n.t('calendar.noLeaves') || 'Click Add Leave to record absences'}</span></div>`
-                : leaves.map(l => `
+            ${
+                leaves.length === 0
+                    ? `<div class="cal-list__empty"><span>${i18n.t('calendar.noLeaves') || 'Click Add Leave to record absences'}</span></div>`
+                    : leaves
+                          .map(
+                              (l) => `
                     <div class="cal-list__row" style="gap:0">
                         <div class="cal-list__avatar-row" style="width:90px">
                             <div class="cal-list__avatar" style="background:${getAssigneeColor(l.assignee)}">${l.assignee.charAt(0)}</div>
@@ -319,7 +343,9 @@ function renderTab3List(el, leaves, parentContainer) {
                         </span>
                         <button class="cal-list__del-btn" data-id="${l.id}">&#128465;</button>
                     </div>
-                `).join('')
+                `
+                          )
+                          .join('')
             }
             <!-- 添加请假表单（内联展开） -->
             <div id="t3-add-form" style="display:none;padding:16px 20px;border-top:1px solid #E2E8F0;flex-direction:column;gap:12px;">
@@ -344,7 +370,7 @@ function renderTab3List(el, leaves, parentContainer) {
     `;
 
     // 删除
-    el.querySelectorAll('.cal-list__del-btn').forEach(btn => {
+    el.querySelectorAll('.cal-list__del-btn').forEach((btn) => {
         btn.addEventListener('click', async () => {
             await deleteLeave(btn.dataset.id);
             const newLeaves = await getAllLeaves();
@@ -376,7 +402,11 @@ function renderTab3List(el, leaves, parentContainer) {
 
         await saveLeave({
             id: crypto.randomUUID(),
-            assignee, startDate, endDate, type, note,
+            assignee,
+            startDate,
+            endDate,
+            type,
+            note,
         });
         const newLeaves = await getAllLeaves();
         renderTab3List(el, newLeaves, parentContainer);

@@ -1,5 +1,12 @@
 import { describe, test, expect, vi, afterEach } from 'vitest';
-import { rollupStatus, rollupAssignee, sumNumberField, getStatusRollupMode, STATUS_ROLLUP_MODE, rollupProgress } from '../../../src/features/gantt/parent-rollup.js';
+import {
+    rollupStatus,
+    rollupAssignee,
+    sumNumberField,
+    getStatusRollupMode,
+    STATUS_ROLLUP_MODE,
+    rollupProgress,
+} from '../../../src/features/gantt/parent-rollup.js';
 
 describe('parent-rollup helpers', () => {
     afterEach(() => {
@@ -22,11 +29,15 @@ describe('parent-rollup helpers', () => {
     });
 
     test('rollupStatus: mode progress_first prefers in_progress over suspended', () => {
-        expect(rollupStatus(['suspended', 'in_progress'], STATUS_ROLLUP_MODE.PROGRESS_FIRST)).toBe('in_progress');
+        expect(rollupStatus(['suspended', 'in_progress'], STATUS_ROLLUP_MODE.PROGRESS_FIRST)).toBe(
+            'in_progress'
+        );
     });
 
     test('rollupStatus: mode suspended_first prefers suspended over in_progress', () => {
-        expect(rollupStatus(['suspended', 'in_progress'], STATUS_ROLLUP_MODE.SUSPENDED_FIRST)).toBe('suspended');
+        expect(rollupStatus(['suspended', 'in_progress'], STATUS_ROLLUP_MODE.SUSPENDED_FIRST)).toBe(
+            'suspended'
+        );
     });
 
     test('rollupAssignee: single unique child assignee', () => {
@@ -48,7 +59,7 @@ describe('parent-rollup helpers', () => {
     test('rollupProgress uses duration-weighted average', () => {
         const p = rollupProgress([
             { progress: 1, duration: 2 },
-            { progress: 0.5, duration: 1 }
+            { progress: 0.5, duration: 1 },
         ]);
         expect(p).toBeCloseTo((1 * 2 + 0.5 * 1) / 3, 5);
     });
@@ -56,21 +67,21 @@ describe('parent-rollup helpers', () => {
     test('rollupProgress falls back to equal weights when duration invalid', () => {
         const p = rollupProgress([
             { progress: 1, duration: null },
-            { progress: 0, duration: undefined }
+            { progress: 0, duration: undefined },
         ]);
         expect(p).toBeCloseTo(0.5, 5);
     });
 
     test('getStatusRollupMode: default progress_first', () => {
         vi.stubGlobal('localStorage', {
-            getItem: vi.fn(() => null)
+            getItem: vi.fn(() => null),
         });
         expect(getStatusRollupMode()).toBe(STATUS_ROLLUP_MODE.PROGRESS_FIRST);
     });
 
     test('getStatusRollupMode: reads suspended_first from localStorage', () => {
         vi.stubGlobal('localStorage', {
-            getItem: vi.fn(() => STATUS_ROLLUP_MODE.SUSPENDED_FIRST)
+            getItem: vi.fn(() => STATUS_ROLLUP_MODE.SUSPENDED_FIRST),
         });
         expect(getStatusRollupMode()).toBe(STATUS_ROLLUP_MODE.SUSPENDED_FIRST);
     });

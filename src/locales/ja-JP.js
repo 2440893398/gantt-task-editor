@@ -20,9 +20,8 @@ export default {
         viewTable: 'テーブル',
         viewGantt: 'ガント',
         criticalPath: 'クリティカルパス',
-        lag: '遅延(日)'
+        lag: '遅延(日)',
     },
-
 
     // ビュー
     view: {
@@ -34,7 +33,7 @@ export default {
         zoomOut: '縮小',
         zoomIn: '拡大',
         tablePanel: 'タスク表',
-        ganttPanel: 'ガントチャート'
+        ganttPanel: 'ガントチャート',
     },
 
     // カラム名（テーブルヘッダー）
@@ -50,23 +49,22 @@ export default {
         assignee: '担当者',
         status: 'ステータス',
         summary: '概要',
-        description: '説明'
+        description: '説明',
     },
-
 
     // 列挙値 (内部値 → ローカライズ表示値)
     enums: {
         priority: {
-            'high': '高',
-            'medium': '中',
-            'low': '低'
+            high: '高',
+            medium: '中',
+            low: '低',
         },
         status: {
-            'pending': '未着手',
-            'in_progress': '進行中',
-            'completed': '完了',
-            'suspended': 'キャンセル'
-        }
+            pending: '未着手',
+            in_progress: '進行中',
+            completed: '完了',
+            suspended: 'キャンセル',
+        },
     },
 
     // タスク
@@ -76,7 +74,7 @@ export default {
         duration: '期間',
         progress: '進捗',
         parent: '親タスク',
-        description: '説明'
+        description: '説明',
     },
 
     // ツールチップ
@@ -89,7 +87,7 @@ export default {
         priority: '優先度',
         status: 'ステータス',
         duration: '期間',
-        days: '日'
+        days: '日',
     },
 
     // フォーム
@@ -99,7 +97,7 @@ export default {
         cancel: 'キャンセル',
         delete: '削除',
         confirm: '確認',
-        selectPlaceholder: '選択してください'
+        selectPlaceholder: '選択してください',
     },
 
     // メッセージ
@@ -117,11 +115,12 @@ export default {
         deleteTask: 'このタスクを削除しますか？',
         confirmDeleteTitle: 'タスク削除',
         confirmDelete: 'このタスクを削除しますか？Ctrl+Zで元に戻せます。',
-        confirmClearCache: 'すべてのキャッシュを削除しますか？保存されたタスクと設定がすべて削除されます。',
+        confirmClearCache:
+            'すべてのキャッシュを削除しますか？保存されたタスクと設定がすべて削除されます。',
         cacheCleared: 'キャッシュを削除しました',
         dataRestored: '{{count}}件のタスクを復元しました',
         updateSuccess: '{{count}}件のタスクを更新しました',
-        comingSoon: '機能開発中'
+        comingSoon: '機能開発中',
     },
 
     // ショートカットパネル
@@ -145,7 +144,7 @@ export default {
         completed: '完了',
         incomplete: '未完了',
         dependency: '依存関係',
-        close: '閉じる'
+        close: '閉じる',
     },
 
     // 一括編集
@@ -156,7 +155,7 @@ export default {
         selectField: '変更するフィールドを選択',
         fieldValue: 'フィールド値',
         apply: '変更を適用',
-        clear: '選択解除'
+        clear: '選択解除',
     },
 
     // フィールド管理
@@ -177,7 +176,8 @@ export default {
         defaultPlaceholder: 'デフォルト値を入力...',
         defaultSelectHint: '下にオプションを追加してからデフォルト値を選択',
         defaultMultiselectHint: 'Ctrlキーで複数選択、下にオプションを追加してください',
-        defaultNote: '新しいフィールドを追加すると、すべての既存タスクにこのデフォルト値が設定されます。',
+        defaultNote:
+            '新しいフィールドを追加すると、すべての既存タスクにこのデフォルト値が設定されます。',
         selectionCount: '{{count}}件のタスクを選択中',
         options: 'オプション設定',
         optionValue: 'オプション値',
@@ -211,7 +211,7 @@ export default {
         filterEnabled: '有効',
         filterDisabled: '無効',
         fieldCount: '{{count}}件のフィールド',
-        editField: '編集'
+        editField: '編集',
     },
 
     // Field types
@@ -221,14 +221,14 @@ export default {
         date: '日付',
         datetime: '日時',
         select: '単一選択',
-        multiselect: '複数選択'
+        multiselect: '複数選択',
     },
 
     // Lightbox
     lightbox: {
         customFields: 'カスタムフィールド',
         manageFields: 'フィールド管理',
-        pleaseSelect: '選択してください'
+        pleaseSelect: '選択してください',
     },
 
     // バリデーション
@@ -238,7 +238,7 @@ export default {
         invalidInput: '無効な入力',
         selectFromList: 'リストから選択してください',
         numberRequired: '有効な数値を入力してください',
-        progressRange: '進捗は0から100の間でなければなりません'
+        progressRange: '進捗は0から100の間でなければなりません',
     },
 
     // Duration format (v1.5)
@@ -246,13 +246,13 @@ export default {
         format: {
             full: '{days}日 {hours}時間',
             daysOnly: '{days}日',
-            hoursOnly: '{hours}時間'
-        }
+            hoursOnly: '{hours}時間',
+        },
     },
 
     // Excel
     excel: {
-        sheetName: 'タスク一覧'
+        sheetName: 'タスク一覧',
     },
 
     // DHTMLX Gantt ラベル
@@ -277,8 +277,8 @@ export default {
             link_to: 'へ',
             type_task: 'タスク',
             type_project: 'プロジェクト',
-            type_milestone: 'マイルストーン'
-        }
+            type_milestone: 'マイルストーン',
+        },
     },
 
     // タスク詳細パネル
@@ -334,9 +334,8 @@ export default {
         deleteSubtaskTitle: 'サブタスク削除',
         deleteSubtaskConfirm: 'このサブタスクを削除しますか？この操作は取り消せません。',
         subtaskDeleted: 'サブタスクを削除しました',
-        openSubtask: '詳細を開く'
+        openSubtask: '詳細を開く',
     },
-
 
     // 新規タスクモーダル
     newTask: {
@@ -347,20 +346,20 @@ export default {
         assigneePlaceholder: '担当者を選択',
         cancel: 'キャンセル',
         create: '作成',
-        nameRequired: 'タスク名は必須です'
+        nameRequired: 'タスク名は必須です',
     },
 
     // 概要フィールド
     summary: {
         viewFull: '完全な概要を表示',
-        empty: '概要なし'
+        empty: '概要なし',
     },
 
     // AIアシスタント
     ai: {
         // フローティングボタン
         floatingBtn: {
-            label: 'AIアシスタントを開く'
+            label: 'AIアシスタントを開く',
         },
         // 設定モーダル
         config: {
@@ -395,20 +394,27 @@ export default {
             skillProgressAnalysisName: 'Progress Analysis',
             skillProgressAnalysisDesc: 'タスクデータに基づき進捗レポートやボトルネックを提示します',
             compatibilityNotSupportedTitle: '⚠️ ツール呼び出しは非対応です',
-            compatibilityNotSupportedMessage: 'この API/モデルはツール呼び出しに対応していません。AI はリアルタイムのタスクデータを取得できません。',
+            compatibilityNotSupportedMessage:
+                'この API/モデルはツール呼び出しに対応していません。AI はリアルタイムのタスクデータを取得できません。',
             compatibilityUnknownTitle: 'ℹ️ ツール呼び出し対応は不明です',
-            compatibilityUnknownMessage: 'ツール呼び出し対応を判定できません。保存後にエラーが出る場合は別モデルに切り替えてください。',
-            savedWithCompatibilityWarning: '設定を保存しました - ⚠️ この設定はツール呼び出しに非対応です',
-            savedWithCompatibilityUnknown: '設定を保存しました - ℹ️ 接続テストでツール呼び出し対応を確認してください',
+            compatibilityUnknownMessage:
+                'ツール呼び出し対応を判定できません。保存後にエラーが出る場合は別モデルに切り替えてください。',
+            savedWithCompatibilityWarning:
+                '設定を保存しました - ⚠️ この設定はツール呼び出しに非対応です',
+            savedWithCompatibilityUnknown:
+                '設定を保存しました - ℹ️ 接続テストでツール呼び出し対応を確認してください',
             reasoningNoToolCall: 'Reasoningモデルは通常ツール呼び出しをサポートしません',
-            toolTestTimeout: 'ツール呼び出しテストがタイムアウトしました。対応可否を判定できません。',
-            toolChoiceRequiredNoCall: 'toolChoice を required にしてもモデルがツールを呼び出しませんでした',
+            toolTestTimeout:
+                'ツール呼び出しテストがタイムアウトしました。対応可否を判定できません。',
+            toolChoiceRequiredNoCall:
+                'toolChoice を required にしてもモデルがツールを呼び出しませんでした',
             connectionSuccess: '接続に成功しました',
             connectionSuccessNoToolCall: '✓ 接続成功（ツール呼び出しは非対応）',
             connectionSuccessWithToolCall: '✓ 接続成功（ツール呼び出し対応）',
             connectionSuccessUnknownToolCall: '✓ 接続成功（ツール呼び出し対応は不明）',
-            connection404Details: '接続失敗 (404): エンドポイントパスが不正です\n\nbaseURL: {{baseUrl}}\nmodel: {{model}}\n\n考えられる原因:\n1. baseURL のパスが不正（/v1 が必要か確認）\n2. モデル名により誤ったエンドポイントが選択された\n3. API がこのエンドポイントをサポートしていない',
-            connectionFailed: '接続に失敗しました。設定を確認してください'
+            connection404Details:
+                '接続失敗 (404): エンドポイントパスが不正です\n\nbaseURL: {{baseUrl}}\nmodel: {{model}}\n\n考えられる原因:\n1. baseURL のパスが不正（/v1 が必要か確認）\n2. モデル名により誤ったエンドポイントが選択された\n3. API がこのエンドポイントをサポートしていない',
+            connectionFailed: '接続に失敗しました。設定を確認してください',
         },
 
         // ドロワー
@@ -434,8 +440,9 @@ export default {
             chatHint: 'Enterで送信、Shift+Enterで改行',
             attach: '添付',
             callingTool: '{{name}} を呼び出し中',
-            taskNotFound: '対象タスクが見つかりません。削除されたか階層が変更された可能性があります。',
-            taskPanelUnavailable: 'タスク詳細パネルを利用できません'
+            taskNotFound:
+                '対象タスクが見つかりません。削除されたか階層が変更された可能性があります。',
+            taskPanelUnavailable: 'タスク詳細パネルを利用できません',
         },
         suggestions: {
             todayTasks: '今日のタスクを確認',
@@ -443,14 +450,14 @@ export default {
             progressOverview: '進捗概要を取得',
             todayTasksPrompt: '今日のタスクは何ですか？',
             overdueTasksPrompt: '期限超過のタスクはどれですか？',
-            progressOverviewPrompt: 'プロジェクト全体の進捗はどうですか？'
+            progressOverviewPrompt: 'プロジェクト全体の進捗はどうですか？',
         },
         // エージェント
         agents: {
             taskRefine: 'タスク改善',
             bugReport: 'バグレポート',
             taskBreakdown: 'タスク分解',
-            timeEstimate: '工数見積り'
+            timeEstimate: '工数見積り',
         },
         // エラー
         error: {
@@ -464,23 +471,24 @@ export default {
             network: 'ネットワークエラー。接続を確認してください',
             unknown: '不明なエラーが発生しました',
             viewDetails: '詳細を見る',
-            originalError: '元のエラー情報'
-        }
+            originalError: '元のエラー情報',
+        },
     },
     baseline: {
         save: 'ベースライン保存',
         show: 'ベースライン表示',
-        saveConfirm: '現在のプロジェクト状態をベースラインとして保存しますか？以前のベースラインは上書きされます',
+        saveConfirm:
+            '現在のプロジェクト状態をベースラインとして保存しますか？以前のベースラインは上書きされます',
         saved: 'ベースラインを保存しました',
         delayed: '遅延',
-        ahead: '前倒し'
+        ahead: '前倒し',
     },
     resource: {
         overload: 'リソース超過',
         on: '日付',
         workload: '作業量',
         hours: '時間',
-        overloadAmount: '超過'
+        overloadAmount: '超過',
     },
     export: {
         title: 'エクスポート',
@@ -498,12 +506,12 @@ export default {
         apiNotAvailable: 'エクスポートサービスが利用できません。ネットワークを確認してください',
         success: 'エクスポート成功',
         error: 'エクスポート失敗',
-        fail: 'エクスポート失敗'
+        fail: 'エクスポート失敗',
     },
     snapping: {
         today: '今日',
         startOf: '開始',
-        endOf: '終了'
+        endOf: '終了',
     },
     calendar: {
         title: '勤務カレンダー',
@@ -519,7 +527,7 @@ export default {
             GB: 'イギリス',
             DE: 'ドイツ',
             FR: 'フランス',
-            SG: 'シンガポール'
+            SG: 'シンガポール',
         },
         weekdays: { 0: '日', 1: '月', 2: '火', 3: '水', 4: '木', 5: '金', 6: '土' },
         hoursPerDay: '1日の勤務時間',
@@ -563,7 +571,7 @@ export default {
         endDate: '終了日',
         noLeaveThatDay: 'この日の休暇記録はありません',
         noSpecialDays: '特別日の設定なし',
-        noLeaves: '「休暇を追加」をクリック'
+        noLeaves: '「休暇を追加」をクリック',
     },
 
     // プロジェクト管理
@@ -578,7 +586,7 @@ export default {
         taskCount: 'タスク数',
         createdAt: '作成日',
         deleted: 'プロジェクトが削除されました',
-        deleteTitle: 'プロジェクトを削除'
+        deleteTitle: 'プロジェクトを削除',
     },
 
     // 共有
@@ -606,7 +614,51 @@ export default {
         importReplaceHint: '現在のプロジェクトすべてのデータを置換、元に戻せません',
         confirmImport: 'インポートを確認',
         importSuccess: 'インポート成功：{{count}}タスク',
-        importedProject: 'インポートしたプロジェクト'
+        importedProject: 'インポートしたプロジェクト',
+    },
+
+    // フィードバック
+    feedback: {
+        title: 'フィードバック',
+        subtitle:
+            '問題を説明し、スクリーンショットや録画を添付できます。調査用のコンテキストも含まれます。',
+        type: '種類',
+        typeBug: 'Bug',
+        typeSuggestion: '提案',
+        typeQuestion: '質問',
+        contact: '連絡先（任意）',
+        contactPlaceholder: 'メール / 電話 / アカウント',
+        issueTitle: '短い概要',
+        titlePlaceholder: '例：プロジェクト切替後にガントが更新されない',
+        description: '説明 / 再現手順',
+        descriptionPlaceholder:
+            '何が起きましたか？期待した動作は？可能なら再現手順も記入してください。',
+        addAttachment: '画像/動画を追加',
+        startRecording: '再現を録画',
+        stopRecording: '録画を停止',
+        replayAutoHint: '再現トレースを自動記録中',
+        startReplayRecording: '再現を記録',
+        replayIdleStatus: '再現記録なし',
+        replayRecordingStatus: '再現を記録中',
+        replayReadyStatus: '{{count}} 件のイベントを記録済み',
+        replayRecordingTitle: '再現を記録中',
+        replayRecordingHint:
+            'そのまま操作を続け、再現できたら終了してフィードバック画面に戻ります。',
+        finishReplayRecording: '終了してフィードバックを入力',
+        previewReplay: '再現をプレビュー',
+        previewTitle: '再現記録をプレビュー',
+        previewSubtitle: '{{count}} 件のイベントを記録しました。',
+        previewHint: 'プレビューはローカル確認用です。送信時に rrweb JSON をアップロードします。',
+        attachmentHint: '添付は1件4MBまで。貼り付け画像にも対応しています。',
+        contextHint:
+            'ページURL、ブラウザ情報、現在のプロジェクト概要、最近のコンソールログを含めます。',
+        submit: '送信',
+        submitting: '送信中...',
+        submitSuccess: 'フィードバックを送信しました',
+        submitFailed: '送信に失敗しました。後でもう一度お試しください',
+        attachmentTooLarge: '添付ファイルが大きすぎます',
+        attachmentFailed: '添付ファイルを読み込めません',
+        recordingFailed: '録画を開始できませんでした',
     },
 
     // 共通
@@ -623,6 +675,6 @@ export default {
         noData: 'データなし',
         success: '成功',
         error: 'エラー',
-        warning: '警告'
-    }
+        warning: '警告',
+    },
 };

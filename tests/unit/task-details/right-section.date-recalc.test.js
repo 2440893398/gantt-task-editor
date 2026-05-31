@@ -6,39 +6,39 @@ const saveStateMock = vi.fn();
 
 vi.mock('../../../src/utils/i18n.js', () => ({
     i18n: {
-        t: vi.fn(() => null)
-    }
+        t: vi.fn(() => null),
+    },
 }));
 
 vi.mock('../../../src/core/store.js', () => ({
     state: { customFields: [] },
     isFieldEnabled: vi.fn(() => true),
     getFieldType: vi.fn(() => 'text'),
-    getSystemFieldOptions: vi.fn(() => [])
+    getSystemFieldOptions: vi.fn(() => []),
 }));
 
 vi.mock('../../../src/features/ai/services/undoManager.js', () => ({
     default: {
         saveState: saveStateMock,
-        isApplyingHistoryOperation: vi.fn(() => false)
-    }
+        isApplyingHistoryOperation: vi.fn(() => false),
+    },
 }));
 
 vi.mock('../../../src/utils/toast.js', () => ({
-    showToast: vi.fn()
+    showToast: vi.fn(),
 }));
 
 vi.mock('../../../src/utils/dom.js', () => ({
-    escapeAttr: vi.fn((v) => String(v ?? ''))
+    escapeAttr: vi.fn((v) => String(v ?? '')),
 }));
 
 vi.mock('../../../src/components/common/dropdown.js', () => ({
     renderSelectHTML: vi.fn(() => ''),
-    setupSelect: setupSelectMock
+    setupSelect: setupSelectMock,
 }));
 
 vi.mock('../../../src/features/task-details/date-picker-popover.js', () => ({
-    openTaskDatePickerPopover: openTaskDatePickerPopoverMock
+    openTaskDatePickerPopover: openTaskDatePickerPopoverMock,
 }));
 
 function buildPanel() {
@@ -71,12 +71,13 @@ describe('right-section date recalculation by schedule mode', () => {
                 return next;
             }),
             calculateDuration: vi.fn(() => 5),
-            hasChild: vi.fn(() => false)
+            hasChild: vi.fn(() => false),
         };
     });
 
     it('in start_duration mode, changing start recalculates end', async () => {
-        const { bindRightSectionEvents } = await import('../../../src/features/task-details/right-section.js');
+        const { bindRightSectionEvents } =
+            await import('../../../src/features/task-details/right-section.js');
         const panel = buildPanel();
         // Use local-timezone Date objects so the panel-open correction check
         // (right-section.js ~line 208) sees end_date === calculateEndDate(start, duration)
@@ -86,9 +87,9 @@ describe('right-section date recalculation by schedule mode', () => {
         const task = {
             id: 1,
             schedule_mode: 'start_duration',
-            start_date: new Date(2026, 2, 1),   // March 1, 2026 local time
-            end_date: new Date(2026, 2, 4),     // March 4, 2026 local time (start + duration)
-            duration: 3
+            start_date: new Date(2026, 2, 1), // March 1, 2026 local time
+            end_date: new Date(2026, 2, 4), // March 4, 2026 local time (start + duration)
+            duration: 3,
         };
 
         bindRightSectionEvents(panel, task);
@@ -108,7 +109,8 @@ describe('right-section date recalculation by schedule mode', () => {
     });
 
     it('in start_end mode, changing start does not recalculate end', async () => {
-        const { bindRightSectionEvents } = await import('../../../src/features/task-details/right-section.js');
+        const { bindRightSectionEvents } =
+            await import('../../../src/features/task-details/right-section.js');
         const panel = buildPanel();
         const initialEnd = new Date('2026-03-08T00:00:00.000Z');
         const task = {
@@ -116,7 +118,7 @@ describe('right-section date recalculation by schedule mode', () => {
             schedule_mode: 'start_end',
             start_date: new Date('2026-03-01T00:00:00.000Z'),
             end_date: initialEnd,
-            duration: 3
+            duration: 3,
         };
 
         bindRightSectionEvents(panel, task);
@@ -130,14 +132,15 @@ describe('right-section date recalculation by schedule mode', () => {
     });
 
     it('in start_end mode, changing end recalculates duration', async () => {
-        const { bindRightSectionEvents } = await import('../../../src/features/task-details/right-section.js');
+        const { bindRightSectionEvents } =
+            await import('../../../src/features/task-details/right-section.js');
         const panel = buildPanel();
         const task = {
             id: 3,
             schedule_mode: 'start_end',
             start_date: new Date('2026-03-01T00:00:00.000Z'),
             end_date: new Date('2026-03-08T00:00:00.000Z'),
-            duration: 3
+            duration: 3,
         };
 
         bindRightSectionEvents(panel, task);
@@ -154,14 +157,15 @@ describe('right-section date recalculation by schedule mode', () => {
     });
 
     it('in start_duration mode, changing end does not recalculate duration', async () => {
-        const { bindRightSectionEvents } = await import('../../../src/features/task-details/right-section.js');
+        const { bindRightSectionEvents } =
+            await import('../../../src/features/task-details/right-section.js');
         const panel = buildPanel();
         const task = {
             id: 4,
             schedule_mode: 'start_duration',
             start_date: new Date('2026-03-01T00:00:00.000Z'),
             end_date: new Date('2026-03-08T00:00:00.000Z'),
-            duration: 3
+            duration: 3,
         };
 
         bindRightSectionEvents(panel, task);

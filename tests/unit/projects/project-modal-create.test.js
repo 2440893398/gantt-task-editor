@@ -38,7 +38,7 @@ async function renderFreshModal() {
     document.body.appendChild(modal);
 
     openProjectModal();
-    await new Promise(r => setTimeout(r, 100));
+    await new Promise((r) => setTimeout(r, 100));
 
     return modal;
 }
@@ -64,7 +64,7 @@ describe('ProjectModal inline create row', () => {
 
         input.value = '';
         btn.click();
-        await new Promise(r => setTimeout(r, 20));
+        await new Promise((r) => setTimeout(r, 20));
 
         expect(createProject).not.toHaveBeenCalled();
     });
@@ -77,7 +77,7 @@ describe('ProjectModal inline create row', () => {
 
         input.value = '';
         btn.click();
-        await new Promise(r => setTimeout(r, 20));
+        await new Promise((r) => setTimeout(r, 20));
 
         expect(input.classList.contains('input-error')).toBe(true);
     });
@@ -90,10 +90,10 @@ describe('ProjectModal inline create row', () => {
         input.value = 'Enter Key Project';
 
         input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-        await new Promise(r => setTimeout(r, 50));
+        await new Promise((r) => setTimeout(r, 50));
 
         expect(createProject).toHaveBeenCalledWith(
-            expect.objectContaining({ name: 'Enter Key Project' }),
+            expect.objectContaining({ name: 'Enter Key Project' })
         );
     });
 
@@ -110,10 +110,10 @@ describe('ProjectModal inline create row', () => {
 
         input.value = 'Colored Project';
         submitBtn.click();
-        await new Promise(r => setTimeout(r, 50));
+        await new Promise((r) => setTimeout(r, 50));
 
         expect(createProject).toHaveBeenCalledWith(
-            expect.objectContaining({ name: 'Colored Project', color: '#0891b2' }),
+            expect.objectContaining({ name: 'Colored Project', color: '#0891b2' })
         );
     });
 
@@ -131,12 +131,12 @@ describe('ProjectModal inline create row', () => {
 
         input.value = 'My New Project';
         btn.click();
-        await new Promise(r => setTimeout(r, 100));
+        await new Promise((r) => setTimeout(r, 100));
 
         document.removeEventListener('projectsUpdated', handler);
 
         expect(createProject).toHaveBeenCalledWith(
-            expect.objectContaining({ name: 'My New Project' }),
+            expect.objectContaining({ name: 'My New Project' })
         );
         expect(refreshProjects).toHaveBeenCalled();
         expect(dispatched).toContain('projectsUpdated');

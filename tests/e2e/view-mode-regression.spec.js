@@ -4,12 +4,16 @@ test.describe('view mode regressions', () => {
     test.beforeEach(async ({ page }) => {
         await page.goto('/');
         await expect(page.locator('#gantt_here')).toBeVisible();
-        await expect.poll(async () => {
-            return page.evaluate(() => window.gantt?.serialize?.()?.data?.length ?? 0);
-        }).toBeGreaterThan(0);
+        await expect
+            .poll(async () => {
+                return page.evaluate(() => window.gantt?.serialize?.()?.data?.length ?? 0);
+            })
+            .toBeGreaterThan(0);
     });
 
-    test('task name column should not become too wide after table to split switch', async ({ page }) => {
+    test('task name column should not become too wide after table to split switch', async ({
+        page,
+    }) => {
         await page.locator('[data-view="table"]').click();
         await page.waitForTimeout(200);
 

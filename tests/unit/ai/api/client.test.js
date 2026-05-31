@@ -1,6 +1,9 @@
-
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { runAgentStream, testConnection, isLocalUrl } from '../../../../src/features/ai/api/client.js';
+import {
+    runAgentStream,
+    testConnection,
+    isLocalUrl,
+} from '../../../../src/features/ai/api/client.js';
 import { getAiConfigState, setAiStatus } from '../../../../src/core/store.js';
 import { createOpenAI } from '@ai-sdk/openai';
 import { streamText } from 'ai';
@@ -8,17 +11,17 @@ import { streamText } from 'ai';
 // Mock dependencies
 vi.mock('../../../../src/core/store.js', () => ({
     getAiConfigState: vi.fn(),
-    setAiStatus: vi.fn()
+    setAiStatus: vi.fn(),
 }));
 
 vi.mock('@ai-sdk/openai', () => ({
-    createOpenAI: vi.fn()
+    createOpenAI: vi.fn(),
 }));
 
 vi.mock('ai', () => ({
     streamText: vi.fn(),
     tool: vi.fn((definition) => definition),
-    jsonSchema: vi.fn((schema) => schema)
+    jsonSchema: vi.fn((schema) => schema),
 }));
 
 describe('AI Client', () => {
@@ -53,12 +56,12 @@ describe('AI Client', () => {
         const mockConfig = {
             apiKey: 'test-key',
             baseUrl: 'https://api.test.com',
-            model: 'gpt-4'
+            model: 'gpt-4',
         };
 
         const mockAgentConfig = {
             system: 'system prompt',
-            userPrompt: 'user prompt'
+            userPrompt: 'user prompt',
         };
 
         beforeEach(() => {
@@ -81,7 +84,7 @@ describe('AI Client', () => {
                 textStream: (async function* () {
                     yield 'Hello';
                     yield ' World';
-                })()
+                })(),
             };
             streamText.mockReturnValue(mockStream);
 
@@ -93,7 +96,7 @@ describe('AI Client', () => {
             expect(createOpenAI).toHaveBeenCalledWith({
                 apiKey: mockConfig.apiKey,
                 baseURL: mockConfig.baseUrl,
-                compatibility: 'compatible'
+                compatibility: 'compatible',
             });
             expect(streamText).toHaveBeenCalled();
             expect(setAiStatus).toHaveBeenCalledWith('loading');
@@ -108,25 +111,31 @@ describe('AI Client', () => {
         it('should handle dynamic user prompt function', async () => {
             const dynamicPromptAgent = {
                 system: 'sys',
-                userPrompt: (ctx) => `Context: ${ctx.data}`
+                userPrompt: (ctx) => `Context: ${ctx.data}`,
             };
             const context = { data: 'test' };
 
             const mockStream = {
-                textStream: (async function* () { yield 'ok'; })()
+                textStream: (async function* () {
+                    yield 'ok';
+                })(),
             };
             streamText.mockReturnValue(mockStream);
 
             await runAgentStream(dynamicPromptAgent, context, null, null, null);
 
-            expect(streamText).toHaveBeenCalledWith(expect.objectContaining({
-                prompt: 'Context: test'
-            }));
+            expect(streamText).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    prompt: 'Context: test',
+                })
+            );
         });
 
         it('should handle stream errors', async () => {
             const error = new Error('Stream failed');
-            streamText.mockImplementation(() => { throw error; });
+            streamText.mockImplementation(() => {
+                throw error;
+            });
             const onError = vi.fn();
 
             await runAgentStream(mockAgentConfig, {}, null, null, onError);
@@ -139,7 +148,7 @@ describe('AI Client', () => {
     describe('testConnection', () => {
         const mockConfig = {
             apiKey: 'test-key',
-            baseUrl: 'https://api.test.com'
+            baseUrl: 'https://api.test.com',
         };
 
         beforeEach(() => {
@@ -151,7 +160,7 @@ describe('AI Client', () => {
             const mockStream = {
                 textStream: (async function* () {
                     yield 'Connected';
-                })()
+                })(),
             };
             streamText.mockReturnValue(mockStream);
 
@@ -172,7 +181,9 @@ describe('AI Client', () => {
         });
 
         it('should return failure on exception', async () => {
-            streamText.mockImplementation(() => { throw new Error('Network error'); });
+            streamText.mockImplementation(() => {
+                throw new Error('Network error');
+            });
 
             const result = await testConnection();
 

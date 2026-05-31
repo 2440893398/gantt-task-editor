@@ -25,7 +25,7 @@ export function registerRenderer(type, renderer) {
 
 /**
  * 获取渲染器
- * @param {string} type 
+ * @param {string} type
  * @returns {Function|null}
  */
 export function getRenderer(type) {
@@ -136,7 +136,9 @@ function taskRefineRenderer(data, options = {}) {
                     </div>
                 </div>
                 
-                ${reasoning ? `
+                ${
+                    reasoning
+                        ? `
                     <!-- 推理过程 (可折叠) -->
                     <details class="collapse collapse-arrow bg-base-100 rounded-lg mt-3">
                         <summary class="collapse-title text-xs font-medium py-2 min-h-0">
@@ -146,11 +148,15 @@ function taskRefineRenderer(data, options = {}) {
                             <p>${escapeHtml(reasoning)}</p>
                         </div>
                     </details>
-                ` : ''}
+                `
+                        : ''
+                }
                 
                 <!-- 操作按钮 -->
                 <div class="card-actions justify-end mt-3">
-                    ${applied ? `
+                    ${
+                        applied
+                            ? `
                         <button class="btn btn-sm btn-outline" disabled>
                             <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
@@ -163,14 +169,18 @@ function taskRefineRenderer(data, options = {}) {
                             </svg>
                             ${i18n.t('ai.result.applied') || '已应用'}
                         </button>
-                    ` : canApply ? `
+                    `
+                            : canApply
+                              ? `
                         <button class="btn btn-sm btn-ghost ai-result-undo" data-original="${escapeAttr(original || '')}">
                             ${i18n.t('ai.result.undo') || '撤回'}
                         </button>
                         <button class="btn btn-sm btn-primary ai-result-apply" data-value="${escapeAttr(optimized || '')}">
                             ${i18n.t('ai.result.apply') || '应用'}
                         </button>
-                    ` : ''}
+                    `
+                              : ''
+                    }
                 </div>
             </div>
         </div>
@@ -200,7 +210,9 @@ function taskSplitRenderer(data, options = {}) {
                 </div>
                 
                 <ul class="space-y-2">
-                    ${subtasks.map((task, idx) => `
+                    ${subtasks
+                        .map(
+                            (task, idx) => `
                         <li class="flex items-start gap-2 text-sm bg-base-100 rounded-lg p-3">
                             <span class="badge badge-sm badge-primary">${idx + 1}</span>
                             <div class="flex-1 min-w-0">
@@ -208,10 +220,14 @@ function taskSplitRenderer(data, options = {}) {
                                 ${typeof task === 'object' && task?.description ? `<div class="text-xs text-base-content/60 mt-1 whitespace-pre-wrap">${escapeHtml(task.description)}</div>` : ''}
                             </div>
                         </li>
-                    `).join('')}
+                    `
+                        )
+                        .join('')}
                 </ul>
                 
-                ${reasoning ? `
+                ${
+                    reasoning
+                        ? `
                     <details class="collapse collapse-arrow bg-base-100 rounded-lg mt-3">
                         <summary class="collapse-title text-xs font-medium py-2 min-h-0">
                             💡 ${i18n.t('ai.result.reasoning') || '查看拆分理由'}
@@ -220,15 +236,21 @@ function taskSplitRenderer(data, options = {}) {
                             <p>${escapeHtml(reasoning)}</p>
                         </div>
                     </details>
-                ` : ''}
+                `
+                        : ''
+                }
                 
                 <!-- 操作按钮 -->
                 <div class="card-actions justify-end mt-3">
-                    ${canApply ? `
+                    ${
+                        canApply
+                            ? `
                         <button class="btn btn-sm btn-primary ai-result-apply-subtasks">
                             ${i18n.t('ai.result.createSubtasks') || '应用子任务方案'}
                         </button>
-                    ` : ''}
+                    `
+                            : ''
+                    }
                 </div>
             </div>
         </div>
@@ -252,5 +274,5 @@ registerRenderer('task_split', taskSplitRenderer);
 export default {
     registerRenderer,
     getRenderer,
-    renderResult
+    renderResult,
 };

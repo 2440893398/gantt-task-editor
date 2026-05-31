@@ -21,7 +21,7 @@ function parseExcelFile(filePath) {
     return {
         headers: XLSX.utils.sheet_to_json(ws, { header: 1 })[0],
         rows: XLSX.utils.sheet_to_json(ws, { header: 1 }).slice(1),
-        json: XLSX.utils.sheet_to_json(ws)
+        json: XLSX.utils.sheet_to_json(ws),
     };
 }
 
@@ -30,7 +30,7 @@ async function importExcelFile(page, filePath) {
     await page.click('#more-actions-dropdown .more-btn');
     const [fileChooser] = await Promise.all([
         page.waitForEvent('filechooser'),
-        page.click('#dropdown-import-excel')
+        page.click('#dropdown-import-excel'),
     ]);
     await fileChooser.setFiles(filePath);
     await page.waitForTimeout(2000);
@@ -50,17 +50,17 @@ test.describe('Export/Import Field Configuration Tests', () => {
         const initialFilePath = path.join(downloadPath, 'config_test_initial.xlsx');
         const [download] = await Promise.all([
             page.waitForEvent('download'),
-            page.click('#config-export-btn')
+            page.click('#config-export-btn'),
         ]);
         await download.saveAs(initialFilePath);
 
         const { headers: initialHeaders } = parseExcelFile(initialFilePath);
         console.log('Initial Headers:', initialHeaders);
 
-        let targetHeader = "Actual Start";
+        const targetHeader = 'Actual Start';
         if (!initialHeaders.includes(targetHeader)) {
             // Check if localization failed or different key used?
-            // "Actual Start" is confirmed by previous run manually. 
+            // "Actual Start" is confirmed by previous run manually.
             // If fails, maybe because we didn't toggle it yet?
             // "Actual Start" is system field default enabled but maybe hidden in list?
             // But now export should include ALL fields.
@@ -74,10 +74,10 @@ test.describe('Export/Import Field Configuration Tests', () => {
         await expect(panel).toBeVisible();
 
         // Use robust selector based on the container data attribute
-        const hasContainer = await page.locator('[data-field-name="actual_start"]').count() > 0;
+        const hasContainer = (await page.locator('[data-field-name="actual_start"]').count()) > 0;
         if (hasContainer) {
             const toggle = page.locator('[data-field-name="actual_start"] .toggle-field-enabled');
-            if (await toggle.count() > 0 && await toggle.isChecked()) {
+            if ((await toggle.count()) > 0 && (await toggle.isChecked())) {
                 // Click the parent label (swap component) as it's the visible interactive element
                 await page.locator('[data-field-name="actual_start"] label.swap').click();
             }
@@ -93,7 +93,7 @@ test.describe('Export/Import Field Configuration Tests', () => {
         const disabledFilePath = path.join(downloadPath, 'config_test_disabled.xlsx');
         const [download2] = await Promise.all([
             page.waitForEvent('download'),
-            page.click('#config-export-btn')
+            page.click('#config-export-btn'),
         ]);
         await download2.saveAs(disabledFilePath);
 
@@ -124,7 +124,7 @@ test.describe('Export/Import Field Configuration Tests', () => {
         const wb = XLSX.utils.book_new();
         const ws = XLSX.utils.aoa_to_sheet([
             ['Hierarchy', 'Task Name', 'Priority', 'Status'],
-            ['1', 'Invalid Priority Task', 'Critical', 'Pending']
+            ['1', 'Invalid Priority Task', 'Critical', 'Pending'],
         ]);
         XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
         const filePath = path.join(downloadPath, 'invalid_option.xlsx');
@@ -134,7 +134,7 @@ test.describe('Export/Import Field Configuration Tests', () => {
 
         // Setup console listener
         const warnings = [];
-        page.on('console', msg => {
+        page.on('console', (msg) => {
             if (msg.type() === 'warning') warnings.push(msg.text());
         });
 
@@ -151,7 +151,7 @@ test.describe('Export/Import Field Configuration Tests', () => {
 
         await page.waitForTimeout(500);
 
-        const hasWarning = warnings.some(w => w.includes(expectedMsgPart));
+        const hasWarning = warnings.some((w) => w.includes(expectedMsgPart));
 
         console.log('Captured Warnings:', warnings);
         expect(hasWarning).toBeTruthy();

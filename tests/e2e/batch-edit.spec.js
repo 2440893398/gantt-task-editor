@@ -36,7 +36,7 @@ test.describe('批量编辑功能 E2E 测试', () => {
 
         // 7. 输入新值
         const textInput = page.locator('#batch-field-input input[type="text"]');
-        if (await textInput.count() > 0) {
+        if ((await textInput.count()) > 0) {
             await textInput.fill('高优先级');
 
             // 8. 点击应用按钮
@@ -76,7 +76,7 @@ test.describe('批量编辑功能 E2E 测试', () => {
             await page.waitForTimeout(200);
 
             const numberInput = page.locator('#batch-field-input input[type="number"]');
-            if (await numberInput.count() > 0) {
+            if ((await numberInput.count()) > 0) {
                 numberFieldIndex = i;
                 break;
             }
@@ -117,7 +117,7 @@ test.describe('批量编辑功能 E2E 测试', () => {
 
             // 查找单选下拉框（不是多选）
             const selectInput = page.locator('#batch-field-input select:not([multiple])');
-            if (await selectInput.count() > 0) {
+            if ((await selectInput.count()) > 0) {
                 // 选择一个选项
                 const selectOptions = await selectInput.locator('option').count();
                 if (selectOptions > 1) {
@@ -155,15 +155,12 @@ test.describe('批量编辑功能 E2E 测试', () => {
 
             // 查找多选下拉框
             const multiselectInput = page.locator('#batch-field-input select[multiple]');
-            if (await multiselectInput.count() > 0) {
+            if ((await multiselectInput.count()) > 0) {
                 // 选择多个选项
                 const selectOptions = await multiselectInput.locator('option').all();
                 if (selectOptions.length >= 2) {
                     // 选择前两个选项
-                    await multiselectInput.selectOption([
-                        { index: 0 },
-                        { index: 1 }
-                    ]);
+                    await multiselectInput.selectOption([{ index: 0 }, { index: 1 }]);
 
                     // 应用批量编辑
                     await page.locator('#batch-apply-btn').click();
@@ -201,11 +198,11 @@ test.describe('批量编辑功能 E2E 测试', () => {
         const numberInput = page.locator('#batch-field-input input[type="number"]');
         const selectInput = page.locator('#batch-field-input select');
 
-        if (await textInput.count() > 0) {
+        if ((await textInput.count()) > 0) {
             await textInput.fill('测试值');
-        } else if (await numberInput.count() > 0) {
+        } else if ((await numberInput.count()) > 0) {
             await numberInput.fill('99');
-        } else if (await selectInput.count() > 0) {
+        } else if ((await selectInput.count()) > 0) {
             await selectInput.selectOption({ index: 1 });
         }
 
@@ -246,15 +243,17 @@ test.describe('批量编辑功能 E2E 测试', () => {
             await expect(page.locator('#batch-field-input-container')).toBeVisible();
 
             // 检测输入框类型
-            if (await page.locator('#batch-field-input input[type="text"]').count() > 0) {
+            if ((await page.locator('#batch-field-input input[type="text"]').count()) > 0) {
                 fieldTypes.push('text');
-            } else if (await page.locator('#batch-field-input input[type="number"]').count() > 0) {
+            } else if (
+                (await page.locator('#batch-field-input input[type="number"]').count()) > 0
+            ) {
                 fieldTypes.push('number');
-            } else if (await page.locator('#batch-field-input select[multiple]').count() > 0) {
+            } else if ((await page.locator('#batch-field-input select[multiple]').count()) > 0) {
                 fieldTypes.push('multiselect');
-            } else if (await page.locator('#batch-field-input select').count() > 0) {
+            } else if ((await page.locator('#batch-field-input select').count()) > 0) {
                 fieldTypes.push('select');
-            } else if (await page.locator('#batch-field-input input[type="date"]').count() > 0) {
+            } else if ((await page.locator('#batch-field-input input[type="date"]').count()) > 0) {
                 fieldTypes.push('date');
             }
         }

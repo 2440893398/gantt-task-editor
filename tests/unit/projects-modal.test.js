@@ -12,7 +12,7 @@ const mockRefreshProjects = vi.fn();
 const mockSwitchProject = vi.fn();
 const mockUpdateProject = vi.fn();
 const mockDeleteProject = vi.fn();
-const mockGetProjectTaskCount = vi.fn(async id => (id === 'prj_a' ? 3 : 1));
+const mockGetProjectTaskCount = vi.fn(async (id) => (id === 'prj_a' ? 3 : 1));
 const mockCreateProject = vi.fn(async ({ name, color }) => ({ id: 'prj_new', name, color }));
 const mockShowToast = vi.fn();
 const showConfirmDialogMock = vi.fn();
@@ -32,7 +32,7 @@ vi.mock('../../src/features/projects/manager.js', () => ({
 
 vi.mock('../../src/utils/i18n.js', () => ({
     i18n: {
-        t: vi.fn(key => key),
+        t: vi.fn((key) => key),
     },
 }));
 
@@ -63,7 +63,7 @@ describe('ProjectModal', () => {
         mockUpdateProject.mockReset();
         mockDeleteProject.mockReset();
         mockGetProjectTaskCount.mockReset();
-        mockGetProjectTaskCount.mockImplementation(async id => (id === 'prj_a' ? 3 : 1));
+        mockGetProjectTaskCount.mockImplementation(async (id) => (id === 'prj_a' ? 3 : 1));
         mockShowToast.mockReset();
         showConfirmDialogMock.mockReset();
 
@@ -95,12 +95,14 @@ describe('ProjectModal', () => {
 
         expect(mockUpdateProject).toHaveBeenCalled();
         expect(mockRefreshProjects).toHaveBeenCalled();
-        expect(dispatchSpy).toHaveBeenCalledWith(expect.objectContaining({ type: 'projectsUpdated' }));
+        expect(dispatchSpy).toHaveBeenCalledWith(
+            expect.objectContaining({ type: 'projectsUpdated' })
+        );
         dispatchSpy.mockRestore();
     });
 
     it('keeps modal renderable when one task-count query fails', async () => {
-        mockGetProjectTaskCount.mockImplementation(async id => {
+        mockGetProjectTaskCount.mockImplementation(async (id) => {
             if (id === 'prj_b') {
                 throw new Error('count failed');
             }
@@ -113,7 +115,9 @@ describe('ProjectModal', () => {
 
         const modal = document.getElementById('project-manage-modal');
         expect(modal).toBeTruthy();
-        const names = Array.from(modal.querySelectorAll('[data-name-project-id]')).map(input => input.value);
+        const names = Array.from(modal.querySelectorAll('[data-name-project-id]')).map(
+            (input) => input.value
+        );
         expect(names).toContain('Alpha');
         expect(names).toContain('Beta');
     });
@@ -146,14 +150,21 @@ describe('ProjectModal', () => {
 
         expect(mockUpdateProject).toHaveBeenCalledWith('prj_a', { name: 'Alpha Renamed' });
         expect(mockRefreshProjects).toHaveBeenCalled();
-        expect(dispatchSpy).toHaveBeenCalledWith(expect.objectContaining({ type: 'projectsUpdated' }));
+        expect(dispatchSpy).toHaveBeenCalledWith(
+            expect.objectContaining({ type: 'projectsUpdated' })
+        );
         dispatchSpy.mockRestore();
     });
 
     it('deletes current project and switches to first remaining project', async () => {
         mockRefreshProjects.mockImplementation(async () => {
             mockState.projects = [
-                { id: 'prj_b', name: 'Beta', color: '#059669', createdAt: '2026-03-10T00:00:00.000Z' },
+                {
+                    id: 'prj_b',
+                    name: 'Beta',
+                    color: '#059669',
+                    createdAt: '2026-03-10T00:00:00.000Z',
+                },
             ];
         });
 

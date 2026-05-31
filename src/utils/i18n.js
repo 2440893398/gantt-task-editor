@@ -14,7 +14,7 @@ const dateFormats = {
     'zh-CN': { date: 'YYYY年MM月DD日', time: 'HH:mm' },
     'en-US': { date: 'MM/DD/YYYY', time: 'hh:mm A' },
     'ja-JP': { date: 'YYYY年MM月DD日', time: 'HH:mm' },
-    'ko-KR': { date: 'YYYY년 MM월 DD일', time: 'HH:mm' }
+    'ko-KR': { date: 'YYYY년 MM월 DD일', time: 'HH:mm' },
 };
 
 /**
@@ -121,7 +121,7 @@ function getLanguage() {
  */
 function updatePageTranslations() {
     // 更新 data-i18n 属性的元素
-    document.querySelectorAll('[data-i18n]').forEach(el => {
+    document.querySelectorAll('[data-i18n]').forEach((el) => {
         const key = el.getAttribute('data-i18n');
         const paramsAttr = el.getAttribute('data-i18n-params');
         let params = {};
@@ -143,13 +143,13 @@ function updatePageTranslations() {
     });
 
     // 更新 data-i18n-placeholder 属性的元素
-    document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+    document.querySelectorAll('[data-i18n-placeholder]').forEach((el) => {
         const key = el.getAttribute('data-i18n-placeholder');
         el.placeholder = t(key);
     });
 
     // 更新 data-i18n-title 属性的元素
-    document.querySelectorAll('[data-i18n-title]').forEach(el => {
+    document.querySelectorAll('[data-i18n-title]').forEach((el) => {
         const key = el.getAttribute('data-i18n-title');
         const translated = t(key);
         el.title = translated;
@@ -160,7 +160,7 @@ function updatePageTranslations() {
     });
 
     // 更新 data-i18n-tip 属性的元素（仅 tooltip 文本）
-    document.querySelectorAll('[data-i18n-tip]').forEach(el => {
+    document.querySelectorAll('[data-i18n-tip]').forEach((el) => {
         const key = el.getAttribute('data-i18n-tip');
         el.setAttribute('data-tip', t(key));
     });
@@ -187,16 +187,21 @@ function updateGanttLocale(lang) {
 
     // 更新日期格式
     const format = dateFormats[lang] || dateFormats['en-US'];
-    gantt.config.date_format = format.date.replace('YYYY', '%Y').replace('MM', '%m').replace('DD', '%d');
+    gantt.config.date_format = format.date
+        .replace('YYYY', '%Y')
+        .replace('MM', '%m')
+        .replace('DD', '%d');
 
     // 动态导入并更新列配置（确保列名本地化）
-    import('../features/gantt/columns.js').then(({ updateGanttColumns }) => {
-        updateGanttColumns();
-    }).catch(err => {
-        console.warn('Failed to update gantt columns:', err);
-        // 如果动态导入失败，至少刷新甘特图
-        gantt.render();
-    });
+    import('../features/gantt/columns.js')
+        .then(({ updateGanttColumns }) => {
+            updateGanttColumns();
+        })
+        .catch((err) => {
+            console.warn('Failed to update gantt columns:', err);
+            // 如果动态导入失败，至少刷新甘特图
+            gantt.render();
+        });
 }
 
 /**
@@ -221,10 +226,7 @@ function formatDate(date, type = 'date') {
     let result = '';
 
     if (type === 'date' || type === 'datetime') {
-        result = format.date
-            .replace('YYYY', year)
-            .replace('MM', month)
-            .replace('DD', day);
+        result = format.date.replace('YYYY', year).replace('MM', month).replace('DD', day);
     }
 
     if (type === 'time' || type === 'datetime') {
@@ -237,9 +239,7 @@ function formatDate(date, type = 'date') {
                 .replace('mm', minutes)
                 .replace('A', period);
         } else {
-            timeStr = timeStr
-                .replace('HH', String(hours).padStart(2, '0'))
-                .replace('mm', minutes);
+            timeStr = timeStr.replace('HH', String(hours).padStart(2, '0')).replace('mm', minutes);
         }
 
         if (type === 'datetime') {
@@ -266,7 +266,7 @@ async function init() {
  */
 async function loadAllLocales() {
     const supportedLanguages = ['zh-CN', 'en-US', 'ja-JP', 'ko-KR'];
-    const promises = supportedLanguages.map(lang => loadLocale(lang));
+    const promises = supportedLanguages.map((lang) => loadLocale(lang));
     await Promise.all(promises);
 }
 
@@ -288,7 +288,7 @@ export const i18n = {
     detectBrowserLanguage,
     loadAllLocales,
     getAllLocales,
-    refresh
+    refresh,
 };
 
 // 挂载到 window 对象，便于在 HTML 中使用

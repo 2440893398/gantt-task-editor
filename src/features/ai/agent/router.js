@@ -23,24 +23,10 @@ const KEYWORD_PATTERNS = {
         /待[办处]理/,
         /未完成/,
         /高优先/,
-        /优先级/
+        /优先级/,
     ],
-    'progress-analysis': [
-        /进度/,
-        /完成率/,
-        /项目.*情况/,
-        /项目.*概[况览]/,
-        /风险/,
-        /总[体结].*进/
-    ],
-    'dependency-analysis': [
-        /依赖/,
-        /关键路径/,
-        /前驱/,
-        /后继/,
-        /dependency/i,
-        /critical.?path/i
-    ],
+    'progress-analysis': [/进度/, /完成率/, /项目.*情况/, /项目.*概[况览]/, /风险/, /总[体结].*进/],
+    'dependency-analysis': [/依赖/, /关键路径/, /前驱/, /后继/, /dependency/i, /critical.?path/i],
     'resource-analysis': [
         /工作量/,
         /负载/,
@@ -48,7 +34,7 @@ const KEYWORD_PATTERNS = {
         /负责.*任务/,
         /谁.*负责/,
         /workload/i,
-        /resource/i
+        /resource/i,
     ],
     'timeline-analysis': [
         /截止日期/,
@@ -57,21 +43,10 @@ const KEYWORD_PATTERNS = {
         /基线偏差/,
         /日期范围/,
         /deadline/i,
-        /timeline/i
+        /timeline/i,
     ],
-    'task-detail-query': [
-        /任务详情/,
-        /子任务/,
-        /任务信息/,
-        /task.?detail/i
-    ],
-    'project-summary': [
-        /项目总结/,
-        /总结报告/,
-        /整体分析/,
-        /全局分析/,
-        /project.?summary/i
-    ],
+    'task-detail-query': [/任务详情/, /子任务/, /任务信息/, /task.?detail/i],
+    'project-summary': [/项目总结/, /总结报告/, /整体分析/, /全局分析/, /project.?summary/i],
     'field-info': [
         /字段配置/,
         /自定义字段/,
@@ -81,7 +56,7 @@ const KEYWORD_PATTERNS = {
         /录入.*字段/,
         /支持.*字段/,
         /字段.*支持/,
-        /field/i
+        /field/i,
     ],
     'import-analysis': [
         /导入/,
@@ -92,8 +67,8 @@ const KEYWORD_PATTERNS = {
         /xlsx/i,
         /xls/i,
         /task.?diff/i,
-        /import/i
-    ]
+        /import/i,
+    ],
 };
 
 /**
@@ -103,7 +78,7 @@ const KEYWORD_PATTERNS = {
  */
 export function quickRoute(message) {
     for (const [skillId, patterns] of Object.entries(KEYWORD_PATTERNS)) {
-        if (patterns.some(p => p.test(message))) {
+        if (patterns.some((p) => p.test(message))) {
             return { skill: skillId, method: 'keyword' };
         }
     }
@@ -116,7 +91,7 @@ export function quickRoute(message) {
 const routerSchema = z.object({
     skill: z.string().nullable().describe('匹配的 Skill ID，无匹配返回 null'),
     confidence: z.number().min(0).max(1).describe('置信度'),
-    reasoning: z.string().describe('判断理由')
+    reasoning: z.string().describe('判断理由'),
 });
 
 /**
@@ -126,15 +101,16 @@ const routerSchema = z.object({
  * @returns {Promise<{skill: string|null, confidence: number, reasoning: string}>}
  */
 export async function routeToSkill(userMessage, modelOrProvider, modelId) {
-    const model = (typeof modelOrProvider === 'function' && modelId)
-        ? modelOrProvider(modelId)
-        : modelOrProvider;
+    const model =
+        typeof modelOrProvider === 'function' && modelId
+            ? modelOrProvider(modelId)
+            : modelOrProvider;
     const skills = getSkillDescriptions();
 
     const systemPrompt = `你是一个意图路由器。根据用户消息判断应该使用哪个 Skill。
 
 可用 Skills:
-${skills.map(s => `- ${s.name}: ${s.description}`).join('\n')}
+${skills.map((s) => `- ${s.name}: ${s.description}`).join('\n')}
 
 规则:
 1. 如果用户问题明确匹配某个 Skill，返回该 Skill ID
@@ -145,7 +121,7 @@ ${skills.map(s => `- ${s.name}: ${s.description}`).join('\n')}
         model: model,
         schema: routerSchema,
         system: systemPrompt,
-        prompt: userMessage
+        prompt: userMessage,
     });
 
     return result.object;

@@ -3,22 +3,22 @@ import { test, expect } from '@playwright/test';
 test.describe('Dependency Management Tests', () => {
     test.beforeEach(async ({ page }) => {
         // Collect console logs
-        page.on('console', msg => console.log(`BROWSER LOG: ${msg.text()}`));
-        page.on('pageerror', err => console.log(`BROWSER ERROR: ${err.toString()}`));
+        page.on('console', (msg) => console.log(`BROWSER LOG: ${msg.text()}`));
+        page.on('pageerror', (err) => console.log(`BROWSER ERROR: ${err.toString()}`));
 
         await page.goto('/');
         await page.waitForSelector('.gantt_task', { timeout: 10000 });
 
-        // Force EN language 
+        // Force EN language
         await page.evaluate(() => {
             if (window.i18n) window.i18n.setLanguage('en-US');
             gantt.clearAll();
             gantt.parse({
                 data: [
-                    { id: 1, text: "Task A", start_date: "2023-01-01", duration: 5 },
-                    { id: 2, text: "Task B", start_date: "2023-01-06", duration: 5 }
+                    { id: 1, text: 'Task A', start_date: '2023-01-01', duration: 5 },
+                    { id: 2, text: 'Task B', start_date: '2023-01-06', duration: 5 },
                 ],
-                links: []
+                links: [],
             });
         });
         await page.waitForTimeout(500);
@@ -31,10 +31,10 @@ test.describe('Dependency Management Tests', () => {
         // Check panel visibility
         await expect(page.locator('#task-details-panel')).toBeVisible();
 
-        // Check section header 
+        // Check section header
         await expect(page.locator('text=Predecessors')).toBeVisible({ timeout: 5000 });
 
-        // Check "No predecessors" 
+        // Check "No predecessors"
         await expect(page.locator('text=No predecessors')).toBeVisible();
 
         const deleteBtns = page.locator('.delete-link-btn');
@@ -73,14 +73,14 @@ test.describe('Dependency Management Tests', () => {
     test('Should delete predecessor link', async ({ page }) => {
         await page.evaluate(() => {
             if (window.i18n) window.i18n.setLanguage('en-US');
-            gantt.addLink({ id: 100, source: 1, target: 2, type: "0" });
+            gantt.addLink({ id: 100, source: 1, target: 2, type: '0' });
         });
 
         await page.locator('.gantt_task_row[data-task-id="2"]').dblclick();
 
         await expect(page.locator('.delete-link-btn')).toHaveCount(1);
 
-        page.on('dialog', dialog => dialog.accept());
+        page.on('dialog', (dialog) => dialog.accept());
 
         await page.locator('.delete-link-btn').click();
 

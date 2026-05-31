@@ -77,7 +77,7 @@ export async function openTaskDatePickerPopover(options = {}) {
             onDayClick: (dateStr) => {
                 onSelect?.(dateStr);
                 closeTaskDatePickerPopover();
-            }
+            },
         });
     };
 
@@ -121,18 +121,21 @@ async function buildMonthHighlights(year, month) {
             if (holiday.countryCode !== countryCode) continue;
             if (!holiday.date.startsWith(monthPrefix)) continue;
             highlights.set(holiday.date, {
-                type: holiday.isOffDay ? 'holiday' : 'makeupday'
+                type: holiday.isOffDay ? 'holiday' : 'makeupday',
             });
         }
     } catch (error) {
-        console.warn('[Task Date Picker] failed to load holiday highlights:', error?.message || error);
+        console.warn(
+            '[Task Date Picker] failed to load holiday highlights:',
+            error?.message || error
+        );
     }
 
     const customs = await getAllCustomDays();
     for (const customDay of customs) {
         if (!customDay.date?.startsWith(monthPrefix)) continue;
         highlights.set(customDay.date, {
-            type: customDay.isOffDay ? 'companyday' : 'overtime'
+            type: customDay.isOffDay ? 'companyday' : 'overtime',
         });
     }
 

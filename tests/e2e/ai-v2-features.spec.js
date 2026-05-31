@@ -1,25 +1,26 @@
-
 import { test, expect } from '@playwright/test';
 
 test.describe('AI V2.0 New Features', () => {
-
     test.beforeEach(async ({ page }) => {
         // Pre-configure AI
         await page.addInitScript(() => {
-            localStorage.setItem('gantt_ai_config', JSON.stringify({
-                apiKey: 'sk-test-key-v2',
-                baseUrl: 'https://api.openai.com/v1',
-                model: 'gpt-3.5-turbo'
-            }));
+            localStorage.setItem(
+                'gantt_ai_config',
+                JSON.stringify({
+                    apiKey: 'sk-test-key-v2',
+                    baseUrl: 'https://api.openai.com/v1',
+                    model: 'gpt-3.5-turbo',
+                })
+            );
         });
 
         // Mock OpenAI API with JSON output
-        await page.route('https://api.openai.com/v1/chat/completions', async route => {
+        await page.route('https://api.openai.com/v1/chat/completions', async (route) => {
             const request = route.request();
             const postData = request.postDataJSON();
 
             // Check if JSON format instructions are present
-            const systemPrompt = postData.messages.find(m => m.role === 'system')?.content || '';
+            const systemPrompt = postData.messages.find((m) => m.role === 'system')?.content || '';
             const expectingJson = systemPrompt.includes('JSON');
 
             let content = '';
@@ -27,13 +28,13 @@ test.describe('AI V2.0 New Features', () => {
             if (expectingJson) {
                 // Return structured JSON
                 content = JSON.stringify({
-                    type: "task_refine",
-                    original: "Simple Task",
-                    optimized: "Optimized Simple Task V2",
-                    reasoning: "Enhanced for clarity"
+                    type: 'task_refine',
+                    original: 'Simple Task',
+                    optimized: 'Optimized Simple Task V2',
+                    reasoning: 'Enhanced for clarity',
                 });
             } else {
-                content = "Plain text response";
+                content = 'Plain text response';
             }
 
             // Simulate stream
@@ -42,7 +43,7 @@ test.describe('AI V2.0 New Features', () => {
                 object: 'chat.completion.chunk',
                 created: Date.now(),
                 model: 'gpt-3.5-turbo',
-                choices: [{ index: 0, delta: { content: content }, finish_reason: null }]
+                choices: [{ index: 0, delta: { content: content }, finish_reason: null }],
             })}\n\n`;
 
             const stream1 = `data: ${JSON.stringify({
@@ -51,13 +52,13 @@ test.describe('AI V2.0 New Features', () => {
                 created: Date.now(),
                 model: 'gpt-3.5-turbo',
                 choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
-                usage: { prompt_tokens: 50, completion_tokens: 30, total_tokens: 80 }
+                usage: { prompt_tokens: 50, completion_tokens: 30, total_tokens: 80 },
             })}\n\n`;
 
             await route.fulfill({
                 status: 200,
                 contentType: 'text/event-stream',
-                body: stream0 + stream1 + 'data: [DONE]\n\n'
+                body: stream0 + stream1 + 'data: [DONE]\n\n',
             });
         });
 
@@ -133,14 +134,14 @@ test.describe('AI V2.0 New Features', () => {
 
         // Check if summary column header exists using a looser check
         // It might be '概述', 'Summary', or 'Overview' depending on the environment/mock
-        const hasSummary = headerTexts.some(text =>
-            /概述|Summary|Overview/i.test(text)
-        );
+        const hasSummary = headerTexts.some((text) => /概述|Summary|Overview/i.test(text));
 
-        expect(hasSummary, `Summary column not found. Available headers: ${headerTexts.join(', ')}`).toBeTruthy();
+        expect(
+            hasSummary,
+            `Summary column not found. Available headers: ${headerTexts.join(', ')}`
+        ).toBeTruthy();
 
         // Also verify the column is actually in the DOM by its attribute if possible
         // Gantt columns often have ::before/after or specific internal structure
     });
-
 });

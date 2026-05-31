@@ -32,10 +32,13 @@ vi.mock('../../../src/utils/i18n.js', () => ({
 }));
 
 // Mock fetch — renderTab1 → ensureHolidaysCached → fetch
-vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-    ok: true,
-    json: async () => ({ days: [] }),
-}));
+vi.stubGlobal(
+    'fetch',
+    vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ days: [] }),
+    })
+);
 
 import { renderTab1 } from '../../../src/features/calendar/tab1-settings.js';
 
@@ -84,14 +87,15 @@ describe('tab1-settings: calendar:save 监听器不重复注册', () => {
 
         let saveCount = 0;
         const origSave = (await import('../../../src/core/storage.js')).saveCalendarSettings;
-        const saveSpy = vi.spyOn(
-            await import('../../../src/core/storage.js'),
-            'saveCalendarSettings'
-        ).mockImplementation(async () => { saveCount++; });
+        const saveSpy = vi
+            .spyOn(await import('../../../src/core/storage.js'), 'saveCalendarSettings')
+            .mockImplementation(async () => {
+                saveCount++;
+            });
 
         document.dispatchEvent(new Event('calendar:save'));
         // Allow microtasks to settle
-        await new Promise(r => setTimeout(r, 50));
+        await new Promise((r) => setTimeout(r, 50));
 
         // Exactly 1 call
         expect(saveCount).toBe(1);
@@ -109,10 +113,12 @@ describe('tab1-settings: calendar:save 监听器不重复注册', () => {
         vi.spyOn(
             await import('../../../src/core/storage.js'),
             'saveCalendarSettings'
-        ).mockImplementation(async () => { saveCount++; });
+        ).mockImplementation(async () => {
+            saveCount++;
+        });
 
         document.dispatchEvent(new Event('calendar:save'));
-        await new Promise(r => setTimeout(r, 50));
+        await new Promise((r) => setTimeout(r, 50));
 
         // 如果有重复注册，saveCount 会是 2
         expect(saveCount).toBe(1);
@@ -127,10 +133,12 @@ describe('tab1-settings: calendar:save 监听器不重复注册', () => {
         vi.spyOn(
             await import('../../../src/core/storage.js'),
             'saveCalendarSettings'
-        ).mockImplementation(async () => { saveCount++; });
+        ).mockImplementation(async () => {
+            saveCount++;
+        });
 
         document.dispatchEvent(new Event('calendar:save'));
-        await new Promise(r => setTimeout(r, 50));
+        await new Promise((r) => setTimeout(r, 50));
 
         expect(saveCount).toBe(1);
     });
@@ -213,7 +221,7 @@ describe('tab1-settings: DOM 渲染', () => {
 
         const refetchBtn = container.querySelector('#cal-refetch');
         refetchBtn.click();
-        await new Promise(r => setTimeout(r, 80));
+        await new Promise((r) => setTimeout(r, 80));
 
         expect(deleteSpy).toHaveBeenCalledWith([thisYear, DEFAULT_PROJECT_ID]);
         expect(deleteSpy).toHaveBeenCalledWith([thisYear + 1, DEFAULT_PROJECT_ID]);

@@ -9,10 +9,49 @@ import { i18n } from '../../utils/i18n.js';
 
 // 月份名称配置（各语言）
 const MONTH_NAMES = {
-    'zh-CN': ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'],
+    'zh-CN': [
+        '1月',
+        '2月',
+        '3月',
+        '4月',
+        '5月',
+        '6月',
+        '7月',
+        '8月',
+        '9月',
+        '10月',
+        '11月',
+        '12月',
+    ],
     'en-US': ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
-    'ja-JP': ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'],
-    'ko-KR': ['1월', '2월', '3월', '4월', '5월', '6월', '7월', '8월', '9월', '10월', '11월', '12월']
+    'ja-JP': [
+        '1月',
+        '2月',
+        '3月',
+        '4月',
+        '5月',
+        '6月',
+        '7月',
+        '8月',
+        '9月',
+        '10月',
+        '11月',
+        '12月',
+    ],
+    'ko-KR': [
+        '1월',
+        '2월',
+        '3월',
+        '4월',
+        '5월',
+        '6월',
+        '7월',
+        '8월',
+        '9월',
+        '10월',
+        '11월',
+        '12월',
+    ],
 };
 
 // 星期名称配置（各语言）
@@ -20,7 +59,7 @@ const WEEKDAY_NAMES = {
     'zh-CN': ['日', '一', '二', '三', '四', '五', '六'],
     'en-US': ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
     'ja-JP': ['日', '月', '火', '水', '木', '金', '土'],
-    'ko-KR': ['일', '월', '화', '수', '목', '금', '토']
+    'ko-KR': ['일', '월', '화', '수', '목', '금', '토'],
 };
 
 /**
@@ -107,7 +146,7 @@ function getLocalizedDateFormatters() {
                 default: // zh-CN, ja-JP
                     return `${month}月`;
             }
-        }
+        },
     };
 }
 
@@ -123,118 +162,118 @@ function getZoomLevels() {
             min_column_width: 80,
             scales: [
                 {
-                    unit: "week",
+                    unit: 'week',
                     step: 1,
                     format: function (date) {
                         const weekStart = new Date(date);
                         const weekEnd = new Date(date);
                         weekEnd.setDate(weekEnd.getDate() + 6);
                         return fmt.weekRange(weekStart, weekEnd);
-                    }
+                    },
                 },
                 {
-                    unit: "day",
+                    unit: 'day',
                     step: 1,
                     format: function (date) {
                         return fmt.dayWeekday(date);
                     },
                     css: function (date) {
                         if (date.getDay() === 0 || date.getDay() === 6) {
-                            return "weekend";
+                            return 'weekend';
                         }
-                        return "";
-                    }
-                }
-            ]
+                        return '';
+                    },
+                },
+            ],
         },
         week: {
             name: i18n.t('view.week'),
             min_column_width: 50,
             scales: [
                 {
-                    unit: "month",
+                    unit: 'month',
                     step: 1,
                     format: function (date) {
                         return fmt.yearMonth(date);
-                    }
+                    },
                 },
                 {
-                    unit: "day",
+                    unit: 'day',
                     step: 1,
                     format: function (date) {
                         return fmt.monthDay(date);
                     },
                     css: function (date) {
                         if (date.getDay() === 0 || date.getDay() === 6) {
-                            return "weekend";
+                            return 'weekend';
                         }
-                        return "";
-                    }
-                }
-            ]
+                        return '';
+                    },
+                },
+            ],
         },
         month: {
             name: i18n.t('view.month'),
             min_column_width: 120,
             scales: [
                 {
-                    unit: "year",
+                    unit: 'year',
                     step: 1,
                     format: function (date) {
                         return fmt.year(date);
-                    }
+                    },
                 },
                 {
-                    unit: "month",
+                    unit: 'month',
                     step: 1,
                     format: function (date) {
                         return fmt.month(date);
-                    }
-                }
-            ]
+                    },
+                },
+            ],
         },
         quarter: {
             name: i18n.t('view.quarter'),
             min_column_width: 100,
             scales: [
                 {
-                    unit: "year",
+                    unit: 'year',
                     step: 1,
                     format: function (date) {
                         return fmt.year(date);
-                    }
+                    },
                 },
                 {
-                    unit: "quarter",
+                    unit: 'quarter',
                     step: 1,
                     format: function (date) {
                         const quarter = Math.floor(date.getMonth() / 3) + 1;
-                        return "Q" + quarter;
-                    }
-                }
-            ]
+                        return 'Q' + quarter;
+                    },
+                },
+            ],
         },
         year: {
             name: i18n.t('view.year'),
             min_column_width: 80,
             scales: [
                 {
-                    unit: "year",
+                    unit: 'year',
                     step: 1,
                     format: function (date) {
                         return fmt.year(date);
-                    }
+                    },
                 },
                 {
-                    unit: "quarter",
+                    unit: 'quarter',
                     step: 1,
                     format: function (date) {
                         const quarter = Math.floor(date.getMonth() / 3) + 1;
-                        return "Q" + quarter;
-                    }
-                }
-            ]
-        }
+                        return 'Q' + quarter;
+                    },
+                },
+            ],
+        },
     };
 }
 
@@ -354,9 +393,9 @@ export function getCurrentLevelName() {
  */
 export function getAvailableLevels() {
     const zoomLevels = getZoomLevels();
-    return ZOOM_ORDER.map(key => ({
+    return ZOOM_ORDER.map((key) => ({
         key,
-        name: zoomLevels[key].name
+        name: zoomLevels[key].name,
     }));
 }
 
@@ -370,19 +409,23 @@ function bindWheelZoom() {
         return;
     }
 
-    ganttContainer.addEventListener('wheel', (e) => {
-        if (e.ctrlKey) {
-            e.preventDefault();
+    ganttContainer.addEventListener(
+        'wheel',
+        (e) => {
+            if (e.ctrlKey) {
+                e.preventDefault();
 
-            if (e.deltaY < 0) {
-                // 向上滚动 = 放大
-                zoomIn();
-            } else {
-                // 向下滚动 = 缩小
-                zoomOut();
+                if (e.deltaY < 0) {
+                    // 向上滚动 = 放大
+                    zoomIn();
+                } else {
+                    // 向下滚动 = 缩小
+                    zoomOut();
+                }
             }
-        }
-    }, { passive: false });
+        },
+        { passive: false }
+    );
 
     console.log('🖱️ Ctrl+滚轮缩放已绑定');
 }

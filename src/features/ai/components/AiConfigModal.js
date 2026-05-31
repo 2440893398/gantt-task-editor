@@ -17,24 +17,24 @@ const PRESET_MODEL_GROUPS = [
             { value: 'gpt-4o', label: 'GPT-4o', recommended: true },
             { value: 'gpt-4o-mini', label: 'GPT-4o Mini' },
             { value: 'gpt-4-turbo', label: 'GPT-4 Turbo' },
-            { value: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo' }
-        ]
+            { value: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo' },
+        ],
     },
     {
         name: 'DeepSeek',
         models: [
             { value: 'deepseek-chat', label: 'DeepSeek Chat' },
             { value: 'deepseek-coder', label: 'DeepSeek Coder' },
-            { value: 'deepseek-reasoner', label: 'DeepSeek Reasoner' }
-        ]
+            { value: 'deepseek-reasoner', label: 'DeepSeek Reasoner' },
+        ],
     },
     {
         name: 'Anthropic',
         models: [
             { value: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet' },
-            { value: 'claude-3-haiku-20240307', label: 'Claude 3 Haiku' }
-        ]
-    }
+            { value: 'claude-3-haiku-20240307', label: 'Claude 3 Haiku' },
+        ],
+    },
 ];
 
 // 预设 Base URL
@@ -42,7 +42,7 @@ const PRESET_URLS = [
     { value: 'https://api.openai.com/v1', label: 'OpenAI' },
     { value: 'https://api.deepseek.com/v1', label: 'DeepSeek' },
     { value: 'https://api.anthropic.com/v1', label: 'Anthropic' },
-    { value: 'http://localhost:11434/v1', label: 'Ollama (Local)' }
+    { value: 'http://localhost:11434/v1', label: 'Ollama (Local)' },
 ];
 
 let modalEl = null;
@@ -131,9 +131,11 @@ function createModalHTML() {
                                 </svg>
                             </label>
                             <ul tabindex="0" class="dropdown-content menu p-2 shadow-xl bg-base-100 rounded-xl w-52 border border-base-300 mt-2" id="ai_url_presets">
-                                ${PRESET_URLS.map(url => `
+                                ${PRESET_URLS.map(
+                                    (url) => `
                                     <li><a data-url="${url.value}" class="text-sm rounded-lg">${url.label}</a></li>
-                                `).join('')}
+                                `
+                                ).join('')}
                             </ul>
                         </div>
                     </div>
@@ -284,7 +286,9 @@ function bindEvents() {
     document.getElementById('ai_config_cancel')?.addEventListener('click', closeModal);
 
     // API Key 显示/隐藏切换
-    document.getElementById('ai_toggle_key_visibility')?.addEventListener('click', toggleKeyVisibility);
+    document
+        .getElementById('ai_toggle_key_visibility')
+        ?.addEventListener('click', toggleKeyVisibility);
 
     // URL 预设选择
     document.getElementById('ai_url_presets')?.addEventListener('click', (e) => {
@@ -349,10 +353,12 @@ function bindEvents() {
     });
 
     // 刷新模型列表
-    document.getElementById('ai_refresh_models_btn')?.addEventListener('click', () => handleRefreshModels(true));
+    document
+        .getElementById('ai_refresh_models_btn')
+        ?.addEventListener('click', () => handleRefreshModels(true));
 
     // Skills toggle 联动计数徽标
-    document.querySelectorAll('.skill-toggle')?.forEach(toggle => {
+    document.querySelectorAll('.skill-toggle')?.forEach((toggle) => {
         toggle.addEventListener('change', updateSkillsEnabledCount);
     });
 
@@ -374,7 +380,7 @@ function bindEvents() {
  */
 function updateSkillsEnabledCount() {
     const toggles = document.querySelectorAll('.skill-toggle');
-    const enabledCount = Array.from(toggles).filter(t => t.checked).length;
+    const enabledCount = Array.from(toggles).filter((t) => t.checked).length;
     const badge = document.querySelector('.skills-enabled-count');
     if (badge) {
         badge.textContent = enabledCount;
@@ -414,11 +420,11 @@ function showCompatibilityWarning(title, message, isError = false) {
     const warningEl = document.getElementById('ai_compatibility_warning');
     const titleEl = document.getElementById('ai_compatibility_title');
     const messageEl = document.getElementById('ai_compatibility_message');
-    
+
     if (!warningEl || !titleEl || !messageEl) return;
-    
+
     warningEl.classList.remove('hidden');
-    
+
     // 根据是否是错误调整样式
     if (isError) {
         warningEl.classList.remove('alert-warning');
@@ -427,7 +433,7 @@ function showCompatibilityWarning(title, message, isError = false) {
         warningEl.classList.remove('alert-error');
         warningEl.classList.add('alert-warning');
     }
-    
+
     titleEl.textContent = title;
     messageEl.textContent = message;
 }
@@ -478,13 +484,13 @@ function renderModelList(filter = '') {
 
     // 动态模型列表（如果有）
     if (dynamicModels.length > 0) {
-        const filteredDynamic = dynamicModels.filter(m =>
+        const filteredDynamic = dynamicModels.filter((m) =>
             m.id.toLowerCase().includes(filterLower)
         );
 
         if (filteredDynamic.length > 0) {
             html += `<li class="menu-title text-xs text-[--color-muted-foreground] px-3 py-2">${i18n.t('ai.config.availableModels')}</li>`;
-            filteredDynamic.forEach(m => {
+            filteredDynamic.forEach((m) => {
                 html += `<li><a data-model="${m.id}" class="flex justify-between">
                     <span class="truncate">${m.id}</span>
                     ${m.owned_by ? `<span class="badge badge-xs badge-ghost">${m.owned_by}</span>` : ''}
@@ -495,15 +501,16 @@ function renderModelList(filter = '') {
     }
 
     // 预设模型分组
-    PRESET_MODEL_GROUPS.forEach(group => {
-        const filteredModels = group.models.filter(m =>
-            m.value.toLowerCase().includes(filterLower) ||
-            m.label.toLowerCase().includes(filterLower)
+    PRESET_MODEL_GROUPS.forEach((group) => {
+        const filteredModels = group.models.filter(
+            (m) =>
+                m.value.toLowerCase().includes(filterLower) ||
+                m.label.toLowerCase().includes(filterLower)
         );
 
         if (filteredModels.length > 0) {
             html += `<li class="menu-title text-xs text-[--color-muted-foreground] px-3 py-2 ${dynamicModels.length > 0 ? 'mt-2' : ''}">${group.name}</li>`;
-            filteredModels.forEach(m => {
+            filteredModels.forEach((m) => {
                 html += `<li><a data-model="${m.value}" class="flex justify-between">
                     <span>${m.label}</span>
                     ${m.recommended ? `<span class="badge badge-xs badge-primary">${i18n.t('ai.config.recommended')}</span>` : ''}
@@ -570,7 +577,8 @@ async function handleRefreshModels(forceRefresh = false) {
             // 更新按钮为成功状态
             if (text) text.textContent = i18n.t('ai.config.refreshed');
             if (icon) {
-                icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />';
+                icon.innerHTML =
+                    '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />';
             }
             badge?.classList.add('hidden');
 
@@ -578,17 +586,21 @@ async function handleRefreshModels(forceRefresh = false) {
             setTimeout(() => {
                 if (text) text.textContent = i18n.t('ai.config.refresh');
                 if (icon) {
-                    icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />';
+                    icon.innerHTML =
+                        '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />';
                 }
             }, 2000);
 
             if (!result.fromCache) {
-                showToast(i18n.t('ai.config.modelsUpdated', { count: result.models.length }), 'success', 2000);
+                showToast(
+                    i18n.t('ai.config.modelsUpdated', { count: result.models.length }),
+                    'success',
+                    2000
+                );
             }
         } else {
             throw new Error(result.error || 'Failed to fetch models');
         }
-
     } catch (error) {
         console.error('[AI Config] Refresh models error:', error);
         if (text) text.textContent = i18n.t('ai.config.refreshFailed');
@@ -596,7 +608,6 @@ async function handleRefreshModels(forceRefresh = false) {
         setTimeout(() => {
             if (text) text.textContent = i18n.t('ai.config.refresh');
         }, 2000);
-
     } finally {
         isRefreshingModels = false;
         if (icon) icon.classList.remove('animate-spin');
@@ -661,22 +672,25 @@ async function handleTestConnection() {
         const tempConfig = {
             apiKey: document.getElementById('ai_api_key')?.value || '',
             baseUrl: document.getElementById('ai_base_url')?.value || 'https://api.openai.com/v1',
-            model: document.getElementById('ai_model_input')?.value || 'gpt-3.5-turbo'
+            model: document.getElementById('ai_model_input')?.value || 'gpt-3.5-turbo',
         };
-        
+
         const result = await testConnection(tempConfig);
-        
+
         // 保存测试结果到 localStorage（供 executor 使用）
         // 包含 testedModel 以区分不同模型的测试结果
-        localStorage.setItem('gantt_ai_last_test_result', JSON.stringify({
-            ...result,
-            testedModel: tempConfig.model,
-            testedAt: Date.now()
-        }));
-        
+        localStorage.setItem(
+            'gantt_ai_last_test_result',
+            JSON.stringify({
+                ...result,
+                testedModel: tempConfig.model,
+                testedAt: Date.now(),
+            })
+        );
+
         // 显示基础测试结果
         showTestResult(result.success, result.message);
-        
+
         // 如果连接成功但不支持函数调用，显示警告
         if (result.success && result.toolCallSupported === false) {
             showCompatibilityWarning(
@@ -695,7 +709,6 @@ async function handleTestConnection() {
                 false
             );
         }
-
     } finally {
         isTestingConnection = false;
         testBtn.innerHTML = originalText;
@@ -726,27 +739,19 @@ function handleSaveConfig() {
     } catch (e) {
         console.warn('[AI Config] Failed to read test result:', e);
     }
-    
+
     // 保存配置
     updateAiConfig({ apiKey, baseUrl, model });
-    
+
     // 根据测试结果显示不同提示
     if (testResult && testResult.toolCallSupported === false) {
-        showToast(
-            i18n.t('ai.config.savedWithCompatibilityWarning'),
-            'warning', 
-            4000
-        );
+        showToast(i18n.t('ai.config.savedWithCompatibilityWarning'), 'warning', 4000);
     } else if (testResult && testResult.toolCallSupported === null) {
-        showToast(
-            i18n.t('ai.config.savedWithCompatibilityUnknown'),
-            'info', 
-            3000
-        );
+        showToast(i18n.t('ai.config.savedWithCompatibilityUnknown'), 'info', 3000);
     } else {
         showToast(i18n.t('ai.config.saved'), 'success');
     }
-    
+
     closeModal();
 
     // 触发配置更新事件
@@ -788,5 +793,5 @@ export function closeModal() {
 export default {
     init: initAiConfigModal,
     open: openAiConfigModal,
-    close: closeModal
+    close: closeModal,
 };

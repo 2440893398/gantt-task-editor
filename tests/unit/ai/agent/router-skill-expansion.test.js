@@ -37,7 +37,7 @@ describe('router skill expansion', () => {
 
             // import-analysis
             { input: '请分析我上传的 Excel 并给出导入差异', expected: 'import-analysis' },
-            { input: '导入任务文件后有哪些新增和修改', expected: 'import-analysis' }
+            { input: '导入任务文件后有哪些新增和修改', expected: 'import-analysis' },
         ];
 
         cases.forEach(({ input, expected }) => {
@@ -71,7 +71,7 @@ describe('router skill expansion', () => {
     describe('skill registry expansion', () => {
         it('has all 10 skills registered', () => {
             const skills = getSkillDescriptions();
-            const names = skills.map(s => s.name);
+            const names = skills.map((s) => s.name);
             expect(names).toContain('task-query');
             expect(names).toContain('progress-analysis');
             expect(names).toContain('dependency-analysis');
@@ -87,12 +87,19 @@ describe('router skill expansion', () => {
 
         it('each new skill has allowedTools defined', () => {
             const skills = getSkillDescriptions();
-            const newSkills = skills.filter(s =>
-                 ['dependency-analysis', 'resource-analysis', 'timeline-analysis',
-                 'task-detail-query', 'project-summary', 'field-info', 'calendar-query',
-                 'import-analysis'].includes(s.name)
+            const newSkills = skills.filter((s) =>
+                [
+                    'dependency-analysis',
+                    'resource-analysis',
+                    'timeline-analysis',
+                    'task-detail-query',
+                    'project-summary',
+                    'field-info',
+                    'calendar-query',
+                    'import-analysis',
+                ].includes(s.name)
             );
-            newSkills.forEach(skill => {
+            newSkills.forEach((skill) => {
                 expect(skill.allowedTools).toBeDefined();
                 expect(skill.allowedTools.length).toBeGreaterThan(0);
             });
@@ -100,9 +107,14 @@ describe('router skill expansion', () => {
 
         it('can lazy-load each new skill', async () => {
             const newSkillNames = [
-                'dependency-analysis', 'resource-analysis', 'timeline-analysis',
-                'task-detail-query', 'project-summary', 'field-info', 'calendar-query',
-                'import-analysis'
+                'dependency-analysis',
+                'resource-analysis',
+                'timeline-analysis',
+                'task-detail-query',
+                'project-summary',
+                'field-info',
+                'calendar-query',
+                'import-analysis',
             ];
             for (const name of newSkillNames) {
                 const skill = await loadSkill(name);

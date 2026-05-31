@@ -4,7 +4,13 @@
  */
 
 import ExcelJS from 'exceljs';
-import { state, isFieldEnabled, getSystemFieldOptions, getFieldType, getCustomFieldByName } from '../../core/store.js';
+import {
+    state,
+    isFieldEnabled,
+    getSystemFieldOptions,
+    getFieldType,
+    getCustomFieldByName,
+} from '../../core/store.js';
 import { projectScope } from '../../core/storage.js';
 import { INTERNAL_FIELDS, SYSTEM_FIELD_CONFIG } from '../../data/fields.js';
 import { showToast } from '../../utils/toast.js';
@@ -52,7 +58,7 @@ function checkVersionCompatibility(fileVersion) {
         return {
             compatible: false,
             warn: true,
-            message: `无法识别的版本号: "${fileVersion}"，请确认文件来源`
+            message: `无法识别的版本号: "${fileVersion}"，请确认文件来源`,
         };
     }
 
@@ -61,7 +67,7 @@ function checkVersionCompatibility(fileVersion) {
         return {
             compatible: false,
             warn: true,
-            message: `备份文件版本 (${fileVersion}) 与当前版本 (${BACKUP_SCHEMA_VERSION}) 不兼容，请使用匹配版本的应用导入`
+            message: `备份文件版本 (${fileVersion}) 与当前版本 (${BACKUP_SCHEMA_VERSION}) 不兼容，请使用匹配版本的应用导入`,
         };
     }
 
@@ -70,7 +76,7 @@ function checkVersionCompatibility(fileVersion) {
         return {
             compatible: true,
             warn: true,
-            message: `备份文件版本 (${fileVersion}) 高于当前版本 (${BACKUP_SCHEMA_VERSION})，部分新功能数据可能丢失`
+            message: `备份文件版本 (${fileVersion}) 高于当前版本 (${BACKUP_SCHEMA_VERSION})，部分新功能数据可能丢失`,
         };
     }
 
@@ -85,7 +91,7 @@ export function exportConfig() {
     const config = {
         customFields: state.customFields,
         fieldOrder: state.fieldOrder,
-        exportTime: new Date().toISOString()
+        exportTime: new Date().toISOString(),
     };
 
     const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
@@ -144,7 +150,7 @@ export async function exportFullBackup() {
             metadata: {
                 taskCount: ganttData.data.length,
                 linkCount: ganttData.links.length,
-                appVersion: BACKUP_SCHEMA_VERSION
+                appVersion: BACKUP_SCHEMA_VERSION,
             },
             data: {
                 tasks: ganttData.data,
@@ -156,9 +162,9 @@ export async function exportFullBackup() {
                 preferences: {
                     locale: localStorage.getItem('gantt_locale'),
                     viewMode: state.viewMode,
-                    gridWidth: localStorage.getItem('gantt_grid_width')
-                }
-            }
+                    gridWidth: localStorage.getItem('gantt_grid_width'),
+                },
+            },
         };
 
         // JSON 不带缩进，减小体积
@@ -171,7 +177,9 @@ export async function exportFullBackup() {
         const originalSize = new Blob([jsonStr]).size;
         const compressedSize = compressedBlob.size;
         const ratio = Math.round((1 - compressedSize / originalSize) * 100);
-        console.log(`[Backup] Compressed: ${(originalSize / 1024).toFixed(1)}KB → ${(compressedSize / 1024).toFixed(1)}KB (${ratio}% smaller)`);
+        console.log(
+            `[Backup] Compressed: ${(originalSize / 1024).toFixed(1)}KB → ${(compressedSize / 1024).toFixed(1)}KB (${ratio}% smaller)`
+        );
 
         // 下载单个压缩文件
         const url = URL.createObjectURL(compressedBlob);
@@ -182,10 +190,7 @@ export async function exportFullBackup() {
         a.dispatchEvent(new MouseEvent('click'));
         URL.revokeObjectURL(url);
 
-        showToast(
-            `备份导出成功 (${backup.metadata.taskCount} 个任务, 压缩${ratio}%)`,
-            'success'
-        );
+        showToast(`备份导出成功 (${backup.metadata.taskCount} 个任务, 压缩${ratio}%)`, 'success');
     } catch (error) {
         console.error('[Backup] Export failed:', error);
         showToast('备份导出失败: ' + error.message, 'error', 3000);
@@ -279,11 +284,11 @@ export async function importFullBackup(file) {
         // 确认操作（会清除现有数据）
         const confirmed = confirm(
             `即将从备份还原数据 (v${backup.version}):\n` +
-            `- 任务: ${backup.metadata?.taskCount || backup.data.tasks.length} 个\n` +
-            `- 链接: ${backup.metadata?.linkCount || backup.data.links.length} 个\n` +
-            `- 自定义字段: ${backup.data.customFields?.length || 0} 个\n` +
-            `- 导出时间: ${backup.exportTime ? new Date(backup.exportTime).toLocaleString() : '未知'}\n\n` +
-            `警告: 这将覆盖当前所有数据，是否继续？`
+                `- 任务: ${backup.metadata?.taskCount || backup.data.tasks.length} 个\n` +
+                `- 链接: ${backup.metadata?.linkCount || backup.data.links.length} 个\n` +
+                `- 自定义字段: ${backup.data.customFields?.length || 0} 个\n` +
+                `- 导出时间: ${backup.exportTime ? new Date(backup.exportTime).toLocaleString() : '未知'}\n\n` +
+                `警告: 这将覆盖当前所有数据，是否继续？`
         );
 
         if (!confirmed) {
@@ -296,7 +301,7 @@ export async function importFullBackup(file) {
             gantt.clearAll();
             gantt.parse({
                 data: backup.data.tasks || [],
-                links: backup.data.links || []
+                links: backup.data.links || [],
             });
         });
 
@@ -313,8 +318,9 @@ export async function importFullBackup(file) {
 
         // 持久化到存储
         const { saveGanttData } = await import('../../core/storage.js');
-        const { persistCustomFields, persistSystemFieldSettings, persistLocale } = await import('../../core/store.js');
-        
+        const { persistCustomFields, persistSystemFieldSettings, persistLocale } =
+            await import('../../core/store.js');
+
         await saveGanttData(gantt.serialize());
         persistCustomFields();
         persistSystemFieldSettings();
@@ -402,9 +408,9 @@ function generateHierarchy(task, taskMap, hierarchyCache) {
     // 获取同级任务的排序（按照ID或创建顺序）
     const getSiblingIndex = (taskId, parentId) => {
         const siblings = Object.values(taskMap)
-            .filter(t => (t.parent || 0) === parentId)
+            .filter((t) => (t.parent || 0) === parentId)
             .sort((a, b) => a.id - b.id);
-        return siblings.findIndex(t => t.id === taskId) + 1;
+        return siblings.findIndex((t) => t.id === taskId) + 1;
     };
 
     if (!task.parent || task.parent === 0) {
@@ -453,7 +459,7 @@ function getExcelColumnName(fieldName) {
     }
 
     // 查找自定义字段定义获取label
-    const customField = state.customFields.find(f => f.name === fieldName);
+    const customField = state.customFields.find((f) => f.name === fieldName);
     if (customField && customField.label) {
         return customField.label;
     }
@@ -470,14 +476,25 @@ function getAllColumnNameMappings() {
     const mapping = {};
     const allLocales = i18n.getAllLocales();
 
-        // 内置字段（含 end_date、estimated_hours 以支持按工时反推计划时间）
-        const builtinFields = ['text', 'start_date', 'end_date', 'duration', 'estimated_hours', 'progress', 'priority', 'assignee', 'status', 'hierarchy'];
+    // 内置字段（含 end_date、estimated_hours 以支持按工时反推计划时间）
+    const builtinFields = [
+        'text',
+        'start_date',
+        'end_date',
+        'duration',
+        'estimated_hours',
+        'progress',
+        'priority',
+        'assignee',
+        'status',
+        'hierarchy',
+    ];
 
     // 遍历每种语言
-    Object.values(allLocales).forEach(lang => {
+    Object.values(allLocales).forEach((lang) => {
         if (!lang || !lang.columns) return;
 
-        builtinFields.forEach(field => {
+        builtinFields.forEach((field) => {
             if (lang.columns[field]) {
                 mapping[lang.columns[field]] = field;
             }
@@ -485,7 +502,7 @@ function getAllColumnNameMappings() {
     });
 
     // 添加自定义字段（Label）
-    state.customFields.forEach(field => {
+    state.customFields.forEach((field) => {
         if (field.label) {
             mapping[field.label] = field.name;
         }
@@ -497,8 +514,8 @@ function getAllColumnNameMappings() {
 
 /**
  * 获取本地化的枚举值（用于导出）
- * @param {string} fieldName 
- * @param {string} value 
+ * @param {string} fieldName
+ * @param {string} value
  */
 function getLocalizedEnumValue(fieldName, value) {
     if (!value) return '';
@@ -520,30 +537,58 @@ function getLocalizedEnumValue(fieldName, value) {
 const ENUM_REVERSE_MAP = {
     priority: {
         // 中文
-        '高': 'high', '中': 'medium', '低': 'low',
+        高: 'high',
+        中: 'medium',
+        低: 'low',
         // 英文（包括首字母大写和全小写）
-        'High': 'high', 'Medium': 'medium', 'Low': 'low',
-        'HIGH': 'high', 'MEDIUM': 'medium', 'LOW': 'low',
+        High: 'high',
+        Medium: 'medium',
+        Low: 'low',
+        HIGH: 'high',
+        MEDIUM: 'medium',
+        LOW: 'low',
         // 日文（与中文相同的字符）
         // '高': 'high', '中': 'medium', '低': 'low', // 已包含
         // 韩文
-        '높음': 'high', '중간': 'medium', '낮음': 'low',
+        높음: 'high',
+        중간: 'medium',
+        낮음: 'low',
         // 内部值（原样返回）
-        'high': 'high', 'medium': 'medium', 'low': 'low'
+        high: 'high',
+        medium: 'medium',
+        low: 'low',
     },
     status: {
         // 中文
-        '待开始': 'pending', '进行中': 'in_progress', '已完成': 'completed', '已取消': 'suspended',
+        待开始: 'pending',
+        进行中: 'in_progress',
+        已完成: 'completed',
+        已取消: 'suspended',
         // 英文（包括多种大小写形式）
-        'Pending': 'pending', 'In Progress': 'in_progress', 'Completed': 'completed', 'Cancelled': 'suspended',
-        'PENDING': 'pending', 'IN PROGRESS': 'in_progress', 'COMPLETED': 'completed', 'CANCELLED': 'suspended',
+        Pending: 'pending',
+        'In Progress': 'in_progress',
+        Completed: 'completed',
+        Cancelled: 'suspended',
+        PENDING: 'pending',
+        'IN PROGRESS': 'in_progress',
+        COMPLETED: 'completed',
+        CANCELLED: 'suspended',
         // 日文
-        '未着手': 'pending', '進行中': 'in_progress', '完了': 'completed', 'キャンセル': 'suspended',
+        未着手: 'pending',
+        進行中: 'in_progress',
+        完了: 'completed',
+        キャンセル: 'suspended',
         // 韩文
-        '대기중': 'pending', '진행중': 'in_progress', '완료': 'completed', '취소': 'suspended',
+        대기중: 'pending',
+        진행중: 'in_progress',
+        완료: 'completed',
+        취소: 'suspended',
         // 内部值（原样返回）
-        'pending': 'pending', 'in_progress': 'in_progress', 'completed': 'completed', 'suspended': 'suspended'
-    }
+        pending: 'pending',
+        in_progress: 'in_progress',
+        completed: 'completed',
+        suspended: 'suspended',
+    },
 };
 
 /**
@@ -582,9 +627,8 @@ function getInternalEnumValue(fieldName, displayValue) {
 
     // 3. Try case-insensitive match
     const lowerValue = valueStr.toLowerCase();
-    const internalValues = fieldName === 'priority'
-        ? INTERNAL_PRIORITY_VALUES
-        : INTERNAL_STATUS_VALUES;
+    const internalValues =
+        fieldName === 'priority' ? INTERNAL_PRIORITY_VALUES : INTERNAL_STATUS_VALUES;
 
     if (internalValues.includes(lowerValue)) {
         return lowerValue;
@@ -598,7 +642,7 @@ function getInternalEnumValue(fieldName, displayValue) {
     }
 
     // 5. Fallback: try matching default options
-    const field = state.customFields.find(f => f.name === fieldName);
+    const field = state.customFields.find((f) => f.name === fieldName);
     if (field && field.options) {
         const index = field.options.indexOf(valueStr);
         if (index !== -1 && index < internalValues.length) {
@@ -617,20 +661,22 @@ function getAllExportableFields() {
     const exportFields = [];
 
     // 1. Get all available unique field names
-    const allSystemFields = Object.keys(SYSTEM_FIELD_CONFIG).filter(f => !INTERNAL_FIELDS.includes(f));
-    const allCustomFields = state.customFields.map(f => f.name);
+    const allSystemFields = Object.keys(SYSTEM_FIELD_CONFIG).filter(
+        (f) => !INTERNAL_FIELDS.includes(f)
+    );
+    const allCustomFields = state.customFields.map((f) => f.name);
     // Use Set to ensure uniqueness
     const allFields = [...new Set([...allSystemFields, ...allCustomFields])];
 
     // 2. Add fields from current visual order (Enabled fields), respecting user's sort order
-    state.fieldOrder.forEach(f => {
+    state.fieldOrder.forEach((f) => {
         if (allFields.includes(f)) {
             exportFields.push(f);
         }
     });
 
     // 3. Add remaining fields (Disabled/Hidden fields)
-    allFields.forEach(f => {
+    allFields.forEach((f) => {
         if (!state.fieldOrder.includes(f)) {
             exportFields.push(f);
         }
@@ -650,13 +696,13 @@ function buildDropdownOptionsData() {
     const priorityOptions = getSystemFieldOptions('priority');
     if (priorityOptions && priorityOptions.length > 0) {
         dropdownFields['priority'] = {
-            options: priorityOptions.map(k => getLocalizedEnumValue('priority', k) || k),
-            internalValues: priorityOptions
+            options: priorityOptions.map((k) => getLocalizedEnumValue('priority', k) || k),
+            internalValues: priorityOptions,
         };
     } else {
         dropdownFields['priority'] = {
-            options: INTERNAL_PRIORITY_VALUES.map(k => getLocalizedEnumValue('priority', k)),
-            internalValues: INTERNAL_PRIORITY_VALUES
+            options: INTERNAL_PRIORITY_VALUES.map((k) => getLocalizedEnumValue('priority', k)),
+            internalValues: INTERNAL_PRIORITY_VALUES,
         };
     }
 
@@ -664,13 +710,13 @@ function buildDropdownOptionsData() {
     const statusOptions = getSystemFieldOptions('status');
     if (statusOptions && statusOptions.length > 0) {
         dropdownFields['status'] = {
-            options: statusOptions.map(k => getLocalizedEnumValue('status', k) || k),
-            internalValues: statusOptions
+            options: statusOptions.map((k) => getLocalizedEnumValue('status', k) || k),
+            internalValues: statusOptions,
         };
     } else {
         dropdownFields['status'] = {
-            options: INTERNAL_STATUS_VALUES.map(k => getLocalizedEnumValue('status', k)),
-            internalValues: INTERNAL_STATUS_VALUES
+            options: INTERNAL_STATUS_VALUES.map((k) => getLocalizedEnumValue('status', k)),
+            internalValues: INTERNAL_STATUS_VALUES,
         };
     }
 
@@ -678,7 +724,7 @@ function buildDropdownOptionsData() {
     const processedFields = ['priority', 'status'];
 
     // Process system fields with type overrides
-    Object.keys(SYSTEM_FIELD_CONFIG).forEach(fieldName => {
+    Object.keys(SYSTEM_FIELD_CONFIG).forEach((fieldName) => {
         if (processedFields.includes(fieldName)) return;
 
         const fieldType = getFieldType(fieldName);
@@ -688,21 +734,21 @@ function buildDropdownOptionsData() {
         if (options && options.length > 0) {
             dropdownFields[fieldName] = {
                 options: options,
-                internalValues: options
+                internalValues: options,
             };
             processedFields.push(fieldName);
         }
     });
 
     // Process custom fields
-    state.customFields.forEach(field => {
+    state.customFields.forEach((field) => {
         if (processedFields.includes(field.name)) return;
         if (field.type !== 'select' && field.type !== 'multiselect') return;
         if (!field.options || field.options.length === 0) return;
 
         dropdownFields[field.name] = {
             options: field.options,
-            internalValues: field.options
+            internalValues: field.options,
         };
     });
 
@@ -720,7 +766,9 @@ export async function exportToExcel() {
 
         // 构建任务映射和层级缓存
         const taskMap = {};
-        tasks.forEach(task => { taskMap[task.id] = task; });
+        tasks.forEach((task) => {
+            taskMap[task.id] = task;
+        });
         const hierarchyCache = {};
 
         // 按照 fieldOrder 顺序构建表头 - 第一列是层级（固定）
@@ -733,7 +781,7 @@ export async function exportToExcel() {
         // 首先添加 fieldOrder 中的字段（保持用户的列顺序偏好）
         // 然后添加不在 fieldOrder 中但可导出的字段（即所有其他字段）
         // 因为 exportableFields 已经按照这个顺序排序了，我们直接遍历它即可
-        exportableFields.forEach(fieldName => {
+        exportableFields.forEach((fieldName) => {
             if (INTERNAL_FIELDS.includes(fieldName)) return;
             if (fieldMapping.includes(fieldName)) return; // 避免重复（如 hierarchy）
 
@@ -756,11 +804,11 @@ export async function exportToExcel() {
         headerRow.fill = {
             type: 'pattern',
             pattern: 'solid',
-            fgColor: { argb: 'FFE0E0E0' }
+            fgColor: { argb: 'FFE0E0E0' },
         };
 
         // 添加数据行
-        tasks.forEach(task => {
+        tasks.forEach((task) => {
             const row = [];
 
             // 第一列：层级编号
@@ -835,7 +883,7 @@ export async function exportToExcel() {
                         showErrorMessage: true,
                         errorStyle: 'warning',
                         errorTitle: i18n.t('validation.invalidInput') || 'Invalid Input',
-                        error: i18n.t('validation.selectFromList') || 'Please select from the list'
+                        error: i18n.t('validation.selectFromList') || 'Please select from the list',
                     };
                 }
             }
@@ -852,7 +900,9 @@ export async function exportToExcel() {
                         showErrorMessage: true,
                         errorStyle: 'stop',
                         errorTitle: i18n.t('validation.invalidInput') || 'Invalid Input',
-                        error: i18n.t('validation.numberRequired') || 'Please enter a valid number (>=0)'
+                        error:
+                            i18n.t('validation.numberRequired') ||
+                            'Please enter a valid number (>=0)',
                     };
                 }
             }
@@ -869,13 +919,15 @@ export async function exportToExcel() {
                         showErrorMessage: true,
                         errorStyle: 'stop',
                         errorTitle: i18n.t('validation.invalidInput') || 'Invalid Input',
-                        error: i18n.t('validation.progressRange') || 'Progress must be between 0 and 100'
+                        error:
+                            i18n.t('validation.progressRange') ||
+                            'Progress must be between 0 and 100',
                     };
                 }
             }
 
             // 自定义数字字段
-            const customField = state.customFields.find(f => f.name === fieldName);
+            const customField = state.customFields.find((f) => f.name === fieldName);
             if (customField && customField.type === 'number' && !dropdownFields[fieldName]) {
                 for (let rowNum = 2; rowNum <= dataRowCount; rowNum++) {
                     const cell = worksheet.getCell(rowNum, colNumber);
@@ -885,7 +937,7 @@ export async function exportToExcel() {
                         showErrorMessage: true,
                         errorStyle: customField.required ? 'stop' : 'warning',
                         errorTitle: i18n.t('validation.invalidInput') || 'Invalid Input',
-                        error: i18n.t('validation.numberRequired') || 'Please enter a valid number'
+                        error: i18n.t('validation.numberRequired') || 'Please enter a valid number',
                     };
                 }
             }
@@ -893,7 +945,9 @@ export async function exportToExcel() {
 
         // 导出文件（浏览器环境）
         const buffer = await workbook.xlsx.writeBuffer();
-        const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        const blob = new Blob([buffer], {
+            type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -904,7 +958,10 @@ export async function exportToExcel() {
         showToast(i18n.t('message.exportSuccess') || 'Excel导出成功', 'success');
     } catch (error) {
         console.error('Excel导出失败:', error);
-        showToast((i18n.t('message.exportError') || 'Excel导出失败') + ': ' + error.message, 'error');
+        showToast(
+            (i18n.t('message.exportError') || 'Excel导出失败') + ': ' + error.message,
+            'error'
+        );
     }
 }
 
@@ -958,12 +1015,12 @@ export async function importFromExcel(file) {
 
         // 兼容旧版硬编码列名
         if (!hasHierarchy && !hasTaskId) {
-            const idIndex = headers.findIndex(h => h === '任务ID' || h === 'Task ID');
+            const idIndex = headers.findIndex((h) => h === '任务ID' || h === 'Task ID');
             if (idIndex !== -1) fieldIndexMap['id'] = idIndex;
         }
 
         if (fieldIndexMap['text'] === undefined) {
-            const textIndex = headers.findIndex(h => h === '任务名称' || h === 'Task Name');
+            const textIndex = headers.findIndex((h) => h === '任务名称' || h === 'Task Name');
             if (textIndex !== -1) fieldIndexMap['text'] = textIndex;
             else {
                 showToast('无法识别"任务名称"列，请检查Excel表头', 'error');
@@ -988,7 +1045,7 @@ export async function importFromExcel(file) {
                     // ExcelJS 的富文本处理
                     if (value && typeof value === 'object') {
                         if (value.richText) {
-                            value = value.richText.map(rt => rt.text).join('');
+                            value = value.richText.map((rt) => rt.text).join('');
                         } else if (value.text) {
                             value = value.text;
                         } else if (value instanceof Date) {
@@ -1000,11 +1057,12 @@ export async function importFromExcel(file) {
                     rowData[colNumber - 1] = value;
                 });
 
-                if (rowData.every(v => v === null || v === undefined || v === '')) return;
+                if (rowData.every((v) => v === null || v === undefined || v === '')) return;
 
                 // ── 日期解析辅助函数 ──────────────────────────────────────────
                 const parseExcelDate = (dateValue) => {
-                    if (dateValue === null || dateValue === undefined || dateValue === '') return null;
+                    if (dateValue === null || dateValue === undefined || dateValue === '')
+                        return null;
 
                     const parseDateOnlyString = (text) => {
                         const str = String(text).trim();
@@ -1029,7 +1087,10 @@ export async function importFromExcel(file) {
                         const wholeDays = Math.floor(dateValue);
                         const fraction = dateValue - wholeDays;
                         const millisInDay = 24 * 60 * 60 * 1000;
-                        const utcMillis = Date.UTC(1899, 11, 30) + (wholeDays * millisInDay) + Math.round(fraction * millisInDay);
+                        const utcMillis =
+                            Date.UTC(1899, 11, 30) +
+                            wholeDays * millisInDay +
+                            Math.round(fraction * millisInDay);
                         const utcDate = new Date(utcMillis);
                         const parsed = new Date(
                             utcDate.getUTCFullYear(),
@@ -1056,16 +1117,22 @@ export async function importFromExcel(file) {
                 };
 
                 // 解析计划开始时间
-                let startDate = fieldIndexMap['start_date'] !== undefined
-                    ? parseExcelDate(rowData[fieldIndexMap['start_date']]) : null;
+                let startDate =
+                    fieldIndexMap['start_date'] !== undefined
+                        ? parseExcelDate(rowData[fieldIndexMap['start_date']])
+                        : null;
 
                 // 解析计划结束时间（用于无开始时间时反推，或直接保留）
-                let endDate = fieldIndexMap['end_date'] !== undefined
-                    ? parseExcelDate(rowData[fieldIndexMap['end_date']]) : null;
+                const endDate =
+                    fieldIndexMap['end_date'] !== undefined
+                        ? parseExcelDate(rowData[fieldIndexMap['end_date']])
+                        : null;
 
                 // 解析工期（天）
-                let duration = fieldIndexMap['duration'] !== undefined
-                    ? (parseFloat(rowData[fieldIndexMap['duration']]) || 0) : 0;
+                let duration =
+                    fieldIndexMap['duration'] !== undefined
+                        ? parseFloat(rowData[fieldIndexMap['duration']]) || 0
+                        : 0;
 
                 // 解析预计工时（小时）并换算为工期（天，按 8h/天）
                 if (!duration && fieldIndexMap['estimated_hours'] !== undefined) {
@@ -1083,7 +1150,9 @@ export async function importFromExcel(file) {
                         if (computedDuration > 0) duration = computedDuration;
                     } catch (e) {
                         // gantt 未初始化时的兜底：按自然天计算（+1 因为是 inclusive 结束）
-                        const fallback = Math.ceil((exclusiveEnd - startDate) / (1000 * 60 * 60 * 24));
+                        const fallback = Math.ceil(
+                            (exclusiveEnd - startDate) / (1000 * 60 * 60 * 24)
+                        );
                         if (fallback > 0) duration = fallback;
                     }
                 }
@@ -1111,7 +1180,10 @@ export async function importFromExcel(file) {
                     text: rowData[fieldIndexMap['text']] || '新任务',
                     start_date: startDate,
                     duration: duration,
-                    progress: fieldIndexMap['progress'] !== undefined ? ((parseFloat(rowData[fieldIndexMap['progress']]) || 0) / 100) : 0
+                    progress:
+                        fieldIndexMap['progress'] !== undefined
+                            ? (parseFloat(rowData[fieldIndexMap['progress']]) || 0) / 100
+                            : 0,
                 };
 
                 // 若 Excel 提供了结束日期，将其转为 DHTMLX exclusive 边界后显式存入 end_date，
@@ -1149,7 +1221,7 @@ export async function importFromExcel(file) {
                 }
 
                 // 解析所有字段（包括自定义字段和系统字段）
-                state.customFields.forEach(field => {
+                state.customFields.forEach((field) => {
                     if (fieldIndexMap[field.name] !== undefined) {
                         let value = rowData[fieldIndexMap[field.name]];
 
@@ -1167,12 +1239,17 @@ export async function importFromExcel(file) {
                             }
 
                             // For multiselect, value might be comma-separated
-                            const valuesToCheck = field.type === 'multiselect' ? String(value).split(',') : [value];
+                            const valuesToCheck =
+                                field.type === 'multiselect' ? String(value).split(',') : [value];
                             // 检查值是否有效 (Internal values)
-                            const invalidValues = valuesToCheck.filter(v => options.length > 0 && !options.includes(v.trim()));
+                            const invalidValues = valuesToCheck.filter(
+                                (v) => options.length > 0 && !options.includes(v.trim())
+                            );
 
                             if (invalidValues.length > 0) {
-                                console.warn(`Invalid value(s) "${invalidValues.join(',')}" for field "${field.name}", valid options: ${options.join(', ')}`);
+                                console.warn(
+                                    `Invalid value(s) "${invalidValues.join(',')}" for field "${field.name}", valid options: ${options.join(', ')}`
+                                );
                             }
                         }
 
@@ -1214,14 +1291,14 @@ export async function importFromExcel(file) {
             const { updateParentDates } = await import('../gantt/scheduler.js');
             // 找出所有叶子任务（无子任务的任务），从它们开始向上更新
             const leafTasks = [];
-            gantt.eachTask(task => {
+            gantt.eachTask((task) => {
                 if (!gantt.hasChild(task.id)) {
                     leafTasks.push(task.id);
                 }
             });
             // 去重后逐一触发父级时间聚合（updateParentDates 会递归向上）
             const triggeredParents = new Set();
-            leafTasks.forEach(id => {
+            leafTasks.forEach((id) => {
                 const task = gantt.getTask(id);
                 if (task.parent && task.parent !== 0 && !triggeredParents.has(task.parent)) {
                     updateParentDates(id);
@@ -1265,7 +1342,7 @@ export function initConfigIO() {
         // 关闭下拉菜单
         const dropdown = document.querySelector('.dropdown-content.active');
         if (dropdown) dropdown.classList.remove('active');
-        
+
         await exportFullBackup();
     });
 
@@ -1274,7 +1351,7 @@ export function initConfigIO() {
         // 关闭下拉菜单
         const dropdown = document.querySelector('.dropdown-content.active');
         if (dropdown) dropdown.classList.remove('active');
-        
+
         const input = document.createElement('input');
         input.type = 'file';
         input.accept = '.json,.json.gz,.gz';

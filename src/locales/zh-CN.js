@@ -20,7 +20,7 @@ export default {
         viewTable: '表格',
         viewGantt: '甘特',
         criticalPath: '关键路径',
-        lag: '延迟(天)'
+        lag: '延迟(天)',
     },
 
     // 视图
@@ -33,7 +33,7 @@ export default {
         zoomOut: '缩小时间跨度',
         zoomIn: '扩大时间跨度',
         tablePanel: '任务表',
-        ganttPanel: '甘特图'
+        ganttPanel: '甘特图',
     },
 
     // 列名称（表格标题）
@@ -49,22 +49,22 @@ export default {
         assignee: '负责人',
         status: '状态',
         summary: '概述',
-        description: '描述'
+        description: '描述',
     },
 
     // 枚举值 (内部值 → 本地化显示值)
     enums: {
         priority: {
-            'high': '高',
-            'medium': '中',
-            'low': '低'
+            high: '高',
+            medium: '中',
+            low: '低',
         },
         status: {
-            'pending': '待开始',
-            'in_progress': '进行中',
-            'completed': '已完成',
-            'suspended': '已取消'
-        }
+            pending: '待开始',
+            in_progress: '进行中',
+            completed: '已完成',
+            suspended: '已取消',
+        },
     },
 
     // 任务
@@ -74,7 +74,7 @@ export default {
         duration: '工期',
         progress: '进度',
         parent: '父任务',
-        description: '描述'
+        description: '描述',
     },
 
     // Tooltip 提示信息
@@ -87,7 +87,7 @@ export default {
         priority: '优先级',
         status: '状态',
         duration: '工期',
-        days: '天'
+        days: '天',
     },
 
     // 表单
@@ -97,7 +97,7 @@ export default {
         cancel: '取消',
         delete: '删除',
         confirm: '确认',
-        selectPlaceholder: '请选择'
+        selectPlaceholder: '请选择',
     },
 
     // 消息提示
@@ -127,7 +127,7 @@ export default {
         backupImportError: '系统还原失败',
         backupValidationError: '备份文件验证失败',
         backupOldFormat: '检测到旧格式配置文件，仅恢复字段设置',
-        backupCancelled: '还原已取消'
+        backupCancelled: '还原已取消',
     },
 
     // 快捷键面板
@@ -151,7 +151,7 @@ export default {
         completed: '已完成',
         incomplete: '未完成',
         dependency: '依赖关系',
-        close: '关闭'
+        close: '关闭',
     },
 
     // 批量编辑
@@ -162,7 +162,7 @@ export default {
         selectField: '选择要修改的字段',
         fieldValue: '字段值',
         apply: '应用修改',
-        clear: '清除选择'
+        clear: '清除选择',
     },
 
     // 字段管理
@@ -217,7 +217,7 @@ export default {
         filterEnabled: '已启用',
         filterDisabled: '已禁用',
         fieldCount: '{{count}} 个字段',
-        editField: '编辑'
+        editField: '编辑',
     },
 
     // Field types
@@ -227,14 +227,14 @@ export default {
         date: '日期',
         datetime: '日期时间',
         select: '单选',
-        multiselect: '多选'
+        multiselect: '多选',
     },
 
     // Lightbox
     lightbox: {
         customFields: '自定义字段',
         manageFields: '管理字段',
-        pleaseSelect: '请选择'
+        pleaseSelect: '请选择',
     },
 
     // 验证
@@ -244,7 +244,7 @@ export default {
         invalidInput: '无效输入',
         selectFromList: '请从列表中选择有效的选项',
         numberRequired: '请输入有效的数字',
-        progressRange: '进度必须在0到100之间'
+        progressRange: '进度必须在0到100之间',
     },
 
     // F-112: 任务详情面板
@@ -307,7 +307,7 @@ export default {
         deleteSubtaskTitle: '删除子任务',
         deleteSubtaskConfirm: '确定要删除此子任务吗？此操作无法撤销。',
         subtaskDeleted: '子任务已删除',
-        openSubtask: '打开详情'
+        openSubtask: '打开详情',
     },
 
     // 富文本编辑器
@@ -317,7 +317,7 @@ export default {
         heading: '标题',
         list: '列表',
         quote: '引用',
-        code: '代码'
+        code: '代码',
     },
 
     // 新建任务模态框
@@ -329,28 +329,27 @@ export default {
         assigneePlaceholder: '请选择负责人',
         cancel: '取消',
         create: '创建',
-        nameRequired: '任务名称不能为空'
+        nameRequired: '任务名称不能为空',
     },
 
     // 摘要字段
     summary: {
         viewFull: '查看完整摘要',
-        empty: '无摘要'
+        empty: '无摘要',
     },
-
 
     // Duration format (v1.5)
     duration: {
         format: {
             full: '{days} 天 {hours} 小时',
             daysOnly: '{days} 天',
-            hoursOnly: '{hours} 小时'
-        }
+            hoursOnly: '{hours} 小时',
+        },
     },
 
     // Excel
     excel: {
-        sheetName: '任务列表'
+        sheetName: '任务列表',
     },
 
     // DHTMLX Gantt 标签
@@ -375,15 +374,15 @@ export default {
             link_to: '到',
             type_task: '任务',
             type_project: '项目',
-            type_milestone: '里程碑'
-        }
+            type_milestone: '里程碑',
+        },
     },
 
     // AI 智能助手 (v2.0 增强)
     ai: {
         // 悬浮按钮
         floatingBtn: {
-            label: '打开AI助手'
+            label: '打开AI助手',
         },
         // 配置弹窗 (F-101, F-102, F-103)
         config: {
@@ -418,7 +417,8 @@ export default {
             skillProgressAnalysisName: 'Progress Analysis',
             skillProgressAnalysisDesc: '基于任务数据生成进度报告或瓶颈提示',
             compatibilityNotSupportedTitle: '⚠️ 不支持函数调用',
-            compatibilityNotSupportedMessage: '该 API/模型不支持函数调用，AI 将无法获取实时任务数据',
+            compatibilityNotSupportedMessage:
+                '该 API/模型不支持函数调用，AI 将无法获取实时任务数据',
             compatibilityUnknownTitle: 'ℹ️ 函数调用支持未知',
             compatibilityUnknownMessage: '无法确定是否支持函数调用，保存后如遇错误请切换其他模型',
             savedWithCompatibilityWarning: '配置已保存 - ⚠️ 该配置不支持函数调用',
@@ -430,8 +430,9 @@ export default {
             connectionSuccessNoToolCall: '✓ 连接成功，但不支持函数调用',
             connectionSuccessWithToolCall: '✓ 连接成功，支持函数调用',
             connectionSuccessUnknownToolCall: '✓ 连接成功，函数调用支持未知',
-            connection404Details: '连接失败 (404): 端点路径错误\n\nbaseURL: {{baseUrl}}\nmodel: {{model}}\n\n可能原因：\n1. baseURL 路径不正确（需要确认是否包含 /v1）\n2. 模型名称触发了错误的端点选择\n3. API 不支持该端点',
-            connectionFailed: '连接失败，请检查配置'
+            connection404Details:
+                '连接失败 (404): 端点路径错误\n\nbaseURL: {{baseUrl}}\nmodel: {{model}}\n\n可能原因：\n1. baseURL 路径不正确（需要确认是否包含 /v1）\n2. 模型名称触发了错误的端点选择\n3. API 不支持该端点',
+            connectionFailed: '连接失败，请检查配置',
         },
         // 抽屉 (F-105, F-106)
         drawer: {
@@ -465,7 +466,7 @@ export default {
             attach: '附件',
             callingTool: '调用 {{name}}',
             taskNotFound: '未找到对应任务，可能已被删除或层级编号已变化',
-            taskPanelUnavailable: '任务详情面板不可用'
+            taskPanelUnavailable: '任务详情面板不可用',
         },
         // 快捷建议
         suggestions: {
@@ -474,7 +475,7 @@ export default {
             progressOverview: '获取进度概览',
             todayTasksPrompt: '今天有什么任务？',
             overdueTasksPrompt: '哪些任务逾期了？',
-            progressOverviewPrompt: '项目整体进度如何？'
+            progressOverviewPrompt: '项目整体进度如何？',
         },
         // 智能体
         agents: {
@@ -482,7 +483,7 @@ export default {
             chat: 'AI 对话',
             bugReport: 'Bug报告',
             taskBreakdown: '任务分解',
-            timeEstimate: '工时估算'
+            timeEstimate: '工时估算',
         },
         // 结果展示 (F-107)
         result: {
@@ -494,13 +495,13 @@ export default {
             applied: '已应用',
             originalTask: '原始任务',
             subtasks: '拆分后子任务',
-            createSubtasks: '创建子任务'
+            createSubtasks: '创建子任务',
         },
         // 提示词编辑 (F-109)
         prompt: {
             additionalInstruction: '附加指令 (可选)',
             placeholder: '输入额外的指令或要求...',
-            hint: '例如："请用更正式的语气" 或 "添加验收标准"'
+            hint: '例如："请用更正式的语气" 或 "添加验收标准"',
         },
         // 错误信息 (F-104 增强)
         error: {
@@ -531,8 +532,8 @@ export default {
             unknown: '未知错误',
             unknownMsg: '发生未知错误',
             viewDetails: '查看详情',
-            originalError: '原始错误信息'
-        }
+            originalError: '原始错误信息',
+        },
     },
     baseline: {
         save: '保存基线',
@@ -540,14 +541,14 @@ export default {
         saveConfirm: '确定保存当前项目状态为基线？之前的基线将被覆盖',
         saved: '基线已保存',
         delayed: '延迟',
-        ahead: '提前'
+        ahead: '提前',
     },
     resource: {
         overload: '资源超载',
         on: '在',
         workload: '工作量',
         hours: '小时',
-        overloadAmount: '超载'
+        overloadAmount: '超载',
     },
     export: {
         title: '导出',
@@ -565,12 +566,12 @@ export default {
         apiNotAvailable: '导出服务不可用，请检查网络连接',
         success: '导出成功',
         error: '导出失败',
-        fail: '导出失败'
+        fail: '导出失败',
     },
     snapping: {
         today: '今天',
         startOf: '开始于',
-        endOf: '结束于'
+        endOf: '结束于',
     },
     calendar: {
         title: '工作日历',
@@ -586,7 +587,7 @@ export default {
             GB: '英国',
             DE: '德国',
             FR: '法国',
-            SG: '新加坡'
+            SG: '新加坡',
         },
         weekdays: { 0: '日', 1: '一', 2: '二', 3: '三', 4: '四', 5: '五', 6: '六' },
         hoursPerDay: '每日工作小时数',
@@ -630,7 +631,7 @@ export default {
         endDate: '结束日期',
         noLeaveThatDay: '当天暂无请假记录',
         noSpecialDays: '暂无特殊工作日配置',
-        noLeaves: '点击「添加请假」记录缺勤'
+        noLeaves: '点击「添加请假」记录缺勤',
     },
 
     // 项目管理
@@ -650,7 +651,7 @@ export default {
         createdAt: '创建时间',
         deleted: '项目已删除',
         deleteTitle: '删除项目',
-        deleteConfirm: '确认删除项目"{name}"？该项目包含 {count} 个任务，删除后无法恢复。'
+        deleteConfirm: '确认删除项目"{name}"？该项目包含 {count} 个任务，删除后无法恢复。',
     },
 
     // 分享
@@ -679,7 +680,47 @@ export default {
         importReplaceHint: '替换当前项目的所有数据，无法撤销',
         confirmImport: '确认导入',
         importSuccess: '导入成功：{{count}} 个任务',
-        importedProject: '导入的项目'
+        importedProject: '导入的项目',
+    },
+
+    // 问题反馈
+    feedback: {
+        title: '问题反馈',
+        subtitle: '描述问题，附上截图或视频，需要时可录制复现轨迹。',
+        type: '类型',
+        typeBug: 'Bug',
+        typeSuggestion: '建议',
+        typeQuestion: '疑问',
+        contact: '联系方式（可选）',
+        contactPlaceholder: '邮箱/微信/手机号',
+        issueTitle: '一句话概括',
+        titlePlaceholder: '例如：切换项目后甘特图没有刷新',
+        description: '问题描述 / 复现步骤',
+        descriptionPlaceholder: '发生了什么？你期望看到什么？如果可以，请写下复现步骤。',
+        addAttachment: '添加截图/视频',
+        startRecording: '录制复现',
+        stopRecording: '停止录制',
+        startReplayRecording: '录制复现',
+        replayIdleStatus: '未录制复现',
+        replayRecordingStatus: '复现录制中',
+        replayReadyStatus: '已记录 {{count}} 条事件',
+        replayRecordingTitle: '正在录制复现',
+        replayRecordingHint: '现在可以继续操作系统，完成复现后点击结束，系统会回到反馈弹窗。',
+        finishReplayRecording: '结束并填写反馈',
+        previewReplay: '预览复现',
+        previewTitle: '预览复现记录',
+        previewSubtitle: '共 {{count}} 条事件，可用于检查录制效果。',
+        previewHint: '预览内容仅用于本地确认，提交时会上传 rrweb JSON。',
+        attachmentHint: '单个附件不超过 4MB，可直接粘贴截图。',
+        contextHint:
+            '会自动附带页面地址、浏览器、当前项目摘要和最近控制台日志；手动录制后会附带 rrweb 复现事件。',
+        submit: '提交反馈',
+        submitting: '提交中...',
+        submitSuccess: '反馈已提交',
+        submitFailed: '提交失败，请稍后重试',
+        attachmentTooLarge: '附件过大，请压缩后再上传',
+        attachmentFailed: '附件读取失败',
+        recordingFailed: '录制未开始',
     },
 
     // 通用
@@ -697,6 +738,6 @@ export default {
         success: '操作成功',
         error: '操作失败',
         warning: '警告',
-        optional: '可选'
-    }
+        optional: '可选',
+    },
 };

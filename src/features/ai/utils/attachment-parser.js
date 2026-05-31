@@ -8,7 +8,7 @@ const LIMITS = {
     maxRowsPerSheet: 20,
     maxColumnsPerRow: 8,
     maxCellChars: 120,
-    maxPromptChars: 6000
+    maxPromptChars: 6000,
 };
 
 function getFileExtension(fileName = '') {
@@ -57,7 +57,7 @@ function parseSheetPreview(sheet) {
         columnCount,
         sampledRows: rows.length,
         sampledColumns,
-        rows
+        rows,
     };
 }
 
@@ -83,7 +83,9 @@ function buildPromptBlock(fileName, sheets) {
 
     sheets.forEach((sheet) => {
         lines.push(`Sheet: ${sheet.name}`);
-        lines.push(`Rows sampled: ${sheet.sampledRows}/${sheet.rowCount}, Cols sampled: ${sheet.sampledColumns}/${sheet.columnCount || sheet.sampledColumns}`);
+        lines.push(
+            `Rows sampled: ${sheet.sampledRows}/${sheet.rowCount}, Cols sampled: ${sheet.sampledColumns}/${sheet.columnCount || sheet.sampledColumns}`
+        );
 
         sheet.rows.forEach((row, index) => {
             const serialized = row.map((cell) => cell || '<empty>').join(' | ');
@@ -111,8 +113,8 @@ function buildAttachmentContext(file, sheets) {
         promptBlock,
         workbook: {
             sheetCount: sheets.length,
-            sheets
-        }
+            sheets,
+        },
     };
 }
 
@@ -121,15 +123,13 @@ async function parseExcelFile(file) {
     const buffer = await file.arrayBuffer();
     await workbook.xlsx.load(buffer);
 
-    const sheets = (workbook.worksheets || [])
-        .slice(0, LIMITS.maxSheets)
-        .map(parseSheetPreview);
+    const sheets = (workbook.worksheets || []).slice(0, LIMITS.maxSheets).map(parseSheetPreview);
 
     const attachmentContext = buildAttachmentContext(file, sheets);
     return {
         ok: true,
         attachmentContext,
-        userMessage: attachmentContext.summary
+        userMessage: attachmentContext.summary,
     };
 }
 
@@ -140,28 +140,29 @@ export async function parseAiAttachmentFile(file) {
     if (!file || !fileName || !extension) {
         return {
             ok: false,
-            warning: 'Please choose a valid file.'
+            warning: 'Please choose a valid file.',
         };
     }
 
     if (!SUPPORTED_EXTENSIONS.has(extension)) {
         return {
             ok: false,
-            warning: `Unsupported file type .${extension}. Please use .xlsx, .xls, or .docx.`
+            warning: `Unsupported file type .${extension}. Please use .xlsx, .xls, or .docx.`,
         };
     }
 
     if (extension === 'docx') {
         return {
             ok: false,
-            warning: 'DOCX upload is recognized, but parsing is not supported yet. Please upload an Excel file for now.'
+            warning:
+                'DOCX upload is recognized, but parsing is not supported yet. Please upload an Excel file for now.',
         };
     }
 
     if (!EXCEL_EXTENSIONS.has(extension)) {
         return {
             ok: false,
-            warning: `Unsupported file type .${extension}.`
+            warning: `Unsupported file type .${extension}.`,
         };
     }
 
@@ -171,7 +172,7 @@ export async function parseAiAttachmentFile(file) {
         return {
             ok: false,
             warning: `Could not parse ${fileName}. Please check the file format and try again.`,
-            error
+            error,
         };
     }
 }
@@ -180,5 +181,5 @@ export const __test__ = {
     getFileExtension,
     parseSheetPreview,
     buildPromptBlock,
-    LIMITS
+    LIMITS,
 };

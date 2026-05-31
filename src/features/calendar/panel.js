@@ -68,10 +68,14 @@ export function openCalendarPanel() {
     renderTab3(document.getElementById('tab-leaves'));
 
     // Tab 切换
-    overlayEl.querySelectorAll('.calendar-panel__tab').forEach(tab => {
+    overlayEl.querySelectorAll('.calendar-panel__tab').forEach((tab) => {
         tab.addEventListener('click', () => {
-            overlayEl.querySelectorAll('.calendar-panel__tab').forEach(t => t.classList.remove('active'));
-            overlayEl.querySelectorAll('.calendar-panel__tab-content').forEach(c => c.classList.remove('active'));
+            overlayEl
+                .querySelectorAll('.calendar-panel__tab')
+                .forEach((t) => t.classList.remove('active'));
+            overlayEl
+                .querySelectorAll('.calendar-panel__tab-content')
+                .forEach((c) => c.classList.remove('active'));
             tab.classList.add('active');
             const target = tab.dataset.tab;
             document.getElementById(`tab-${target}`)?.classList.add('active');
@@ -85,7 +89,9 @@ export function openCalendarPanel() {
     };
     document.getElementById('calendar-panel-close').addEventListener('click', closePanel);
     document.getElementById('calendar-panel-cancel').addEventListener('click', closePanel);
-    overlayEl.addEventListener('click', e => { if (e.target === overlayEl) closePanel(); });
+    overlayEl.addEventListener('click', (e) => {
+        if (e.target === overlayEl) closePanel();
+    });
     document.getElementById('calendar-panel-save').addEventListener('click', async () => {
         await saveAllSettings();
         closePanel();

@@ -1,14 +1,16 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { buildHierarchyMap, attachHierarchyIds } from '../../../../src/features/ai/utils/hierarchy-id.js';
-import { generateToolSummary, getToolDisplayNameExtended } from '../../../../src/features/ai/tools/hierarchy.js';
+import {
+    buildHierarchyMap,
+    attachHierarchyIds,
+} from '../../../../src/features/ai/utils/hierarchy-id.js';
+import {
+    generateToolSummary,
+    getToolDisplayNameExtended,
+} from '../../../../src/features/ai/tools/hierarchy.js';
 
 describe('hierarchy-id utility', () => {
     it('builds hierarchy map from flat root tasks', () => {
-        const tasks = [
-            { id: 1 },
-            { id: 2 },
-            { id: 3 }
-        ];
+        const tasks = [{ id: 1 }, { id: 2 }, { id: 3 }];
 
         const eachTask = (fn) => tasks.forEach(fn);
         const getParent = () => null; // all root tasks
@@ -25,9 +27,9 @@ describe('hierarchy-id utility', () => {
         const tasks = [
             { id: 1 },
             { id: 2 },
-            { id: 3 },  // child of 1
-            { id: 4 },  // child of 1
-            { id: 5 }   // child of 2
+            { id: 3 }, // child of 1
+            { id: 4 }, // child of 1
+            { id: 5 }, // child of 2
         ];
 
         const parentMap = { 3: 1, 4: 1, 5: 2 };
@@ -51,9 +53,9 @@ describe('hierarchy.js tool helpers', () => {
             const result = {
                 tasks: [
                     { id: 1, text: 'Task A' },
-                    { id: 2, text: 'Task B' }
+                    { id: 2, text: 'Task B' },
                 ],
-                count: 2
+                count: 2,
             };
             const summary = generateToolSummary('get_today_tasks', result);
             expect(summary).toContain('2');
@@ -63,7 +65,7 @@ describe('hierarchy.js tool helpers', () => {
             const result = {
                 total_tasks: 10,
                 completed: 5,
-                average_progress: 60
+                average_progress: 60,
             };
             const summary = generateToolSummary('get_progress_summary', result);
             expect(summary).toContain('10');
@@ -90,7 +92,7 @@ describe('hierarchy.js tool helpers', () => {
                 'get_overdue_tasks',
                 'get_tasks_by_status',
                 'get_tasks_by_priority',
-                'get_progress_summary'
+                'get_progress_summary',
             ];
 
             for (const tool of knownTools) {

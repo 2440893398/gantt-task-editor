@@ -8,7 +8,7 @@ function normalizeText(value) {
 
 export const STATUS_ROLLUP_MODE = {
     PROGRESS_FIRST: 'progress_first',
-    SUSPENDED_FIRST: 'suspended_first'
+    SUSPENDED_FIRST: 'suspended_first',
 };
 
 export function getStatusRollupMode() {
@@ -25,14 +25,14 @@ export function rollupStatus(statuses = [], mode = getStatusRollupMode()) {
     const normalized = statuses.map(normalizeText).filter(Boolean);
     if (normalized.length === 0) return null;
 
-    if (normalized.every(s => s === 'completed')) return 'completed';
+    if (normalized.every((s) => s === 'completed')) return 'completed';
 
     if (mode === STATUS_ROLLUP_MODE.SUSPENDED_FIRST) {
-        if (normalized.some(s => s === 'suspended')) return 'suspended';
-        if (normalized.some(s => s === 'in_progress')) return 'in_progress';
+        if (normalized.some((s) => s === 'suspended')) return 'suspended';
+        if (normalized.some((s) => s === 'in_progress')) return 'in_progress';
     } else {
-        if (normalized.some(s => s === 'in_progress')) return 'in_progress';
-        if (normalized.some(s => s === 'suspended')) return 'suspended';
+        if (normalized.some((s) => s === 'in_progress')) return 'in_progress';
+        if (normalized.some((s) => s === 'suspended')) return 'suspended';
     }
 
     return 'pending';

@@ -1,4 +1,3 @@
-
 import { test, expect } from '@playwright/test';
 
 test.use({ locale: 'zh-CN' });
@@ -27,7 +26,9 @@ test.describe('Internationalization (I18n)', () => {
         await expect(batchEditBtn).toHaveAttribute('title', '批量编辑');
 
         // Check New Task button text
-        await expect(page.locator('#new-task-btn span[data-i18n="toolbar.newTask"]')).toContainText('新建任务');
+        await expect(page.locator('#new-task-btn span[data-i18n="toolbar.newTask"]')).toContainText(
+            '新建任务'
+        );
     });
 
     test('TC-I18N-002: Switch to English', async ({ page }) => {
@@ -49,7 +50,9 @@ test.describe('Internationalization (I18n)', () => {
         await page.waitForTimeout(500);
         const selectedOption = page.locator('#view-selector option:checked');
         await expect(selectedOption).toHaveText(/Week|Week View/i);
-        await expect(page.locator('#new-task-btn span[data-i18n="toolbar.newTask"]')).toContainText('New Task');
+        await expect(page.locator('#new-task-btn span[data-i18n="toolbar.newTask"]')).toContainText(
+            'New Task'
+        );
         await expect(page.locator('#batch-edit-btn')).toHaveAttribute('title', 'Batch Edit');
     });
 
@@ -61,7 +64,10 @@ test.describe('Internationalization (I18n)', () => {
         // Verify UI - 等待语言切换完成
         await page.waitForTimeout(500);
         // Japanese for Batch Edit: "一括編集"
-        await expect(page.locator('#batch-edit-btn')).toHaveAttribute('title', /一括編集|バッチ編集/);
+        await expect(page.locator('#batch-edit-btn')).toHaveAttribute(
+            'title',
+            /一括編集|バッチ編集/
+        );
     });
 
     test('TC-I18N-004: Switch to Korean', async ({ page }) => {

@@ -76,12 +76,12 @@ export function addOptionInput(value = '') {
 function initOptionsSortable() {
     const optionsList = document.getElementById('options-list');
     if (!optionsList) return;
-    
+
     // 销毁旧实例
     if (optionsList.sortableInstance) {
         optionsList.sortableInstance.destroy();
     }
-    
+
     // 创建新实例
     if (typeof Sortable !== 'undefined') {
         optionsList.sortableInstance = new Sortable(optionsList, {
@@ -89,9 +89,9 @@ function initOptionsSortable() {
             handle: '.option-drag-handle',
             ghostClass: 'opacity-40 bg-base-200',
             dragClass: 'opacity-100 shadow-lg',
-            onEnd: function() {
+            onEnd: function () {
                 notifyOptionsChange();
-            }
+            },
         });
     }
 }
@@ -218,9 +218,10 @@ export function showSummaryPopover(cell, html, options = {}) {
         }
     } catch (error) {
         summaryPreviewInstance = null;
-        const fallbackHtml = previewPayload.type === 'html'
-            ? previewPayload.html
-            : `<p>${escapeHtml(JSON.stringify(previewPayload.delta || {}))}</p>`;
+        const fallbackHtml =
+            previewPayload.type === 'html'
+                ? previewPayload.html
+                : `<p>${escapeHtml(JSON.stringify(previewPayload.delta || {}))}</p>`;
         previewHost.innerHTML = `<div class="ql-container ql-snow"><div class="ql-editor" contenteditable="false">${fallbackHtml}</div></div>`;
         console.warn('[Tooltip] Rich preview init failed, fallback to static HTML.', error);
     }
@@ -364,7 +365,13 @@ function sanitizeRichTextHtml(html) {
         const el = walker.currentNode;
         const tag = el.tagName;
 
-        if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'IFRAME' || tag === 'OBJECT' || tag === 'EMBED') {
+        if (
+            tag === 'SCRIPT' ||
+            tag === 'STYLE' ||
+            tag === 'IFRAME' ||
+            tag === 'OBJECT' ||
+            tag === 'EMBED'
+        ) {
             toRemove.push(el);
             continue;
         }

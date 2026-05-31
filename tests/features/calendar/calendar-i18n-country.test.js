@@ -37,16 +37,17 @@ describe('calendar i18n and locale-country behavior', () => {
         vi.doMock('../../../src/utils/i18n.js', () => ({
             i18n: {
                 getLanguage: () => 'en-US',
-                t: (key) => ({
-                    'calendar.countryOptions.CN': 'China',
-                    'calendar.countryOptions.US': 'United States',
-                    'calendar.countryOptions.JP': 'Japan',
-                    'calendar.countryOptions.KR': 'Korea',
-                    'calendar.countryOptions.GB': 'United Kingdom',
-                    'calendar.countryOptions.DE': 'Germany',
-                    'calendar.countryOptions.FR': 'France',
-                    'calendar.countryOptions.SG': 'Singapore',
-                }[key] || key),
+                t: (key) =>
+                    ({
+                        'calendar.countryOptions.CN': 'China',
+                        'calendar.countryOptions.US': 'United States',
+                        'calendar.countryOptions.JP': 'Japan',
+                        'calendar.countryOptions.KR': 'Korea',
+                        'calendar.countryOptions.GB': 'United Kingdom',
+                        'calendar.countryOptions.DE': 'Germany',
+                        'calendar.countryOptions.FR': 'France',
+                        'calendar.countryOptions.SG': 'Singapore',
+                    })[key] || key,
             },
         }));
 
@@ -65,15 +66,16 @@ describe('calendar i18n and locale-country behavior', () => {
         vi.doMock('../../../src/utils/i18n.js', () => ({
             i18n: {
                 getLanguage: () => 'en-US',
-                t: (key) => ({
-                    'calendar.configuredCount': 'Configured {{count}} items',
-                    'calendar.add': '+ Add',
-                    'calendar.col.date': 'Date',
-                    'calendar.col.type': 'Type',
-                    'calendar.col.note': 'Note',
-                    'calendar.col.action': 'Action',
-                    'calendar.noSpecialDays': 'No special workday config',
-                }[key] || key),
+                t: (key) =>
+                    ({
+                        'calendar.configuredCount': 'Configured {{count}} items',
+                        'calendar.add': '+ Add',
+                        'calendar.col.date': 'Date',
+                        'calendar.col.type': 'Type',
+                        'calendar.col.note': 'Note',
+                        'calendar.col.action': 'Action',
+                        'calendar.noSpecialDays': 'No special workday config',
+                    })[key] || key,
             },
         }));
 
@@ -89,7 +91,12 @@ describe('calendar i18n and locale-country behavior', () => {
 
     it('tab2 calendar only uses holidays for selected country', async () => {
         const thisYear = new Date().getFullYear();
-        await db.calendar_settings.add({ countryCode: 'US', workdaysOfWeek: [1, 2, 3, 4, 5], hoursPerDay: 8, locale: 'en-US' });
+        await db.calendar_settings.add({
+            countryCode: 'US',
+            workdaysOfWeek: [1, 2, 3, 4, 5],
+            hoursPerDay: 8,
+            locale: 'en-US',
+        });
         await db.calendar_holidays.add({
             date: `${thisYear}-02-10`,
             name: '春节',
@@ -106,21 +113,22 @@ describe('calendar i18n and locale-country behavior', () => {
         vi.doMock('../../../src/utils/i18n.js', () => ({
             i18n: {
                 getLanguage: () => 'en-US',
-                t: (key) => ({
-                    'calendar.calendarView': 'Calendar View',
-                    'calendar.listView': 'List View',
-                    'calendar.publicHoliday': 'Public Holiday',
-                    'calendar.makeupDay': 'Makeup Day',
-                    'calendar.customOvertime': 'Custom Overtime',
-                    'calendar.companyHoliday': 'Company Holiday',
-                    'calendar.configuredCount': 'Configured {{count}} items',
-                    'calendar.add': '+ Add',
-                    'calendar.col.date': 'Date',
-                    'calendar.col.type': 'Type',
-                    'calendar.col.note': 'Note',
-                    'calendar.col.action': 'Action',
-                    'calendar.noSpecialDays': 'No special workday config',
-                }[key] || key),
+                t: (key) =>
+                    ({
+                        'calendar.calendarView': 'Calendar View',
+                        'calendar.listView': 'List View',
+                        'calendar.publicHoliday': 'Public Holiday',
+                        'calendar.makeupDay': 'Makeup Day',
+                        'calendar.customOvertime': 'Custom Overtime',
+                        'calendar.companyHoliday': 'Company Holiday',
+                        'calendar.configuredCount': 'Configured {{count}} items',
+                        'calendar.add': '+ Add',
+                        'calendar.col.date': 'Date',
+                        'calendar.col.type': 'Type',
+                        'calendar.col.note': 'Note',
+                        'calendar.col.action': 'Action',
+                        'calendar.noSpecialDays': 'No special workday config',
+                    })[key] || key,
             },
         }));
 
@@ -139,7 +147,8 @@ describe('calendar i18n and locale-country behavior', () => {
             },
         }));
 
-        const { renderMiniCalendar } = await import('../../../src/features/calendar/mini-calendar.js');
+        const { renderMiniCalendar } =
+            await import('../../../src/features/calendar/mini-calendar.js');
         const container = createContainer();
 
         renderMiniCalendar({
@@ -158,10 +167,11 @@ describe('calendar i18n and locale-country behavior', () => {
         vi.doMock('../../../src/utils/i18n.js', () => ({
             i18n: {
                 getLanguage: () => 'en-US',
-                t: (key) => ({
-                    'calendar.noLeaves': 'Click Add Leave to record absence',
-                    'calendar.addLeaveRecord': 'Add Leave Record',
-                }[key] || key),
+                t: (key) =>
+                    ({
+                        'calendar.noLeaves': 'Click Add Leave to record absence',
+                        'calendar.addLeaveRecord': 'Add Leave Record',
+                    })[key] || key,
             },
         }));
 

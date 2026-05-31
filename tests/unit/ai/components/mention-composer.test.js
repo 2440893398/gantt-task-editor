@@ -2,23 +2,51 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import {
     createMentionComposer,
     filterTasksForMention,
-    buildReferencedTasksPayload
+    buildReferencedTasksPayload,
 } from '../../../../src/features/ai/components/mention-composer.js';
 
 describe('mention-composer', () => {
     const sampleTasks = [
-        { id: 1, text: '设计登录页面', hierarchy_id: '#1', status: 'in_progress', priority: 'high', progress: 60 },
-        { id: 2, text: '实现用户认证', hierarchy_id: '#2', status: 'pending', priority: 'medium', progress: 0 },
-        { id: 3, text: '编写API文档', hierarchy_id: '#1.1', status: 'completed', priority: 'low', progress: 100 },
-        { id: 4, text: '数据库设计', hierarchy_id: '#1.2', status: 'in_progress', priority: 'high', progress: 30 }
+        {
+            id: 1,
+            text: '设计登录页面',
+            hierarchy_id: '#1',
+            status: 'in_progress',
+            priority: 'high',
+            progress: 60,
+        },
+        {
+            id: 2,
+            text: '实现用户认证',
+            hierarchy_id: '#2',
+            status: 'pending',
+            priority: 'medium',
+            progress: 0,
+        },
+        {
+            id: 3,
+            text: '编写API文档',
+            hierarchy_id: '#1.1',
+            status: 'completed',
+            priority: 'low',
+            progress: 100,
+        },
+        {
+            id: 4,
+            text: '数据库设计',
+            hierarchy_id: '#1.2',
+            status: 'in_progress',
+            priority: 'high',
+            progress: 30,
+        },
     ];
 
     describe('filterTasksForMention', () => {
         it('matches tasks by name substring', () => {
             const results = filterTasksForMention(sampleTasks, '设计');
             expect(results).toHaveLength(2);
-            expect(results.map(t => t.id)).toContain(1);
-            expect(results.map(t => t.id)).toContain(4);
+            expect(results.map((t) => t.id)).toContain(1);
+            expect(results.map((t) => t.id)).toContain(4);
         });
 
         it('matches tasks by hierarchy id', () => {
@@ -39,7 +67,14 @@ describe('mention-composer', () => {
 
         it('matches regardless of whitespace differences in query and task name', () => {
             const tasks = [
-                { id: 10, text: '4A映射规则', hierarchy_id: '#3', status: 'pending', priority: 'medium', progress: 0 }
+                {
+                    id: 10,
+                    text: '4A映射规则',
+                    hierarchy_id: '#3',
+                    status: 'pending',
+                    priority: 'medium',
+                    progress: 0,
+                },
             ];
 
             const results = filterTasksForMention(tasks, '4A 映射 规则');
@@ -54,7 +89,7 @@ describe('mention-composer', () => {
             const payload = buildReferencedTasksPayload(selected);
             expect(payload).toEqual([
                 { id: 1, hierarchy_id: '#1', text: '设计登录页面' },
-                { id: 3, hierarchy_id: '#1.1', text: '编写API文档' }
+                { id: 3, hierarchy_id: '#1.1', text: '编写API文档' },
             ]);
         });
 
@@ -75,7 +110,7 @@ describe('mention-composer', () => {
         it('returns an object with init, destroy, getSelectedTasks methods', () => {
             const composer = createMentionComposer({
                 containerEl: container,
-                getTaskList: () => sampleTasks
+                getTaskList: () => sampleTasks,
             });
 
             expect(typeof composer.init).toBe('function');
@@ -86,7 +121,7 @@ describe('mention-composer', () => {
         it('shows popup when @ is typed', () => {
             const composer = createMentionComposer({
                 containerEl: container,
-                getTaskList: () => sampleTasks
+                getTaskList: () => sampleTasks,
             });
             composer.init();
 
@@ -101,7 +136,7 @@ describe('mention-composer', () => {
         it('hides popup when query is cleared', () => {
             const composer = createMentionComposer({
                 containerEl: container,
-                getTaskList: () => sampleTasks
+                getTaskList: () => sampleTasks,
             });
             composer.init();
 
@@ -115,7 +150,7 @@ describe('mention-composer', () => {
         it('adds selected task to mention chips', () => {
             const composer = createMentionComposer({
                 containerEl: container,
-                getTaskList: () => sampleTasks
+                getTaskList: () => sampleTasks,
             });
             composer.init();
 
@@ -133,7 +168,7 @@ describe('mention-composer', () => {
             const composer = createMentionComposer({
                 containerEl: container,
                 inputEl,
-                getTaskList: () => sampleTasks
+                getTaskList: () => sampleTasks,
             });
             composer.init();
 
@@ -149,7 +184,7 @@ describe('mention-composer', () => {
         it('emits payload with referencedTasks', () => {
             const composer = createMentionComposer({
                 containerEl: container,
-                getTaskList: () => sampleTasks
+                getTaskList: () => sampleTasks,
             });
             composer.init();
 
@@ -162,7 +197,7 @@ describe('mention-composer', () => {
             expect(payload.referencedTasks[0]).toEqual({
                 id: 1,
                 hierarchy_id: '#1',
-                text: '设计登录页面'
+                text: '设计登录页面',
             });
         });
 
@@ -174,7 +209,7 @@ describe('mention-composer', () => {
             const composer = createMentionComposer({
                 containerEl: container,
                 inputEl,
-                getTaskList: () => sampleTasks
+                getTaskList: () => sampleTasks,
             });
             composer.init();
 
@@ -188,7 +223,14 @@ describe('mention-composer', () => {
 
         it('keeps popup visible when @query contains spaces (for full task names)', () => {
             const tasks = [
-                { id: 11, text: '人员子域需求与验收文档（用户字段、账号生命周期、4A映射规则、示例数据）', hierarchy_id: '#4', status: 'pending', priority: 'medium', progress: 0 }
+                {
+                    id: 11,
+                    text: '人员子域需求与验收文档（用户字段、账号生命周期、4A映射规则、示例数据）',
+                    hierarchy_id: '#4',
+                    status: 'pending',
+                    priority: 'medium',
+                    progress: 0,
+                },
             ];
 
             const inputEl = document.createElement('div');
@@ -198,7 +240,7 @@ describe('mention-composer', () => {
             const composer = createMentionComposer({
                 containerEl: container,
                 inputEl,
-                getTaskList: () => tasks
+                getTaskList: () => tasks,
             });
             composer.init();
 
@@ -214,7 +256,7 @@ describe('mention-composer', () => {
         it('removes a selected task chip', () => {
             const composer = createMentionComposer({
                 containerEl: container,
-                getTaskList: () => sampleTasks
+                getTaskList: () => sampleTasks,
             });
             composer.init();
 

@@ -100,7 +100,7 @@ export function saveState(taskId) {
             op: 'update',
             taskId: taskId,
             timestamp: Date.now(),
-            taskData: _cloneTask(task)
+            taskData: _cloneTask(task),
         };
 
         _pushSnapshot(snapshot);
@@ -136,12 +136,17 @@ export function saveAddState(taskId) {
             op: 'add',
             taskId: taskId,
             timestamp: Date.now(),
-            taskData: _cloneTask(task)
+            taskData: _cloneTask(task),
         };
 
         _pushSnapshot(snapshot);
 
-        console.log('[UndoManager] Add state saved for task', taskId, 'Stack size:', undoStack.length);
+        console.log(
+            '[UndoManager] Add state saved for task',
+            taskId,
+            'Stack size:',
+            undoStack.length
+        );
         return true;
     } catch (e) {
         console.error('[UndoManager] Failed to save add state:', e);
@@ -157,7 +162,9 @@ export function saveAddState(taskId) {
  */
 export function saveDeleteState(taskId) {
     if (typeof gantt === 'undefined' || !taskId) {
-        console.warn('[UndoManager] Cannot save delete state: gantt not available or taskId missing');
+        console.warn(
+            '[UndoManager] Cannot save delete state: gantt not available or taskId missing'
+        );
         return false;
     }
 
@@ -172,12 +179,17 @@ export function saveDeleteState(taskId) {
             op: 'delete',
             taskId: taskId,
             timestamp: Date.now(),
-            taskData: _cloneTask(task)
+            taskData: _cloneTask(task),
         };
 
         _pushSnapshot(snapshot);
 
-        console.log('[UndoManager] Delete state saved for task', taskId, 'Stack size:', undoStack.length);
+        console.log(
+            '[UndoManager] Delete state saved for task',
+            taskId,
+            'Stack size:',
+            undoStack.length
+        );
         return true;
     } catch (e) {
         console.error('[UndoManager] Failed to save delete state:', e);
@@ -206,7 +218,6 @@ export function undo() {
 
         applyingHistoryOperation = true;
         try {
-
             if (op === 'add') {
                 // 撤回"新增"操作 → 删除该任务
                 gantt.deleteTask(taskId);
@@ -248,7 +259,7 @@ export function undo() {
                 op: 'update',
                 taskId: taskId,
                 timestamp: Date.now(),
-                taskData: _cloneTask(currentTask)
+                taskData: _cloneTask(currentTask),
             };
             redoStack.push(currentSnapshot);
 
@@ -291,14 +302,13 @@ export function redo() {
 
         applyingHistoryOperation = true;
         try {
-
             if (op === 'add') {
                 // 重做"新增"操作 → 重新添加任务，同时把当前删除状态压入 undoStack
                 const addSnapshot = {
                     op: 'add',
                     taskId: taskId,
                     timestamp: Date.now(),
-                    taskData: taskData
+                    taskData: taskData,
                 };
                 const restored = _restoreDates(taskData);
                 const parent = taskData.parent ?? 0;
@@ -315,7 +325,7 @@ export function redo() {
                     op: 'delete',
                     taskId: taskId,
                     timestamp: Date.now(),
-                    taskData: taskData
+                    taskData: taskData,
                 };
                 gantt.deleteTask(taskId);
                 undoStack.push(deleteSnapshot);
@@ -345,7 +355,7 @@ export function redo() {
                 op: 'update',
                 taskId: taskId,
                 timestamp: Date.now(),
-                taskData: _cloneTask(currentTask)
+                taskData: _cloneTask(currentTask),
             };
             undoStack.push(currentSnapshot);
 
@@ -374,14 +384,14 @@ export function redo() {
  */
 function restoreTaskState(task, taskData) {
     // 恢复所有字段（跳过日期，单独处理以确保转换为 Date 对象）
-    Object.keys(taskData).forEach(key => {
+    Object.keys(taskData).forEach((key) => {
         if (key === 'start_date' || key === 'end_date') return;
         task[key] = taskData[key];
     });
 
     // 恢复日期（需要转换为 Date 对象）
     if (taskData.start_date) task.start_date = new Date(taskData.start_date);
-    if (taskData.end_date)   task.end_date   = new Date(taskData.end_date);
+    if (taskData.end_date) task.end_date = new Date(taskData.end_date);
 }
 
 /**
@@ -450,8 +460,8 @@ export function saveReorderState(before, after) {
         const snapshot = {
             op: 'reorder',
             timestamp: Date.now(),
-            before: before.map(t => ({ id: t.id, parent: t.parent, sortorder: t.sortorder })),
-            after:  after.map(t => ({ id: t.id, parent: t.parent, sortorder: t.sortorder })),
+            before: before.map((t) => ({ id: t.id, parent: t.parent, sortorder: t.sortorder })),
+            after: after.map((t) => ({ id: t.id, parent: t.parent, sortorder: t.sortorder })),
         };
 
         _pushSnapshot(snapshot);
@@ -502,5 +512,5 @@ export default {
     getUndoStackSize,
     getRedoStackSize,
     clearHistory,
-    isApplyingHistoryOperation
+    isApplyingHistoryOperation,
 };

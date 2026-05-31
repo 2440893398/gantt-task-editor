@@ -3,7 +3,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
     applySavedColumnWidths,
     loadColumnWidthPrefs,
-    saveColumnWidthPref
+    saveColumnWidthPref,
 } from '../../../src/features/gantt/column-widths.js';
 
 function createStorage(initial = {}) {
@@ -12,7 +12,7 @@ function createStorage(initial = {}) {
         getItem: vi.fn((key) => (key in bag ? bag[key] : null)),
         setItem: vi.fn((key, value) => {
             bag[key] = value;
-        })
+        }),
     };
 }
 
@@ -29,12 +29,12 @@ describe('column width preferences', () => {
         const columns = [
             { name: 'text', width: '*', min_width: 240 },
             { name: 'progress', width: 100 },
-            { name: 'add', width: 44 }
+            { name: 'add', width: 44 },
         ];
 
         const updated = applySavedColumnWidths(columns, {
             text: 360,
-            progress: 120
+            progress: 120,
         });
 
         expect(updated[0].width).toBe(360);
@@ -49,7 +49,7 @@ describe('column width preferences', () => {
         const next = saveColumnWidthPref(existing, 'progress', 10, {
             minWidth: 80,
             maxWidth: 160,
-            storage
+            storage,
         });
         const afterIgnored = saveColumnWidthPref(next, 'add', 100, { storage });
 

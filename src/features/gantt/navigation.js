@@ -1,6 +1,6 @@
 /**
  * 甘特图导航模块
- * 
+ *
  * 实现拖拽平移和"回到今天"功能
  */
 
@@ -85,9 +85,9 @@ function bindUndoRedoButtons() {
 function configureDragTimeline() {
     // 配置 drag_timeline 插件 - 允许直接鼠标拖拽
     gantt.config.drag_timeline = {
-        ignore: ".gantt_task_line, .gantt_task_link, .gantt_task_content",
-        useKey: false,  // 不需要按键即可拖拽
-        render: true
+        ignore: '.gantt_task_line, .gantt_task_link, .gantt_task_content',
+        useKey: false, // 不需要按键即可拖拽
+        render: true,
     };
 
     // 同时保留空格键拖拽作为辅助功能

@@ -18,7 +18,7 @@ const ERROR_TYPES = {
         messageKey: 'ai.error.quotaExceededMsg',
         defaultMessage: 'The free quota for this model is exhausted',
         actionKey: 'ai.error.quotaAction',
-        defaultAction: 'Switch model or upgrade plan'
+        defaultAction: 'Switch model or upgrade plan',
     },
     invalid_api_key: {
         type: 'error',
@@ -28,7 +28,7 @@ const ERROR_TYPES = {
         messageKey: 'ai.error.invalidKeyMsg',
         defaultMessage: 'Please verify API key configuration and remove extra spaces',
         actionKey: 'ai.error.checkConfig',
-        defaultAction: 'Check settings'
+        defaultAction: 'Check settings',
     },
     rate_limit_exceeded: {
         type: 'warning',
@@ -38,7 +38,7 @@ const ERROR_TYPES = {
         messageKey: 'ai.error.rateLimitMsg',
         defaultMessage: 'Please try again later',
         actionKey: 'ai.error.waitRetry',
-        defaultAction: 'Retry later'
+        defaultAction: 'Retry later',
     },
     model_not_found: {
         type: 'error',
@@ -48,7 +48,7 @@ const ERROR_TYPES = {
         messageKey: 'ai.error.modelNotFoundMsg',
         defaultMessage: 'Requested model was not found',
         actionKey: 'ai.error.selectOther',
-        defaultAction: 'Choose another model'
+        defaultAction: 'Choose another model',
     },
     network_error: {
         type: 'error',
@@ -58,7 +58,7 @@ const ERROR_TYPES = {
         messageKey: 'ai.error.networkMsg',
         defaultMessage: 'Unable to connect to AI service',
         actionKey: 'ai.error.checkNetwork',
-        defaultAction: 'Check network or Base URL'
+        defaultAction: 'Check network or Base URL',
     },
     context_length_exceeded: {
         type: 'warning',
@@ -68,7 +68,7 @@ const ERROR_TYPES = {
         messageKey: 'ai.error.contextLengthMsg',
         defaultMessage: 'Input exceeds model context limit',
         actionKey: 'ai.error.shortenInput',
-        defaultAction: 'Shorten input'
+        defaultAction: 'Shorten input',
     },
     unknown: {
         type: 'error',
@@ -78,8 +78,8 @@ const ERROR_TYPES = {
         messageKey: 'ai.error.unknownMsg',
         defaultMessage: 'An unknown error occurred',
         actionKey: 'ai.error.viewDetails',
-        defaultAction: 'View details'
-    }
+        defaultAction: 'View details',
+    },
 };
 
 function tr(key, fallback) {
@@ -99,17 +99,37 @@ export function parseError(error) {
     const originalError = extracted.originalError || error?.error || error;
 
     // 根据错误内容判断类型
-    if (message.includes('401') || message.includes('Unauthorized') || message.includes('invalid_api_key')) {
+    if (
+        message.includes('401') ||
+        message.includes('Unauthorized') ||
+        message.includes('invalid_api_key')
+    ) {
         errorType = 'invalid_api_key';
-    } else if (message.includes('429') || message.includes('rate_limit') || message.includes('Rate limit')) {
+    } else if (
+        message.includes('429') ||
+        message.includes('rate_limit') ||
+        message.includes('Rate limit')
+    ) {
         errorType = 'rate_limit_exceeded';
-    } else if (message.includes('quota') || message.includes('insufficient_quota') || message.includes('billing')) {
+    } else if (
+        message.includes('quota') ||
+        message.includes('insufficient_quota') ||
+        message.includes('billing')
+    ) {
         errorType = 'quota_exceeded';
-    } else if (message.includes('model') && (message.includes('not found') || message.includes('does not exist'))) {
+    } else if (
+        message.includes('model') &&
+        (message.includes('not found') || message.includes('does not exist'))
+    ) {
         errorType = 'model_not_found';
     } else if (message.includes('context_length') || message.includes('maximum context length')) {
         errorType = 'context_length_exceeded';
-    } else if (message.includes('network') || message.includes('fetch') || message.includes('Failed to fetch') || message.includes('ECONNREFUSED')) {
+    } else if (
+        message.includes('network') ||
+        message.includes('fetch') ||
+        message.includes('Failed to fetch') ||
+        message.includes('ECONNREFUSED')
+    ) {
         errorType = 'network_error';
     }
 
@@ -122,7 +142,7 @@ export function parseError(error) {
         title: tr(config.titleKey, config.defaultTitle),
         message: message || tr(config.messageKey, config.defaultMessage),
         action: tr(config.actionKey, config.defaultAction),
-        originalError: originalError
+        originalError: originalError,
     };
 }
 
@@ -163,10 +183,11 @@ function extractApiErrorInfo(error) {
             continue;
         }
 
-        const nestedMessage = item?.error?.message
-            || item?.data?.error?.message
-            || item?.response?.data?.error?.message
-            || item?.response?.error?.message;
+        const nestedMessage =
+            item?.error?.message ||
+            item?.data?.error?.message ||
+            item?.response?.data?.error?.message ||
+            item?.response?.error?.message;
 
         if (typeof nestedMessage === 'string' && nestedMessage.trim()) {
             return { message: nestedMessage.trim(), originalError: item };
@@ -174,9 +195,10 @@ function extractApiErrorInfo(error) {
 
         if (item instanceof Error) {
             const frameworkMessage = String(item.message || '');
-            const isFrameworkWrapper = frameworkMessage.includes('AI_NoOutputGeneratedError')
-                || frameworkMessage.includes('AI_APICallError')
-                || frameworkMessage.includes('AI_');
+            const isFrameworkWrapper =
+                frameworkMessage.includes('AI_NoOutputGeneratedError') ||
+                frameworkMessage.includes('AI_APICallError') ||
+                frameworkMessage.includes('AI_');
 
             if (isFrameworkWrapper && item.cause) {
                 continue;
@@ -211,9 +233,10 @@ export function createErrorAlertHTML(parsedError, showDetails = true) {
 
     let detailsHTML = '';
     if (showDetails && originalError) {
-        const errorJson = typeof originalError === 'string'
-            ? originalError
-            : JSON.stringify(originalError, null, 2);
+        const errorJson =
+            typeof originalError === 'string'
+                ? originalError
+                : JSON.stringify(originalError, null, 2);
 
         detailsHTML = `
             <details class="collapse collapse-arrow mt-2">
@@ -239,11 +262,15 @@ export function createErrorAlertHTML(parsedError, showDetails = true) {
                             <button class="btn btn-xs btn-outline ai-error-action" data-action="config">
                                 ${escapeHtml(action)}
                             </button>
-                            ${showDetails ? `
+                            ${
+                                showDetails
+                                    ? `
                                 <button class="btn btn-xs btn-ghost opacity-60 ai-error-toggle-details">
                                     ${tr('ai.error.viewDetails', 'View details')}
                                 </button>
-                            ` : ''}
+                            `
+                                    : ''
+                            }
                         </div>
                         ${detailsHTML}
                     </div>
@@ -271,11 +298,7 @@ export function showErrorToast(parsedError, duration = 5000) {
  * @returns {Object} 解析后的错误对象
  */
 export function handleAiError(error, options = {}) {
-    const {
-        showAlertCard = false,
-        alertContainer = null,
-        showToastMsg = true
-    } = options;
+    const { showAlertCard = false, alertContainer = null, showToastMsg = true } = options;
 
     const parsedError = parseError(error);
 
@@ -329,5 +352,5 @@ export default {
     createErrorAlertHTML,
     showErrorToast,
     handleAiError,
-    ERROR_TYPES
+    ERROR_TYPES,
 };

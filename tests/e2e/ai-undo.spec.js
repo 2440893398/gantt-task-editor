@@ -1,11 +1,9 @@
-
 import { test, expect } from '@playwright/test';
 
 test.describe('AI Agent Undo Functionality (F-201)', () => {
-
     test.beforeEach(async ({ page }) => {
         // Enable console log from browser
-        page.on('console', msg => console.log(`[Browser]: ${msg.text()}`));
+        page.on('console', (msg) => console.log(`[Browser]: ${msg.text()}`));
 
         await page.goto('/');
         await page.waitForLoadState('networkidle');
@@ -17,20 +15,23 @@ test.describe('AI Agent Undo Functionality (F-201)', () => {
         // 1. Get a task
         const taskLocator = page.locator('.gantt_task_line').first();
         const taskId = await taskLocator.getAttribute('data-task-id');
-        const initialText = await page.evaluate(id => gantt.getTask(id).text, taskId);
+        const initialText = await page.evaluate((id) => gantt.getTask(id).text, taskId);
         console.log('Initial Text:', initialText);
 
         // 2. Modify the task using applyToTask (simulating AI apply)
         // This should trigger undoManager.saveState internally
         const newText = 'AI Modified Task ' + Date.now();
-        await page.evaluate(async ({ id, text }) => {
-            // Import and use applyToTask from aiService
-            const aiService = await import('/src/features/ai/services/aiService.js');
-            aiService.applyToTask(id, text);
-        }, { id: taskId, text: newText });
+        await page.evaluate(
+            async ({ id, text }) => {
+                // Import and use applyToTask from aiService
+                const aiService = await import('/src/features/ai/services/aiService.js');
+                aiService.applyToTask(id, text);
+            },
+            { id: taskId, text: newText }
+        );
 
         // 3. Verify Task Updated
-        const updatedText = await page.evaluate(id => gantt.getTask(id).text, taskId);
+        const updatedText = await page.evaluate((id) => gantt.getTask(id).text, taskId);
         expect(updatedText).toBe(newText);
         console.log('Updated Text:', updatedText);
 
@@ -40,7 +41,7 @@ test.describe('AI Agent Undo Functionality (F-201)', () => {
 
         // 5. Verify Task Reverted
         await page.waitForTimeout(300);
-        const revertedText = await page.evaluate(id => gantt.getTask(id).text, taskId);
+        const revertedText = await page.evaluate((id) => gantt.getTask(id).text, taskId);
         console.log('Reverted Text:', revertedText);
         expect(revertedText).toBe(initialText);
     });
@@ -49,14 +50,17 @@ test.describe('AI Agent Undo Functionality (F-201)', () => {
         // 1. Get a task
         const taskLocator = page.locator('.gantt_task_line').first();
         const taskId = await taskLocator.getAttribute('data-task-id');
-        const initialText = await page.evaluate(id => gantt.getTask(id).text, taskId);
+        const initialText = await page.evaluate((id) => gantt.getTask(id).text, taskId);
 
         // 2. Modify the task using applyToTask (simulating AI apply)
         const newText = 'AI Modified for Redo ' + Date.now();
-        await page.evaluate(async ({ id, text }) => {
-            const aiService = await import('/src/features/ai/services/aiService.js');
-            aiService.applyToTask(id, text);
-        }, { id: taskId, text: newText });
+        await page.evaluate(
+            async ({ id, text }) => {
+                const aiService = await import('/src/features/ai/services/aiService.js');
+                aiService.applyToTask(id, text);
+            },
+            { id: taskId, text: newText }
+        );
 
         // 3. Undo
         await page.click('#gantt_here', { position: { x: 10, y: 10 } });
@@ -64,7 +68,7 @@ test.describe('AI Agent Undo Functionality (F-201)', () => {
         await page.waitForTimeout(300);
 
         // 4. Verify undone
-        let currentText = await page.evaluate(id => gantt.getTask(id).text, taskId);
+        let currentText = await page.evaluate((id) => gantt.getTask(id).text, taskId);
         expect(currentText).toBe(initialText);
 
         // 5. Redo (Ctrl+Y)
@@ -72,7 +76,7 @@ test.describe('AI Agent Undo Functionality (F-201)', () => {
         await page.waitForTimeout(300);
 
         // 6. Verify redone
-        currentText = await page.evaluate(id => gantt.getTask(id).text, taskId);
+        currentText = await page.evaluate((id) => gantt.getTask(id).text, taskId);
         expect(currentText).toBe(newText);
     });
 
@@ -80,25 +84,28 @@ test.describe('AI Agent Undo Functionality (F-201)', () => {
         // 1. Get a task
         const taskLocator = page.locator('.gantt_task_line').first();
         const taskId = await taskLocator.getAttribute('data-task-id');
-        const initialText = await page.evaluate(id => gantt.getTask(id).text, taskId);
+        const initialText = await page.evaluate((id) => gantt.getTask(id).text, taskId);
 
         // 2. Apply multiple modifications
         const texts = [
             'First AI Change ' + Date.now(),
             'Second AI Change ' + Date.now(),
-            'Third AI Change ' + Date.now()
+            'Third AI Change ' + Date.now(),
         ];
 
         for (const text of texts) {
-            await page.evaluate(async ({ id, text }) => {
-                const aiService = await import('/src/features/ai/services/aiService.js');
-                aiService.applyToTask(id, text);
-            }, { id: taskId, text });
+            await page.evaluate(
+                async ({ id, text }) => {
+                    const aiService = await import('/src/features/ai/services/aiService.js');
+                    aiService.applyToTask(id, text);
+                },
+                { id: taskId, text }
+            );
             await page.waitForTimeout(100);
         }
 
         // 3. Verify last change applied
-        let currentText = await page.evaluate(id => gantt.getTask(id).text, taskId);
+        let currentText = await page.evaluate((id) => gantt.getTask(id).text, taskId);
         expect(currentText).toBe(texts[2]);
 
         // 4. Undo three times to get back to initial state
@@ -106,17 +113,17 @@ test.describe('AI Agent Undo Functionality (F-201)', () => {
 
         await page.keyboard.press('Control+z');
         await page.waitForTimeout(200);
-        currentText = await page.evaluate(id => gantt.getTask(id).text, taskId);
+        currentText = await page.evaluate((id) => gantt.getTask(id).text, taskId);
         expect(currentText).toBe(texts[1]);
 
         await page.keyboard.press('Control+z');
         await page.waitForTimeout(200);
-        currentText = await page.evaluate(id => gantt.getTask(id).text, taskId);
+        currentText = await page.evaluate((id) => gantt.getTask(id).text, taskId);
         expect(currentText).toBe(texts[0]);
 
         await page.keyboard.press('Control+z');
         await page.waitForTimeout(200);
-        currentText = await page.evaluate(id => gantt.getTask(id).text, taskId);
+        currentText = await page.evaluate((id) => gantt.getTask(id).text, taskId);
         expect(currentText).toBe(initialText);
     });
 
@@ -124,14 +131,17 @@ test.describe('AI Agent Undo Functionality (F-201)', () => {
         // 1. Get a task
         const taskLocator = page.locator('.gantt_task_line').first();
         const taskId = await taskLocator.getAttribute('data-task-id');
-        const initialText = await page.evaluate(id => gantt.getTask(id).text, taskId);
+        const initialText = await page.evaluate((id) => gantt.getTask(id).text, taskId);
 
         // 2. Apply first modification
         const firstChange = 'First Change ' + Date.now();
-        await page.evaluate(async ({ id, text }) => {
-            const aiService = await import('/src/features/ai/services/aiService.js');
-            aiService.applyToTask(id, text);
-        }, { id: taskId, text: firstChange });
+        await page.evaluate(
+            async ({ id, text }) => {
+                const aiService = await import('/src/features/ai/services/aiService.js');
+                aiService.applyToTask(id, text);
+            },
+            { id: taskId, text: firstChange }
+        );
 
         // 3. Undo
         await page.click('#gantt_here', { position: { x: 10, y: 10 } });
@@ -140,16 +150,19 @@ test.describe('AI Agent Undo Functionality (F-201)', () => {
 
         // 4. Apply new modification (should clear redo stack)
         const newChange = 'New Change After Undo ' + Date.now();
-        await page.evaluate(async ({ id, text }) => {
-            const aiService = await import('/src/features/ai/services/aiService.js');
-            aiService.applyToTask(id, text);
-        }, { id: taskId, text: newChange });
+        await page.evaluate(
+            async ({ id, text }) => {
+                const aiService = await import('/src/features/ai/services/aiService.js');
+                aiService.applyToTask(id, text);
+            },
+            { id: taskId, text: newChange }
+        );
 
         // 5. Try to redo - should not restore firstChange
         await page.keyboard.press('Control+y');
         await page.waitForTimeout(200);
 
-        const currentText = await page.evaluate(id => gantt.getTask(id).text, taskId);
+        const currentText = await page.evaluate((id) => gantt.getTask(id).text, taskId);
         // Should still be newChange, not firstChange (redo stack was cleared)
         expect(currentText).toBe(newChange);
     });
@@ -172,10 +185,13 @@ test.describe('AI Agent Undo Functionality (F-201)', () => {
         const taskLocator = page.locator('.gantt_task_line').first();
         const taskId = await taskLocator.getAttribute('data-task-id');
 
-        await page.evaluate(async ({ id }) => {
-            const aiService = await import('/src/features/ai/services/aiService.js');
-            aiService.applyToTask(id, 'Test Change');
-        }, { id: taskId });
+        await page.evaluate(
+            async ({ id }) => {
+                const aiService = await import('/src/features/ai/services/aiService.js');
+                aiService.applyToTask(id, 'Test Change');
+            },
+            { id: taskId }
+        );
 
         // 3. Now canUndo should be true
         canUndo = await page.evaluate(async () => {

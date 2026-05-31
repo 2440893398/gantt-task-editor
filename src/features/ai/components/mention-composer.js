@@ -18,7 +18,7 @@ export function filterTasksForMention(tasks, query) {
     const q = query.trim().toLowerCase();
     const qCompact = normalizeMentionSearchText(q);
 
-    return tasks.filter(task => {
+    return tasks.filter((task) => {
         const name = (task.text || '').toLowerCase();
         const hierarchyId = (task.hierarchy_id || '').toLowerCase();
         const nameCompact = normalizeMentionSearchText(name);
@@ -36,10 +36,10 @@ export function filterTasksForMention(tasks, query) {
  * @returns {Array} 精简的引用载荷
  */
 export function buildReferencedTasksPayload(selectedTasks) {
-    return selectedTasks.map(task => ({
+    return selectedTasks.map((task) => ({
         id: task.id,
         hierarchy_id: task.hierarchy_id,
-        text: task.text
+        text: task.text,
     }));
 }
 
@@ -59,7 +59,9 @@ export function createMentionComposer({ containerEl, inputEl = null, getTaskList
     let currentQuery = '';
     let highlightedIndex = -1;
     let onDocumentMouseDown = null;
-    const isInlineInput = !!inputEl && (inputEl.isContentEditable || inputEl.getAttribute('contenteditable') === 'true');
+    const isInlineInput =
+        !!inputEl &&
+        (inputEl.isContentEditable || inputEl.getAttribute('contenteditable') === 'true');
 
     function init() {
         if (!isInlineInput) {
@@ -118,13 +120,15 @@ export function createMentionComposer({ containerEl, inputEl = null, getTaskList
         const filtered = filterTasksForMention(tasks, query);
 
         // 排除已选任务
-        const available = filtered.filter(t => !selectedTasks.some(s => s.id === t.id));
+        const available = filtered.filter((t) => !selectedTasks.some((s) => s.id === t.id));
 
         if (available.length === 0) {
             popupEl.innerHTML = `<div class="mention-empty">${i18n.t('ai.mention.noResults') || '无匹配任务'}</div>`;
         } else {
             highlightedIndex = 0;
-            popupEl.innerHTML = available.map((task, idx) => `
+            popupEl.innerHTML = available
+                .map(
+                    (task, idx) => `
                 <div class="mention-item ${idx === highlightedIndex ? 'is-highlighted' : ''}"
                      data-task-id="${task.id}">
                     <span class="mention-status-dot ${getStatusColor(task.status)}"></span>
@@ -132,13 +136,15 @@ export function createMentionComposer({ containerEl, inputEl = null, getTaskList
                     <span class="mention-title">${escapeHtml(task.text)}</span>
                     <span class="mention-priority ${getPriorityBadge(task.priority)}">${escapeHtml(getPriorityLabel(task.priority))}</span>
                 </div>
-            `).join('');
+            `
+                )
+                .join('');
 
             // 绑定点击事件
-            popupEl.querySelectorAll('.mention-item').forEach(el => {
+            popupEl.querySelectorAll('.mention-item').forEach((el) => {
                 el.addEventListener('click', () => {
                     const taskId = parseInt(el.dataset.taskId, 10) || el.dataset.taskId;
-                    const task = tasks.find(t => t.id === taskId);
+                    const task = tasks.find((t) => t.id === taskId);
                     if (task) selectTask(task);
                 });
             });
@@ -156,7 +162,7 @@ export function createMentionComposer({ containerEl, inputEl = null, getTaskList
     }
 
     function selectTask(task) {
-        if (selectedTasks.some(t => t.id === task.id)) return;
+        if (selectedTasks.some((t) => t.id === task.id)) return;
 
         selectedTasks.push(task);
         if (isInlineInput) {
@@ -174,7 +180,7 @@ export function createMentionComposer({ containerEl, inputEl = null, getTaskList
     }
 
     function removeTask(taskId) {
-        selectedTasks = selectedTasks.filter(t => t.id !== taskId);
+        selectedTasks = selectedTasks.filter((t) => t.id !== taskId);
         if (isInlineInput) {
             removeInlineToken(taskId);
         } else {
@@ -189,7 +195,9 @@ export function createMentionComposer({ containerEl, inputEl = null, getTaskList
         if (isInlineInput) return;
         if (!chipsEl) return;
 
-        chipsEl.innerHTML = selectedTasks.map(task => `
+        chipsEl.innerHTML = selectedTasks
+            .map(
+                (task) => `
             <span class="mention-chip badge badge-primary gap-1 text-xs">
                 <span class="font-mono">${escapeHtml(task.hierarchy_id)}</span>
                 <span class="truncate max-w-[120px]">${escapeHtml(task.text)}</span>
@@ -199,10 +207,12 @@ export function createMentionComposer({ containerEl, inputEl = null, getTaskList
                     </svg>
                 </button>
             </span>
-        `).join('');
+        `
+            )
+            .join('');
 
         // 绑定移除按钮
-        chipsEl.querySelectorAll('.mention-chip-remove').forEach(btn => {
+        chipsEl.querySelectorAll('.mention-chip-remove').forEach((btn) => {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 const taskId = parseInt(btn.dataset.taskId, 10) || btn.dataset.taskId;
@@ -228,7 +238,7 @@ export function createMentionComposer({ containerEl, inputEl = null, getTaskList
         const messageText = typeof text === 'string' ? text : getInputText();
         return {
             text: messageText.trim(),
-            referencedTasks: buildReferencedTasksPayload(selectedTasks)
+            referencedTasks: buildReferencedTasksPayload(selectedTasks),
         };
     }
 
@@ -335,7 +345,7 @@ export function createMentionComposer({ containerEl, inputEl = null, getTaskList
 
     function removeInlineToken(taskId) {
         if (!inputEl) return;
-        inputEl.querySelectorAll(`.mention-token[data-task-id="${taskId}"]`).forEach(el => {
+        inputEl.querySelectorAll(`.mention-token[data-task-id="${taskId}"]`).forEach((el) => {
             const next = el.nextSibling;
             el.remove();
             if (next?.nodeType === Node.TEXT_NODE) {
@@ -347,7 +357,7 @@ export function createMentionComposer({ containerEl, inputEl = null, getTaskList
 
     function removeAllInlineTokens() {
         if (!inputEl) return;
-        inputEl.querySelectorAll('.mention-token').forEach(el => el.remove());
+        inputEl.querySelectorAll('.mention-token').forEach((el) => el.remove());
         normalizeInlineInput(inputEl);
     }
 
@@ -361,7 +371,9 @@ export function createMentionComposer({ containerEl, inputEl = null, getTaskList
         getSelectedTasks,
         clearSelection,
         buildPayload,
-        get isPopupVisible() { return isPopupVisible; }
+        get isPopupVisible() {
+            return isPopupVisible;
+        },
     };
 }
 
@@ -397,7 +409,8 @@ function createInlineToken(task, onRemove) {
     text.textContent = task.text || '';
 
     const removeBtn = document.createElement('button');
-    removeBtn.className = 'mention-token-remove btn btn-ghost btn-xs btn-circle w-4 h-4 min-h-0 p-0';
+    removeBtn.className =
+        'mention-token-remove btn btn-ghost btn-xs btn-circle w-4 h-4 min-h-0 p-0';
     removeBtn.type = 'button';
     removeBtn.setAttribute('aria-label', '移除任务引用');
     removeBtn.innerHTML = `
@@ -443,14 +456,15 @@ function getPlainTextFromInlineInput(inputEl) {
 function extractPlainText(node) {
     if (!node) return '';
     if (node.nodeType === Node.TEXT_NODE) return node.textContent || '';
-    if (node.nodeType !== Node.ELEMENT_NODE && node.nodeType !== Node.DOCUMENT_FRAGMENT_NODE) return '';
+    if (node.nodeType !== Node.ELEMENT_NODE && node.nodeType !== Node.DOCUMENT_FRAGMENT_NODE)
+        return '';
 
     const el = /** @type {Element} */ (node);
     if (el.classList?.contains('mention-token')) return ' ';
     if (el.tagName === 'BR') return '\n';
 
     let text = '';
-    node.childNodes.forEach(child => {
+    node.childNodes.forEach((child) => {
         text += extractPlainText(child);
     });
     return text;
@@ -508,7 +522,7 @@ function getTextPositions(root) {
                 return NodeFilter.FILTER_REJECT;
             }
             return NodeFilter.FILTER_ACCEPT;
-        }
+        },
     });
 
     const positions = [];
@@ -574,19 +588,19 @@ function normalizeInlineInput(inputEl) {
 
 function getStatusColor(status) {
     const colors = {
-        'completed': 'bg-success',
-        'in_progress': 'bg-info',
-        'pending': 'bg-warning',
-        'suspended': 'bg-error'
+        completed: 'bg-success',
+        in_progress: 'bg-info',
+        pending: 'bg-warning',
+        suspended: 'bg-error',
     };
     return colors[status] || 'bg-base-content/30';
 }
 
 function getPriorityBadge(priority) {
     const badges = {
-        'high': 'is-high',
-        'medium': 'is-medium',
-        'low': 'is-low'
+        high: 'is-high',
+        medium: 'is-medium',
+        low: 'is-low',
     };
     return badges[priority] || '';
 }
@@ -595,7 +609,7 @@ function getPriorityLabel(priority) {
     const labels = {
         high: 'high',
         medium: 'medium',
-        low: 'low'
+        low: 'low',
     };
     return labels[priority] || 'normal';
 }

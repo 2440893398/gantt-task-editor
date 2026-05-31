@@ -188,7 +188,7 @@ describe('calendar_holidays: getHolidayDayByCountry', () => {
 
     it('保存节假日后可以按 date + countryCode 查询到', async () => {
         await bulkSaveHolidays([
-            { date: '2026-01-01', year: 2026, countryCode: 'CN', isOffDay: true, name: '元旦' }
+            { date: '2026-01-01', year: 2026, countryCode: 'CN', isOffDay: true, name: '元旦' },
         ]);
 
         const found = await getHolidayDayByCountry('2026-01-01', 'CN');
@@ -199,7 +199,7 @@ describe('calendar_holidays: getHolidayDayByCountry', () => {
 
     it('同日期不同 countryCode 查询时，不同国家的记录不返回', async () => {
         await bulkSaveHolidays([
-            { date: '2026-01-01', year: 2026, countryCode: 'JP', isOffDay: true, name: '元日' }
+            { date: '2026-01-01', year: 2026, countryCode: 'JP', isOffDay: true, name: '元日' },
         ]);
 
         // 查 CN 应查不到
@@ -209,7 +209,7 @@ describe('calendar_holidays: getHolidayDayByCountry', () => {
 
     it('JP 节假日不影响 CN 工作日判断', async () => {
         await bulkSaveHolidays([
-            { date: '2026-09-21', year: 2026, countryCode: 'JP', isOffDay: true, name: '敬老の日' }
+            { date: '2026-09-21', year: 2026, countryCode: 'JP', isOffDay: true, name: '敬老の日' },
         ]);
 
         // CN 视角这天没有节假日
@@ -235,7 +235,7 @@ describe('calendar_holidays: getHolidayDay requires countryCode', () => {
 
     it('未传 countryCode 时返回 undefined（避免错误命中同年其他国家数据）', async () => {
         await bulkSaveHolidays([
-            { date: '2026-01-01', year: 2026, countryCode: 'JP', isOffDay: true, name: '元日' }
+            { date: '2026-01-01', year: 2026, countryCode: 'JP', isOffDay: true, name: '元日' },
         ]);
 
         const found = await getHolidayDay('2026-01-01');
@@ -264,14 +264,20 @@ describe('calendar_holidays: clearHolidaysByYear', () => {
 
         const remaining = await db.calendar_holidays.toArray();
         expect(remaining).toHaveLength(2);
-        expect(remaining.some(h => h.year === 2026 && h.countryCode === 'JP')).toBe(true);
-        expect(remaining.some(h => h.year === 2025)).toBe(true);
+        expect(remaining.some((h) => h.year === 2026 && h.countryCode === 'JP')).toBe(true);
+        expect(remaining.some((h) => h.year === 2025)).toBe(true);
     });
 
     it('清除后仅目标国家的节假日查询返回 undefined', async () => {
         await bulkSaveHolidays([
             { date: '2026-05-01', year: 2026, countryCode: 'CN', isOffDay: true, name: '劳动节' },
-            { date: '2026-05-01', year: 2026, countryCode: 'JP', isOffDay: true, name: '憲法記念日' }
+            {
+                date: '2026-05-01',
+                year: 2026,
+                countryCode: 'JP',
+                isOffDay: true,
+                name: '憲法記念日',
+            },
         ]);
 
         await clearHolidaysByYear(2026, 'CN');
@@ -305,7 +311,11 @@ describe('calendar_settings: getCalendarSettings / saveCalendarSettings', () => 
     });
 
     it('保存设置后可以读回', async () => {
-        await saveCalendarSettings({ countryCode: 'JP', workdaysOfWeek: [1, 2, 3, 4, 5, 6], hoursPerDay: 9 });
+        await saveCalendarSettings({
+            countryCode: 'JP',
+            workdaysOfWeek: [1, 2, 3, 4, 5, 6],
+            hoursPerDay: 9,
+        });
         const settings = await getCalendarSettings();
         expect(settings.countryCode).toBe('JP');
         expect(settings.workdaysOfWeek).toContain(6);
@@ -313,8 +323,16 @@ describe('calendar_settings: getCalendarSettings / saveCalendarSettings', () => 
     });
 
     it('多次保存只保留最新一条设置', async () => {
-        await saveCalendarSettings({ countryCode: 'CN', workdaysOfWeek: [1, 2, 3, 4, 5], hoursPerDay: 8 });
-        await saveCalendarSettings({ countryCode: 'KR', workdaysOfWeek: [1, 2, 3, 4, 5], hoursPerDay: 8 });
+        await saveCalendarSettings({
+            countryCode: 'CN',
+            workdaysOfWeek: [1, 2, 3, 4, 5],
+            hoursPerDay: 8,
+        });
+        await saveCalendarSettings({
+            countryCode: 'KR',
+            workdaysOfWeek: [1, 2, 3, 4, 5],
+            hoursPerDay: 8,
+        });
 
         const count = await db.calendar_settings.count();
         expect(count).toBe(1);
@@ -370,8 +388,18 @@ describe('calendar_meta: getCalendarMeta / saveCalendarMeta', () => {
     });
 
     it('getCalendarMeta 支持按 project_id 读取复合主键记录', async () => {
-        await saveCalendarMeta({ year: 2026, project_id: 'prj_alpha', countryCode: 'CN', fetchedAt: 1000 });
-        await saveCalendarMeta({ year: 2026, project_id: 'prj_beta', countryCode: 'JP', fetchedAt: 2000 });
+        await saveCalendarMeta({
+            year: 2026,
+            project_id: 'prj_alpha',
+            countryCode: 'CN',
+            fetchedAt: 1000,
+        });
+        await saveCalendarMeta({
+            year: 2026,
+            project_id: 'prj_beta',
+            countryCode: 'JP',
+            fetchedAt: 2000,
+        });
 
         const alpha = await getCalendarMeta(2026, 'prj_alpha');
         const beta = await getCalendarMeta(2026, 'prj_beta');
@@ -407,7 +435,7 @@ describe('person_leaves: isPersonOnLeave', () => {
             startDate: '2026-03-10',
             endDate: '2026-03-20',
             type: 'annual',
-            note: ''
+            note: '',
         });
 
         expect(await isPersonOnLeave('alice', '2026-03-10')).toBe(true); // 边界开始
@@ -422,7 +450,7 @@ describe('person_leaves: isPersonOnLeave', () => {
             startDate: '2026-03-10',
             endDate: '2026-03-20',
             type: 'annual',
-            note: ''
+            note: '',
         });
 
         expect(await isPersonOnLeave('alice', '2026-03-09')).toBe(false); // 开始前一天
@@ -436,15 +464,29 @@ describe('person_leaves: isPersonOnLeave', () => {
             startDate: '2026-04-01',
             endDate: '2026-04-07',
             type: 'sick',
-            note: ''
+            note: '',
         });
 
         expect(await isPersonOnLeave('alice', '2026-04-03')).toBe(false);
     });
 
     it('多段请假：至少有一段覆盖则返回 true', async () => {
-        await saveLeave({ id: uid(), assignee: 'carol', startDate: '2026-01-05', endDate: '2026-01-07', type: 'annual', note: '' });
-        await saveLeave({ id: uid(), assignee: 'carol', startDate: '2026-01-15', endDate: '2026-01-17', type: 'annual', note: '' });
+        await saveLeave({
+            id: uid(),
+            assignee: 'carol',
+            startDate: '2026-01-05',
+            endDate: '2026-01-07',
+            type: 'annual',
+            note: '',
+        });
+        await saveLeave({
+            id: uid(),
+            assignee: 'carol',
+            startDate: '2026-01-15',
+            endDate: '2026-01-17',
+            type: 'annual',
+            note: '',
+        });
 
         expect(await isPersonOnLeave('carol', '2026-01-06')).toBe(true);
         expect(await isPersonOnLeave('carol', '2026-01-16')).toBe(true);
@@ -464,19 +506,33 @@ describe('person_leaves: saveLeave / deleteLeave / getAllLeaves', () => {
 
     it('saveLeave 后 getAllLeaves 包含该记录', async () => {
         const id = uid();
-        await saveLeave({ id, assignee: 'dave', startDate: '2026-07-01', endDate: '2026-07-05', type: 'annual', note: '' });
+        await saveLeave({
+            id,
+            assignee: 'dave',
+            startDate: '2026-07-01',
+            endDate: '2026-07-05',
+            type: 'annual',
+            note: '',
+        });
 
         const all = await getAllLeaves();
-        expect(all.some(l => l.id === id)).toBe(true);
+        expect(all.some((l) => l.id === id)).toBe(true);
     });
 
     it('deleteLeave 后记录不再存在', async () => {
         const id = uid();
-        await saveLeave({ id, assignee: 'eve', startDate: '2026-08-01', endDate: '2026-08-03', type: 'sick', note: '' });
+        await saveLeave({
+            id,
+            assignee: 'eve',
+            startDate: '2026-08-01',
+            endDate: '2026-08-03',
+            type: 'sick',
+            note: '',
+        });
         await deleteLeave(id);
 
         const all = await getAllLeaves();
-        expect(all.some(l => l.id === id)).toBe(false);
+        expect(all.some((l) => l.id === id)).toBe(false);
         expect(await isPersonOnLeave('eve', '2026-08-02')).toBe(false);
     });
 

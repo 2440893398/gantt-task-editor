@@ -53,10 +53,8 @@ test.describe('字段管理功能 E2E 测试', () => {
         await page.waitForTimeout(500);
         const fieldItems = page.locator('#field-list-container .field-item');
         const fieldNames = await fieldItems.locator('.field-name').allTextContents();
-        expect(fieldNames.some(name => name.includes('测试字段E2E'))).toBeTruthy();
+        expect(fieldNames.some((name) => name.includes('测试字段E2E'))).toBeTruthy();
     });
-
-
 
     // 注意：删除字段的功能需要在字段管理面板中操作
     // 当前测试只打开字段配置弹窗，无法访问字段列表
@@ -80,7 +78,9 @@ test.describe('字段管理功能 E2E 测试', () => {
             await page.waitForTimeout(200);
 
             // 验证选择器显示更新
-            const selectorText = await page.locator('#field-type-selector .field-type-text').textContent();
+            const selectorText = await page
+                .locator('#field-type-selector .field-type-text')
+                .textContent();
             expect(selectorText).toBeTruthy();
 
             // 验证隐藏的select元素值也更新
@@ -155,8 +155,10 @@ test.describe('字段管理功能 E2E 测试', () => {
 
         // 字段不应该被创建
         await page.waitForTimeout(500);
-        const fieldNames = await page.locator('#field-list-container .field-item .field-name').allTextContents();
-        expect(fieldNames.every(name => !name.includes('不保存的字段'))).toBeTruthy();
+        const fieldNames = await page
+            .locator('#field-list-container .field-item .field-name')
+            .allTextContents();
+        expect(fieldNames.every((name) => !name.includes('不保存的字段'))).toBeTruthy();
     });
 
     test('应该通过X按钮关闭字段配置弹窗', async ({ page }) => {

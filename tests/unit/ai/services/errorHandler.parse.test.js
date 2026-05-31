@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../../../src/utils/i18n.js', () => ({
     i18n: {
-        t: vi.fn(() => null)
-    }
+        t: vi.fn(() => null),
+    },
 }));
 
 import { parseError } from '../../../../src/features/ai/services/errorHandler.js';
@@ -13,8 +13,8 @@ describe('errorHandler.parseError', () => {
         const error = {
             error: {
                 message: 'This token is not enabled (tid: 2026020711482441463869258320602)',
-                type: 'Aihubmix_api_error'
-            }
+                type: 'Aihubmix_api_error',
+            },
         };
 
         const parsed = parseError(error);
@@ -30,10 +30,10 @@ describe('errorHandler.parseError', () => {
                 data: {
                     error: {
                         message: 'Model access denied by provider',
-                        type: 'provider_error'
-                    }
-                }
-            }
+                        type: 'provider_error',
+                    },
+                },
+            },
         };
 
         const parsed = parseError(wrapped);
@@ -43,10 +43,10 @@ describe('errorHandler.parseError', () => {
             response: {
                 data: {
                     error: {
-                        message: 'Model access denied by provider'
-                    }
-                }
-            }
+                        message: 'Model access denied by provider',
+                    },
+                },
+            },
         });
     });
 });

@@ -1,6 +1,6 @@
 /**
  * 智能调度引擎模块
- * 
+ *
  * 实现 PRD-竞品改进-v1.0 中的智能调度功能：
  * - 级联更新 (Cascade Update)
  * - 工作日历 (Work Calendar) — 异步四层优先级判断
@@ -8,7 +8,7 @@
  * - SS 依赖支持
  * - 循环检测 (Cycle Detection)
  * - Buffer/Lag 支持（手动异步调度实现）
- * 
+ *
  * Buffer/Lag 使用方式：
  * 在创建连线时设置 link.lag 属性（工作日数）
  * 例如：{ source: 1, target: 2, type: '0', lag: 2 } 表示任务2在任务1结束后2个工作日开始
@@ -142,7 +142,7 @@ export function detectCycle(sourceId, targetId) {
     const links = gantt.getLinks();
     const adjacency = new Map();
 
-    links.forEach(link => {
+    links.forEach((link) => {
         if (!adjacency.has(link.source)) {
             adjacency.set(link.source, []);
         }
@@ -173,7 +173,7 @@ export function detectCycle(sourceId, targetId) {
         visited.add(current);
 
         const neighbors = adjacency.get(current) || [];
-        neighbors.forEach(neighbor => {
+        neighbors.forEach((neighbor) => {
             if (!visited.has(neighbor)) {
                 stack.push(neighbor);
             }
@@ -202,7 +202,7 @@ export function calculateWBS(parentId) {
     let minStart = null;
     let maxEnd = null;
 
-    children.forEach(childId => {
+    children.forEach((childId) => {
         const child = gantt.getTask(childId);
 
         if (minStart === null || child.start_date < minStart) {
@@ -235,9 +235,7 @@ export function updateParentDates(taskId) {
         let changed = false;
 
         const childIds = gantt.getChildren(parentId) || [];
-        const childTasks = childIds
-            .map((id) => gantt.getTask(id))
-            .filter(Boolean);
+        const childTasks = childIds.map((id) => gantt.getTask(id)).filter(Boolean);
 
         if (parent.start_date.getTime() !== wbs.start_date.getTime()) {
             parent.start_date = wbs.start_date;
@@ -307,7 +305,7 @@ export function updateParentDates(taskId) {
  */
 function bindTaskChangeEvents() {
     // 任务拖拽完成后触发调度
-    gantt.attachEvent("onAfterTaskDrag", function (id, mode, e) {
+    gantt.attachEvent('onAfterTaskDrag', function (id, mode, e) {
         dragSnapshotTaskIds.delete(id);
         console.log('📅 任务拖拽完成，触发调度:', id);
         updateParentDates(id);
@@ -317,7 +315,7 @@ function bindTaskChangeEvents() {
     });
 
     // 任务更新后更新父任务
-    gantt.attachEvent("onAfterTaskUpdate", function (id, task) {
+    gantt.attachEvent('onAfterTaskUpdate', function (id, task) {
         updateParentDates(id);
         scheduleAsyncReschedule(id);
         return true;
@@ -329,7 +327,7 @@ function bindTaskChangeEvents() {
  */
 function bindLinkEvents() {
     // 创建依赖前检测循环
-    gantt.attachEvent("onBeforeLinkAdd", function (id, link) {
+    gantt.attachEvent('onBeforeLinkAdd', function (id, link) {
         if (detectCycle(link.source, link.target)) {
             // 显示错误提示
             if (window.showToast) {
@@ -343,7 +341,7 @@ function bindLinkEvents() {
     });
 
     // 依赖创建后触发异步调度
-    gantt.attachEvent("onAfterLinkAdd", function (id, link) {
+    gantt.attachEvent('onAfterLinkAdd', function (id, link) {
         console.log('🔗 依赖创建，触发调度:', link.source, '->', link.target);
         scheduleAsyncReschedule(link.source);
         return true;
@@ -355,7 +353,7 @@ function bindLinkEvents() {
  */
 function bindWBSEvents() {
     // 阻止直接修改父任务时间（如果有子任务）
-    gantt.attachEvent("onBeforeTaskDrag", function (id, mode, e) {
+    gantt.attachEvent('onBeforeTaskDrag', function (id, mode, e) {
         const task = gantt.getTask(id);
         const children = gantt.getChildren(id);
 
@@ -389,7 +387,7 @@ export function cascadeUpdate(taskId) {
 async function scheduleAsyncReschedule(taskId) {
     try {
         const task = gantt.getTask(taskId);
-        const links = gantt.getLinks().filter(l => l.source == taskId && l.type === '0'); // FS
+        const links = gantt.getLinks().filter((l) => l.source == taskId && l.type === '0'); // FS
 
         for (const link of links) {
             const successor = gantt.getTask(link.target);

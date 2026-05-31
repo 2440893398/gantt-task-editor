@@ -25,9 +25,12 @@ export function renderSelectHTML(elementId, currentValue, options, config = {}) 
         } else {
             // 显示选中数量或 Tags
             if (values.length <= 2) {
-                displayLabel = values.map(v =>
-                    `<span class="badge badge-xs badge-neutral mr-1">${escapeSafe(v)}</span>`
-                ).join('');
+                displayLabel = values
+                    .map(
+                        (v) =>
+                            `<span class="badge badge-xs badge-neutral mr-1">${escapeSafe(v)}</span>`
+                    )
+                    .join('');
             } else {
                 displayLabel = `
                     <span class="badge badge-xs badge-neutral mr-1">${escapeSafe(values[0])}</span>
@@ -37,9 +40,13 @@ export function renderSelectHTML(elementId, currentValue, options, config = {}) 
         }
     } else {
         // 单选展示逻辑
-        const selectedOpt = options.find(o => (typeof o === 'object' ? o.value : o) == currentValue);
+        const selectedOpt = options.find(
+            (o) => (typeof o === 'object' ? o.value : o) == currentValue
+        );
         const label = selectedOpt
-            ? (typeof selectedOpt === 'object' ? selectedOpt.label : selectedOpt)
+            ? typeof selectedOpt === 'object'
+                ? selectedOpt.label
+                : selectedOpt
             : null;
 
         if (label) {
@@ -88,7 +95,7 @@ export function setupSelect(elementId, options, currentValue, onChange, config =
     let backdropElement = null;
 
     // 标准化选项数据
-    const normalizedOptions = options.map(opt => {
+    const normalizedOptions = options.map((opt) => {
         if (typeof opt === 'object') return opt;
         return { value: opt, label: opt };
     });
@@ -170,9 +177,9 @@ export function setupSelect(elementId, options, currentValue, onChange, config =
         if (normalizedOptions.length === 0) {
             contentHTML += `<div class="px-3 py-2 text-sm text-base-content/40 text-center">无选项</div>`;
         } else {
-            normalizedOptions.forEach(opt => {
+            normalizedOptions.forEach((opt) => {
                 const isSelected = isMulti
-                    ? (Array.isArray(currentValue) && currentValue.includes(opt.value))
+                    ? Array.isArray(currentValue) && currentValue.includes(opt.value)
                     : currentValue == opt.value;
 
                 contentHTML += `
@@ -190,7 +197,7 @@ export function setupSelect(elementId, options, currentValue, onChange, config =
         document.body.appendChild(menuElement);
 
         // Bind Option Clicks
-        menuElement.querySelectorAll('.dropdown-item').forEach(item => {
+        menuElement.querySelectorAll('.dropdown-item').forEach((item) => {
             item.addEventListener('click', (e) => {
                 e.preventDefault(); // Prevent focus loss issues
                 e.stopPropagation();
@@ -200,7 +207,7 @@ export function setupSelect(elementId, options, currentValue, onChange, config =
                 if (isMulti) {
                     let newValues = Array.isArray(currentValue) ? [...currentValue] : [];
                     if (newValues.includes(val)) {
-                        newValues = newValues.filter(v => v !== val);
+                        newValues = newValues.filter((v) => v !== val);
                     } else {
                         newValues.push(val);
                     }
@@ -208,7 +215,7 @@ export function setupSelect(elementId, options, currentValue, onChange, config =
                     onChange(currentValue);
 
                     // Re-render menu content to update checks (simplified: close and reopen or just update DOM)
-                    // For better UX in multi-select, we often keep menu open. 
+                    // For better UX in multi-select, we often keep menu open.
                     // Let's just toggle the UI state manually here for responsiveness.
                     const isNowSelected = newValues.includes(val);
                     const icon = item.querySelector('svg');
@@ -230,7 +237,7 @@ export function setupSelect(elementId, options, currentValue, onChange, config =
                     }
 
                     // Update Trigger HTML as well
-                    // Re-render only inner part? Or just leave it until closed? 
+                    // Re-render only inner part? Or just leave it until closed?
                     // Ideally we update trigger immediately.
                     // But we can't easily replace outer HTML because we lose listeners.
                     // We can update innerHTML of trigger first child.
@@ -243,7 +250,12 @@ export function setupSelect(elementId, options, currentValue, onChange, config =
                             displayLabel = `<span class="text-base-content/40 text-sm">${config.placeholder || '请选择'}</span>`;
                         } else {
                             if (values.length <= 2) {
-                                displayLabel = values.map(v => `<span class="badge badge-xs badge-neutral mr-1">${escapeSafe(v)}</span>`).join('');
+                                displayLabel = values
+                                    .map(
+                                        (v) =>
+                                            `<span class="badge badge-xs badge-neutral mr-1">${escapeSafe(v)}</span>`
+                                    )
+                                    .join('');
                             } else {
                                 displayLabel = `
                                      <span class="badge badge-xs badge-neutral mr-1">${escapeSafe(values[0])}</span>
@@ -253,14 +265,14 @@ export function setupSelect(elementId, options, currentValue, onChange, config =
                         }
                         triggerContent.innerHTML = displayLabel;
                     }
-
                 } else {
                     if (currentValue !== val) {
                         currentValue = val;
                         onChange(currentValue);
 
                         // Update Trigger UI
-                        const displayLabel = normalizedOptions.find(o => o.value == val)?.label || val;
+                        const displayLabel =
+                            normalizedOptions.find((o) => o.value == val)?.label || val;
                         const triggerContent = trigger.querySelector('.flex-wrap');
                         if (triggerContent) {
                             triggerContent.innerHTML = `<span class="text-sm text-base-content truncate">${escapeSafe(displayLabel)}</span>`;
@@ -283,6 +295,6 @@ export function setupSelect(elementId, options, currentValue, onChange, config =
         toggleMenu();
     });
 
-    // Handle initial value display if needed? 
+    // Handle initial value display if needed?
     // Already handled by renderSelectHTML
 }

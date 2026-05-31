@@ -1,6 +1,7 @@
 import { renderTaskCitationChip } from './task-ui.js';
 
-const CITATION_PATTERN = /\[(#\d+(?:\.\d+)*)\]\s*([^\n\[\]|]+?)(?=\s*(?:\||\n|$|\[#\d|(?:和|及|,|，)\s*\[#\d))/g;
+const CITATION_PATTERN =
+    /\[(#\d+(?:\.\d+)*)\]\s*([^\n\[\]|]+?)(?=\s*(?:\||\n|$|\[#\d|(?:和|及|,|，)\s*\[#\d))/g;
 
 function escapeHtml(value) {
     const div = document.createElement('div');
@@ -21,7 +22,7 @@ export function extractTaskCitations(text) {
             raw,
             hierarchyId,
             name,
-            index: match.index ?? -1
+            index: match.index ?? -1,
         });
     }
 
@@ -47,7 +48,7 @@ export function replaceTaskCitationsWithChips(text) {
 
         html += renderTaskCitationChip({
             hierarchyId: citation.hierarchyId,
-            name: citation.name
+            name: citation.name,
         });
 
         cursor = end;
@@ -62,5 +63,5 @@ export function replaceTaskCitationsWithChips(text) {
 
 export default {
     extractTaskCitations,
-    replaceTaskCitationsWithChips
+    replaceTaskCitationsWithChips,
 };

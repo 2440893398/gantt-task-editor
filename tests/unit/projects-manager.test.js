@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { createProject, getAllProjects, updateProject, deleteProject, getProjectTaskCount } from '../../src/features/projects/manager.js';
+import {
+    createProject,
+    getAllProjects,
+    updateProject,
+    deleteProject,
+    getProjectTaskCount,
+} from '../../src/features/projects/manager.js';
 import { db } from '../../src/core/storage.js';
 
 describe('projects manager', () => {
@@ -29,18 +35,18 @@ describe('projects manager', () => {
         await createProject({ name: 'P2' });
         const all = await getAllProjects();
         expect(all.length).toBe(2);
-        expect(all.some(p => p.name === 'P1')).toBe(true);
-        expect(all.some(p => p.name === 'P2')).toBe(true);
+        expect(all.some((p) => p.name === 'P1')).toBe(true);
+        expect(all.some((p) => p.name === 'P2')).toBe(true);
     });
 
     it('updateProject changes name and updates updatedAt', async () => {
         const p = await createProject({ name: 'Old' });
         const before = p.updatedAt;
         // Small delay to ensure timestamp differs
-        await new Promise(r => setTimeout(r, 5));
+        await new Promise((r) => setTimeout(r, 5));
         await updateProject(p.id, { name: 'New' });
         const all = await getAllProjects();
-        const updated = all.find(x => x.id === p.id);
+        const updated = all.find((x) => x.id === p.id);
         expect(updated.name).toBe('New');
         expect(updated.updatedAt).not.toBe(before);
     });
@@ -49,7 +55,7 @@ describe('projects manager', () => {
         const p = await createProject({ name: 'Del' });
         await deleteProject(p.id);
         const all = await getAllProjects();
-        expect(all.find(x => x.id === p.id)).toBeUndefined();
+        expect(all.find((x) => x.id === p.id)).toBeUndefined();
     });
 
     it('deleteProject cascades to tasks', async () => {
@@ -66,9 +72,7 @@ describe('projects manager', () => {
 
     it('deleteProject cascades to links', async () => {
         const p = await createProject({ name: 'WithLinks' });
-        await db.links.bulkAdd([
-            { id: 2001, source: 1, target: 2, type: 0, project_id: p.id },
-        ]);
+        await db.links.bulkAdd([{ id: 2001, source: 1, target: 2, type: 0, project_id: p.id }]);
         await deleteProject(p.id);
         const remaining = await db.links.where('project_id').equals(p.id).toArray();
         expect(remaining.length).toBe(0);

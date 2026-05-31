@@ -10,6 +10,5 @@ export {
     closeTaskDetailsPanel,
     isTaskDetailsPanelOpen,
     refreshTaskDetailsPanel,
-    getCurrentTaskId
+    getCurrentTaskId,
 } from './panel.js';
-

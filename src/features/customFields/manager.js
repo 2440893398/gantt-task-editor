@@ -12,7 +12,7 @@ import {
     toggleSystemFieldEnabled,
     setSystemFieldType,
     getSystemFieldOptions,
-    getSystemFieldDefaultValue
+    getSystemFieldDefaultValue,
 } from '../../core/store.js';
 
 import { SYSTEM_FIELD_CONFIG, INTERNAL_FIELDS } from '../../data/fields.js';
@@ -103,11 +103,11 @@ function getLocalizedFieldTypeLabel(type) {
     // Map type to i18n key
     // assuming type is 'text', 'number', 'date', 'select', 'multiselect'
     const keyMap = {
-        'text': 'fieldManagement.typeText',
-        'number': 'fieldManagement.typeNumber',
-        'date': 'fieldManagement.typeDate',
-        'select': 'fieldManagement.typeSelect',
-        'multiselect': 'fieldManagement.typeMultiselect'
+        text: 'fieldManagement.typeText',
+        number: 'fieldManagement.typeNumber',
+        date: 'fieldManagement.typeDate',
+        select: 'fieldManagement.typeSelect',
+        multiselect: 'fieldManagement.typeMultiselect',
     };
 
     return i18n.t(keyMap[type] || 'fieldManagement.typeText');
@@ -180,7 +180,7 @@ export function updateIconSelector(icon) {
     document.getElementById('selected-icon').textContent = icon;
 
     // 更新图标网格中的选中状态
-    document.querySelectorAll('#icon-grid .icon-option').forEach(opt => {
+    document.querySelectorAll('#icon-grid .icon-option').forEach((opt) => {
         opt.classList.toggle('selected', opt.dataset.icon === icon);
     });
 }
@@ -195,7 +195,7 @@ function initIconPicker() {
 
     // 生成图标网格
     let gridHTML = '';
-    ICON_OPTIONS.forEach(option => {
+    ICON_OPTIONS.forEach((option) => {
         gridHTML += `<div class="icon-option" data-icon="${option.value}" title="${option.label}">${option.value}</div>`;
     });
     iconGrid.innerHTML = gridHTML;
@@ -227,22 +227,24 @@ export function renderFieldList() {
     let html = '';
 
     // 1. Get all available fields
-    const allSystemFields = Object.keys(SYSTEM_FIELD_CONFIG).filter(f => !INTERNAL_FIELDS.includes(f));
-    const allCustomFields = state.customFields.map(f => f.name);
+    const allSystemFields = Object.keys(SYSTEM_FIELD_CONFIG).filter(
+        (f) => !INTERNAL_FIELDS.includes(f)
+    );
+    const allCustomFields = state.customFields.map((f) => f.name);
     const allFields = [...new Set([...allSystemFields, ...allCustomFields])];
 
     // 2. Sort fields: Custom order first (enabled fields), then disabled fields
     const sortedFields = [];
 
     // First: fields currently in enabled order
-    state.fieldOrder.forEach(f => {
+    state.fieldOrder.forEach((f) => {
         if (allFields.includes(f)) {
             sortedFields.push(f);
         }
     });
 
     // Second: fields not in enabled order (disabled)
-    allFields.forEach(f => {
+    allFields.forEach((f) => {
         if (!state.fieldOrder.includes(f)) {
             sortedFields.push(f);
         }
@@ -251,7 +253,9 @@ export function renderFieldList() {
     // 更新字段计数显示
     const fieldCountEl = document.getElementById('field-count');
     if (fieldCountEl) {
-        fieldCountEl.textContent = i18n.t('fieldManagement.fieldCount', { count: allFields.length });
+        fieldCountEl.textContent = i18n.t('fieldManagement.fieldCount', {
+            count: allFields.length,
+        });
     }
 
     sortedFields.forEach((fieldName) => {
@@ -269,7 +273,7 @@ export function renderFieldList() {
             fieldType = fieldConfig.type;
             canDisable = fieldConfig.canDisable;
         } else {
-            fieldConfig = state.customFields.find(f => f.name === fieldName);
+            fieldConfig = state.customFields.find((f) => f.name === fieldName);
             if (!fieldConfig) return;
             fieldLabel = fieldConfig.label;
             fieldIcon = fieldConfig.icon || DEFAULT_FIELD_ICON;
@@ -278,9 +282,8 @@ export function renderFieldList() {
         }
 
         const enabled = isSystem
-            ? isFieldEnabled(fieldName)  // System fields use systemFieldSettings.enabled
-            : state.fieldOrder.includes(fieldName);  // Custom fields use fieldOrder
-
+            ? isFieldEnabled(fieldName) // System fields use systemFieldSettings.enabled
+            : state.fieldOrder.includes(fieldName); // Custom fields use fieldOrder
 
         html += `
             <div class="field-item flex items-center gap-3 p-4 transition-all duration-200 group ${!enabled ? 'opacity-60' : ''} 
@@ -318,11 +321,14 @@ export function renderFieldList() {
                 </div>
 
                 <div class="flex gap-2 items-center opacity-100 sm:opacity-0 group-hover:opacity-100 transition-opacity">
-                    ${canDisable ? `
+                    ${
+                        canDisable
+                            ? `
                         <label title="${enabled ? i18n.t('fieldManagement.disableField') : i18n.t('fieldManagement.enableField')}" class="inline-flex items-center">
                             <input type="checkbox" class="toggle toggle-primary toggle-sm toggle-field-enabled" data-field="${fieldName}" ${enabled ? 'checked' : ''}>
                         </label>
-                    ` : `
+                    `
+                            : `
                         <div class="flex items-center text-base-content/40" title="${i18n.t('fieldManagement.required')}">
                             <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24"
                                 stroke="currentColor" stroke-width="2">
@@ -330,9 +336,12 @@ export function renderFieldList() {
                                     d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
                             </svg>
                         </div>
-                    `}
+                    `
+                    }
 
-                    ${!isSystem ? `
+                    ${
+                        !isSystem
+                            ? `
                         <button class="field-action-btn w-8 h-8 inline-flex items-center justify-center rounded-lg bg-base-100 border border-base-300 text-base-content/60 hover:text-primary hover:border-primary/30 transition-colors"
                             data-action="edit" data-field="${fieldName}" title="${i18n.t('fieldManagement.editField')}">
                             <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -347,7 +356,9 @@ export function renderFieldList() {
                                     d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                             </svg>
                         </button>
-                    ` : ''}
+                    `
+                            : ''
+                    }
                 </div>
             </div>
         `;
@@ -356,7 +367,7 @@ export function renderFieldList() {
     container.innerHTML = html;
 
     // Click item to edit (system/custom)
-    container.querySelectorAll('[data-field-name]').forEach(item => {
+    container.querySelectorAll('[data-field-name]').forEach((item) => {
         item.addEventListener('click', (e) => {
             if (Date.now() < suppressFieldItemClickUntil) return;
             const actionBtn = e.target.closest('.field-action-btn');
@@ -371,7 +382,7 @@ export function renderFieldList() {
     });
 
     // Bind delete events
-    container.querySelectorAll('.field-action-btn').forEach(btn => {
+    container.querySelectorAll('.field-action-btn').forEach((btn) => {
         btn.addEventListener('click', function (e) {
             e.stopPropagation();
             const action = this.dataset.action;
@@ -385,7 +396,7 @@ export function renderFieldList() {
     });
 
     // Bind enable/disable toggle events
-    container.querySelectorAll('.toggle-field-enabled').forEach(toggle => {
+    container.querySelectorAll('.toggle-field-enabled').forEach((toggle) => {
         toggle.addEventListener('change', function (e) {
             e.stopPropagation();
             const fieldName = this.dataset.field;
@@ -403,7 +414,7 @@ export function renderFieldList() {
         const items = container.querySelectorAll('[data-field-name]');
         const enabledFields = [];
 
-        items.forEach(item => {
+        items.forEach((item) => {
             const checkbox = item.querySelector('.toggle-field-enabled');
             if (checkbox) {
                 if (checkbox.checked) {
@@ -414,7 +425,7 @@ export function renderFieldList() {
             }
         });
 
-        const internalFieldsPreserved = state.fieldOrder.filter(f => INTERNAL_FIELDS.includes(f));
+        const internalFieldsPreserved = state.fieldOrder.filter((f) => INTERNAL_FIELDS.includes(f));
         const uniqueNewOrder = [...new Set([...enabledFields, ...internalFieldsPreserved])];
 
         console.log('[Debug] New field order:', uniqueNewOrder);
@@ -429,11 +440,15 @@ export function renderFieldList() {
     let nativeDragFromHandle = false;
     let nativeDraggingField = null;
 
-    container.addEventListener('mousedown', (e) => {
-        nativeDragFromHandle = !!e.target.closest('.field-drag-handle');
-    }, true);
+    container.addEventListener(
+        'mousedown',
+        (e) => {
+            nativeDragFromHandle = !!e.target.closest('.field-drag-handle');
+        },
+        true
+    );
 
-    container.querySelectorAll('.field-item').forEach(item => {
+    container.querySelectorAll('.field-item').forEach((item) => {
         item.addEventListener('dragstart', (e) => {
             if (!nativeDragFromHandle) {
                 e.preventDefault();
@@ -461,7 +476,9 @@ export function renderFieldList() {
             const targetItem = e.currentTarget;
             if (!targetItem || targetItem.dataset.fieldName === nativeDraggingField) return;
 
-            const draggedItem = container.querySelector(`[data-field-name="${nativeDraggingField}"]`);
+            const draggedItem = container.querySelector(
+                `[data-field-name="${nativeDraggingField}"]`
+            );
             if (!draggedItem) return;
 
             const rect = targetItem.getBoundingClientRect();
@@ -485,17 +502,20 @@ export function renderFieldList() {
     }
 
     // Check for Sortable availability
-    const SortableClass = (typeof Sortable !== 'undefined' ? Sortable : undefined) || (window.Sortable || undefined);
+    const SortableClass =
+        (typeof Sortable !== 'undefined' ? Sortable : undefined) || window.Sortable || undefined;
 
     window.__debugLogs = window.__debugLogs || [];
-    window.__debugLogs.push('[Debug] renderFieldList called. Sortable available: ' + !!SortableClass);
+    window.__debugLogs.push(
+        '[Debug] renderFieldList called. Sortable available: ' + !!SortableClass
+    );
 
     if (SortableClass) {
         window.__debugLogs.push('[Debug] Sortable initializing on container');
         try {
             sortableInstance = new SortableClass(container, {
                 animation: 200,
-                easing: "cubic-bezier(0.4, 0, 0.2, 1)",
+                easing: 'cubic-bezier(0.4, 0, 0.2, 1)',
                 handle: '.field-drag-handle',
                 draggable: '.field-item',
                 forceFallback: true,
@@ -513,7 +533,7 @@ export function renderFieldList() {
                     suppressFieldItemClickUntil = Date.now() + 300;
                     console.log('[Debug] Sortable onEnd', evt.oldIndex, '->', evt.newIndex);
                     applyOrderFromDom();
-                }
+                },
             });
         } catch (e) {
             console.error('[Debug] Error creating Sortable instance:', e);
@@ -539,7 +559,7 @@ function getSystemFieldIcon(fieldName) {
         duration: '⏱️',
         actual_start: '▶️',
         actual_end: '⏹️',
-        actual_hours: '⏰'
+        actual_hours: '⏰',
     };
     return iconMap[fieldName] || '📝';
 }
@@ -565,7 +585,7 @@ export function updateFieldTypeSelector(value) {
     }
 
     // 更新下拉菜单选中状态
-    dropdown.querySelectorAll('.field-type-option').forEach(opt => {
+    dropdown.querySelectorAll('.field-type-option').forEach((opt) => {
         const isSelected = opt.dataset.value === value;
         // Tailwind styling for selection state
         opt.classList.toggle('bg-primary/10', isSelected);
@@ -603,7 +623,13 @@ export function updateDefaultValueInput(fieldType) {
     if (configSection) {
         configSection.style.display = 'block';
         // 添加黄色高亮背景
-        configSection.classList.add('bg-warning/10', 'p-3', 'rounded-lg', 'border', 'border-warning/20');
+        configSection.classList.add(
+            'bg-warning/10',
+            'p-3',
+            'rounded-lg',
+            'border',
+            'border-warning/20'
+        );
     }
 
     let inputHTML = '';
@@ -662,7 +688,7 @@ export function updateDefaultValueOptions() {
 
     // 获取当前已配置的选项
     const options = [];
-    document.querySelectorAll('#options-list input[type="text"]').forEach(input => {
+    document.querySelectorAll('#options-list input[type="text"]').forEach((input) => {
         if (input.value.trim()) {
             options.push(input.value.trim());
         }
@@ -670,21 +696,22 @@ export function updateDefaultValueOptions() {
 
     // 保留当前选中的值
     const currentValue = defaultValueSelect.value;
-    const currentValues = fieldType === 'multiselect'
-        ? Array.from(defaultValueSelect.selectedOptions).map(o => o.value)
-        : [currentValue];
+    const currentValues =
+        fieldType === 'multiselect'
+            ? Array.from(defaultValueSelect.selectedOptions).map((o) => o.value)
+            : [currentValue];
 
     // 重新生成选项
     if (fieldType === 'select') {
         const selectPlaceholder = i18n.t('form.selectPlaceholder');
         defaultValueSelect.innerHTML = `<option value="">${selectPlaceholder}</option>`;
-        options.forEach(opt => {
+        options.forEach((opt) => {
             const selected = currentValues.includes(opt) ? 'selected' : '';
             defaultValueSelect.innerHTML += `<option value="${opt}" ${selected}>${opt}</option>`;
         });
     } else {
         defaultValueSelect.innerHTML = '';
-        options.forEach(opt => {
+        options.forEach((opt) => {
             const selected = currentValues.includes(opt) ? 'selected' : '';
             defaultValueSelect.innerHTML += `<option value="${opt}" ${selected}>${opt}</option>`;
         });
@@ -730,7 +757,7 @@ function openCustomFieldEditModal(fieldName) {
         optionsList.innerHTML = '';
 
         if (field.options) {
-            field.options.forEach(option => {
+            field.options.forEach((option) => {
                 addOptionInput(option);
             });
         }
@@ -839,20 +866,28 @@ function openSystemFieldEditModal(fieldName) {
                                 <span>${escapeAttr(i18n.t('fieldManagement.fieldType'))}</span>
                             </span>
                         </label>
-                        ${config.allowedTypes.length > 1 ? `
+                        ${
+                            config.allowedTypes.length > 1
+                                ? `
                             <select id="system-field-type-select" class="select select-bordered w-full h-12">
-                                ${config.allowedTypes.map(type => `
+                                ${config.allowedTypes
+                                    .map(
+                                        (type) => `
                                     <option value="${escapeAttr(type)}" ${type === currentType ? 'selected' : ''}>
                                         ${escapeAttr(i18n.t('fieldTypes.' + type))}
                                     </option>
-                                `).join('')}
+                                `
+                                    )
+                                    .join('')}
                             </select>
-                        ` : `
+                        `
+                                : `
                             <input type="text" value="${escapeAttr(i18n.t('fieldTypes.' + config.type))}" disabled class="input input-bordered w-full bg-base-200 h-12">
                             <label class="label">
                                 <span class="label-text-alt text-base-content/60">${escapeAttr(i18n.t('fieldManagement.typeNotEditable'))}</span>
                             </label>
-                        `}
+                        `
+                        }
                     </div>
 
                     <!-- 选项配置 -->
@@ -864,12 +899,16 @@ function openSystemFieldEditModal(fieldName) {
                             </span>
                         </label>
                         <div id="system-field-options-list" class="space-y-2 mb-2">
-                            ${currentOptions.map(opt => `
+                            ${currentOptions
+                                .map(
+                                    (opt) => `
                                 <div class="flex gap-2 items-center">
                                     <input type="text" class="input input-sm input-bordered flex-1 system-field-option-input" value="${escapeAttr(opt)}">
                                     <button type="button" class="btn btn-ghost btn-xs btn-circle text-error system-field-remove-option">✕</button>
                                 </div>
-                            `).join('')}
+                            `
+                                )
+                                .join('')}
                         </div>
                         <button type="button" id="system-field-add-option-btn" class="btn btn-sm btn-ghost btn-outline border-dashed w-full gap-2">
                             + ${escapeAttr(i18n.t('fieldManagement.addOption'))}
@@ -887,9 +926,13 @@ function openSystemFieldEditModal(fieldName) {
                         </div>
                         <select id="system-field-default-value" class="select select-sm select-bordered w-full bg-white">
                             <option value="">${escapeAttr(i18n.t('form.selectPlaceholder'))}</option>
-                            ${currentOptions.map(opt => `
+                            ${currentOptions
+                                .map(
+                                    (opt) => `
                                 <option value="${escapeAttr(opt)}" ${opt === currentDefaultValue ? 'selected' : ''}>${escapeAttr(opt)}</option>
-                            `).join('')}
+                            `
+                                )
+                                .join('')}
                         </select>
                         <div class="text-xs text-gray-400 mt-2">
                             ${escapeAttr(i18n.t('fieldManagement.defaultNote') || '新增字段时，所有现有任务将被设置为此默认值。')}
@@ -950,7 +993,7 @@ function openSystemFieldEditModal(fieldName) {
 
     cancelBtn.addEventListener('click', closeModal);
     if (closeXBtn) closeXBtn.addEventListener('click', closeModal);
-    
+
     // ESC 键关闭
     const escHandler = (e) => {
         if (e.key === 'Escape') {
@@ -975,7 +1018,7 @@ function openSystemFieldEditModal(fieldName) {
     // Function to update default value dropdown options
     const updateDefaultValueOptions = () => {
         const options = [];
-        optionsList.querySelectorAll('.system-field-option-input').forEach(input => {
+        optionsList.querySelectorAll('.system-field-option-input').forEach((input) => {
             if (input.value.trim()) {
                 options.push(input.value.trim());
             }
@@ -983,7 +1026,7 @@ function openSystemFieldEditModal(fieldName) {
 
         const currentDefaultVal = defaultValueSelect.value;
         defaultValueSelect.innerHTML = `<option value="">${i18n.t('form.selectPlaceholder')}</option>`;
-        options.forEach(opt => {
+        options.forEach((opt) => {
             const selected = opt === currentDefaultVal ? 'selected' : '';
             defaultValueSelect.innerHTML += `<option value="${opt}" ${selected}>${opt}</option>`;
         });
@@ -1030,7 +1073,7 @@ function openSystemFieldEditModal(fieldName) {
 
         if (isNewSelectType) {
             options = [];
-            optionsList.querySelectorAll('.system-field-option-input').forEach(input => {
+            optionsList.querySelectorAll('.system-field-option-input').forEach((input) => {
                 if (input.value.trim()) {
                     options.push(input.value.trim());
                 }
@@ -1056,7 +1099,6 @@ function openSystemFieldEditModal(fieldName) {
     });
 }
 
-
 /**
  * 显示删除确认弹窗
  */
@@ -1068,7 +1110,9 @@ export function showDeleteConfirmModal(fieldName) {
         icon: 'trash-2',
         variant: 'danger',
         title: i18n.t('fieldManagement.deleteTitle') || '确认删除',
-        message: i18n.t('fieldManagement.deleteMessage', { name: field.label }) || '确定要删除此字段吗？此操作无法撤销。',
+        message:
+            i18n.t('fieldManagement.deleteMessage', { name: field.label }) ||
+            '确定要删除此字段吗？此操作无法撤销。',
         confirmText: i18n.t('form.delete') || '删除',
         cancelText: i18n.t('form.cancel') || '取消',
         onConfirm: () => {
@@ -1082,7 +1126,7 @@ export function showDeleteConfirmModal(fieldName) {
             persistCustomFields();
 
             showToast(i18n.t('message.deleteSuccess'), 'success');
-        }
+        },
     });
 }
 
@@ -1113,7 +1157,7 @@ export function initCustomFieldsUI() {
     });
 
     // 字段类型选项点击事件
-    document.querySelectorAll('.field-type-option').forEach(option => {
+    document.querySelectorAll('.field-type-option').forEach((option) => {
         option.addEventListener('click', function (e) {
             e.stopPropagation();
             const value = this.dataset.value;
@@ -1164,10 +1208,10 @@ export function initCustomFieldsUI() {
         system: 'fieldManagement.filterSystem',
         custom: 'fieldManagement.filterCustom',
         enabled: 'fieldManagement.filterEnabled',
-        disabled: 'fieldManagement.filterDisabled'
+        disabled: 'fieldManagement.filterDisabled',
     };
 
-    document.querySelectorAll('#field-filter-btn + ul a').forEach(item => {
+    document.querySelectorAll('#field-filter-btn + ul a').forEach((item) => {
         item.addEventListener('click', function (e) {
             e.preventDefault();
             const filter = this.dataset.filter;
@@ -1226,8 +1270,12 @@ export function initCustomFieldsUI() {
     });
 
     // 字段管理面板
-    document.getElementById('close-field-management').addEventListener('click', closeFieldManagementPanel);
-    document.getElementById('field-management-backdrop')?.addEventListener('click', closeFieldManagementPanel);
+    document
+        .getElementById('close-field-management')
+        .addEventListener('click', closeFieldManagementPanel);
+    document
+        .getElementById('field-management-backdrop')
+        ?.addEventListener('click', closeFieldManagementPanel);
 
     // 防抖函数
     function debounce(func, wait) {
@@ -1243,7 +1291,8 @@ export function initCustomFieldsUI() {
     }
 
     // Drawer 搜索过滤（防抖300ms）
-    document.getElementById('field-management-search-input')?.addEventListener('input',
+    document.getElementById('field-management-search-input')?.addEventListener(
+        'input',
         debounce((e) => {
             const query = (e.target.value || '').toLowerCase().trim();
             document.querySelectorAll('#field-list-container [data-field-name]').forEach((el) => {
@@ -1271,7 +1320,7 @@ export function initCustomFieldsUI() {
                         break;
                 }
 
-                el.style.display = (matchesSearch && matchesFilter) ? '' : 'none';
+                el.style.display = matchesSearch && matchesFilter ? '' : 'none';
             });
         }, 300)
     );
@@ -1305,7 +1354,9 @@ export function initCustomFieldsUI() {
         const defaultValueEl = document.getElementById('field-default-value');
         if (defaultValueEl) {
             if (fieldType === 'multiselect' && defaultValueEl.multiple) {
-                fieldDefaultValue = Array.from(defaultValueEl.selectedOptions).map(o => o.value).join(',');
+                fieldDefaultValue = Array.from(defaultValueEl.selectedOptions)
+                    .map((o) => o.value)
+                    .join(',');
             } else {
                 fieldDefaultValue = defaultValueEl.value.trim();
             }
@@ -1322,12 +1373,12 @@ export function initCustomFieldsUI() {
             type: fieldType,
             icon: fieldIcon,
             width: 100,
-            required: fieldRequired
+            required: fieldRequired,
         };
 
         if (fieldType === 'select' || fieldType === 'multiselect') {
             const options = [];
-            document.querySelectorAll('#options-list input[type="text"]').forEach(input => {
+            document.querySelectorAll('#options-list input[type="text"]').forEach((input) => {
                 if (input.value.trim()) {
                     options.push(input.value.trim());
                 }
@@ -1354,11 +1405,13 @@ export function initCustomFieldsUI() {
 
                 if (fieldType === 'select' || fieldType === 'multiselect') {
                     const options = [];
-                    document.querySelectorAll('#options-list input[type="text"]').forEach(input => {
-                        if (input.value.trim()) {
-                            options.push(input.value.trim());
-                        }
-                    });
+                    document
+                        .querySelectorAll('#options-list input[type="text"]')
+                        .forEach((input) => {
+                            if (input.value.trim()) {
+                                options.push(input.value.trim());
+                            }
+                        });
 
                     if (options.length === 0) {
                         showToast(i18n.t('message.validationError'), 'error', 3000);

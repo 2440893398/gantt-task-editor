@@ -1,6 +1,6 @@
 /**
  * 关键路径 (CPM - Critical Path Method) 模块
- * 
+ *
  * 实现 PRD-竞品改进-v1.0 中的关键路径高亮功能：
  * - 正向推导 (Forward Pass): 计算 ES/EF
  * - 逆向推导 (Backward Pass): 计算 LS/LF
@@ -32,7 +32,7 @@ export function initCriticalPath() {
     bindRecalculateEvents();
 
     // 绑定渲染事件，确保高亮正确应用
-    gantt.attachEvent("onGanttRender", function () {
+    gantt.attachEvent('onGanttRender', function () {
         if (showCriticalPath) {
             applyLinkHighlight();
         }
@@ -93,7 +93,7 @@ function bindToggleEvent() {
  */
 function bindRecalculateEvents() {
     // 任务更新后重新计算
-    gantt.attachEvent("onAfterTaskUpdate", function (id, task) {
+    gantt.attachEvent('onAfterTaskUpdate', function (id, task) {
         if (showCriticalPath) {
             recalculateCriticalPath();
         }
@@ -101,7 +101,7 @@ function bindRecalculateEvents() {
     });
 
     // 任务拖拽后重新计算
-    gantt.attachEvent("onAfterTaskDrag", function (id, mode, e) {
+    gantt.attachEvent('onAfterTaskDrag', function (id, mode, e) {
         if (showCriticalPath) {
             recalculateCriticalPath();
         }
@@ -109,14 +109,14 @@ function bindRecalculateEvents() {
     });
 
     // 依赖创建/删除后重新计算
-    gantt.attachEvent("onAfterLinkAdd", function (id, link) {
+    gantt.attachEvent('onAfterLinkAdd', function (id, link) {
         if (showCriticalPath) {
             recalculateCriticalPath();
         }
         return true;
     });
 
-    gantt.attachEvent("onAfterLinkDelete", function (id, link) {
+    gantt.attachEvent('onAfterLinkDelete', function (id, link) {
         if (showCriticalPath) {
             recalculateCriticalPath();
         }
@@ -133,7 +133,7 @@ export function calculateCriticalPath() {
     const links = gantt.getLinks();
 
     // 收集所有叶子任务（非父任务）
-    gantt.eachTask(task => {
+    gantt.eachTask((task) => {
         const children = gantt.getChildren(task.id);
         if (children.length === 0) {
             tasks.push({
@@ -141,11 +141,11 @@ export function calculateCriticalPath() {
                 start: task.start_date.getTime(),
                 end: task.end_date.getTime(),
                 duration: task.duration || 1,
-                ES: 0,  // 最早开始
-                EF: 0,  // 最早结束
-                LS: Infinity,  // 最晚开始
-                LF: Infinity,  // 最晚结束
-                float: 0  // 浮动时间
+                ES: 0, // 最早开始
+                EF: 0, // 最早结束
+                LS: Infinity, // 最晚开始
+                LF: Infinity, // 最晚结束
+                float: 0, // 浮动时间
             });
         }
     });
@@ -156,18 +156,18 @@ export function calculateCriticalPath() {
 
     // 构建任务映射
     const taskMap = new Map();
-    tasks.forEach(t => taskMap.set(t.id, t));
+    tasks.forEach((t) => taskMap.set(t.id, t));
 
     // 构建依赖关系图
-    const predecessors = new Map();  // 前置任务
-    const successors = new Map();    // 后继任务
+    const predecessors = new Map(); // 前置任务
+    const successors = new Map(); // 后继任务
 
-    tasks.forEach(t => {
+    tasks.forEach((t) => {
         predecessors.set(t.id, []);
         successors.set(t.id, []);
     });
 
-    links.forEach(link => {
+    links.forEach((link) => {
         const source = link.source;
         const target = link.target;
         const lag = link.lag || 0;
@@ -185,7 +185,7 @@ export function calculateCriticalPath() {
     // 按开始时间排序，确保按正确顺序处理
     const sortedTasks = [...tasks].sort((a, b) => a.start - b.start);
 
-    sortedTasks.forEach(task => {
+    sortedTasks.forEach((task) => {
         const preds = predecessors.get(task.id);
 
         if (preds.length === 0) {
@@ -194,7 +194,7 @@ export function calculateCriticalPath() {
         } else {
             // ES = max(所有前置任务的 EF + lag)
             let maxEF = 0;
-            preds.forEach(pred => {
+            preds.forEach((pred) => {
                 const predTask = taskMap.get(pred.id);
                 if (predTask) {
                     let ef = predTask.EF;
@@ -220,12 +220,12 @@ export function calculateCriticalPath() {
     // ========================================
 
     // 找到项目结束时间 (最大的 EF)
-    const projectEnd = Math.max(...tasks.map(t => t.EF));
+    const projectEnd = Math.max(...tasks.map((t) => t.EF));
 
     // 按结束时间倒序处理
     const reverseSortedTasks = [...tasks].sort((a, b) => b.EF - a.EF);
 
-    reverseSortedTasks.forEach(task => {
+    reverseSortedTasks.forEach((task) => {
         const succs = successors.get(task.id);
 
         if (succs.length === 0) {
@@ -234,7 +234,7 @@ export function calculateCriticalPath() {
         } else {
             // LF = min(所有后继任务的 LS - lag)
             let minLS = Infinity;
-            succs.forEach(succ => {
+            succs.forEach((succ) => {
                 const succTask = taskMap.get(succ.id);
                 if (succTask) {
                     let ls = succTask.LS;
@@ -261,7 +261,7 @@ export function calculateCriticalPath() {
 
     const criticalIds = new Set();
 
-    tasks.forEach(task => {
+    tasks.forEach((task) => {
         task.float = task.LS - task.ES;
 
         // Float = 0 表示在关键路径上
@@ -309,13 +309,13 @@ function applyHighlight() {
  */
 function applyLinkHighlight() {
     // 移除所有连线高亮
-    document.querySelectorAll('.gantt_task_link.critical-link').forEach(el => {
+    document.querySelectorAll('.gantt_task_link.critical-link').forEach((el) => {
         el.classList.remove('critical-link');
     });
 
     // 高亮关键路径上的连线
     const links = gantt.getLinks();
-    links.forEach(link => {
+    links.forEach((link) => {
         if (criticalTaskIds.has(link.source) && criticalTaskIds.has(link.target)) {
             const linkNode = gantt.getLinkNode(link.id);
             if (linkNode) {
@@ -331,11 +331,11 @@ function applyLinkHighlight() {
 function clearHighlight() {
     criticalTaskIds.clear();
 
-    document.querySelectorAll('.critical-path').forEach(el => {
+    document.querySelectorAll('.critical-path').forEach((el) => {
         el.classList.remove('critical-path');
     });
 
-    document.querySelectorAll('.critical-link').forEach(el => {
+    document.querySelectorAll('.critical-link').forEach((el) => {
         el.classList.remove('critical-link');
     });
 

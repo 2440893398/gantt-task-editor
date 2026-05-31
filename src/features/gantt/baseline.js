@@ -45,8 +45,8 @@ export function initBaseline() {
                         new Date(task.baseline_start),
                         new Date(task.baseline_end)
                     );
-                }
-            }
+                },
+            },
         });
     } else {
         console.warn('gantt.addTaskLayer not available. Baseline display disabled.');
@@ -69,13 +69,18 @@ export async function handleSaveBaseline() {
     const snapshot = gantt.serialize();
 
     // Clean up snapshot to only keep essential data for baseline
-    snapshot.data.forEach(task => {
+    snapshot.data.forEach((task) => {
         // Ensure dates are strings
-        if (task.start_date instanceof Date) task.start_date = gantt.date.date_to_str('%Y-%m-%d')(task.start_date);
-        if (task.end_date instanceof Date) task.end_date = gantt.date.date_to_str('%Y-%m-%d')(task.end_date);
+        if (task.start_date instanceof Date)
+            task.start_date = gantt.date.date_to_str('%Y-%m-%d')(task.start_date);
+        if (task.end_date instanceof Date)
+            task.end_date = gantt.date.date_to_str('%Y-%m-%d')(task.end_date);
     });
 
-    await projectScope(state.currentProjectId).saveBaseline({ snapshot, savedAt: new Date().toISOString() });
+    await projectScope(state.currentProjectId).saveBaseline({
+        snapshot,
+        savedAt: new Date().toISOString(),
+    });
 
     const date = new Date().toLocaleString();
     showToast(i18n.t('baseline.saved') + ` (${date})`, 'success');
@@ -104,16 +109,16 @@ async function loadBaselineData() {
     if (!baseline) return;
 
     const baselineMap = new Map();
-    baseline.snapshot.data.forEach(task => {
+    baseline.snapshot.data.forEach((task) => {
         baselineMap.set(task.id, {
             baseline_start: task.start_date,
             baseline_end: task.end_date,
-            baseline_duration: task.duration
+            baseline_duration: task.duration,
         });
     });
 
     // Merge baseline data into current tasks
-    gantt.eachTask(task => {
+    gantt.eachTask((task) => {
         const baselineData = baselineMap.get(task.id);
         if (baselineData) {
             Object.assign(task, baselineData);

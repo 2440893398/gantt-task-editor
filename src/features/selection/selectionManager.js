@@ -43,9 +43,9 @@ export function updateSelectedTasksUI() {
     const selectAll = document.getElementById('select-all-checkbox');
     if (selectAll) {
         const allTaskIds = [];
-        gantt.eachTask(task => allTaskIds.push(task.id));
-        const allSelected = allTaskIds.length > 0 && allTaskIds.every(id => isTaskSelected(id));
-        const someSelected = allTaskIds.some(id => isTaskSelected(id));
+        gantt.eachTask((task) => allTaskIds.push(task.id));
+        const allSelected = allTaskIds.length > 0 && allTaskIds.every((id) => isTaskSelected(id));
+        const someSelected = allTaskIds.some((id) => isTaskSelected(id));
 
         selectAll.checked = allSelected;
         selectAll.indeterminate = someSelected && !allSelected;
@@ -57,21 +57,21 @@ export function updateSelectedTasksUI() {
  */
 export function applySelectionStyles() {
     // 首先清除所有选中样式
-    document.querySelectorAll('.gantt_row.gantt-selected').forEach(row => {
+    document.querySelectorAll('.gantt_row.gantt-selected').forEach((row) => {
         row.classList.remove('gantt-selected');
         row.style.backgroundColor = '';
         row.style.borderLeft = '';
     });
-    document.querySelectorAll('.gantt_task_row.gantt-selected').forEach(row => {
+    document.querySelectorAll('.gantt_task_row.gantt-selected').forEach((row) => {
         row.classList.remove('gantt-selected');
         row.style.backgroundColor = '';
     });
 
     // 遍历所有选中的任务并应用样式
-    state.selectedTasks.forEach(taskId => {
+    state.selectedTasks.forEach((taskId) => {
         // 查找左侧表格行
         const gridRows = document.querySelectorAll(`.gantt_row[task_id="${taskId}"]`);
-        gridRows.forEach(row => {
+        gridRows.forEach((row) => {
             row.classList.add('gantt-selected');
             row.style.backgroundColor = 'rgba(59, 130, 246, 0.15)';
             row.style.borderLeft = '3px solid #3b82f6';
@@ -86,14 +86,14 @@ export function applySelectionStyles() {
 
         // 查找右侧时间轴行
         const taskRows = document.querySelectorAll(`.gantt_task_row[task_id="${taskId}"]`);
-        taskRows.forEach(row => {
+        taskRows.forEach((row) => {
             row.classList.add('gantt-selected');
             row.style.backgroundColor = 'rgba(59, 130, 246, 0.15)';
         });
 
         // 高亮右侧甘特条本身，增强可见性
         const taskBars = document.querySelectorAll(`.gantt_task_line[task_id="${taskId}"]`);
-        taskBars.forEach(bar => {
+        taskBars.forEach((bar) => {
             bar.classList.add('gantt-selected');
             bar.style.outline = '2px solid #3b82f6';
             bar.style.outlineOffset = '1px';
@@ -104,7 +104,9 @@ export function applySelectionStyles() {
     // 更新未选中任务的复选框状态
     gantt.eachTask(function (task) {
         if (!isTaskSelected(task.id)) {
-            const checkbox = document.querySelector(`.gantt-checkbox-selection[data-task-id="${task.id}"]`);
+            const checkbox = document.querySelector(
+                `.gantt-checkbox-selection[data-task-id="${task.id}"]`
+            );
             if (checkbox) {
                 checkbox.checked = false;
             }

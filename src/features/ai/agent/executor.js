@@ -12,8 +12,14 @@ import { IMPORT_SYSTEM_PROMPT, DIFF_JSON_SCHEMA } from '../prompts/importPrompt.
 import { getAiConfigState } from '../../../core/store.js';
 
 function hasAttachmentContext(messages = []) {
-    return Array.isArray(messages) && messages.some((m) =>
-        m?.role === 'user' && typeof m?.content === 'string' && m.content.includes('[Attachment Context]')
+    return (
+        Array.isArray(messages) &&
+        messages.some(
+            (m) =>
+                m?.role === 'user' &&
+                typeof m?.content === 'string' &&
+                m.content.includes('[Attachment Context]')
+        )
     );
 }
 
@@ -46,11 +52,11 @@ function getLanguageInstruction() {
         'zh-CN': 'Simplified Chinese',
         'en-US': 'English',
         'ja-JP': 'Japanese',
-        'ko-KR': 'Korean'
+        'ko-KR': 'Korean',
     };
     return {
         language: currentLanguage,
-        languageName: localeNameMap[currentLanguage] || 'English'
+        languageName: localeNameMap[currentLanguage] || 'English',
     };
 }
 
@@ -68,17 +74,17 @@ function isToolCallingSupportedByAPI(baseUrl, model) {
         const testResult = localStorage.getItem('gantt_ai_last_test_result');
         if (testResult) {
             const result = JSON.parse(testResult);
-            
+
             // 检查测试结果是否针对当前的 model
             // 如果 model 不同，忽略旧的测试结果
             if (result.testedModel && result.testedModel !== model) {
                 console.log('[Executor] Test result is for different model, ignoring:', {
                     tested: result.testedModel,
-                    current: model
+                    current: model,
                 });
                 return true; // 默认启用，让用户重新测试
             }
-            
+
             // 如果明确测试过不支持，则禁用工具调用
             if (result.toolCallSupported === false) {
                 return false;
@@ -87,7 +93,7 @@ function isToolCallingSupportedByAPI(baseUrl, model) {
     } catch (e) {
         console.warn('[Executor] Failed to read test result:', e);
     }
-    
+
     // 默认启用（让 API 自己报错，然后用户可以通过测试连接来确认）
     return true;
 }
@@ -99,8 +105,17 @@ function isToolCallingSupportedByAPI(baseUrl, model) {
  * @param {LanguageModel} model - 已创建的模型实例
  * @param {Object} callbacks - 回调函数
  */
-export async function executeSkill(skillId, messages, modelOrProvider, modelIdOrCallbacks = {}, maybeCallbacks = {}) {
-    const model = resolveModel(modelOrProvider, typeof modelIdOrCallbacks === 'string' ? modelIdOrCallbacks : undefined);
+export async function executeSkill(
+    skillId,
+    messages,
+    modelOrProvider,
+    modelIdOrCallbacks = {},
+    maybeCallbacks = {}
+) {
+    const model = resolveModel(
+        modelOrProvider,
+        typeof modelIdOrCallbacks === 'string' ? modelIdOrCallbacks : undefined
+    );
     const callbacks = typeof modelIdOrCallbacks === 'string' ? maybeCallbacks : modelIdOrCallbacks;
     // 1. 加载完整 Skill 内容（按需加载）
     const skill = await loadSkill(skillId);
@@ -113,15 +128,17 @@ export async function executeSkill(skillId, messages, modelOrProvider, modelIdOr
     const config = getAiConfigState();
     const currentModel = config.model || 'gpt-3.5-turbo';
     const apiSupportsTools = isToolCallingSupportedByAPI(config.baseUrl, currentModel);
-    
+
     if (!apiSupportsTools) {
-        console.warn('[Executor] Current API endpoint does not support tool calling, falling back to general chat');
+        console.warn(
+            '[Executor] Current API endpoint does not support tool calling, falling back to general chat'
+        );
     }
 
     // 3. 获取 Skill 允许的工具子集 (only if API supports it)
     const tools = apiSupportsTools ? getToolsForSkill(skill.allowedTools) : null;
     const hasTools = tools && Object.keys(tools).length > 0;
-    
+
     // 4. Debug: Log tool schemas (DEEP INSPECTION)
     if (hasTools && import.meta.env.DEV) {
         console.log('[Executor] Tools for skill:', Object.keys(tools));
@@ -130,17 +147,17 @@ export async function executeSkill(skillId, messages, modelOrProvider, modelIdOr
                 hasDescription: !!tool.description,
                 hasParameters: !!tool.parameters,
                 parametersType: tool.parameters?.constructor?.name,
-                hasExecute: !!tool.execute
+                hasExecute: !!tool.execute,
             });
-            
+
             // DEEP: Check what Zod schema actually contains
             if (tool.parameters?._def) {
                 const def = tool.parameters._def;
                 console.log(`[Executor] Tool ${name} Zod schema:`, {
                     typeName: def.typeName,
-                    shape: typeof def.shape === 'function' ? Object.keys(def.shape()) : 'no-shape'
+                    shape: typeof def.shape === 'function' ? Object.keys(def.shape()) : 'no-shape',
                 });
-                
+
                 // Try to see what JSON schema the AI SDK will generate
                 try {
                     const schema = tool.parameters;
@@ -161,13 +178,14 @@ export async function executeSkill(skillId, messages, modelOrProvider, modelIdOr
         day: '2-digit',
         weekday: 'long',
         hour: '2-digit',
-        minute: '2-digit'
+        minute: '2-digit',
     });
     const todayDate = now.toISOString().split('T')[0]; // YYYY-MM-DD 格式
-    
-    const importGuidance = skillId === 'import-analysis' || hasAttachmentContext(messages)
-        ? `\n\n## Attachment Import Guidance\n${IMPORT_SYSTEM_PROMPT}\n\nDIFF_JSON_SCHEMA:\n${JSON.stringify(DIFF_JSON_SCHEMA, null, 2)}`
-        : '';
+
+    const importGuidance =
+        skillId === 'import-analysis' || hasAttachmentContext(messages)
+            ? `\n\n## Attachment Import Guidance\n${IMPORT_SYSTEM_PROMPT}\n\nDIFF_JSON_SCHEMA:\n${JSON.stringify(DIFF_JSON_SCHEMA, null, 2)}`
+            : '';
 
     const systemPrompt = `You are a professional Gantt project management assistant.
 
@@ -198,9 +216,9 @@ ${skill.content}${importGuidance}
         messagesCount: messages.length,
         toolNames: hasTools ? Object.keys(tools) : [],
         maxSteps: hasTools ? 5 : 1,
-        toolChoice: hasTools ? 'auto' : undefined
+        toolChoice: hasTools ? 'auto' : undefined,
     });
-    
+
     // Debug: 检查工具的实际结构
     if (hasTools) {
         Object.entries(tools).forEach(([name, t]) => {
@@ -212,36 +230,46 @@ ${skill.content}${importGuidance}
                 hasExecute: 'execute' in t,
                 // 检查 inputSchema 的内容
                 inputSchemaType: t.inputSchema?.type,
-                inputSchemaJsonSchema: t.inputSchema?.jsonSchema
+                inputSchemaJsonSchema: t.inputSchema?.jsonSchema,
             });
         });
     }
-    
+
     const result = streamText({
         model: model,
         system: systemPrompt,
         messages,
         tools: hasTools ? tools : undefined,
-        stopWhen: hasTools ? stepCountIs(5) : undefined,  // AI SDK 6: 使用 stopWhen 替代 maxSteps
+        stopWhen: hasTools ? stepCountIs(5) : undefined, // AI SDK 6: 使用 stopWhen 替代 maxSteps
         toolChoice: hasTools ? 'auto' : undefined,
         onStepFinish: ({ stepType, toolCalls, toolResults, text, finishReason }) => {
-            console.log('[Executor] Step finished:', { stepType, finishReason, hasToolCalls: !!toolCalls?.length, hasToolResults: !!toolResults?.length, textLength: text?.length });
-            
+            console.log('[Executor] Step finished:', {
+                stepType,
+                finishReason,
+                hasToolCalls: !!toolCalls?.length,
+                hasToolResults: !!toolResults?.length,
+                textLength: text?.length,
+            });
+
             if (stepType === 'tool-call' && toolCalls?.length) {
-                callbacks?.onToolCall?.(toolCalls.map(tc => ({
-                    id: tc.toolCallId,
-                    name: tc.toolName,
-                    args: tc.args
-                })));
+                callbacks?.onToolCall?.(
+                    toolCalls.map((tc) => ({
+                        id: tc.toolCallId,
+                        name: tc.toolName,
+                        args: tc.args,
+                    }))
+                );
             }
             if (stepType === 'tool-result' && toolResults?.length) {
-                callbacks?.onToolResult?.(toolResults.map(tr => ({
-                    id: tr.toolCallId,
-                    name: tr.toolName,
-                    result: tr.result
-                })));
+                callbacks?.onToolResult?.(
+                    toolResults.map((tr) => ({
+                        id: tr.toolCallId,
+                        name: tr.toolName,
+                        result: tr.result,
+                    }))
+                );
             }
-        }
+        },
     });
 
     return result;
@@ -253,8 +281,16 @@ ${skill.content}${importGuidance}
  * @param {LanguageModel} model - 已创建的模型实例
  * @param {Object} callbacks - 回调函数
  */
-export async function executeGeneralChat(messages, modelOrProvider, modelIdOrCallbacks = {}, maybeCallbacks = {}) {
-    const model = resolveModel(modelOrProvider, typeof modelIdOrCallbacks === 'string' ? modelIdOrCallbacks : undefined);
+export async function executeGeneralChat(
+    messages,
+    modelOrProvider,
+    modelIdOrCallbacks = {},
+    maybeCallbacks = {}
+) {
+    const model = resolveModel(
+        modelOrProvider,
+        typeof modelIdOrCallbacks === 'string' ? modelIdOrCallbacks : undefined
+    );
     const callbacks = typeof modelIdOrCallbacks === 'string' ? maybeCallbacks : modelIdOrCallbacks;
     const { language, languageName } = getLanguageInstruction();
     const importGuidance = hasAttachmentContext(messages)
@@ -266,6 +302,6 @@ export async function executeGeneralChat(messages, modelOrProvider, modelIdOrCal
 Response language must follow the current UI locale: ${languageName} (${language}).
 If users ask for specific realtime task data, suggest they ask focused questions like "today's tasks" or "overdue tasks" so tool-enabled flows can provide precise results.${importGuidance}`,
         messages,
-        maxSteps: 1
+        maxSteps: 1,
     });
 }

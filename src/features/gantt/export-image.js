@@ -48,7 +48,9 @@ function isExportApiAvailable() {
 export async function exportCurrentView() {
     if (!isExportApiAvailable()) {
         showToast(i18n.t('export.apiNotAvailable'), 'error');
-        console.error('DHTMLX export API not available. Make sure https://export.dhtmlx.com/gantt/api.js is loaded.');
+        console.error(
+            'DHTMLX export API not available. Make sure https://export.dhtmlx.com/gantt/api.js is loaded.'
+        );
         return;
     }
 
@@ -72,7 +74,7 @@ export async function exportCurrentView() {
                 } else {
                     showToast(i18n.t('export.error'), 'error');
                 }
-            }
+            },
         });
     } catch (error) {
         hideProgress();
@@ -88,7 +90,9 @@ export async function exportCurrentView() {
 export async function exportFullGantt() {
     if (!isExportApiAvailable()) {
         showToast(i18n.t('export.apiNotAvailable'), 'error');
-        console.error('DHTMLX export API not available. Make sure https://export.dhtmlx.com/gantt/api.js is loaded.');
+        console.error(
+            'DHTMLX export API not available. Make sure https://export.dhtmlx.com/gantt/api.js is loaded.'
+        );
         return;
     }
 
@@ -119,7 +123,7 @@ export async function exportFullGantt() {
                 } else {
                     showToast(i18n.t('export.error'), 'error');
                 }
-            }
+            },
         });
     } catch (error) {
         hideProgress();
@@ -157,7 +161,7 @@ export async function exportToPDF() {
                 } else {
                     showToast(i18n.t('export.error'), 'error');
                 }
-            }
+            },
         });
     } catch (error) {
         hideProgress();

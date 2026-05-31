@@ -9,7 +9,9 @@ test.describe('Regression: today marker and new task entry', () => {
     test('clicking Today keeps a visible today marker line', async ({ page }) => {
         await page.locator('#scroll-to-today-btn').click();
 
-        const markerCount = await page.locator('.gantt_marker.today-marker, #custom-today-line').count();
+        const markerCount = await page
+            .locator('.gantt_marker.today-marker, #custom-today-line')
+            .count();
         expect(markerCount).toBeGreaterThan(0);
     });
 

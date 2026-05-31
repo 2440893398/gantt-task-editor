@@ -24,7 +24,7 @@ function buildTaskDataFromGantt(taskId) {
         if (!endDate && task.start_date && task.duration) {
             endDate = gantt.calculateEndDate({
                 start_date: task.start_date,
-                duration: task.duration
+                duration: task.duration,
             });
         }
 
@@ -47,17 +47,17 @@ function buildTaskDataFromGantt(taskId) {
             priority: task.priority || 'medium',
             status: task.status || 'pending',
             assignee: task.assignee || null,
-            subtasks: []
+            subtasks: [],
         };
 
         if (gantt.hasChild && gantt.hasChild(task.id)) {
             const childIds = gantt.getChildren(task.id);
-            taskData.subtasks = childIds.map(childId => {
+            taskData.subtasks = childIds.map((childId) => {
                 const child = gantt.getTask(childId);
                 return {
                     id: child.id,
                     text: child.text || '',
-                    status: child.status || 'pending'
+                    status: child.status || 'pending',
                 };
             });
         }
@@ -112,7 +112,7 @@ function bindGlobalEvents() {
                         return AiService.applyToTask(context.taskId, result);
                     }
                 },
-                additionalInfo: context?.additionalInfo
+                additionalInfo: context?.additionalInfo,
             });
             return;
         }
@@ -135,8 +135,11 @@ function bindGlobalEvents() {
 
         // 构建完整任务数据（当来源是任务且智能体需要时）
         let taskData = null;
-        if (context.source === 'task' && context.taskId &&
-            (agentId === 'task_refine' || agentId === 'task_breakdown')) {
+        if (
+            context.source === 'task' &&
+            context.taskId &&
+            (agentId === 'task_refine' || agentId === 'task_breakdown')
+        ) {
             taskData = buildTaskDataFromGantt(context.taskId);
         }
 
@@ -145,7 +148,7 @@ function bindGlobalEvents() {
             text: context.text,
             taskId: context.taskId,
             taskData,
-            onApply
+            onApply,
         });
     });
 
@@ -178,7 +181,8 @@ export function attachAiTrigger(inputEl, options = {}) {
     // 创建触发按钮
     const triggerBtn = document.createElement('button');
     triggerBtn.type = 'button';
-    triggerBtn.className = 'btn btn-xs btn-circle btn-ghost text-primary absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity';
+    triggerBtn.className =
+        'btn btn-xs btn-circle btn-ghost text-primary absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity';
     triggerBtn.setAttribute('aria-label', 'AI 润色');
     triggerBtn.innerHTML = `
         <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -210,7 +214,7 @@ export function attachAiTrigger(inputEl, options = {}) {
             text,
             onApply: (result) => {
                 AiService.applyToInput(inputEl, result);
-            }
+            },
         });
 
         // 恢复按钮
@@ -236,7 +240,9 @@ export function setupLightboxAiIntegration() {
         // 延迟执行，等待 DOM 渲染
         setTimeout(() => {
             // 找到任务名称输入框
-            const textInput = document.querySelector('.gantt_cal_ltext textarea, .gantt_cal_ltext input');
+            const textInput = document.querySelector(
+                '.gantt_cal_ltext textarea, .gantt_cal_ltext input'
+            );
             if (textInput) {
                 attachAiTrigger(textInput, { agentId: 'task_refine' });
             }
@@ -247,5 +253,5 @@ export function setupLightboxAiIntegration() {
 export default {
     init: initAiModule,
     attachAiTrigger,
-    setupLightboxAiIntegration
+    setupLightboxAiIntegration,
 };

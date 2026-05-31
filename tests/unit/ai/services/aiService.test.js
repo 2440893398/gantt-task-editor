@@ -1,6 +1,9 @@
-
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import AiService, { invokeAgent, getSmartContext, applyToInput } from '../../../../src/features/ai/services/aiService.js';
+import AiService, {
+    invokeAgent,
+    getSmartContext,
+    applyToInput,
+} from '../../../../src/features/ai/services/aiService.js';
 import { checkAiConfigured } from '../../../../src/core/store.js';
 import { runAgentStream, runSmartChat } from '../../../../src/features/ai/api/client.js';
 import { getAgent, getAgentName } from '../../../../src/features/ai/prompts/agentRegistry.js';
@@ -10,15 +13,15 @@ import { openAiConfigModal } from '../../../../src/features/ai/components/AiConf
 
 // Mocks
 vi.mock('../../../../src/core/store.js', () => ({
-    checkAiConfigured: vi.fn()
+    checkAiConfigured: vi.fn(),
 }));
 vi.mock('../../../../src/features/ai/api/client.js', () => ({
     runAgentStream: vi.fn(),
-    runSmartChat: vi.fn()
+    runSmartChat: vi.fn(),
 }));
 vi.mock('../../../../src/features/ai/prompts/agentRegistry.js', () => ({
     getAgent: vi.fn(),
-    getAgentName: vi.fn()
+    getAgentName: vi.fn(),
 }));
 vi.mock('../../../../src/features/ai/components/AiDrawer.js', () => ({
     default: {
@@ -33,20 +36,20 @@ vi.mock('../../../../src/features/ai/components/AiDrawer.js', () => ({
         addMessage: vi.fn(),
         removeMessagesAfter: vi.fn(),
         showToolCall: vi.fn(),
-        showToolResult: vi.fn()
-    }
+        showToolResult: vi.fn(),
+    },
 }));
 vi.mock('../../../../src/utils/toast.js', () => ({
-    showToast: vi.fn()
+    showToast: vi.fn(),
 }));
 vi.mock('../../../../src/utils/i18n.js', () => ({
-    i18n: { t: (k) => k }
+    i18n: { t: (k) => k },
 }));
 vi.mock('../../../../src/features/ai/components/AiConfigModal.js', () => ({
-    openAiConfigModal: vi.fn()
+    openAiConfigModal: vi.fn(),
 }));
 vi.mock('../../../../src/features/ai/services/errorHandler.js', () => ({
-    handleAiError: vi.fn().mockReturnValue({ message: 'test error', errorType: 'unknown' })
+    handleAiError: vi.fn().mockReturnValue({ message: 'test error', errorType: 'unknown' }),
 }));
 
 // Mock global gantt
@@ -54,7 +57,7 @@ global.gantt = {
     getSelectedId: vi.fn(),
     getTask: vi.fn(),
     updateTask: vi.fn(),
-    eachTask: vi.fn()
+    eachTask: vi.fn(),
 };
 
 describe('AI Service', () => {
@@ -67,7 +70,7 @@ describe('AI Service', () => {
         // Mock window.getSelection
         window.getSelection = vi.fn().mockReturnValue({
             toString: () => '',
-            removeAllRanges: vi.fn()
+            removeAllRanges: vi.fn(),
         });
     });
 
@@ -79,7 +82,10 @@ describe('AI Service', () => {
 
             await invokeAgent('test-agent', mockContext);
 
-            expect(showToast).toHaveBeenCalledWith(expect.stringContaining('notConfigured'), 'warning');
+            expect(showToast).toHaveBeenCalledWith(
+                expect.stringContaining('notConfigured'),
+                'warning'
+            );
             expect(openAiConfigModal).toHaveBeenCalled();
             expect(runAgentStream).not.toHaveBeenCalled();
         });
@@ -89,7 +95,10 @@ describe('AI Service', () => {
 
             await invokeAgent('invalid-agent', mockContext);
 
-            expect(showToast).toHaveBeenCalledWith(expect.stringContaining('agentNotFound'), 'error');
+            expect(showToast).toHaveBeenCalledWith(
+                expect.stringContaining('agentNotFound'),
+                'error'
+            );
             expect(runAgentStream).not.toHaveBeenCalled();
         });
 
@@ -105,10 +114,12 @@ describe('AI Service', () => {
 
             await invokeAgent('test-agent', mockContext);
 
-            expect(AiDrawer.open).toHaveBeenCalledWith(expect.objectContaining({
-                title: 'Test Agent',
-                context: 'test content'
-            }));
+            expect(AiDrawer.open).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    title: 'Test Agent',
+                    context: 'test content',
+                })
+            );
             expect(AiDrawer.startStreaming).toHaveBeenCalled();
             expect(runAgentStream).toHaveBeenCalled();
         });
@@ -146,14 +157,16 @@ describe('AI Service', () => {
         it('passes referenced task context into smart chat message', async () => {
             await invokeAgent('chat', { text: '' });
 
-            document.dispatchEvent(new CustomEvent('aiSend', {
-                detail: {
-                    message: '介绍一下这个任务',
-                    referencedTasks: [
-                        { id: 101, hierarchy_id: '#1.1', text: '确认需求与验收标准' }
-                    ]
-                }
-            }));
+            document.dispatchEvent(
+                new CustomEvent('aiSend', {
+                    detail: {
+                        message: '介绍一下这个任务',
+                        referencedTasks: [
+                            { id: 101, hierarchy_id: '#1.1', text: '确认需求与验收标准' },
+                        ],
+                    },
+                })
+            );
 
             await Promise.resolve();
 
@@ -167,15 +180,17 @@ describe('AI Service', () => {
         it('prepends import guidance when attachment context exists', async () => {
             await invokeAgent('chat', { text: '' });
 
-            document.dispatchEvent(new CustomEvent('aiSend', {
-                detail: {
-                    message: '请根据附件分析任务差异',
-                    attachmentContext: {
-                        fileName: 'import.xlsx',
-                        promptBlock: 'Sheet: Tasks\nRows: 10'
-                    }
-                }
-            }));
+            document.dispatchEvent(
+                new CustomEvent('aiSend', {
+                    detail: {
+                        message: '请根据附件分析任务差异',
+                        attachmentContext: {
+                            fileName: 'import.xlsx',
+                            promptBlock: 'Sheet: Tasks\nRows: 10',
+                        },
+                    },
+                })
+            );
 
             await Promise.resolve();
 
@@ -197,21 +212,23 @@ describe('AI Service', () => {
                     end_date: '2026-02-13',
                     assignee: '张三',
                     status: 'completed',
-                    priority: 'high'
+                    priority: 'high',
                 });
             });
 
             await invokeAgent('chat', { text: '' });
 
-            document.dispatchEvent(new CustomEvent('aiSend', {
-                detail: {
-                    message: '继续',
-                    attachmentContext: {
-                        fileName: 'gantt-tasks-2026-03-02.xlsx',
-                        promptBlock: 'Sheet: 任务列表\nRows: 5'
-                    }
-                }
-            }));
+            document.dispatchEvent(
+                new CustomEvent('aiSend', {
+                    detail: {
+                        message: '继续',
+                        attachmentContext: {
+                            fileName: 'gantt-tasks-2026-03-02.xlsx',
+                            promptBlock: 'Sheet: 任务列表\nRows: 5',
+                        },
+                    },
+                })
+            );
 
             await Promise.resolve();
 
@@ -226,13 +243,13 @@ describe('AI Service', () => {
     describe('getSmartContext', () => {
         it('should prioritize selected text', () => {
             window.getSelection.mockReturnValue({
-                toString: () => 'selected text '
+                toString: () => 'selected text ',
             });
 
             const context = getSmartContext();
             expect(context).toEqual({
                 text: 'selected text',
-                source: 'selection'
+                source: 'selection',
             });
         });
 
@@ -246,7 +263,7 @@ describe('AI Service', () => {
             expect(context).toEqual({
                 text: 'input text',
                 element: input,
-                source: 'input'
+                source: 'input',
             });
 
             document.body.removeChild(input);
@@ -260,7 +277,7 @@ describe('AI Service', () => {
             expect(context).toEqual({
                 text: 'task text',
                 taskId: '1',
-                source: 'task'
+                source: 'task',
             });
         });
 

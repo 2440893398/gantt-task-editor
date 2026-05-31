@@ -8,7 +8,7 @@ describe('task-input-bubble', () => {
         status: 'in_progress',
         progress: 60,
         start_date: '2026-02-01',
-        end_date: '2026-02-10'
+        end_date: '2026-02-10',
     };
 
     it('renders with unified class structure', () => {
@@ -68,8 +68,8 @@ describe('task-input-bubble', () => {
             ...taskData,
             subtasks: [
                 { text: '子任务A', status: 'pending' },
-                { text: '子任务B', status: 'completed' }
-            ]
+                { text: '子任务B', status: 'completed' },
+            ],
         };
         const html = renderTaskInputBubble(withSubs, { mode: 'split' });
         // Should show subtask count (2)

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
     renderTaskDiffSummaryCard,
-    __test__
+    __test__,
 } from '../../../../src/features/ai/components/DiffConfirmModal.js';
 
 const {
@@ -10,7 +10,7 @@ const {
     reconcileRowsWithExistingTasks,
     setNodeInclude,
     countIncludedRows,
-    applySelectedChanges
+    applySelectedChanges,
 } = __test__;
 
 describe('DiffConfirmModal helpers', () => {
@@ -22,8 +22,8 @@ describe('DiffConfirmModal helpers', () => {
                 { op: 'add', taskId: 'temp-parent', data: { text: '父任务' } },
                 { op: 'add', taskId: 'temp-child', parentIndex: 0, data: { text: '子任务' } },
                 { op: 'update', taskId: '200', data: { text: '更新标题' } },
-                { op: 'delete', taskId: '300', data: { text: '删除项' } }
-            ]
+                { op: 'delete', taskId: '300', data: { text: '删除项' } },
+            ],
         };
 
         const normalized = normalizeDiffPayload(payload);
@@ -46,8 +46,8 @@ describe('DiffConfirmModal helpers', () => {
             type: 'task_diff',
             changes: [
                 { op: 'add', taskId: 'p', data: { text: '父' } },
-                { op: 'add', taskId: 'c', parentIndex: 0, data: { text: '子' } }
-            ]
+                { op: 'add', taskId: 'c', parentIndex: 0, data: { text: '子' } },
+            ],
         });
 
         const parent = normalized.flatRows.find((row) => row.taskId === 'p');
@@ -69,7 +69,7 @@ describe('DiffConfirmModal helpers', () => {
         const taskStore = {
             u1: { id: 'u1', text: '旧标题', progress: 0.1 },
             d1: { id: 'd1', text: '父删除项' },
-            d2: { id: 'd2', text: '子删除项', parent: 'd1' }
+            d2: { id: 'd2', text: '子删除项', parent: 'd1' },
         };
 
         const ganttMock = {
@@ -83,29 +83,34 @@ describe('DiffConfirmModal helpers', () => {
             updateTask: vi.fn((id) => id),
             deleteTask: vi.fn((id) => {
                 delete taskStore[id];
-            })
+            }),
         };
 
         const undoManagerMock = {
             saveAddState: vi.fn(),
             saveState: vi.fn(),
-            saveDeleteState: vi.fn()
+            saveDeleteState: vi.fn(),
         };
 
         const normalized = normalizeDiffPayload({
             type: 'task_diff',
             changes: [
                 { op: 'add', taskId: 'tmp-parent', data: { id: 'new-parent', text: '新父任务' } },
-                { op: 'add', taskId: 'tmp-child', parentIndex: 0, data: { id: 'new-child', text: '新子任务' } },
+                {
+                    op: 'add',
+                    taskId: 'tmp-child',
+                    parentIndex: 0,
+                    data: { id: 'new-child', text: '新子任务' },
+                },
                 { op: 'update', taskId: 'u1', data: { text: '新标题', progress: 0.4 } },
                 { op: 'delete', taskId: 'd1', data: { text: '父删除项' } },
-                { op: 'delete', taskId: 'd2', parentId: 'd1', data: { text: '子删除项' } }
-            ]
+                { op: 'delete', taskId: 'd2', parentId: 'd1', data: { text: '子删除项' } },
+            ],
         });
 
         const result = applySelectedChanges(normalized.flatRows, {
             ganttApi: ganttMock,
-            undoApi: undoManagerMock
+            undoApi: undoManagerMock,
         });
 
         expect(result.ok).toBe(true);
@@ -144,10 +149,10 @@ describe('DiffConfirmModal helpers', () => {
                         text: '已有任务',
                         start_date: '2026-03-02',
                         end_date: '2026-03-04',
-                        assignee: '张三'
-                    }
-                }
-            ]
+                        assignee: '张三',
+                    },
+                },
+            ],
         });
 
         const ganttMock = {
@@ -157,10 +162,10 @@ describe('DiffConfirmModal helpers', () => {
                     text: '已有任务',
                     start_date: '2026-03-02',
                     end_date: '2026-03-04',
-                    assignee: '张三'
+                    assignee: '张三',
                 });
             }),
-            isTaskExists: vi.fn(() => true)
+            isTaskExists: vi.fn(() => true),
         };
 
         const reconciled = reconcileRowsWithExistingTasks(normalized, { ganttApi: ganttMock });
@@ -178,27 +183,30 @@ describe('DiffConfirmModal helpers', () => {
                     text: '陈龙龙的工时',
                     start_date: '2026-02-02',
                     end_date: '2026-02-13',
-                    assignee: '张三'
+                    assignee: '张三',
                 });
             }),
-            isTaskExists: vi.fn(() => false)
+            isTaskExists: vi.fn(() => false),
         };
 
-        const html = renderTaskDiffSummaryCard({
-            type: 'task_diff',
-            source: 'gantt-tasks-2026-03-02.xlsx',
-            changes: [
-                {
-                    op: 'add',
-                    data: {
-                        text: '陈龙龙的工时',
-                        start_date: '2026-02-02',
-                        end_date: '2026-02-13',
-                        assignee: '张三'
-                    }
-                }
-            ]
-        }, { ganttApi: ganttMock });
+        const html = renderTaskDiffSummaryCard(
+            {
+                type: 'task_diff',
+                source: 'gantt-tasks-2026-03-02.xlsx',
+                changes: [
+                    {
+                        op: 'add',
+                        data: {
+                            text: '陈龙龙的工时',
+                            start_date: '2026-02-02',
+                            end_date: '2026-02-13',
+                            assignee: '张三',
+                        },
+                    },
+                ],
+            },
+            { ganttApi: ganttMock }
+        );
 
         expect(html).toMatch(/新增\s*0/);
         expect(html).toMatch(/修改\s*1/);
@@ -206,7 +214,7 @@ describe('DiffConfirmModal helpers', () => {
 
     it('upserts when add row target already exists', () => {
         const taskStore = {
-            existing: { id: 'existing', text: '旧值', priority: 'low' }
+            existing: { id: 'existing', text: '旧值', priority: 'low' },
         };
 
         const ganttMock = {
@@ -215,13 +223,13 @@ describe('DiffConfirmModal helpers', () => {
             eachTask: vi.fn((cb) => cb(taskStore.existing)),
             addTask: vi.fn(() => 'new-task-id'),
             updateTask: vi.fn((id) => id),
-            deleteTask: vi.fn()
+            deleteTask: vi.fn(),
         };
 
         const undoManagerMock = {
             saveAddState: vi.fn(),
             saveState: vi.fn(),
-            saveDeleteState: vi.fn()
+            saveDeleteState: vi.fn(),
         };
 
         const normalized = normalizeDiffPayload({
@@ -230,14 +238,14 @@ describe('DiffConfirmModal helpers', () => {
                 {
                     op: 'add',
                     taskId: 'existing',
-                    data: { id: 'existing', text: '新值', priority: 'high' }
-                }
-            ]
+                    data: { id: 'existing', text: '新值', priority: 'high' },
+                },
+            ],
         });
 
         const result = applySelectedChanges(normalized.flatRows, {
             ganttApi: ganttMock,
-            undoApi: undoManagerMock
+            undoApi: undoManagerMock,
         });
 
         expect(result.ok).toBe(true);

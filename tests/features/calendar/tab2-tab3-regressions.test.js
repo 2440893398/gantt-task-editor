@@ -52,8 +52,8 @@ describe('tab3-leaves regressions', () => {
 
         const assigneeSelect = tab.querySelector('#t3-assignee-select');
         expect(assigneeSelect).not.toBeNull();
-        expect([...assigneeSelect.options].map(o => o.value)).toContain('张三');
-        expect([...assigneeSelect.options].map(o => o.value)).toContain('李四');
+        expect([...assigneeSelect.options].map((o) => o.value)).toContain('张三');
+        expect([...assigneeSelect.options].map((o) => o.value)).toContain('李四');
     });
 
     it('clicking a calendar date opens leave maintenance popup even when no leave exists', async () => {

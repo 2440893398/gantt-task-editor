@@ -1,4 +1,3 @@
-
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { initAiModule, attachAiTrigger } from '../../../src/features/ai/manager.js';
 import AiService from '../../../src/features/ai/services/aiService.js';
@@ -10,17 +9,17 @@ import { showToast } from '../../../src/utils/toast.js';
 
 // Mocks
 vi.mock('../../../src/core/store.js', () => ({
-    restoreAiConfig: vi.fn()
+    restoreAiConfig: vi.fn(),
 }));
 vi.mock('../../../src/features/ai/components/AiConfigModal.js', () => ({
-    initAiConfigModal: vi.fn()
+    initAiConfigModal: vi.fn(),
 }));
 vi.mock('../../../src/features/ai/components/AiFloatingBtn.js', () => ({
     initAiFloatingBtn: vi.fn(),
-    openMenu: vi.fn()
+    openMenu: vi.fn(),
 }));
 vi.mock('../../../src/features/ai/components/AiDrawer.js', () => ({
-    initAiDrawer: vi.fn()
+    initAiDrawer: vi.fn(),
 }));
 vi.mock('../../../src/features/ai/services/aiService.js', () => ({
     default: {
@@ -29,13 +28,13 @@ vi.mock('../../../src/features/ai/services/aiService.js', () => ({
         retryCurrentAgent: vi.fn(),
         applyToInput: vi.fn(),
         applyToTask: vi.fn(),
-    }
+    },
 }));
 vi.mock('../../../src/utils/toast.js', () => ({
-    showToast: vi.fn()
+    showToast: vi.fn(),
 }));
 vi.mock('../../../src/utils/i18n.js', () => ({
-    i18n: { t: (k) => k }
+    i18n: { t: (k) => k },
 }));
 
 describe('AI Manager', () => {
@@ -68,21 +67,24 @@ describe('AI Manager', () => {
             AiService.getSmartContext.mockReturnValue({
                 text: 'context text',
                 taskId: '1',
-                source: 'task'
+                source: 'task',
             });
 
             const event = new CustomEvent('aiAgentSelected', {
-                detail: { agentId: 'test-agent' }
+                detail: { agentId: 'test-agent' },
             });
             document.dispatchEvent(event);
 
             // Wait for handling (since it might be async inside listener)
-            await new Promise(resolve => setTimeout(resolve, 0));
+            await new Promise((resolve) => setTimeout(resolve, 0));
 
-            expect(AiService.invokeAgent).toHaveBeenCalledWith('test-agent', expect.objectContaining({
-                text: 'context text',
-                taskId: '1'
-            }));
+            expect(AiService.invokeAgent).toHaveBeenCalledWith(
+                'test-agent',
+                expect.objectContaining({
+                    text: 'context text',
+                    taskId: '1',
+                })
+            );
         });
 
         it('should show toast if no context on selection', async () => {
@@ -90,12 +92,12 @@ describe('AI Manager', () => {
             AiService.getSmartContext.mockReturnValue(null);
 
             const event = new CustomEvent('aiAgentSelected', {
-                detail: { agentId: 'test-agent' }
+                detail: { agentId: 'test-agent' },
             });
             document.dispatchEvent(event);
 
             // Wait for async dynamic import and toast
-            await new Promise(resolve => setTimeout(resolve, 10));
+            await new Promise((resolve) => setTimeout(resolve, 10));
 
             expect(showToast).toHaveBeenCalled();
         });
@@ -129,12 +131,15 @@ describe('AI Manager', () => {
             trigger.click();
 
             // Wait for async invocation
-            await new Promise(resolve => setTimeout(resolve, 0));
+            await new Promise((resolve) => setTimeout(resolve, 0));
 
-            expect(AiService.invokeAgent).toHaveBeenCalledWith('test-agent', expect.objectContaining({
-                text: 'test input',
-                onApply: expect.any(Function)
-            }));
+            expect(AiService.invokeAgent).toHaveBeenCalledWith(
+                'test-agent',
+                expect.objectContaining({
+                    text: 'test input',
+                    onApply: expect.any(Function),
+                })
+            );
         });
     });
 });

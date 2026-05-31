@@ -26,15 +26,15 @@ export function showToast(message, type = 'success', duration = null) {
     const palette =
         type === 'success'
             ? {
-                iconBgClass: 'bg-success/15',
-                iconColorClass: 'text-success',
-                iconPath: '<path d="M20 6L9 17l-5-5" />'
-            }
+                  iconBgClass: 'bg-success/15',
+                  iconColorClass: 'text-success',
+                  iconPath: '<path d="M20 6L9 17l-5-5" />',
+              }
             : {
-                iconBgClass: 'bg-error/10',
-                iconColorClass: 'text-error',
-                iconPath: '<path d="M18 6L6 18" /><path d="M6 6l12 12" />'
-            };
+                  iconBgClass: 'bg-error/10',
+                  iconColorClass: 'text-error',
+                  iconPath: '<path d="M18 6L6 18" /><path d="M6 6l12 12" />',
+              };
 
     toast.innerHTML = `
         <div class="flex flex-row items-center gap-3 cursor-pointer px-4 py-3 bg-base-100 border border-base-300 rounded-xl shadow-xl">
@@ -75,4 +75,3 @@ export function showToast(message, type = 'success', duration = null) {
         }
     }, autoCloseDelay);
 }
-

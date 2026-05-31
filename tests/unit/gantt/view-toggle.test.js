@@ -9,16 +9,16 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('../../../src/core/store.js', () => ({
     getViewMode: vi.fn(() => 'split'),
-    setViewMode: vi.fn()
+    setViewMode: vi.fn(),
 }));
 
 vi.mock('../../../src/features/gantt/columns.js', () => ({
     updateGanttColumns: vi.fn(),
-    setGanttOnlyColumns: vi.fn()
+    setGanttOnlyColumns: vi.fn(),
 }));
 
 vi.mock('../../../src/utils/i18n.js', () => ({
-    i18n: { t: vi.fn((key) => key) }
+    i18n: { t: vi.fn((key) => key) },
 }));
 
 // --- Imports (after mocks) ---
@@ -54,10 +54,10 @@ describe('initViewToggle', () => {
             config: {
                 show_grid: false,
                 show_chart: false,
-                columns: []
+                columns: [],
             },
             resetLayout: vi.fn(),
-            render: vi.fn()
+            render: vi.fn(),
         };
 
         // Clear all mock call history
@@ -97,7 +97,7 @@ describe('initViewToggle', () => {
         initViewToggle();
 
         const buttons = document.querySelectorAll('.view-seg-btn');
-        buttons.forEach(btn => {
+        buttons.forEach((btn) => {
             if (btn.dataset.view === 'gantt') {
                 expect(btn.classList.contains('active')).toBe(true);
             } else {
@@ -161,10 +161,10 @@ describe('applyViewMode (via initViewToggle)', () => {
             config: {
                 show_grid: false,
                 show_chart: false,
-                columns: []
+                columns: [],
             },
             resetLayout: vi.fn(),
-            render: vi.fn()
+            render: vi.fn(),
         };
 
         vi.clearAllMocks();
@@ -270,10 +270,10 @@ describe('updateViewToggleUI (via initViewToggle)', () => {
             config: {
                 show_grid: false,
                 show_chart: false,
-                columns: []
+                columns: [],
             },
             resetLayout: vi.fn(),
-            render: vi.fn()
+            render: vi.fn(),
         };
 
         vi.clearAllMocks();
@@ -303,15 +303,25 @@ describe('updateViewToggleUI (via initViewToggle)', () => {
         initViewToggle();
 
         // Initially split is active
-        expect(document.querySelector('[data-view="split"]').classList.contains('active')).toBe(true);
-        expect(document.querySelector('[data-view="gantt"]').classList.contains('active')).toBe(false);
+        expect(document.querySelector('[data-view="split"]').classList.contains('active')).toBe(
+            true
+        );
+        expect(document.querySelector('[data-view="gantt"]').classList.contains('active')).toBe(
+            false
+        );
 
         // Click gantt
         clickButton('gantt');
 
-        expect(document.querySelector('[data-view="gantt"]').classList.contains('active')).toBe(true);
-        expect(document.querySelector('[data-view="split"]').classList.contains('active')).toBe(false);
-        expect(document.querySelector('[data-view="table"]').classList.contains('active')).toBe(false);
+        expect(document.querySelector('[data-view="gantt"]').classList.contains('active')).toBe(
+            true
+        );
+        expect(document.querySelector('[data-view="split"]').classList.contains('active')).toBe(
+            false
+        );
+        expect(document.querySelector('[data-view="table"]').classList.contains('active')).toBe(
+            false
+        );
     });
 
     it('should correctly toggle active across all three modes', () => {
@@ -323,7 +333,7 @@ describe('updateViewToggleUI (via initViewToggle)', () => {
         for (const mode of modes) {
             clickButton(mode);
 
-            document.querySelectorAll('.view-seg-btn').forEach(btn => {
+            document.querySelectorAll('.view-seg-btn').forEach((btn) => {
                 if (btn.dataset.view === mode) {
                     expect(btn.classList.contains('active')).toBe(true);
                 } else {

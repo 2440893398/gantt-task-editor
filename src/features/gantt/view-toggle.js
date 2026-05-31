@@ -49,7 +49,7 @@ export function initViewToggle() {
  * 更新切换按钮的 active 状态
  */
 function updateViewToggleUI(mode) {
-    document.querySelectorAll('.view-seg-btn').forEach(btn => {
+    document.querySelectorAll('.view-seg-btn').forEach((btn) => {
         const isActive = btn.dataset.view === mode;
         btn.classList.toggle('active', isActive);
     });
@@ -80,28 +80,28 @@ function restoreSplitLayout() {
     const savedGridWidth = getSavedGridWidth();
 
     gantt.config.layout = {
-        css: "gantt_container",
+        css: 'gantt_container',
         cols: [
             {
                 width: savedGridWidth,
                 min_width: 200,
                 rows: [
-                    { view: "grid", scrollX: "gridScroll", scrollY: "scrollVer", scrollable: true },
-                    { view: "scrollbar", id: "gridScroll", group: "horizontal" }
-                ]
+                    { view: 'grid', scrollX: 'gridScroll', scrollY: 'scrollVer', scrollable: true },
+                    { view: 'scrollbar', id: 'gridScroll', group: 'horizontal' },
+                ],
             },
             {
                 width: 6,
-                html: "<div id='custom-resizer' style='width:100%;height:100%;background:#E5E7EB;cursor:col-resize;border-left:1px solid #D1D5DB;border-right:1px solid #D1D5DB;transition:background 0.2s;'></div>"
+                html: "<div id='custom-resizer' style='width:100%;height:100%;background:#E5E7EB;cursor:col-resize;border-left:1px solid #D1D5DB;border-right:1px solid #D1D5DB;transition:background 0.2s;'></div>",
             },
             {
                 rows: [
-                    { view: "timeline", scrollX: "scrollHor", scrollY: "scrollVer" },
-                    { view: "scrollbar", id: "scrollHor", group: "horizontal" }
-                ]
+                    { view: 'timeline', scrollX: 'scrollHor', scrollY: 'scrollVer' },
+                    { view: 'scrollbar', id: 'scrollHor', group: 'horizontal' },
+                ],
             },
-            { view: "scrollbar", id: "scrollVer" }
-        ]
+            { view: 'scrollbar', id: 'scrollVer' },
+        ],
     };
 }
 
@@ -116,7 +116,9 @@ function getSavedGanttOnlyGridWidth() {
             w = parseInt(saved, 10);
             if (w < 100) w = 100;
         }
-    } catch (e) { /* ignore */ }
+    } catch (e) {
+        /* ignore */
+    }
     return w;
 }
 
@@ -128,28 +130,28 @@ function setGanttOnlyLayout() {
     const w = getSavedGanttOnlyGridWidth();
 
     gantt.config.layout = {
-        css: "gantt_container gantt-only-mode",
+        css: 'gantt_container gantt-only-mode',
         cols: [
             {
                 width: w,
                 min_width: 100,
                 rows: [
-                    { view: "grid", scrollX: "gridScroll", scrollY: "scrollVer", scrollable: true },
-                    { view: "scrollbar", id: "gridScroll", group: "horizontal" }
-                ]
+                    { view: 'grid', scrollX: 'gridScroll', scrollY: 'scrollVer', scrollable: true },
+                    { view: 'scrollbar', id: 'gridScroll', group: 'horizontal' },
+                ],
             },
             {
                 width: 6,
-                html: "<div id='custom-resizer' style='width:100%;height:100%;background:#E5E7EB;cursor:col-resize;border-left:1px solid #D1D5DB;border-right:1px solid #D1D5DB;transition:background 0.2s;'></div>"
+                html: "<div id='custom-resizer' style='width:100%;height:100%;background:#E5E7EB;cursor:col-resize;border-left:1px solid #D1D5DB;border-right:1px solid #D1D5DB;transition:background 0.2s;'></div>",
             },
             {
                 rows: [
-                    { view: "timeline", scrollX: "scrollHor", scrollY: "scrollVer" },
-                    { view: "scrollbar", id: "scrollHor", group: "horizontal" }
-                ]
+                    { view: 'timeline', scrollX: 'scrollHor', scrollY: 'scrollVer' },
+                    { view: 'scrollbar', id: 'scrollHor', group: 'horizontal' },
+                ],
             },
-            { view: "scrollbar", id: "scrollVer" }
-        ]
+            { view: 'scrollbar', id: 'scrollVer' },
+        ],
     };
 }
 
@@ -158,16 +160,16 @@ function setGanttOnlyLayout() {
  */
 function setTableLayout() {
     gantt.config.layout = {
-        css: "gantt_container table-view-mode",
+        css: 'gantt_container table-view-mode',
         cols: [
             {
                 rows: [
-                    { view: "grid", scrollX: "gridScroll", scrollY: "scrollVer", scrollable: true },
-                    { view: "scrollbar", id: "gridScroll", group: "horizontal" }
-                ]
+                    { view: 'grid', scrollX: 'gridScroll', scrollY: 'scrollVer', scrollable: true },
+                    { view: 'scrollbar', id: 'gridScroll', group: 'horizontal' },
+                ],
             },
-            { view: "scrollbar", id: "scrollVer" }
-        ]
+            { view: 'scrollbar', id: 'scrollVer' },
+        ],
     };
 }
 
@@ -230,7 +232,7 @@ function stretchTableColumnsToFill() {
     if (!gridWidth) return;
 
     const columns = gantt.config.columns || [];
-    const textCol = columns.find(col => col.name === 'text');
+    const textCol = columns.find((col) => col.name === 'text');
     if (!textCol) return;
 
     const fixedWidth = columns.reduce((sum, col) => {

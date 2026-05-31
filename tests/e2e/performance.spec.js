@@ -14,7 +14,6 @@
 import { test, expect } from '@playwright/test';
 
 test.describe('性能优化模块 (Performance) - P0', () => {
-
     test.beforeEach(async ({ page }) => {
         await page.goto('/');
         await page.waitForSelector('#gantt_here', { timeout: 15000 });
@@ -25,7 +24,6 @@ test.describe('性能优化模块 (Performance) - P0', () => {
     // 1.1 智能渲染测试 (PERF-001 ~ PERF-003)
     // ========================================
     test.describe('智能渲染 (Smart Rendering)', () => {
-
         // PERF-001: 验证智能渲染配置是否正确启用
         test('PERF-001: smart_rendering 配置应为 true', async ({ page }) => {
             const smartRendering = await page.evaluate(() => {
@@ -58,7 +56,7 @@ test.describe('性能优化模块 (Performance) - P0', () => {
                         text: `性能测试任务 ${i}`,
                         start_date: startDate,
                         end_date: endDate,
-                        progress: 0.5
+                        progress: 0.5,
                     });
                 }
 
@@ -76,7 +74,7 @@ test.describe('性能优化模块 (Performance) - P0', () => {
                 return {
                     totalTasks,
                     renderedRows,
-                    viewportHeight
+                    viewportHeight,
                 };
             });
 
@@ -109,7 +107,7 @@ test.describe('性能优化模块 (Performance) - P0', () => {
                         text: `滚动测试任务 ${i}`,
                         start_date: startDate,
                         end_date: endDate,
-                        progress: 0.3
+                        progress: 0.3,
                     });
                 }
 
@@ -121,7 +119,7 @@ test.describe('性能优化模块 (Performance) - P0', () => {
             // 记录初始渲染的任务
             const initialTaskIds = await page.evaluate(() => {
                 const rows = document.querySelectorAll('.gantt_row[data-task-id]');
-                return Array.from(rows).map(row => row.getAttribute('data-task-id'));
+                return Array.from(rows).map((row) => row.getAttribute('data-task-id'));
             });
 
             // 滚动到底部
@@ -137,7 +135,7 @@ test.describe('性能优化模块 (Performance) - P0', () => {
             // 记录滚动后渲染的任务
             const afterScrollTaskIds = await page.evaluate(() => {
                 const rows = document.querySelectorAll('.gantt_row[data-task-id]');
-                return Array.from(rows).map(row => row.getAttribute('data-task-id'));
+                return Array.from(rows).map((row) => row.getAttribute('data-task-id'));
             });
 
             console.log('初始任务 IDs:', initialTaskIds.slice(0, 5));
@@ -152,7 +150,6 @@ test.describe('性能优化模块 (Performance) - P0', () => {
     // 1.2 配置验证测试
     // ========================================
     test.describe('性能配置验证', () => {
-
         test('work_time 配置应为 true', async ({ page }) => {
             const workTime = await page.evaluate(() => {
                 if (typeof gantt !== 'undefined') {
@@ -191,7 +188,6 @@ test.describe('性能优化模块 (Performance) - P0', () => {
     // 1.4 性能基准测试 (PERF-007)
     // ========================================
     test.describe('性能基准测试', () => {
-
         // PERF-007: 验证 1000 任务场景下 FPS >= 50
         // 注意：FPS 测试在自动化环境中可能不完全准确
         test('PERF-007: 大量任务加载性能测试', async ({ page }) => {
@@ -215,7 +211,7 @@ test.describe('性能优化模块 (Performance) - P0', () => {
                         start_date: startDate,
                         end_date: endDate,
                         progress: Math.random(),
-                        parent: i > 100 ? Math.floor(Math.random() * 100) + 3001 : 0
+                        parent: i > 100 ? Math.floor(Math.random() * 100) + 3001 : 0,
                     });
                 }
 
@@ -226,7 +222,7 @@ test.describe('性能优化模块 (Performance) - P0', () => {
 
                 return {
                     loadTime: endTime - startTime,
-                    taskCount: gantt.getTaskCount()
+                    taskCount: gantt.getTaskCount(),
                 };
             });
 
@@ -246,7 +242,7 @@ test.describe('性能优化模块 (Performance) - P0', () => {
 
                 for (let i = 1; i <= 500; i++) {
                     const startDate = new Date(baseDate);
-                    startDate.setDate(startDate.getDate() + i % 60);
+                    startDate.setDate(startDate.getDate() + (i % 60));
                     const endDate = new Date(startDate);
                     endDate.setDate(endDate.getDate() + 5);
 
@@ -255,7 +251,7 @@ test.describe('性能优化模块 (Performance) - P0', () => {
                         text: `滚动性能任务 ${i}`,
                         start_date: startDate,
                         end_date: endDate,
-                        progress: 0.5
+                        progress: 0.5,
                     });
                 }
 
@@ -277,7 +273,7 @@ test.describe('性能优化模块 (Performance) - P0', () => {
                     const startTime = performance.now();
                     scrollContainer.scrollTop += 100;
                     // 等待重绘
-                    await new Promise(r => requestAnimationFrame(r));
+                    await new Promise((r) => requestAnimationFrame(r));
                     const endTime = performance.now();
                     scrollTimes.push(endTime - startTime);
                 }
@@ -286,7 +282,7 @@ test.describe('性能优化模块 (Performance) - P0', () => {
 
                 return {
                     avgScrollTime,
-                    scrollTimes
+                    scrollTimes,
                 };
             });
 
@@ -305,7 +301,6 @@ test.describe('性能优化模块 (Performance) - P0', () => {
 // 智能调度引擎 E2E 测试
 // ========================================
 test.describe('智能调度引擎 E2E 测试 (Auto-Scheduling)', () => {
-
     test.beforeEach(async ({ page }) => {
         await page.goto('/');
         await page.waitForSelector('#gantt_here', { timeout: 15000 });
@@ -318,7 +313,7 @@ test.describe('智能调度引擎 E2E 测试 (Auto-Scheduling)', () => {
             if (typeof gantt !== 'undefined') {
                 return {
                     work_time: gantt.config.work_time,
-                    auto_scheduling: gantt.config.auto_scheduling
+                    auto_scheduling: gantt.config.auto_scheduling,
                 };
             }
             return null;
@@ -342,7 +337,7 @@ test.describe('智能调度引擎 E2E 测试 (Auto-Scheduling)', () => {
                 return {
                     saturdayIsWorkTime: gantt.isWorkTime(saturday),
                     sundayIsWorkTime: gantt.isWorkTime(sunday),
-                    mondayIsWorkTime: gantt.isWorkTime(monday)
+                    mondayIsWorkTime: gantt.isWorkTime(monday),
                 };
             }
             return null;
@@ -366,17 +361,15 @@ test.describe('智能调度引擎 E2E 测试 (Auto-Scheduling)', () => {
                 // 使用 parse 批量添加任务和依赖，更加原子化且健壮
                 const tasks = [
                     { id: 9001, text: '任务A', start_date: new Date('2026-01-20'), duration: 5 },
-                    { id: 9002, text: '任务B', start_date: new Date('2026-01-27'), duration: 3 }
+                    { id: 9002, text: '任务B', start_date: new Date('2026-01-27'), duration: 3 },
                 ];
 
-                const links = [
-                    { id: 9001, source: 9001, target: 9002, type: '0' }
-                ];
+                const links = [{ id: 9001, source: 9001, target: 9002, type: '0' }];
 
                 gantt.parse({ data: tasks, links: links });
 
                 return {
-                    linksCount: gantt.getLinks().length
+                    linksCount: gantt.getLinks().length,
                 };
             }
             return null;

@@ -27,8 +27,20 @@ test.describe('Gantt v1.5 Features', () => {
     test('Resource conflict detection marks tasks', async ({ page }) => {
         await page.evaluate(() => {
             const today = new Date();
-            gantt.addTask({ id: 8101, text: 'Task A', start_date: today, duration: 8, assignee: 'Alice' });
-            gantt.addTask({ id: 8102, text: 'Task B', start_date: today, duration: 8, assignee: 'Alice' });
+            gantt.addTask({
+                id: 8101,
+                text: 'Task A',
+                start_date: today,
+                duration: 8,
+                assignee: 'Alice',
+            });
+            gantt.addTask({
+                id: 8102,
+                text: 'Task B',
+                start_date: today,
+                duration: 8,
+                assignee: 'Alice',
+            });
             gantt.callEvent('onAfterTaskAdd', []);
         });
 
@@ -40,7 +52,7 @@ test.describe('Gantt v1.5 Features', () => {
     test('Snapping config is enabled', async ({ page }) => {
         const config = await page.evaluate(() => ({
             round: gantt.config.round_dnd_dates,
-            step: gantt.config.duration_step
+            step: gantt.config.duration_step,
         }));
 
         expect(config.round).toBe(true);

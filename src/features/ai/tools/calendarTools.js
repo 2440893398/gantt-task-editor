@@ -1,11 +1,6 @@
 // src/features/ai/tools/calendarTools.js
 import { tool, jsonSchema } from 'ai';
-import {
-    db,
-    getCalendarSettings,
-    getAllCustomDays,
-    getAllLeaves
-} from '../../../core/storage.js';
+import { db, getCalendarSettings, getAllCustomDays, getAllLeaves } from '../../../core/storage.js';
 import { attachHierarchyIds } from '../utils/hierarchy-id.js';
 
 const calendarInfoSchema = jsonSchema({
@@ -14,19 +9,20 @@ const calendarInfoSchema = jsonSchema({
         type: {
             type: 'string',
             enum: ['all', 'settings', 'holidays', 'custom_days', 'leaves'],
-            description: '查询范围：all(全部)、settings(日历设置)、holidays(法定节假日)、custom_days(自定义特殊日)、leaves(人员请假)'
+            description:
+                '查询范围：all(全部)、settings(日历设置)、holidays(法定节假日)、custom_days(自定义特殊日)、leaves(人员请假)',
         },
         start_date: {
             type: 'string',
-            description: '可选，开始日期 YYYY-MM-DD'
+            description: '可选，开始日期 YYYY-MM-DD',
         },
         end_date: {
             type: 'string',
-            description: '可选，结束日期 YYYY-MM-DD'
-        }
+            description: '可选，结束日期 YYYY-MM-DD',
+        },
     },
     required: [],
-    additionalProperties: false
+    additionalProperties: false,
 });
 
 const assigneeWorkloadSchema = jsonSchema({
@@ -34,16 +30,16 @@ const assigneeWorkloadSchema = jsonSchema({
     properties: {
         assignee: {
             type: 'string',
-            description: '可选，仅统计指定负责人'
+            description: '可选，仅统计指定负责人',
         },
         status: {
             type: 'string',
             enum: ['pending', 'in_progress', 'completed', 'suspended'],
-            description: '可选，仅统计指定状态'
-        }
+            description: '可选，仅统计指定状态',
+        },
     },
     required: [],
-    additionalProperties: false
+    additionalProperties: false,
 });
 
 function normalizeDateString(value) {
@@ -124,12 +120,12 @@ export const calendarTools = {
                     holidays = [];
                 }
                 holidays = holidays
-                    .filter(item => isDateInRange(item.date, rangeStart, rangeEnd))
-                    .map(item => ({
+                    .filter((item) => isDateInRange(item.date, rangeStart, rangeEnd))
+                    .map((item) => ({
                         date: item.date,
                         country_code: item.countryCode || null,
                         is_off_day: !!item.isOffDay,
-                        name: item.name || null
+                        name: item.name || null,
                     }))
                     .sort((a, b) => compareByFields(a, b, ['date', 'country_code', 'name']));
             }
@@ -138,13 +134,13 @@ export const calendarTools = {
             if (includeCustomDays) {
                 customDays = await getAllCustomDays();
                 customDays = customDays
-                    .filter(item => isDateInRange(item.date, rangeStart, rangeEnd))
-                    .map(item => ({
+                    .filter((item) => isDateInRange(item.date, rangeStart, rangeEnd))
+                    .map((item) => ({
                         id: item.id,
                         date: item.date,
                         is_off_day: !!item.isOffDay,
                         name: item.name || null,
-                        note: item.note || null
+                        note: item.note || null,
                     }))
                     .sort((a, b) => compareByFields(a, b, ['date', 'id']));
             }
@@ -153,30 +149,36 @@ export const calendarTools = {
             if (includeLeaves) {
                 leaves = await getAllLeaves();
                 leaves = leaves
-                    .filter(item => isOverlapRange(item.startDate, item.endDate, rangeStart, rangeEnd))
-                    .map(item => ({
+                    .filter((item) =>
+                        isOverlapRange(item.startDate, item.endDate, rangeStart, rangeEnd)
+                    )
+                    .map((item) => ({
                         id: item.id,
                         assignee: item.assignee || '未分配',
                         start_date: item.startDate,
                         end_date: item.endDate,
                         type: item.type || 'other',
-                        note: item.note || null
+                        note: item.note || null,
                     }))
-                    .sort((a, b) => compareByFields(a, b, ['start_date', 'end_date', 'assignee', 'id']));
+                    .sort((a, b) =>
+                        compareByFields(a, b, ['start_date', 'end_date', 'assignee', 'id'])
+                    );
             }
 
             return {
                 query: {
                     type,
                     start_date: start_date || null,
-                    end_date: end_date || null
+                    end_date: end_date || null,
                 },
                 settings: settings
                     ? {
-                        country_code: settings.countryCode || 'CN',
-                        workdays_of_week: Array.isArray(settings.workdaysOfWeek) ? settings.workdaysOfWeek : [1, 2, 3, 4, 5],
-                        hours_per_day: Number(settings.hoursPerDay) || 8
-                    }
+                          country_code: settings.countryCode || 'CN',
+                          workdays_of_week: Array.isArray(settings.workdaysOfWeek)
+                              ? settings.workdaysOfWeek
+                              : [1, 2, 3, 4, 5],
+                          hours_per_day: Number(settings.hoursPerDay) || 8,
+                      }
                     : null,
                 holidays,
                 custom_days: customDays,
@@ -185,30 +187,27 @@ export const calendarTools = {
                     holidays: holidays.length,
                     custom_days: customDays.length,
                     leaves: leaves.length,
-                    records: holidays.length + customDays.length + leaves.length
-                }
+                    records: holidays.length + customDays.length + leaves.length,
+                },
             };
-        }
+        },
     }),
 
     get_assignee_workload: tool({
         description: '按负责人汇总任务工作量，支持按负责人/状态过滤',
         inputSchema: assigneeWorkloadSchema,
         execute: async ({ assignee, status } = {}) => {
-            if (
-                typeof gantt === 'undefined' ||
-                typeof gantt.eachTask !== 'function'
-            ) {
+            if (typeof gantt === 'undefined' || typeof gantt.eachTask !== 'function') {
                 return {
                     error: 'Gantt 未初始化',
                     query: { assignee: assignee || null, status: status || null },
                     totals: { assignee_count: 0, total_tasks: 0, total_duration: 0 },
-                    workload: []
+                    workload: [],
                 };
             }
 
             const taskList = [];
-            gantt.eachTask(task => {
+            gantt.eachTask((task) => {
                 const taskAssignee = task.assignee || '未分配';
                 const taskStatus = normalizeTaskStatus(task);
 
@@ -224,7 +223,7 @@ export const calendarTools = {
                     duration: Number(task.duration) || 0,
                     priority: task.priority || 'medium',
                     start_date: normalizeDateString(task.start_date),
-                    end_date: normalizeDateString(task.end_date)
+                    end_date: normalizeDateString(task.end_date),
                 });
             });
 
@@ -242,10 +241,10 @@ export const calendarTools = {
                             pending: 0,
                             in_progress: 0,
                             completed: 0,
-                            suspended: 0
+                            suspended: 0,
                         },
                         tasks: [],
-                        _progress_sum: 0
+                        _progress_sum: 0,
                     });
                 }
                 const bucket = grouped.get(task.assignee);
@@ -263,33 +262,34 @@ export const calendarTools = {
                     duration: task.duration,
                     priority: task.priority,
                     start_date: task.start_date,
-                    end_date: task.end_date
+                    end_date: task.end_date,
                 });
             }
 
             const workload = Array.from(grouped.values())
-                .map(item => ({
+                .map((item) => ({
                     assignee: item.assignee,
                     task_count: item.task_count,
                     total_duration: item.total_duration,
-                    average_progress: item.task_count > 0 ? Math.round(item._progress_sum / item.task_count) : 0,
+                    average_progress:
+                        item.task_count > 0 ? Math.round(item._progress_sum / item.task_count) : 0,
                     status_breakdown: item.status_breakdown,
-                    tasks: attachHierarchyIds(item.tasks)
+                    tasks: attachHierarchyIds(item.tasks),
                 }))
                 .sort((a, b) => compareByFields(a, b, ['assignee']));
 
             return {
                 query: {
                     assignee: assignee || null,
-                    status: status || null
+                    status: status || null,
                 },
                 totals: {
                     assignee_count: workload.length,
                     total_tasks: taskList.length,
-                    total_duration: taskList.reduce((sum, task) => sum + task.duration, 0)
+                    total_duration: taskList.reduce((sum, task) => sum + task.duration, 0),
                 },
-                workload
+                workload,
             };
-        }
-    })
+        },
+    }),
 };

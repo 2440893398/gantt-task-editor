@@ -6,85 +6,87 @@ vi.mock('../../../src/core/store.js', () => ({
     state: {
         selectedTasks: new Set(),
         fieldOrder: ['text', 'start_date', 'duration'],
-        customFields: []
+        customFields: [],
     },
     isFieldEnabled: vi.fn(() => true),
-    getViewMode: vi.fn(() => 'gantt')
+    getViewMode: vi.fn(() => 'gantt'),
 }));
 
 vi.mock('../../../src/data/fields.js', () => ({
     INTERNAL_FIELDS: [],
-    SYSTEM_FIELD_CONFIG: {}
+    SYSTEM_FIELD_CONFIG: {},
 }));
 
 vi.mock('../../../src/features/gantt/templates.js', () => ({
     renderPriorityBadge: vi.fn(() => '<span>priority</span>'),
     renderStatusBadge: vi.fn(() => '<span>status</span>'),
     renderAssignee: vi.fn(() => '<span>assignee</span>'),
-    renderProgressBar: vi.fn(() => '<span>progress</span>')
+    renderProgressBar: vi.fn(() => '<span>progress</span>'),
 }));
 
 vi.mock('../../../src/utils/dom.js', () => ({
     extractPlainText: vi.fn((v) => String(v || '')),
-    escapeAttr: vi.fn((v) => String(v ?? '')
-        .replace(/&/g, '&amp;')
-        .replace(/"/g, '&quot;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;'))
+    escapeAttr: vi.fn((v) =>
+        String(v ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+    ),
 }));
 
 vi.mock('../../../src/utils/time-formatter.js', () => ({
     formatDuration: vi.fn((v) => `${v}d`),
     exclusiveToInclusive: vi.fn((v) => v),
-    isDayPrecision: vi.fn(() => true)
+    isDayPrecision: vi.fn(() => true),
 }));
 
 vi.mock('../../../src/features/gantt/column-widths.js', () => ({
     applySavedColumnWidths: vi.fn((cols) => cols),
-    loadColumnWidthPrefs: vi.fn(() => ({}))
+    loadColumnWidthPrefs: vi.fn(() => ({})),
 }));
 
 vi.mock('../../../src/utils/i18n.js', () => ({
-    i18n: { t: vi.fn((key) => key) }
+    i18n: { t: vi.fn((key) => key) },
 }));
 
 vi.mock('../../../src/components/common/confirm-dialog.js', () => ({
-    showConfirmDialog: vi.fn()
+    showConfirmDialog: vi.fn(),
 }));
 
 vi.mock('../../../src/utils/toast.js', () => ({
-    showToast: vi.fn()
+    showToast: vi.fn(),
 }));
 
 // Mocks for init.js dependencies
 vi.mock('../../../src/data/tasks.js', () => ({ defaultTasks: { data: [], links: [] } }));
 vi.mock('../../../src/features/gantt/resizer.js', () => ({
     initResizer: vi.fn(),
-    stretchGridColumnsToFill: vi.fn()
+    stretchGridColumnsToFill: vi.fn(),
 }));
 vi.mock('../../../src/features/lightbox/customization.js', () => ({
     registerCustomFieldsBlock: vi.fn(),
     configureLightbox: vi.fn(),
-    registerNameInput: vi.fn()
+    registerNameInput: vi.fn(),
 }));
 vi.mock('../../../src/features/selection/selectionManager.js', () => ({
     updateSelectedTasksUI: vi.fn(),
-    applySelectionStyles: vi.fn()
+    applySelectionStyles: vi.fn(),
 }));
 vi.mock('../../../src/features/gantt/navigation.js', () => ({
     initNavigation: vi.fn(),
-    refreshUndoRedoButtons: vi.fn()
+    refreshUndoRedoButtons: vi.fn(),
 }));
 vi.mock('../../../src/features/gantt/markers.js', () => ({ initMarkers: vi.fn() }));
 vi.mock('../../../src/features/gantt/zoom.js', () => ({
     initZoom: vi.fn(),
-    refreshZoomBindings: vi.fn()
+    refreshZoomBindings: vi.fn(),
 }));
 vi.mock('../../../src/features/gantt/scheduler.js', () => ({ initScheduler: vi.fn() }));
 vi.mock('../../../src/features/gantt/responsive.js', () => ({ initResponsive: vi.fn() }));
 vi.mock('../../../src/features/gantt/inline-edit.js', () => ({
     initInlineEdit: vi.fn(),
-    addInlineEditStyles: vi.fn()
+    addInlineEditStyles: vi.fn(),
 }));
 vi.mock('../../../src/features/gantt/critical-path.js', () => ({ initCriticalPath: vi.fn() }));
 vi.mock('../../../src/features/ai/services/undoManager.js', () => ({
@@ -94,30 +96,41 @@ vi.mock('../../../src/features/ai/services/undoManager.js', () => ({
         undo: vi.fn(),
         redo: vi.fn(),
         isApplyingHistoryOperation: vi.fn(() => false),
-        saveState: vi.fn()
-    }
+        saveState: vi.fn(),
+    },
 }));
 vi.mock('../../../src/features/gantt/baseline.js', () => ({
     initBaseline: vi.fn(),
     handleSaveBaseline: vi.fn(),
-    handleToggleBaseline: vi.fn()
+    handleToggleBaseline: vi.fn(),
 }));
-vi.mock('../../../src/features/gantt/resource-conflict.js', () => ({ detectResourceConflicts: vi.fn(async () => ({ conflictTaskIds: new Set(), conflictDetails: {} })) }));
+vi.mock('../../../src/features/gantt/resource-conflict.js', () => ({
+    detectResourceConflicts: vi.fn(async () => ({
+        conflictTaskIds: new Set(),
+        conflictDetails: {},
+    })),
+}));
 vi.mock('../../../src/features/gantt/export-image.js', () => ({
     exportCurrentView: vi.fn(),
-    exportFullGantt: vi.fn()
+    exportFullGantt: vi.fn(),
 }));
 vi.mock('../../../src/features/config/configIO.js', () => ({ exportToExcel: vi.fn() }));
 vi.mock('../../../src/features/gantt/snapping.js', () => ({ initSnapping: vi.fn() }));
 vi.mock('../../../src/features/gantt/column-reorder-sync.js', () => ({
     computeFieldOrderFromGridColumns: vi.fn((prev) => prev),
-    hasFieldOrderChanged: vi.fn(() => false)
+    hasFieldOrderChanged: vi.fn(() => false),
 }));
-vi.mock('../../../src/features/calendar/holidayFetcher.js', () => ({ prefetchHolidays: vi.fn(async () => {}) }));
+vi.mock('../../../src/features/calendar/holidayFetcher.js', () => ({
+    prefetchHolidays: vi.fn(async () => {}),
+}));
 vi.mock('../../../src/core/storage.js', () => ({
     getAllCustomDays: vi.fn(async () => []),
     getCalendarSettings: vi.fn(async () => ({ countryCode: 'CN' })),
-    db: { calendar_holidays: { where: () => ({ anyOf: () => ({ filter: () => ({ toArray: async () => [] }) }) }) } }
+    db: {
+        calendar_holidays: {
+            where: () => ({ anyOf: () => ({ filter: () => ({ toArray: async () => [] }) }) }),
+        },
+    },
 }));
 
 describe('gantt-only action affordances', () => {
@@ -128,7 +141,7 @@ describe('gantt-only action affordances', () => {
 
         global.gantt = {
             config: {
-                columns: []
+                columns: [],
             },
             $container: document.createElement('div'),
             render: vi.fn(),
@@ -138,12 +151,12 @@ describe('gantt-only action affordances', () => {
                 id,
                 text: 'Parent Task',
                 start_date: new Date('2026-03-10T00:00:00.000Z'),
-                duration: 3
+                duration: 3,
             })),
             addTask: vi.fn(() => 9901),
             templates: {
-                date_grid: vi.fn(() => '2026-03-10')
-            }
+                date_grid: vi.fn(() => '2026-03-10'),
+            },
         };
     });
 
@@ -193,7 +206,7 @@ describe('gantt-only action affordances', () => {
                     id: 654,
                     text: 'Numeric Parent',
                     start_date: new Date('2026-03-11T09:30:00.000Z'),
-                    duration: 2
+                    duration: 2,
                 };
             }
             return null;
@@ -227,7 +240,7 @@ describe('gantt-only action affordances', () => {
             id: 321,
             text: 'Parent Task',
             parent: 0,
-            start_date: new Date('2026-03-10T00:00:00.000Z')
+            start_date: new Date('2026-03-10T00:00:00.000Z'),
         });
         document.body.innerHTML = html;
 
@@ -252,21 +265,24 @@ describe('timeline empty-area create action', () => {
             $task_data: taskData,
             attachEvent: vi.fn(),
             dateFromPos: vi.fn(() => new Date('2026-04-02T13:45:00.000Z')),
-            addTask: vi.fn(() => 8801)
+            addTask: vi.fn(() => 8801),
         };
     });
 
     it('creates a new task from empty-area context with clicked start_date', async () => {
-        const { bindTimelineEmptyAreaCreateAction } = await import('../../../src/features/gantt/init.js');
+        const { bindTimelineEmptyAreaCreateAction } =
+            await import('../../../src/features/gantt/init.js');
         bindTimelineEmptyAreaCreateAction();
 
-        const onContextMenu = global.gantt.attachEvent.mock.calls.find(([name]) => name === 'onContextMenu')[1];
+        const onContextMenu = global.gantt.attachEvent.mock.calls.find(
+            ([name]) => name === 'onContextMenu'
+        )[1];
         const target = global.gantt.$task_data.firstElementChild;
         const preventDefault = vi.fn();
         const event = {
             target,
             clientX: 120,
-            preventDefault
+            preventDefault,
         };
 
         const result = onContextMenu(null, null, event);
@@ -286,15 +302,18 @@ describe('timeline empty-area create action', () => {
         window.openNewTaskDetailsPanel = undefined;
         window.openTaskDetailsPanel = vi.fn();
 
-        const { bindTimelineEmptyAreaCreateAction } = await import('../../../src/features/gantt/init.js');
+        const { bindTimelineEmptyAreaCreateAction } =
+            await import('../../../src/features/gantt/init.js');
         bindTimelineEmptyAreaCreateAction();
 
-        const onContextMenu = global.gantt.attachEvent.mock.calls.find(([name]) => name === 'onContextMenu')[1];
+        const onContextMenu = global.gantt.attachEvent.mock.calls.find(
+            ([name]) => name === 'onContextMenu'
+        )[1];
         const target = global.gantt.$task_data.firstElementChild;
         const event = {
             target,
             clientX: 80,
-            preventDefault: vi.fn()
+            preventDefault: vi.fn(),
         };
 
         onContextMenu(null, null, event);

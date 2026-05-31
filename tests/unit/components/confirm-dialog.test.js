@@ -6,10 +6,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('../../../src/utils/dom.js', () => ({
-    escapeHtml: vi.fn((text) => String(text))
+    escapeHtml: vi.fn((text) => String(text)),
 }));
 
-import { showConfirmDialog, closeConfirmDialog } from '../../../src/components/common/confirm-dialog.js';
+import {
+    showConfirmDialog,
+    closeConfirmDialog,
+} from '../../../src/components/common/confirm-dialog.js';
 
 describe('confirm-dialog', () => {
     beforeEach(() => {
@@ -37,7 +40,7 @@ describe('confirm-dialog', () => {
         it('contains confirm and cancel buttons with correct text', () => {
             showConfirmDialog({
                 confirmText: 'Delete',
-                cancelText: 'Keep'
+                cancelText: 'Keep',
             });
 
             const cancelBtn = document.getElementById('confirm-dialog-cancel');
@@ -51,7 +54,7 @@ describe('confirm-dialog', () => {
         it('shows title and message', () => {
             showConfirmDialog({
                 title: 'Delete Task',
-                message: 'This action cannot be undone.'
+                message: 'This action cannot be undone.',
             });
 
             const backdrop = document.getElementById('confirm-dialog-backdrop');

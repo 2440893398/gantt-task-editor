@@ -3,7 +3,12 @@
  * 集成 localStorage + IndexedDB 混合存储
  */
 
-import { defaultCustomFields, defaultFieldOrder, SYSTEM_FIELD_CONFIG, INTERNAL_FIELDS } from '../data/fields.js';
+import {
+    defaultCustomFields,
+    defaultFieldOrder,
+    SYSTEM_FIELD_CONFIG,
+    INTERNAL_FIELDS,
+} from '../data/fields.js';
 import {
     saveCustomFieldsDef,
     getCustomFieldsDef,
@@ -21,7 +26,7 @@ import {
     saveViewMode,
     getViewMode as getStoredViewMode,
     projectScope,
-    DEFAULT_PROJECT_ID
+    DEFAULT_PROJECT_ID,
 } from './storage.js';
 import { getAllProjects, createProject } from '../features/projects/manager.js';
 
@@ -51,12 +56,12 @@ export const state = {
     selectedTasks: new Set(),
     sortableInstance: null,
     isCtrlPressed: false,
-    isDataLoaded: false,  // 标记数据是否已从缓存加载
+    isDataLoaded: false, // 标记数据是否已从缓存加载
     // AI 配置状态
     aiConfig: {
         apiKey: '',
         baseUrl: 'https://api.openai.com/v1',
-        model: 'gpt-3.5-turbo'
+        model: 'gpt-3.5-turbo',
     },
     aiStatus: 'idle', // idle | loading | streaming | error
     viewMode: 'split', // 'split' | 'table' | 'gantt'
@@ -71,10 +76,10 @@ export const state = {
             duration: true,
             actual_start: true,
             actual_end: true,
-            actual_hours: true
+            actual_hours: true,
         },
-        typeOverrides: {}
-    }
+        typeOverrides: {},
+    },
 };
 
 // ========================================
@@ -89,7 +94,11 @@ export async function restoreStateFromCache() {
     try {
         // 恢复自定义字段定义
         const cachedCustomFields = getCustomFieldsDef();
-        if (cachedCustomFields && Array.isArray(cachedCustomFields) && cachedCustomFields.length > 0) {
+        if (
+            cachedCustomFields &&
+            Array.isArray(cachedCustomFields) &&
+            cachedCustomFields.length > 0
+        ) {
             state.customFields = cachedCustomFields;
             console.log('[Store] Restored custom fields from cache:', cachedCustomFields.length);
         }
@@ -127,8 +136,12 @@ export async function restoreStateFromCache() {
                     !cachedFieldOrder.includes(fieldName)
                 ) {
                     // 插入到合理位置：end_date 紧跟 start_date 之后
-                    const anchorField = fieldName === 'end_date' ? 'start_date'
-                        : fieldName === 'description' ? 'start_date' : null;
+                    const anchorField =
+                        fieldName === 'end_date'
+                            ? 'start_date'
+                            : fieldName === 'description'
+                              ? 'start_date'
+                              : null;
                     if (anchorField) {
                         const anchorIdx = cachedFieldOrder.indexOf(anchorField);
                         if (anchorIdx >= 0) {
@@ -152,7 +165,7 @@ export async function restoreStateFromCache() {
         if (cachedSystemFieldSettings) {
             state.systemFieldSettings = {
                 ...state.systemFieldSettings,
-                ...cachedSystemFieldSettings
+                ...cachedSystemFieldSettings,
             };
             console.log('[Store] Restored system field settings from cache');
         }
@@ -242,7 +255,7 @@ export async function initProjects() {
         state.projects = projects;
 
         const savedProjectId = getStoredProjectId();
-        const validProjectId = projects.find(project => project.id === savedProjectId)?.id;
+        const validProjectId = projects.find((project) => project.id === savedProjectId)?.id;
 
         state.currentProjectId = validProjectId ?? projects[0].id;
         persistProjectId(state.currentProjectId);
@@ -276,7 +289,7 @@ export async function switchProject(projectId) {
         return;
     }
 
-    if (!state.projects.some(project => project.id === projectId)) {
+    if (!state.projects.some((project) => project.id === projectId)) {
         console.warn('[Store] Ignored switch to unknown project:', projectId);
         return;
     }
@@ -375,19 +388,19 @@ export function addCustomField(field) {
 }
 
 export function updateCustomField(fieldName, updates) {
-    const field = state.customFields.find(f => f.name === fieldName);
+    const field = state.customFields.find((f) => f.name === fieldName);
     if (field) {
         Object.assign(field, updates);
     }
 }
 
 export function removeCustomField(fieldName) {
-    state.customFields = state.customFields.filter(f => f.name !== fieldName);
-    state.fieldOrder = state.fieldOrder.filter(f => f !== fieldName);
+    state.customFields = state.customFields.filter((f) => f.name !== fieldName);
+    state.fieldOrder = state.fieldOrder.filter((f) => f !== fieldName);
 }
 
 export function getCustomFieldByName(fieldName) {
-    return state.customFields.find(f => f.name === fieldName);
+    return state.customFields.find((f) => f.name === fieldName);
 }
 
 // 字段顺序管理
@@ -396,7 +409,14 @@ export function reorderFields(oldIndex, newIndex) {
     state.customFields.splice(newIndex, 0, movedField);
 
     // 更新 fieldOrder
-    state.fieldOrder = ["text", ...state.customFields.map(f => f.name), "description", "start_date", "duration", "progress"];
+    state.fieldOrder = [
+        'text',
+        ...state.customFields.map((f) => f.name),
+        'description',
+        'start_date',
+        'duration',
+        'progress',
+    ];
 }
 
 // ========================================
@@ -531,10 +551,9 @@ export function getFieldType(fieldName) {
     if (SYSTEM_FIELD_CONFIG[fieldName]) {
         return SYSTEM_FIELD_CONFIG[fieldName].type;
     }
-    const customField = state.customFields.find(f => f.name === fieldName);
+    const customField = state.customFields.find((f) => f.name === fieldName);
     return customField?.type || 'text';
 }
-
 
 /**
  * Toggle field enabled state (handles both system and custom fields)
@@ -552,10 +571,12 @@ export function toggleSystemFieldEnabled(fieldName, enabled) {
 
         // If field has a linked group, toggle all fields in the group
         const fieldsToToggle = config.linkedGroup
-            ? Object.keys(SYSTEM_FIELD_CONFIG).filter(f => SYSTEM_FIELD_CONFIG[f].linkedGroup === config.linkedGroup)
+            ? Object.keys(SYSTEM_FIELD_CONFIG).filter(
+                  (f) => SYSTEM_FIELD_CONFIG[f].linkedGroup === config.linkedGroup
+              )
             : [fieldName];
 
-        fieldsToToggle.forEach(f => {
+        fieldsToToggle.forEach((f) => {
             state.systemFieldSettings.enabled[f] = enabled;
 
             // Also update fieldOrder so Gantt columns reflect the change
@@ -587,8 +608,6 @@ export function toggleSystemFieldEnabled(fieldName, enabled) {
         persistCustomFields();
     }
 }
-
-
 
 /**
  * Set system field type override with optional options and default value
@@ -652,13 +671,12 @@ export function getSystemFieldDefaultValue(fieldName) {
     return null;
 }
 
-
 /**
  * Get visible fields (excluding disabled and internal fields)
  * @returns {string[]}
  */
 export function getVisibleFields() {
-    return state.fieldOrder.filter(fieldName => {
+    return state.fieldOrder.filter((fieldName) => {
         if (INTERNAL_FIELDS.includes(fieldName)) return false;
         return isFieldEnabled(fieldName);
     });

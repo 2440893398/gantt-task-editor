@@ -11,7 +11,7 @@ import { getAgentList } from '../prompts/agentRegistry.js';
 let btnEl = null;
 let menuEl = null;
 let isMenuOpen = false;
-let closeMenuTimeout = null;  // 用于取消延迟的 closeMenu
+let closeMenuTimeout = null; // 用于取消延迟的 closeMenu
 
 /**
  * 创建悬浮按钮 HTML
@@ -79,7 +79,7 @@ function getAgentIcon(iconName) {
         </svg>`,
         clock: `<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-warning" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>`
+        </svg>`,
     };
     return icons[iconName] || icons.sparkles;
 }
@@ -138,15 +138,17 @@ function bindEvents() {
     });
 
     // 智能体选择
-    document.querySelectorAll('.ai-agent-item[data-agent-id]').forEach(item => {
+    document.querySelectorAll('.ai-agent-item[data-agent-id]').forEach((item) => {
         item.addEventListener('click', (e) => {
             e.stopPropagation();
             const agentId = item.dataset.agentId;
             closeMenu();
             // 触发智能体调用事件
-            document.dispatchEvent(new CustomEvent('aiAgentSelected', {
-                detail: { agentId }
-            }));
+            document.dispatchEvent(
+                new CustomEvent('aiAgentSelected', {
+                    detail: { agentId },
+                })
+            );
         });
     });
 
@@ -178,9 +180,11 @@ function handleBtnClick(e) {
     }
 
     // F-203: 直接触发 chat 模式，无需菜单
-    document.dispatchEvent(new CustomEvent('aiAgentSelected', {
-        detail: { agentId: 'chat' }
-    }));
+    document.dispatchEvent(
+        new CustomEvent('aiAgentSelected', {
+            detail: { agentId: 'chat' },
+        })
+    );
 }
 
 /**
@@ -310,5 +314,5 @@ export default {
     init: initAiFloatingBtn,
     setLoading,
     openMenu,
-    closeMenu
+    closeMenu,
 };

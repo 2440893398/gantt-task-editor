@@ -6,7 +6,13 @@
  * - 节假日数据状态卡片
  */
 
-import { DEFAULT_PROJECT_ID, getCalendarSettings, saveCalendarSettings, getCalendarMeta, db } from '../../core/storage.js';
+import {
+    DEFAULT_PROJECT_ID,
+    getCalendarSettings,
+    saveCalendarSettings,
+    getCalendarMeta,
+    db,
+} from '../../core/storage.js';
 import { ensureHolidaysCached } from './holidayFetcher.js';
 import { refreshHolidayHighlightCache } from '../gantt/init.js';
 import { i18n } from '../../utils/i18n.js';
@@ -37,7 +43,10 @@ function getCountryLabel(country) {
 function formatConfiguredCount(source, dateStr) {
     const sourceLabel = source || '-';
     const updated = dateStr || '-';
-    return i18n.t('calendar.holidayCachedDetail', { source: sourceLabel, date: updated }) || `Source: ${sourceLabel} Updated: ${updated}`;
+    return (
+        i18n.t('calendar.holidayCachedDetail', { source: sourceLabel, date: updated }) ||
+        `Source: ${sourceLabel} Updated: ${updated}`
+    );
 }
 
 export async function renderTab1(container) {
@@ -48,7 +57,11 @@ export async function renderTab1(container) {
     const currentCountryCode = resolvedCountry.countryCode;
     const meta = await getCalendarMeta(new Date().getFullYear());
 
-    if (!storedSettings || storedSettings.countryCode !== currentCountryCode || storedSettings.locale !== currentLocale) {
+    if (
+        !storedSettings ||
+        storedSettings.countryCode !== currentCountryCode ||
+        storedSettings.locale !== currentLocale
+    ) {
         await saveCalendarSettings({
             countryCode: currentCountryCode,
             workdaysOfWeek: settings.workdaysOfWeek,
@@ -67,7 +80,7 @@ export async function renderTab1(container) {
                     ${i18n.t('calendar.country') || '国家/地区'}
                 </div>
                 <select id="cal-country" style="width:100%;height:40px;border-radius:8px;border:1px solid #E2E8F0;padding:0 12px;font-size:13px;font-family:inherit;">
-                    ${COUNTRIES.map(c => `<option value="${c.code}" ${c.code === currentCountryCode ? 'selected' : ''}>${c.flag} ${getCountryLabel(c)}</option>`).join('')}
+                    ${COUNTRIES.map((c) => `<option value="${c.code}" ${c.code === currentCountryCode ? 'selected' : ''}>${c.flag} ${getCountryLabel(c)}</option>`).join('')}
                 </select>
             </div>
 
@@ -90,14 +103,16 @@ export async function renderTab1(container) {
                     ${i18n.t('calendar.workdays') || '工作日设置'}
                 </div>
                 <div id="cal-workdays" style="display:flex;gap:8px;">
-                    ${DAY_NAMES.map((name, idx) => `
+                    ${DAY_NAMES.map(
+                        (name, idx) => `
                         <button class="cal-workday-chip" data-day="${idx}"
                             style="width:36px;height:36px;border-radius:8px;border:none;cursor:pointer;font-size:13px;font-weight:600;
                             background:${settings.workdaysOfWeek.includes(idx) ? '#0EA5E9' : '#F1F5F9'};
                             color:${settings.workdaysOfWeek.includes(idx) ? '#fff' : '#64748B'};">
                             ${getDayLabel(idx)}
                         </button>
-                    `).join('')}
+                    `
+                    ).join('')}
                 </div>
             </div>
 
@@ -105,10 +120,10 @@ export async function renderTab1(container) {
             <div style="border:1px solid #E2E8F0;border-radius:10px;padding:14px 16px;display:flex;justify-content:space-between;align-items:center;">
                 <div>
                     <div style="font-size:13px;font-weight:600;color:#0F172A;">
-                        ${meta ? (i18n.t('calendar.holidayCached') || 'Holiday data cached') : (i18n.t('calendar.holidayNotLoaded') || 'Holiday data not loaded')}
+                        ${meta ? i18n.t('calendar.holidayCached') || 'Holiday data cached' : i18n.t('calendar.holidayNotLoaded') || 'Holiday data not loaded'}
                     </div>
                     <div style="font-size:11px;color:#64748B;margin-top:2px;">
-                        ${meta ? formatConfiguredCount(meta.source, meta.fetchedAt?.substring(0, 10)) : (i18n.t('calendar.clickRefetchToLoad') || 'Click Refresh to load')}
+                        ${meta ? formatConfiguredCount(meta.source, meta.fetchedAt?.substring(0, 10)) : i18n.t('calendar.clickRefetchToLoad') || 'Click Refresh to load'}
                     </div>
                 </div>
                 <button id="cal-refetch" style="padding:6px 14px;border-radius:8px;background:#F1F5F9;border:none;cursor:pointer;font-size:12px;font-weight:600;color:#64748B;">
@@ -121,14 +136,20 @@ export async function renderTab1(container) {
     // 工时步进
     let hours = settings.hoursPerDay;
     container.querySelector('#cal-hours-dec').addEventListener('click', () => {
-        if (hours > 1) { hours--; container.querySelector('#cal-hours-val').textContent = hours; }
+        if (hours > 1) {
+            hours--;
+            container.querySelector('#cal-hours-val').textContent = hours;
+        }
     });
     container.querySelector('#cal-hours-inc').addEventListener('click', () => {
-        if (hours < 24) { hours++; container.querySelector('#cal-hours-val').textContent = hours; }
+        if (hours < 24) {
+            hours++;
+            container.querySelector('#cal-hours-val').textContent = hours;
+        }
     });
 
     // 工作日 Chip 切换
-    container.querySelectorAll('.cal-workday-chip').forEach(chip => {
+    container.querySelectorAll('.cal-workday-chip').forEach((chip) => {
         chip.addEventListener('click', () => {
             const isActive = chip.style.background.includes('#0EA5E9');
             chip.style.background = isActive ? '#F1F5F9' : '#0EA5E9';
@@ -143,9 +164,15 @@ export async function renderTab1(container) {
         btn.disabled = true;
         const countryCode = container.querySelector('#cal-country').value;
         const workdays = Array.from(container.querySelectorAll('.cal-workday-chip'))
-            .filter(c => c.style.background.includes('#0EA5E9'))
-            .map(c => parseInt(c.dataset.day, 10));
-        await saveCalendarSettings({ countryCode, workdaysOfWeek: workdays, hoursPerDay: hours, locale: currentLocale, countryAuto: false });
+            .filter((c) => c.style.background.includes('#0EA5E9'))
+            .map((c) => parseInt(c.dataset.day, 10));
+        await saveCalendarSettings({
+            countryCode,
+            workdaysOfWeek: workdays,
+            hoursPerDay: hours,
+            locale: currentLocale,
+            countryAuto: false,
+        });
         // 强制清除 meta 触发重新拉取
         const { db } = await import('../../core/storage.js');
         const thisYear = new Date().getFullYear();
@@ -165,9 +192,15 @@ export async function renderTab1(container) {
     saveHandler = async () => {
         const countryCode = container.querySelector('#cal-country').value;
         const workdays = Array.from(container.querySelectorAll('.cal-workday-chip'))
-            .filter(c => c.style.background.includes('#0EA5E9'))
-            .map(c => parseInt(c.dataset.day, 10));
-        await saveCalendarSettings({ countryCode, workdaysOfWeek: workdays, hoursPerDay: hours, locale: currentLocale, countryAuto: false });
+            .filter((c) => c.style.background.includes('#0EA5E9'))
+            .map((c) => parseInt(c.dataset.day, 10));
+        await saveCalendarSettings({
+            countryCode,
+            workdaysOfWeek: workdays,
+            hoursPerDay: hours,
+            locale: currentLocale,
+            countryAuto: false,
+        });
         const thisYear = new Date().getFullYear();
         await ensureHolidaysCached(thisYear);
         await ensureHolidaysCached(thisYear + 1);

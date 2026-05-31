@@ -9,11 +9,12 @@ import { getCalendarSettings, db } from '../../core/storage.js';
  */
 function getAssigneeFieldKey() {
     const fields = state.customFields || [];
-    const assigneeField = fields.find(f =>
-        f.label === '负责人' ||
-        f.label === 'Assignee' ||
-        f.label === '责任人' ||
-        f.key === 'assignee'
+    const assigneeField = fields.find(
+        (f) =>
+            f.label === '负责人' ||
+            f.label === 'Assignee' ||
+            f.label === '责任人' ||
+            f.key === 'assignee'
     );
     return assigneeField?.key || 'assignee';
 }
@@ -32,7 +33,7 @@ function normalizeAssignee(value) {
 
 function isOnLeave(leaveRanges, dateStr) {
     if (!leaveRanges || leaveRanges.length === 0) return false;
-    return leaveRanges.some(item => item.startDate <= dateStr && dateStr <= item.endDate);
+    return leaveRanges.some((item) => item.startDate <= dateStr && dateStr <= item.endDate);
 }
 
 async function buildCalendarContext(tasks) {
@@ -40,7 +41,7 @@ async function buildCalendarContext(tasks) {
     const workdaysOfWeek = new Set(settings.workdaysOfWeek || [1, 2, 3, 4, 5]);
 
     const years = new Set();
-    tasks.forEach(task => {
+    tasks.forEach((task) => {
         const s = task?.start_date instanceof Date ? task.start_date : new Date(task?.start_date);
         const e = task?.end_date instanceof Date ? task.end_date : new Date(task?.end_date);
         if (!isNaN(s.getTime())) years.add(s.getFullYear());
@@ -54,26 +55,29 @@ async function buildCalendarContext(tasks) {
 
     const [customDays, holidayRows, leaves] = await Promise.all([
         db.calendar_custom.toArray(),
-        db.calendar_holidays.where('year').anyOf([...years]).toArray(),
-        db.person_leaves.toArray()
+        db.calendar_holidays
+            .where('year')
+            .anyOf([...years])
+            .toArray(),
+        db.person_leaves.toArray(),
     ]);
 
     const customMap = new Map(); // dateStr -> isOffDay
-    customDays.forEach(item => {
+    customDays.forEach((item) => {
         if (!item?.date) return;
         customMap.set(item.date, !!item.isOffDay);
     });
 
     const holidayMap = new Map(); // dateStr -> isOffDay
     holidayRows
-        .filter(item => item?.countryCode === settings.countryCode)
-        .forEach(item => {
+        .filter((item) => item?.countryCode === settings.countryCode)
+        .forEach((item) => {
             if (!item?.date) return;
             holidayMap.set(item.date, !!item.isOffDay);
         });
 
     const leaveMap = new Map(); // assignee -> [{startDate,endDate}]
-    leaves.forEach(item => {
+    leaves.forEach((item) => {
         const assignee = normalizeAssignee(item?.assignee);
         if (!assignee || !item?.startDate || !item?.endDate) return;
         if (!leaveMap.has(assignee)) leaveMap.set(assignee, []);
@@ -147,7 +151,7 @@ export async function detectResourceConflicts() {
     // Date -> Assignee -> Workload info
     const dailyWorkload = {};
 
-    tasks.forEach(task => {
+    tasks.forEach((task) => {
         // 跳过父任务（有子任务的任务）：父任务的工期是子任务的聚合，
         // 如果同时计入父任务和子任务的工时，会造成双重统计
         if (task.type === 'project' || gantt.hasChild(task.id)) return;
@@ -156,7 +160,8 @@ export async function detectResourceConflicts() {
         if (!assignee) return;
 
         // Handle string dates if necessary (though gantt usually provides Date objects)
-        const startDate = task.start_date instanceof Date ? task.start_date : new Date(task.start_date);
+        const startDate =
+            task.start_date instanceof Date ? task.start_date : new Date(task.start_date);
         const rawEndDate = task.end_date instanceof Date ? task.end_date : new Date(task.end_date);
 
         if (isNaN(startDate.getTime()) || isNaN(rawEndDate.getTime())) return;
@@ -164,9 +169,7 @@ export async function detectResourceConflicts() {
         // DHTMLX 的 day-precision end_date 是 exclusive（下一天 00:00）。
         // 资源负载按“实际工作日”分摊时，需要先转回 inclusive 结束日，
         // 否则相邻不重叠任务会在边界日被错误地同时计入，触发误报。
-        const endDate = isDayPrecision(rawEndDate)
-            ? exclusiveToInclusive(rawEndDate)
-            : rawEndDate;
+        const endDate = isDayPrecision(rawEndDate) ? exclusiveToInclusive(rawEndDate) : rawEndDate;
 
         const workDays = getWorkDays(startDate, endDate, assignee, calendarCtx);
         if (workDays.length === 0) return;
@@ -187,12 +190,12 @@ export async function detectResourceConflicts() {
             // If duration is 1.5 days (12 hours) and spans 2 days.
             // We'll simplify: spread duration equally across work days, max 8h/day.
             // But for this feature, "overload" means > 8h/day.
-            // If a task is 1 day, it's 8h. 
+            // If a task is 1 day, it's 8h.
             // If we have strict duration, we can use that.
             hoursPerDay = (duration * 8) / workDays.length;
         }
 
-        workDays.forEach(day => {
+        workDays.forEach((day) => {
             const dateKey = gantt.date.date_to_str('%Y-%m-%d')(day);
 
             if (!dailyWorkload[dateKey]) {
@@ -202,7 +205,7 @@ export async function detectResourceConflicts() {
             if (!dailyWorkload[dateKey][assignee]) {
                 dailyWorkload[dateKey][assignee] = {
                     totalHours: 0,
-                    tasks: []
+                    tasks: [],
                 };
             }
 
@@ -210,7 +213,7 @@ export async function detectResourceConflicts() {
             dailyWorkload[dateKey][assignee].tasks.push({
                 id: task.id,
                 text: task.text,
-                hours: hoursPerDay
+                hours: hoursPerDay,
             });
         });
     });
@@ -221,10 +224,11 @@ export async function detectResourceConflicts() {
 
     Object.entries(dailyWorkload).forEach(([date, assignments]) => {
         Object.entries(assignments).forEach(([assignee, workload]) => {
-            if (workload.totalHours > 8.01) { // Floating point tolerance
+            if (workload.totalHours > 8.01) {
+                // Floating point tolerance
                 const overload = workload.totalHours - 8;
 
-                workload.tasks.forEach(task => {
+                workload.tasks.forEach((task) => {
                     conflictTaskIds.add(task.id);
 
                     if (!conflictDetails[task.id]) {
@@ -235,7 +239,7 @@ export async function detectResourceConflicts() {
                         date,
                         assignee,
                         totalHours: workload.totalHours,
-                        overload
+                        overload,
                     });
                 });
             }

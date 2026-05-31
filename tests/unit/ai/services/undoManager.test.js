@@ -1,4 +1,3 @@
-
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import undoManager, {
     saveState,
@@ -8,7 +7,7 @@ import undoManager, {
     canRedo,
     getUndoStackSize,
     getRedoStackSize,
-    clearHistory
+    clearHistory,
 } from '../../../../src/features/ai/services/undoManager.js';
 
 // Mock global gantt
@@ -24,7 +23,7 @@ const mockTask = {
     assignee: 'John',
     summary: 'Task summary',
     parent: 0,
-    open: true
+    open: true,
 };
 
 let currentTaskState = { ...mockTask };
@@ -36,7 +35,7 @@ global.gantt = {
         }
         return null;
     }),
-    updateTask: vi.fn()
+    updateTask: vi.fn(),
 };
 
 describe('UndoManager (F-201)', () => {
@@ -56,7 +55,7 @@ describe('UndoManager (F-201)', () => {
             assignee: 'John',
             summary: 'Task summary',
             parent: 0,
-            open: true
+            open: true,
         };
     });
 

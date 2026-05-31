@@ -14,7 +14,6 @@ import undoManager from '../ai/services/undoManager.js';
 // F-112: 任务详情面板
 import { openTaskDetailsPanel } from '../task-details/index.js';
 
-
 // 当前活跃的编辑器
 let activeEditor = null;
 
@@ -77,7 +76,7 @@ function bindDoubleClickEdit() {
     // F-112: 禁用默认的 lightbox 双击行为
     gantt.config.details_on_dblclick = false;
 
-    gantt.attachEvent("onTaskDblClick", function (id, e) {
+    gantt.attachEvent('onTaskDblClick', function (id, e) {
         const target = e.target;
         const cell = target.closest('.gantt_cell');
 
@@ -92,7 +91,6 @@ function bindDoubleClickEdit() {
             openTaskDetailsPanel(id);
             return false;
         }
-
 
         // 检查是否为 buttons 列（复选框列），不可编辑
         if (columnName === 'buttons' || columnName === 'add') {
@@ -181,7 +179,7 @@ function startInlineEdit(taskId, columnName, cell, editorType) {
         case 'multiselect':
             editorElement = createMultiselectEditor(columnName, originalValue);
             break;
-        case 'textarea':  // F-112
+        case 'textarea': // F-112
             editorElement = createTextareaEditor(originalValue);
             break;
         default:
@@ -210,7 +208,7 @@ function startInlineEdit(taskId, columnName, cell, editorType) {
         editorElement,
         originalContent,
         originalValue,
-        editorType
+        editorType,
     };
 
     // 绑定键盘事件
@@ -315,7 +313,7 @@ function createSelectEditor(columnName, value) {
 
     // 获取字段配置 - 先检查系统字段覆盖，再检查自定义字段
     const systemOptions = getSystemFieldOptions(columnName);
-    const customField = state.customFields.find(f => f.name === columnName);
+    const customField = state.customFields.find((f) => f.name === columnName);
 
     // 确定有效选项：系统字段覆盖优先，否则使用自定义字段选项
     const effectiveOptions = systemOptions || (customField && customField.options) || [];
@@ -329,7 +327,7 @@ function createSelectEditor(columnName, value) {
     select.appendChild(emptyOption);
 
     // 添加选项
-    effectiveOptions.forEach(option => {
+    effectiveOptions.forEach((option) => {
         const optElement = document.createElement('option');
         optElement.value = option;
 
@@ -352,7 +350,6 @@ function createSelectEditor(columnName, value) {
     return select;
 }
 
-
 /**
  * 创建多选编辑器
  */
@@ -364,7 +361,7 @@ function createMultiselectEditor(columnName, value) {
 
     // 获取字段配置 - 先检查系统字段覆盖，再检查自定义字段
     const systemOptions = getSystemFieldOptions(columnName);
-    const customField = state.customFields.find(f => f.name === columnName);
+    const customField = state.customFields.find((f) => f.name === columnName);
 
     // 确定有效选项
     const effectiveOptions = systemOptions || (customField && customField.options) || [];
@@ -372,10 +369,10 @@ function createMultiselectEditor(columnName, value) {
     if (effectiveOptions.length === 0) return select;
 
     // 解析当前选中值
-    const selectedValues = Array.isArray(value) ? value : (value ? String(value).split(',') : []);
+    const selectedValues = Array.isArray(value) ? value : value ? String(value).split(',') : [];
 
     // 添加选项
-    effectiveOptions.forEach(option => {
+    effectiveOptions.forEach((option) => {
         const optElement = document.createElement('option');
         optElement.value = option;
 
@@ -398,7 +395,6 @@ function createMultiselectEditor(columnName, value) {
     return select;
 }
 
-
 /**
  * 处理键盘事件
  */
@@ -418,7 +414,8 @@ function handleKeydown(e) {
 function saveAndCloseEditor() {
     if (!activeEditor) return;
 
-    const { taskId, columnName, cell, editorElement, originalContent, originalValue, editorType } = activeEditor;
+    const { taskId, columnName, cell, editorElement, originalContent, originalValue, editorType } =
+        activeEditor;
     const task = gantt.getTask(taskId);
 
     // 获取新值
@@ -432,7 +429,9 @@ function saveAndCloseEditor() {
             }
             break;
         case 'date':
-            newValue = editorElement.value ? gantt.date.str_to_date('%Y-%m-%d')(editorElement.value) : null;
+            newValue = editorElement.value
+                ? gantt.date.str_to_date('%Y-%m-%d')(editorElement.value)
+                : null;
             break;
         case 'datetime':
             // datetime-local 返回格式: YYYY-MM-DDTHH:mm
@@ -446,9 +445,11 @@ function saveAndCloseEditor() {
             newValue = editorElement.value;
             break;
         case 'multiselect':
-            newValue = Array.from(editorElement.selectedOptions).map(o => o.value).join(',');
+            newValue = Array.from(editorElement.selectedOptions)
+                .map((o) => o.value)
+                .join(',');
             break;
-        case 'textarea':  // F-112
+        case 'textarea': // F-112
             newValue = editorElement.value.trim();
             break;
         default:

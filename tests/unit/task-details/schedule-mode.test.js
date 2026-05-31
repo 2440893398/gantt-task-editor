@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
     normalizeScheduleMode,
     deriveFromStartAndDuration,
-    deriveFromStartAndEnd
+    deriveFromStartAndEnd,
 } from '../../../src/features/task-details/schedule-mode.js';
 
 describe('schedule-mode utilities', () => {
@@ -28,14 +28,14 @@ describe('schedule-mode utilities', () => {
             const calculateEndDate = vi.fn(() => endDate);
 
             const result = deriveFromStartAndDuration(startDate, 5, {
-                calculateEndDate
+                calculateEndDate,
             });
 
             expect(calculateEndDate).toHaveBeenCalledWith(startDate, 5);
             expect(result).toEqual({
                 start_date: startDate,
                 duration: 5,
-                end_date: endDate
+                end_date: endDate,
             });
         });
 
@@ -43,7 +43,7 @@ describe('schedule-mode utilities', () => {
             const calculateEndDate = vi.fn();
 
             const result = deriveFromStartAndDuration(null, 5, {
-                calculateEndDate
+                calculateEndDate,
             });
 
             expect(result).toBeNull();
@@ -58,14 +58,14 @@ describe('schedule-mode utilities', () => {
             const calculateDuration = vi.fn(() => 5);
 
             const result = deriveFromStartAndEnd(startDate, endDate, {
-                calculateDuration
+                calculateDuration,
             });
 
             expect(calculateDuration).toHaveBeenCalledWith(startDate, endDate);
             expect(result).toEqual({
                 start_date: startDate,
                 end_date: endDate,
-                duration: 5
+                duration: 5,
             });
         });
 
@@ -73,7 +73,7 @@ describe('schedule-mode utilities', () => {
             const calculateDuration = vi.fn();
 
             const result = deriveFromStartAndEnd(null, new Date('2026-03-08'), {
-                calculateDuration
+                calculateDuration,
             });
 
             expect(result).toBeNull();

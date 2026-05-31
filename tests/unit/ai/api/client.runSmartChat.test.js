@@ -8,33 +8,33 @@ import { executeSkill, executeGeneralChat } from '../../../../src/features/ai/ag
 // Mock dependencies
 vi.mock('../../../../src/core/store.js', () => ({
     getAiConfigState: vi.fn(),
-    setAiStatus: vi.fn()
+    setAiStatus: vi.fn(),
 }));
 
 vi.mock('@ai-sdk/openai', () => ({
-    createOpenAI: vi.fn()
+    createOpenAI: vi.fn(),
 }));
 
 vi.mock('ai', () => ({
     streamText: vi.fn(),
-    tool: vi.fn((definition) => definition)
+    tool: vi.fn((definition) => definition),
 }));
 
 vi.mock('../../../../src/features/ai/agent/router.js', () => ({
     quickRoute: vi.fn(),
-    routeToSkill: vi.fn()
+    routeToSkill: vi.fn(),
 }));
 
 vi.mock('../../../../src/features/ai/agent/executor.js', () => ({
     executeSkill: vi.fn(),
-    executeGeneralChat: vi.fn()
+    executeGeneralChat: vi.fn(),
 }));
 
 describe('runSmartChat', () => {
     const mockConfig = {
         apiKey: 'test-key',
         baseUrl: 'https://api.test.com',
-        model: 'gpt-4'
+        model: 'gpt-4',
     };
 
     const mockOpenai = vi.fn((model) => `openai-${model}`);
@@ -48,8 +48,8 @@ describe('runSmartChat', () => {
         usage: Promise.resolve({
             promptTokens: 10,
             completionTokens: 20,
-            totalTokens: 30
-        })
+            totalTokens: 30,
+        }),
     });
 
     beforeEach(() => {
@@ -111,7 +111,7 @@ describe('runSmartChat', () => {
             routeToSkill.mockResolvedValue({
                 skill: 'progress-analysis',
                 confidence: 0.85,
-                reasoning: 'AI判断'
+                reasoning: 'AI判断',
             });
             executeSkill.mockResolvedValue(createMockResult());
 
@@ -133,7 +133,7 @@ describe('runSmartChat', () => {
             routeToSkill.mockResolvedValue({
                 skill: 'task-query',
                 confidence: 0.8,
-                reasoning: '高置信度'
+                reasoning: '高置信度',
             });
             executeSkill.mockResolvedValue(createMockResult());
 
@@ -153,18 +153,14 @@ describe('runSmartChat', () => {
             routeToSkill.mockResolvedValue({
                 skill: 'task-query',
                 confidence: 0.5,
-                reasoning: '低置信度'
+                reasoning: '低置信度',
             });
             executeGeneralChat.mockResolvedValue(createMockResult());
 
             await runSmartChat('你好', [], {});
 
             expect(executeSkill).not.toHaveBeenCalled();
-            expect(executeGeneralChat).toHaveBeenCalledWith(
-                expect.any(Array),
-                mockOpenai,
-                'gpt-4'
-            );
+            expect(executeGeneralChat).toHaveBeenCalledWith(expect.any(Array), mockOpenai, 'gpt-4');
         });
 
         it('should fallback to general chat when routeToSkill throws error', async () => {
@@ -172,7 +168,7 @@ describe('runSmartChat', () => {
             routeToSkill.mockRejectedValue(new Error('API Error'));
             executeGeneralChat.mockResolvedValue(createMockResult());
 
-            const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => { });
+            const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
             await runSmartChat('test', [], {});
 
@@ -197,7 +193,7 @@ describe('runSmartChat', () => {
             const callbacks = {
                 onToolCall: vi.fn(),
                 onToolResult: vi.fn(),
-                onSkillStart: vi.fn()
+                onSkillStart: vi.fn(),
             };
 
             await runSmartChat('test', [], callbacks);
@@ -210,7 +206,7 @@ describe('runSmartChat', () => {
                 {
                     onToolCall: callbacks.onToolCall,
                     onToolResult: callbacks.onToolResult,
-                    onSkillStart: callbacks.onSkillStart
+                    onSkillStart: callbacks.onSkillStart,
                 }
             );
         });
@@ -237,7 +233,7 @@ describe('runSmartChat', () => {
 
             const history = [
                 { role: 'user', content: 'first message' },
-                { role: 'assistant', content: 'first response' }
+                { role: 'assistant', content: 'first response' },
             ];
 
             await runSmartChat('second message', history, {});
@@ -246,7 +242,7 @@ describe('runSmartChat', () => {
                 [
                     { role: 'user', content: 'first message' },
                     { role: 'assistant', content: 'first response' },
-                    { role: 'user', content: 'second message' }
+                    { role: 'user', content: 'second message' },
                 ],
                 mockOpenai,
                 'gpt-4'
@@ -263,7 +259,7 @@ describe('runSmartChat', () => {
             expect(createOpenAI).toHaveBeenCalledWith({
                 apiKey: 'test-key',
                 baseURL: 'https://api.test.com',
-                compatibility: 'compatible'
+                compatibility: 'compatible',
             });
         });
 
@@ -309,8 +305,10 @@ describe('runSmartChat', () => {
 
             const usageData = { promptTokens: 15, completionTokens: 25, totalTokens: 40 };
             const mockResult = {
-                textStream: (async function* () { yield 'done'; })(),
-                usage: Promise.resolve(usageData)
+                textStream: (async function* () {
+                    yield 'done';
+                })(),
+                usage: Promise.resolve(usageData),
             };
             executeGeneralChat.mockResolvedValue(mockResult);
 
@@ -353,7 +351,7 @@ describe('runSmartChat', () => {
             expect(executorCallbacks).toMatchObject({
                 onToolCall,
                 onToolResult,
-                onSkillStart
+                onSkillStart,
             });
         });
 
@@ -368,7 +366,7 @@ describe('runSmartChat', () => {
             expect(executorCallbacks).toEqual({
                 onToolCall: undefined,
                 onToolResult: undefined,
-                onSkillStart: undefined
+                onSkillStart: undefined,
             });
         });
     });
@@ -402,7 +400,7 @@ describe('runSmartChat', () => {
             routeToSkill.mockResolvedValue({ skill: null, confidence: 0, reasoning: '' });
             executeGeneralChat.mockRejectedValue(new Error('Execution failed'));
 
-            const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => { });
+            const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
             await runSmartChat('test', [], {});
 
@@ -423,7 +421,7 @@ describe('runSmartChat', () => {
             executeGeneralChat.mockRejectedValue(error);
 
             const onError = vi.fn();
-            const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => { });
+            const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
             await runSmartChat('test', [], { onError });
 
@@ -438,7 +436,7 @@ describe('runSmartChat', () => {
             routeToSkill.mockResolvedValue({ skill: null, confidence: 0, reasoning: '' });
             executeGeneralChat.mockRejectedValue(error);
 
-            const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => { });
+            const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
             await runSmartChat('test', [], {});
 
@@ -453,7 +451,7 @@ describe('runSmartChat', () => {
             executeGeneralChat.mockRejectedValue(new Error('Failed'));
 
             const onError = vi.fn();
-            const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => { });
+            const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
             await runSmartChat('test', [], { onError });
 

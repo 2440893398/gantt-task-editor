@@ -58,12 +58,17 @@ export function renderMiniCalendar(options) {
         let inner = `<span>${d}</span>`;
         if (hl?.label) inner += `<span class="cal-mini__day-tag">${hl.label}</span>`;
         if (hl?.avatars?.length) {
-            const avHtml = hl.avatars.slice(0, 3).map(av =>
-                `<div class="cal-mini__avatar" style="background:${av.color}">${av.initial}</div>`
-            ).join('');
-            const extra = hl.avatars.length > 3
-                ? `<div class="cal-mini__avatar" style="background:#94A3B8">+${hl.avatars.length - 3}</div>`
-                : '';
+            const avHtml = hl.avatars
+                .slice(0, 3)
+                .map(
+                    (av) =>
+                        `<div class="cal-mini__avatar" style="background:${av.color}">${av.initial}</div>`
+                )
+                .join('');
+            const extra =
+                hl.avatars.length > 3
+                    ? `<div class="cal-mini__avatar" style="background:#94A3B8">+${hl.avatars.length - 3}</div>`
+                    : '';
             inner += `<div class="cal-mini__day-avatars">${avHtml}${extra}</div>`;
         }
 
@@ -78,7 +83,7 @@ export function renderMiniCalendar(options) {
                 <button class="cal-mini__nav-btn" id="cal-next">&#8250;</button>
             </div>
             <div class="cal-mini__weekrow">
-                ${weekLabels.map(w => `<span>${w}</span>`).join('')}
+                ${weekLabels.map((w) => `<span>${w}</span>`).join('')}
             </div>
             <div class="cal-mini__grid">${daysHtml}</div>
         </div>
@@ -86,19 +91,27 @@ export function renderMiniCalendar(options) {
 
     // 翻月
     container.querySelector('#cal-prev').addEventListener('click', () => {
-        let m = month - 1, y = year;
-        if (m < 0) { m = 11; y--; }
+        let m = month - 1,
+            y = year;
+        if (m < 0) {
+            m = 11;
+            y--;
+        }
         onMonthChange?.(y, m);
     });
     container.querySelector('#cal-next').addEventListener('click', () => {
-        let m = month + 1, y = year;
-        if (m > 11) { m = 0; y++; }
+        let m = month + 1,
+            y = year;
+        if (m > 11) {
+            m = 0;
+            y++;
+        }
         onMonthChange?.(y, m);
     });
 
     // 日期点击
-    container.querySelectorAll('.cal-mini__day:not(.empty)').forEach(el => {
-        el.addEventListener('click', e => {
+    container.querySelectorAll('.cal-mini__day:not(.empty)').forEach((el) => {
+        el.addEventListener('click', (e) => {
             onDayClick?.(el.dataset.date, el, e);
         });
     });

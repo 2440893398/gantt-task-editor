@@ -20,9 +20,9 @@ import { openDiffConfirmModal, renderTaskDiffSummaryCard } from './DiffConfirmMo
 
 // 配置 marked
 marked.setOptions({
-    gfm: true,          // GitHub Flavored Markdown
-    breaks: true,       // 换行符转 <br>
-    async: false        // 同步渲染
+    gfm: true, // GitHub Flavored Markdown
+    breaks: true, // 换行符转 <br>
+    async: false, // 同步渲染
 });
 
 let drawerEl = null;
@@ -55,7 +55,7 @@ let pendingAttachmentContext = null;
 let tokenStats = {
     promptTokens: 0,
     completionTokens: 0,
-    totalTokens: 0
+    totalTokens: 0,
 };
 
 /**
@@ -289,10 +289,12 @@ function bindEvents() {
             icon: 'trash-2',
             variant: 'danger',
             title: i18n.t('ai.drawer.clearTitle') || 'Clear conversation',
-            message: i18n.t('ai.drawer.clearConfirm') || 'Are you sure you want to clear all messages? This cannot be undone.',
+            message:
+                i18n.t('ai.drawer.clearConfirm') ||
+                'Are you sure you want to clear all messages? This cannot be undone.',
             confirmText: i18n.t('ai.drawer.clear') || 'Clear',
             cancelText: i18n.t('form.cancel') || 'Cancel',
-            onConfirm: () => clearConversation()
+            onConfirm: () => clearConversation(),
         });
     });
 
@@ -305,7 +307,9 @@ function bindEvents() {
         const fileInput = document.getElementById('ai_attachment_input');
         fileInput?.click();
     });
-    document.getElementById('ai_attachment_input')?.addEventListener('change', handleAttachmentChange);
+    document
+        .getElementById('ai_attachment_input')
+        ?.addEventListener('change', handleAttachmentChange);
 
     // F-106: 聊天输入框回车发送 + @ mention 支持
     const chatInput = document.getElementById('ai_chat_input');
@@ -350,7 +354,7 @@ function bindEvents() {
             containerEl: inputContainer,
             inputEl: chatInput,
             getTaskList: () => getAllTasksWithHierarchy(),
-            onSelect: () => autoResizeChatInput(chatInput)
+            onSelect: () => autoResizeChatInput(chatInput),
         });
         mentionComposer.init();
     }
@@ -367,7 +371,7 @@ function bindEvents() {
             event.preventDefault();
             chatInputResizeState = {
                 startY: event.clientY,
-                startHeight: Number(inputEl.offsetHeight) || 46
+                startHeight: Number(inputEl.offsetHeight) || 46,
             };
             document.addEventListener('mousemove', handleChatInputResizeMove);
             document.addEventListener('mouseup', stopChatInputResize);
@@ -443,7 +447,8 @@ function handleChatInputResizeMove(event) {
 
     const minHeight = 46;
     const maxHeight = 220;
-    const desired = chatInputResizeState.startHeight + (chatInputResizeState.startY - event.clientY);
+    const desired =
+        chatInputResizeState.startHeight + (chatInputResizeState.startY - event.clientY);
     const clamped = clamp(desired, minHeight, maxHeight);
 
     inputEl.style.height = `${clamped}px`;
@@ -469,7 +474,7 @@ function initResizableLayout() {
             const currentWidth = parseInt(drawerEl.style.width || `${DRAWER_DEFAULT_WIDTH}`, 10);
             drawerResizeState = {
                 startX: event.clientX,
-                startWidth: Number.isFinite(currentWidth) ? currentWidth : DRAWER_DEFAULT_WIDTH
+                startWidth: Number.isFinite(currentWidth) ? currentWidth : DRAWER_DEFAULT_WIDTH,
             };
             document.addEventListener('mousemove', handleDrawerResizeMove);
             document.addEventListener('mouseup', stopDrawerResize);
@@ -491,7 +496,7 @@ function findTaskByHierarchyId(hierarchyId, taskList = getAllTasksWithHierarchy(
     if (!target) return null;
     if (!Array.isArray(taskList)) return null;
 
-    return taskList.find(task => String(task?.hierarchy_id || '').trim() === target) || null;
+    return taskList.find((task) => String(task?.hierarchy_id || '').trim() === target) || null;
 }
 
 function normalizeTaskText(text) {
@@ -511,20 +516,23 @@ function findTaskForCitation({ hierarchyId, taskName }, taskList = getAllTasksWi
     if (!normalizedName) return null;
 
     const candidates = taskList
-        .map(task => ({ task, normalizedTaskName: normalizeTaskText(task?.text || '') }))
-        .filter(item => item.normalizedTaskName.length > 0);
+        .map((task) => ({ task, normalizedTaskName: normalizeTaskText(task?.text || '') }))
+        .filter((item) => item.normalizedTaskName.length > 0);
 
-    const exact = candidates.find(item => item.normalizedTaskName === normalizedName);
+    const exact = candidates.find((item) => item.normalizedTaskName === normalizedName);
     if (exact) return exact.task;
 
-    const contains = candidates.filter(item => item.normalizedTaskName.includes(normalizedName));
+    const contains = candidates.filter((item) => item.normalizedTaskName.includes(normalizedName));
     if (contains.length === 1) return contains[0].task;
     if (contains.length > 1) {
         contains.sort((a, b) => a.normalizedTaskName.length - b.normalizedTaskName.length);
         return contains[0].task;
     }
 
-    const reverseContains = candidates.filter(item => normalizedName.includes(item.normalizedTaskName) && item.normalizedTaskName.length >= 4);
+    const reverseContains = candidates.filter(
+        (item) =>
+            normalizedName.includes(item.normalizedTaskName) && item.normalizedTaskName.length >= 4
+    );
     if (reverseContains.length === 1) return reverseContains[0].task;
     if (reverseContains.length > 1) {
         reverseContains.sort((a, b) => b.normalizedTaskName.length - a.normalizedTaskName.length);
@@ -551,9 +559,12 @@ function handleTaskCitationClick(event, deps = {}) {
         return;
     }
 
-    const openTaskDetails = typeof deps.openTaskDetails === 'function'
-        ? deps.openTaskDetails
-        : (typeof window !== 'undefined' ? window.openTaskDetailsPanel : null);
+    const openTaskDetails =
+        typeof deps.openTaskDetails === 'function'
+            ? deps.openTaskDetails
+            : typeof window !== 'undefined'
+              ? window.openTaskDetailsPanel
+              : null;
 
     if (typeof openTaskDetails === 'function') {
         openTaskDetails(task.id);
@@ -579,7 +590,8 @@ export function openDrawer(options = {}) {
     // 设置标题
     const titleEl = document.getElementById('ai_drawer_title_text');
     if (titleEl) {
-        titleEl.textContent = title || (agentId ? getAgentName(agentId) : i18n.t('ai.drawer.title'));
+        titleEl.textContent =
+            title || (agentId ? getAgentName(agentId) : i18n.t('ai.drawer.title'));
     }
 
     // 保存回调
@@ -625,8 +637,11 @@ export function addMessage(role, content, meta = {}) {
         id: Date.now(),
         role,
         content,
-        timestamp: new Date().toLocaleTimeString(i18n.getLanguage(), { hour: '2-digit', minute: '2-digit' }),
-        ...meta
+        timestamp: new Date().toLocaleTimeString(i18n.getLanguage(), {
+            hour: '2-digit',
+            minute: '2-digit',
+        }),
+        ...meta,
     };
 
     // 如果是第一条消息，清空可能存在的 "Start new conversation" 占位符
@@ -685,13 +700,19 @@ function renderMessage(message) {
                 <div class="prose prose-sm max-w-none" id="msg_content_${message.id}">
                     ${isUser ? renderUserMessageContent(message) : renderMarkdownWithTaskCitations(message.content)}
                 </div>
-                ${!isUser && message.tokens ? `
+                ${
+                    !isUser && message.tokens
+                        ? `
                     <div class="flex items-center justify-between text-xs text-base-content/60 mt-2 pt-2 border-t border-base-300/50">
                         <span>${i18n.t('ai.drawer.tokens')}: ${message.tokens.total || 0}</span>
                     </div>
-                ` : ''}
+                `
+                        : ''
+                }
             </div>
-            ${!isUser ? `
+            ${
+                !isUser
+                    ? `
                 <div class="chat-footer opacity-70 text-xs mt-1 flex flex-wrap gap-1 ${message.streaming ? 'hidden' : ''}" id="msg_footer_${message.id}">
                     <button class="btn btn-xs btn-ghost gap-1 ai-msg-copy" data-content="${escapeAttr(message.content)}">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -705,16 +726,22 @@ function renderMessage(message) {
                         </svg>
                         ${i18n.t('ai.drawer.retry')}
                     </button>
-                    ${canApply ? `
+                    ${
+                        canApply
+                            ? `
                         <button class="btn btn-xs btn-primary gap-1 ai-msg-apply" data-message-id="${message.id}">
                             <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
                             </svg>
                             ${i18n.t('ai.drawer.apply')}
                         </button>
-                    ` : ''}
+                    `
+                            : ''
+                    }
                 </div>
-            ` : ''}
+            `
+                    : ''
+            }
         </div>
     `;
 
@@ -744,7 +771,7 @@ function renderMessage(message) {
 export function renderUserMessageContent(message) {
     if (message?.inputBubble?.taskData) {
         return renderTaskInputBubble(message.inputBubble.taskData, {
-            mode: message.inputBubble.mode || 'mention'
+            mode: message.inputBubble.mode || 'mention',
         });
     }
 
@@ -785,7 +812,9 @@ function bindMessageFooterEvents(message) {
         const newRetryBtn = retryBtn.cloneNode(true);
         retryBtn.parentNode.replaceChild(newRetryBtn, retryBtn);
         newRetryBtn.addEventListener('click', () => {
-            document.dispatchEvent(new CustomEvent('aiRetry', { detail: { messageId: message.id } }));
+            document.dispatchEvent(
+                new CustomEvent('aiRetry', { detail: { messageId: message.id } })
+            );
         });
     }
 
@@ -904,7 +933,7 @@ function renderEmptyState() {
             return fallback;
         }
     };
-    
+
     return `
         <div class="ai-empty-state">
             <!-- 大尺寸AI图标：64x64px -->
@@ -920,11 +949,11 @@ function renderEmptyState() {
             
             <!-- 快捷建议 -->
             <div class="ai-suggestions">
-                <button class="ai-suggestion-card" data-suggestion="${t('ai.suggestions.todayTasksPrompt', 'What are today\'s tasks?')}">
+                <button class="ai-suggestion-card" data-suggestion="${t('ai.suggestions.todayTasksPrompt', "What are today's tasks?")}">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
                     </svg>
-                    <span>${t('ai.suggestions.todayTasks', 'Today\'s tasks')}</span>
+                    <span>${t('ai.suggestions.todayTasks', "Today's tasks")}</span>
                 </button>
                 
                 <button class="ai-suggestion-card ai-suggestion-danger" data-suggestion="${t('ai.suggestions.overdueTasksPrompt', 'Which tasks are overdue?')}">
@@ -951,13 +980,15 @@ function renderEmptyState() {
 function handleSuggestionClick(event) {
     const btn = event.target.closest('.ai-suggestion-card');
     if (!btn) return;
-    
+
     const message = btn.dataset.suggestion;
     if (message) {
         // 触发发送事件
-        document.dispatchEvent(new CustomEvent('aiSend', {
-            detail: { message }
-        }));
+        document.dispatchEvent(
+            new CustomEvent('aiSend', {
+                detail: { message },
+            })
+        );
     }
 }
 
@@ -994,7 +1025,7 @@ export function appendText(text) {
     currentText += text;
 
     // 找到最后一条 AI 消息
-    const lastMsg = conversationHistory.filter(m => m.role === 'assistant').pop();
+    const lastMsg = conversationHistory.filter((m) => m.role === 'assistant').pop();
     if (lastMsg) {
         lastMsg.content = currentText;
         const contentEl = document.getElementById(`msg_content_${lastMsg.id}`);
@@ -1004,7 +1035,8 @@ export function appendText(text) {
             if (currentText.trim().startsWith('{')) {
                 contentEl.innerHTML = `<pre class="text-xs bg-base-200 p-2 rounded overflow-x-auto"><code>${escapeHtml(currentText)}</code></pre><span class="ai-cursor">|</span>`;
             } else {
-                contentEl.innerHTML = renderMarkdown(currentText) + '<span class="ai-cursor">|</span>';
+                contentEl.innerHTML =
+                    renderMarkdown(currentText) + '<span class="ai-cursor">|</span>';
             }
         }
     }
@@ -1024,7 +1056,7 @@ export function finishStreaming(usage = {}) {
     isStreaming = false;
 
     // 找到最后一条 AI 消息
-    const lastMsg = conversationHistory.filter(m => m.role === 'assistant').pop();
+    const lastMsg = conversationHistory.filter((m) => m.role === 'assistant').pop();
     if (lastMsg) {
         // 更新流式状态
         lastMsg.streaming = false;
@@ -1037,7 +1069,8 @@ export function finishStreaming(usage = {}) {
         try {
             // 尝试提取 JSON 部分（应对可能包含的 markdown 代码块标记）
             let jsonText = lastMsg.content.trim();
-            const jsonMatch = jsonText.match(/```json\n([\s\S]*?)\n```/) || jsonText.match(/```([\s\S]*?)```/);
+            const jsonMatch =
+                jsonText.match(/```json\n([\s\S]*?)\n```/) || jsonText.match(/```([\s\S]*?)```/);
             if (jsonMatch) {
                 jsonText = jsonMatch[1];
             }
@@ -1056,7 +1089,8 @@ export function finishStreaming(usage = {}) {
                     renderHTML = renderResult(data, {
                         // 传递操作回调
                         onApply: (text) => handleApply(text, lastMsg.id),
-                        canApply: typeof onApplyCallback === 'function' && currentAgentId !== 'chat',
+                        canApply:
+                            typeof onApplyCallback === 'function' && currentAgentId !== 'chat',
                         // onUndo: ...
                     });
 
@@ -1094,7 +1128,7 @@ export function finishStreaming(usage = {}) {
             lastMsg.tokens = {
                 prompt: usage.promptTokens || 0,
                 completion: usage.completionTokens || 0,
-                total: (usage.promptTokens || 0) + (usage.completionTokens || 0)
+                total: (usage.promptTokens || 0) + (usage.completionTokens || 0),
             };
 
             tokenStats.promptTokens += lastMsg.tokens.prompt;
@@ -1163,7 +1197,7 @@ function hideError() {
 function clearStreamingStateOnError() {
     isStreaming = false;
 
-    const lastMsg = conversationHistory.filter(m => m.role === 'assistant').pop();
+    const lastMsg = conversationHistory.filter((m) => m.role === 'assistant').pop();
     if (!lastMsg) return;
     if (!lastMsg.streaming) return;
 
@@ -1176,7 +1210,7 @@ function clearStreamingStateOnError() {
     if (!hasContent) {
         const msgEl = document.querySelector(`[data-message-id="${lastMsg.id}"]`);
         msgEl?.remove();
-        conversationHistory = conversationHistory.filter(m => m.id !== lastMsg.id);
+        conversationHistory = conversationHistory.filter((m) => m.id !== lastMsg.id);
         return;
     }
 
@@ -1204,7 +1238,7 @@ function errorDetailReplacer(_key, value) {
         const serialized = {
             name: value.name,
             message: value.message,
-            stack: value.stack
+            stack: value.stack,
         };
         if (value.cause !== undefined) {
             serialized.cause = value.cause;
@@ -1266,7 +1300,7 @@ function handleSendMessage() {
         const payload = mentionComposer.buildPayload();
         detail = {
             message: payload.text,
-            referencedTasks: payload.referencedTasks
+            referencedTasks: payload.referencedTasks,
         };
     }
 
@@ -1412,7 +1446,9 @@ function handleApply(content, messageId) {
 
         // 更新对应消息的应用按钮状态
         if (messageId) {
-            const applyBtn = messagesEl?.querySelector(`[data-message-id="${messageId}"] .ai-msg-apply`);
+            const applyBtn = messagesEl?.querySelector(
+                `[data-message-id="${messageId}"] .ai-msg-apply`
+            );
             if (applyBtn) {
                 applyBtn.innerHTML = `
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1432,7 +1468,9 @@ function handleApply(content, messageId) {
  * 处理结构化结果的操作按钮
  */
 function handleResultAction(event) {
-    const button = event.target.closest('.ai-result-apply, .ai-result-undo, .ai-result-apply-subtasks, .ai-result-open-diff');
+    const button = event.target.closest(
+        '.ai-result-apply, .ai-result-undo, .ai-result-apply-subtasks, .ai-result-open-diff'
+    );
     if (!button) return;
 
     const messageEl = button.closest('[data-message-id]');
@@ -1477,14 +1515,14 @@ function handleResultAction(event) {
                 if (result?.ok !== false) {
                     markResultApplied(messageEl, button);
                 }
-            }
+            },
         });
     }
 }
 
 function getMessageById(messageId) {
     if (!messageId) return null;
-    return conversationHistory.find(msg => String(msg.id) === String(messageId)) || null;
+    return conversationHistory.find((msg) => String(msg.id) === String(messageId)) || null;
 }
 
 function markResultApplied(messageEl, button) {
@@ -1493,7 +1531,8 @@ function markResultApplied(messageEl, button) {
     button.classList.remove('btn-primary');
     button.classList.add('btn-success');
     const appliedLabel = i18n.t('ai.result.applied');
-    button.textContent = appliedLabel === 'ai.result.applied' ? i18n.t('ai.drawer.applied') : appliedLabel;
+    button.textContent =
+        appliedLabel === 'ai.result.applied' ? i18n.t('ai.drawer.applied') : appliedLabel;
 }
 
 function tryParseStructuredData(text) {
@@ -1526,8 +1565,6 @@ export function getCurrentText() {
     return currentText;
 }
 
-
-
 /**
  * 检查抽屉是否打开
  * @returns {boolean}
@@ -1543,7 +1580,7 @@ export function isDrawerOpen() {
 function renderMarkdown(text) {
     if (!text) return '';
     const normalizedText = normalizeAiMarkdown(text);
-    
+
     try {
         // marked.parse 返回 HTML 字符串
         return marked.parse(normalizedText);
@@ -1597,10 +1634,13 @@ export function renderMarkdownWithTaskCitations(text) {
         }
 
         markdownWithTokens += token;
-        tokenToHtml.set(token, renderTaskCitationChip({
-            hierarchyId: citation.hierarchyId,
-            name: citation.name
-        }));
+        tokenToHtml.set(
+            token,
+            renderTaskCitationChip({
+                hierarchyId: citation.hierarchyId,
+                name: citation.name,
+            })
+        );
 
         cursor = end;
     });
@@ -1656,7 +1696,7 @@ export const __test__ = {
     tryParseStructuredData,
     handleTaskCitationClick,
     findTaskByHierarchyId,
-    findTaskForCitation
+    findTaskForCitation,
 };
 
 export default {
@@ -1676,5 +1716,5 @@ export default {
     removeMessagesAfter,
     isOpen: isDrawerOpen,
     getAdditionalInstruction,
-    clearAdditionalInstruction
+    clearAdditionalInstruction,
 };

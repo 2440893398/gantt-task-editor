@@ -1,0 +1,12 @@
+---
+description: Run repository quality gates after code changes
+globs:
+  - "**/*.js"
+alwaysApply: true
+---
+
+After editing code, run the repository quality command before reporting completion:
+
+`npm run check`
+
+Treat failures as work to fix, not as optional follow-up.

@@ -4,5 +4,10 @@ compatibility_date = "2024-01-01"
 
 [[kv_namespaces]]
 binding = "SHARE_KV"
-id = "YOUR_KV_NAMESPACE_ID"
-preview_id = "YOUR_PREVIEW_KV_ID"
+id = "7d9a0ab283ec48b7b9f106d0175b3f01"
+preview_id = "fcfc0a97ee1046aaaaa66de0059f22b5"
+
+[[kv_namespaces]]
+binding = "FEEDBACK_KV"
+id = "6f5d4a8a6aa14ff6bde111b5469d9df5"
+preview_id = "d2737e958a7c469c9982372db65c5ab7"

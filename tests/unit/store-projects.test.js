@@ -34,7 +34,10 @@ describe('store project management', () => {
 
         expect(state.projects.length).toBe(1);
         expect(state.currentProjectId).toBe(state.projects[0].id);
-        expect(localStorage.setItem).toHaveBeenCalledWith('gantt_current_project_id', state.currentProjectId);
+        expect(localStorage.setItem).toHaveBeenCalledWith(
+            'gantt_current_project_id',
+            state.currentProjectId
+        );
     });
 
     it('initProjects restores saved current project id when valid', async () => {
@@ -67,7 +70,7 @@ describe('store project management', () => {
             expect.objectContaining({
                 type: 'projectSwitched',
                 detail: { projectId: target.id },
-            }),
+            })
         );
 
         dispatchSpy.mockRestore();

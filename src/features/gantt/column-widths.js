@@ -60,7 +60,7 @@ export function saveColumnWidthPref(currentPrefs, columnName, width, options = {
     const nextWidth = Math.round(clampWidth(numericWidth, minWidth, maxWidth));
     const nextPrefs = {
         ...(currentPrefs || {}),
-        [columnName]: nextWidth
+        [columnName]: nextWidth,
     };
 
     persistColumnWidthPrefs(nextPrefs, storage);
@@ -84,7 +84,7 @@ export function applySavedColumnWidths(columns, prefs = {}) {
         const nextWidth = clampWidth(savedWidth, column.min_width, column.max_width);
         return {
             ...column,
-            width: Math.round(nextWidth)
+            width: Math.round(nextWidth),
         };
     });
 }

@@ -13,9 +13,10 @@ import i18n from './i18n.js';
  */
 function isUtcMidnightArtifact(date) {
     if (!(date instanceof Date) || isNaN(date.getTime())) return false;
-    if (date.getMinutes() !== 0 || date.getSeconds() !== 0 || date.getMilliseconds() !== 0) return false;
+    if (date.getMinutes() !== 0 || date.getSeconds() !== 0 || date.getMilliseconds() !== 0)
+        return false;
 
-    const localHourForUtcMidnight = (24 + (-date.getTimezoneOffset() / 60)) % 24;
+    const localHourForUtcMidnight = (24 + -date.getTimezoneOffset() / 60) % 24;
     return date.getHours() === localHourForUtcMidnight;
 }
 
@@ -103,33 +104,34 @@ export function exclusiveToInclusive(date) {
  * @returns {string} Formatted duration string
  */
 export function formatDuration(days, options = {}) {
-  const { showZero = false } = options;
+    const { showZero = false } = options;
 
-  if (days === 0 && !showZero) {
+    if (days === 0 && !showZero) {
+        return i18n.t('duration.format.hoursOnly').replace('{hours}', '0');
+    }
+
+    const fullDays = Math.floor(days);
+    const remainingHours = Math.round((days - fullDays) * 8);
+
+    // Only days
+    if (fullDays > 0 && remainingHours === 0) {
+        return i18n.t('duration.format.daysOnly').replace('{days}', fullDays);
+    }
+
+    // Only hours
+    if (fullDays === 0 && remainingHours > 0) {
+        return i18n.t('duration.format.hoursOnly').replace('{hours}', remainingHours);
+    }
+
+    // Days + hours
+    if (fullDays > 0 && remainingHours > 0) {
+        return i18n
+            .t('duration.format.full')
+            .replace('{days}', fullDays)
+            .replace('{hours}', remainingHours);
+    }
+
     return i18n.t('duration.format.hoursOnly').replace('{hours}', '0');
-  }
-
-  const fullDays = Math.floor(days);
-  const remainingHours = Math.round((days - fullDays) * 8);
-
-  // Only days
-  if (fullDays > 0 && remainingHours === 0) {
-    return i18n.t('duration.format.daysOnly').replace('{days}', fullDays);
-  }
-
-  // Only hours
-  if (fullDays === 0 && remainingHours > 0) {
-    return i18n.t('duration.format.hoursOnly').replace('{hours}', remainingHours);
-  }
-
-  // Days + hours
-  if (fullDays > 0 && remainingHours > 0) {
-    return i18n.t('duration.format.full')
-      .replace('{days}', fullDays)
-      .replace('{hours}', remainingHours);
-  }
-
-  return i18n.t('duration.format.hoursOnly').replace('{hours}', '0');
 }
 
 /**
@@ -138,28 +140,28 @@ export function formatDuration(days, options = {}) {
  * @returns {number} Duration in days
  */
 export function parseDurationInput(input) {
-  const locale = i18n.getLanguage();
+    const locale = i18n.getLanguage();
 
-  const patterns = {
-    'zh-CN': { day: /(\d+\.?\d*)\s*天/, hour: /(\d+\.?\d*)\s*小时/ },
-    'en-US': { day: /(\d+\.?\d*)\s*d/, hour: /(\d+\.?\d*)\s*h/ },
-    'ja-JP': { day: /(\d+\.?\d*)\s*日/, hour: /(\d+\.?\d*)\s*時間/ },
-    'ko-KR': { day: /(\d+\.?\d*)\s*일/, hour: /(\d+\.?\d*)\s*시간/ }
-  };
+    const patterns = {
+        'zh-CN': { day: /(\d+\.?\d*)\s*天/, hour: /(\d+\.?\d*)\s*小时/ },
+        'en-US': { day: /(\d+\.?\d*)\s*d/, hour: /(\d+\.?\d*)\s*h/ },
+        'ja-JP': { day: /(\d+\.?\d*)\s*日/, hour: /(\d+\.?\d*)\s*時間/ },
+        'ko-KR': { day: /(\d+\.?\d*)\s*일/, hour: /(\d+\.?\d*)\s*시간/ },
+    };
 
-  const pattern = patterns[locale] || patterns['en-US'];
+    const pattern = patterns[locale] || patterns['en-US'];
 
-  let days = 0;
-  const dayMatch = input.match(pattern.day);
-  const hourMatch = input.match(pattern.hour);
+    let days = 0;
+    const dayMatch = input.match(pattern.day);
+    const hourMatch = input.match(pattern.hour);
 
-  if (dayMatch) days += parseFloat(dayMatch[1]);
-  if (hourMatch) days += parseFloat(hourMatch[1]) / 8;
+    if (dayMatch) days += parseFloat(dayMatch[1]);
+    if (hourMatch) days += parseFloat(hourMatch[1]) / 8;
 
-  if (!dayMatch && !hourMatch) {
-    const num = parseFloat(input);
-    if (!isNaN(num)) days = num;
-  }
+    if (!dayMatch && !hourMatch) {
+        const num = parseFloat(input);
+        if (!isNaN(num)) days = num;
+    }
 
-  return days;
+    return days;
 }

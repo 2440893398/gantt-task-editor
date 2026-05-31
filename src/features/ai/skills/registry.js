@@ -11,53 +11,64 @@ const skillDescriptions = [
     {
         name: 'task-query',
         description: '查询任务数据，包括今日任务、逾期任务、按状态/优先级筛选',
-        allowedTools: ['get_today_tasks', 'get_tasks_by_status', 'get_overdue_tasks', 'get_tasks_by_priority']
+        allowedTools: [
+            'get_today_tasks',
+            'get_tasks_by_status',
+            'get_overdue_tasks',
+            'get_tasks_by_priority',
+        ],
     },
     {
         name: 'progress-analysis',
         description: '分析项目整体进度情况，包括完成率、逾期统计、风险预警',
-        allowedTools: ['get_progress_summary', 'get_overdue_tasks']
+        allowedTools: ['get_progress_summary', 'get_overdue_tasks'],
     },
     {
         name: 'dependency-analysis',
         description: '分析任务之间的依赖关系和关键路径',
-        allowedTools: ['get_task_dependencies', 'get_critical_path']
+        allowedTools: ['get_task_dependencies', 'get_critical_path'],
     },
     {
         name: 'resource-analysis',
         description: '分析资源负载、冲突和按负责人查询任务',
-        allowedTools: ['get_resource_workload', 'get_tasks_by_assignee', 'get_resource_conflicts']
+        allowedTools: ['get_resource_workload', 'get_tasks_by_assignee', 'get_resource_conflicts'],
     },
     {
         name: 'timeline-analysis',
         description: '分析任务时间线、即将到期和基线偏差',
-        allowedTools: ['get_tasks_in_range', 'get_upcoming_deadlines', 'get_baseline_deviation']
+        allowedTools: ['get_tasks_in_range', 'get_upcoming_deadlines', 'get_baseline_deviation'],
     },
     {
         name: 'task-detail-query',
         description: '查询任务详情和子任务列表',
-        allowedTools: ['get_task_detail', 'get_subtasks']
+        allowedTools: ['get_task_detail', 'get_subtasks'],
     },
     {
         name: 'project-summary',
         description: '生成项目整体总结报告，综合多维度分析',
-        allowedTools: ['get_progress_summary', 'get_overdue_tasks', 'get_critical_path', 'get_resource_workload', 'get_upcoming_deadlines']
+        allowedTools: [
+            'get_progress_summary',
+            'get_overdue_tasks',
+            'get_critical_path',
+            'get_resource_workload',
+            'get_upcoming_deadlines',
+        ],
     },
     {
         name: 'field-info',
         description: '查询字段配置、自定义字段值和字段统计',
-        allowedTools: ['get_field_config', 'get_custom_fields', 'get_field_statistics']
+        allowedTools: ['get_field_config', 'get_custom_fields', 'get_field_statistics'],
     },
     {
         name: 'calendar-query',
         description: '查询工作日历信息与负责人工作量汇总',
-        allowedTools: ['get_calendar_info', 'get_assignee_workload']
+        allowedTools: ['get_calendar_info', 'get_assignee_workload'],
     },
     {
         name: 'import-analysis',
         description: '分析附件中的任务内容并生成新增/修改/删除的结构化建议',
-        allowedTools: ['get_task_detail', 'get_subtasks', 'get_tasks_by_status']
-    }
+        allowedTools: ['get_task_detail', 'get_subtasks', 'get_tasks_by_status'],
+    },
 ];
 
 /**
@@ -74,7 +85,7 @@ const skillLoaders = {
     'project-summary': () => import('./project-summary/SKILL.md?raw'),
     'field-info': () => import('./field-info/SKILL.md?raw'),
     'calendar-query': () => import('./calendar-query/SKILL.md?raw'),
-    'import-analysis': () => import('./import-analysis/SKILL.md?raw')
+    'import-analysis': () => import('./import-analysis/SKILL.md?raw'),
 };
 
 /**
@@ -91,7 +102,7 @@ export function getSkillDescriptions() {
  * @returns {Promise<{name: string, description: string, allowedTools: string[], content: string} | null>}
  */
 export async function loadSkill(skillId) {
-    const desc = skillDescriptions.find(s => s.name === skillId);
+    const desc = skillDescriptions.find((s) => s.name === skillId);
     if (!desc) return null;
 
     const loader = skillLoaders[skillId];
@@ -101,7 +112,7 @@ export async function loadSkill(skillId) {
         const mod = await loader();
         return {
             ...desc,
-            content: mod.default || mod
+            content: mod.default || mod,
         };
     } catch (err) {
         console.error(`[Skills] Failed to load skill: ${skillId}`, err);

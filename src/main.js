@@ -30,7 +30,7 @@ import {
     getCacheStatus,
     persistLocale,
     getSavedLocale,
-    initProjects
+    initProjects,
 } from './core/store.js';
 import { checkStorageAvailability } from './core/storage.js';
 import { prefetchHolidays } from './features/calendar/holidayFetcher.js';
@@ -41,6 +41,7 @@ import { openTaskDetailsPanel, openNewTaskDetailsPanel } from './features/task-d
 // 视图切换
 import { initViewToggle } from './features/gantt/view-toggle.js';
 import undoManager from './features/ai/services/undoManager.js';
+import { initFeedbackModule } from './features/feedback/index.js';
 
 // 挂载 exportConfig 到 window 以便 HTML 中调用
 window.exportConfig = exportConfig;
@@ -51,11 +52,16 @@ window.openNewTaskDetailsPanel = openNewTaskDetailsPanel;
 
 // 挂载工作日历面板（动态 import 必须在 Vite 模块图内才能正确打包）
 window.openCalendarPanel = () =>
-    import('./features/calendar/panel.js').then(m => m.openCalendarPanel());
+    import('./features/calendar/panel.js').then((m) => m.openCalendarPanel());
 
 // 挂载缓存管理函数到 window（供清除缓存按钮使用）
 window.clearGanttCache = async () => {
-    if (confirm(i18n.t('message.confirmClearCache') || '确定清除所有缓存数据吗？这将删除所有保存的任务和配置。')) {
+    if (
+        confirm(
+            i18n.t('message.confirmClearCache') ||
+                '确定清除所有缓存数据吗？这将删除所有保存的任务和配置。'
+        )
+    ) {
         await clearCache();
         showToast(i18n.t('message.cacheCleared') || '缓存已清除', 'success');
         // 重新加载页面
@@ -160,6 +166,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     initGeoSeo();
     console.log('📊 Analytics & SEO 初始化完成');
 
+    // 初始化问题反馈模块
+    initFeedbackModule();
+    console.log('📝 问题反馈模块初始化完成');
+
     // 设置数据变化时自动保存
     setupAutoSave();
 
@@ -204,7 +214,12 @@ async function initGanttWithCache() {
             gantt.clearAll();
             gantt.parse(cachedData);
             console.log('📦 从缓存恢复了', cachedData.data.length, '个任务');
-            showToast(i18n.t('message.dataRestored', { count: cachedData.data.length }) || `已恢复 ${cachedData.data.length} 个任务`, 'success', 2000);
+            showToast(
+                i18n.t('message.dataRestored', { count: cachedData.data.length }) ||
+                    `已恢复 ${cachedData.data.length} 个任务`,
+                'success',
+                2000
+            );
         } catch (e) {
             console.error('从缓存恢复数据失败:', e);
         }
@@ -240,11 +255,11 @@ function setupAutoSave() {
         return true;
     });
 
-    gantt.attachEvent("onAfterTaskUpdate", debouncedSave);
-    gantt.attachEvent("onAfterTaskDelete", debouncedSave);
-    gantt.attachEvent("onAfterLinkAdd", debouncedSave);
-    gantt.attachEvent("onAfterLinkUpdate", debouncedSave);
-    gantt.attachEvent("onAfterLinkDelete", debouncedSave);
+    gantt.attachEvent('onAfterTaskUpdate', debouncedSave);
+    gantt.attachEvent('onAfterTaskDelete', debouncedSave);
+    gantt.attachEvent('onAfterLinkAdd', debouncedSave);
+    gantt.attachEvent('onAfterLinkUpdate', debouncedSave);
+    gantt.attachEvent('onAfterLinkDelete', debouncedSave);
 
     // 监听语言切换事件
     document.addEventListener('languageChanged', (e) => {

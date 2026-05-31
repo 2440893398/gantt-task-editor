@@ -13,9 +13,8 @@ describe('AiConfigModal skills collapse', () => {
         modalContainer = null;
 
         // Dynamically import and init the modal
-        const { initAiConfigModal } = await import(
-            '../../../../src/features/ai/components/AiConfigModal.js'
-        );
+        const { initAiConfigModal } =
+            await import('../../../../src/features/ai/components/AiConfigModal.js');
         initAiConfigModal();
         modalContainer = document.getElementById('ai_config_modal');
     });
@@ -28,7 +27,8 @@ describe('AiConfigModal skills collapse', () => {
     it('skills section is collapsed by default', () => {
         const skillsSection = modalContainer.querySelector('[data-section="skills"]');
         // The details element should not have 'open' attribute by default
-        const details = skillsSection?.closest('details') || skillsSection?.querySelector('details');
+        const details =
+            skillsSection?.closest('details') || skillsSection?.querySelector('details');
         // If using details/summary, it should not be open
         // If using custom collapse, the content should be hidden
         const isCollapsed = details
@@ -45,9 +45,10 @@ describe('AiConfigModal skills collapse', () => {
     });
 
     it('expands to show skill toggles on click', () => {
-        const details = modalContainer.querySelector('[data-section="skills"]')?.closest('details')
-            || modalContainer.querySelector('details[data-section="skills"]');
-        
+        const details =
+            modalContainer.querySelector('[data-section="skills"]')?.closest('details') ||
+            modalContainer.querySelector('details[data-section="skills"]');
+
         if (details) {
             // Simulate opening
             details.setAttribute('open', '');

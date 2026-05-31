@@ -38,18 +38,28 @@ export function renderProjectPicker(container) {
 
     updateProjectPicker(container);
 
-    document.addEventListener('projectSwitched', () => {
-        updateProjectPicker(container);
-    }, { signal: controller.signal });
-    document.addEventListener('projectsUpdated', () => {
-        updateProjectPicker(container);
-    }, { signal: controller.signal });
+    document.addEventListener(
+        'projectSwitched',
+        () => {
+            updateProjectPicker(container);
+        },
+        { signal: controller.signal }
+    );
+    document.addEventListener(
+        'projectsUpdated',
+        () => {
+            updateProjectPicker(container);
+        },
+        { signal: controller.signal }
+    );
 }
 
 function updateProjectPicker(container) {
-    const current = state.projects.find(project => project.id === state.currentProjectId);
+    const current = state.projects.find((project) => project.id === state.currentProjectId);
     const currentColor = sanitizeColor(current?.color);
-    const currentName = escapeHtml(current?.name || i18n.t('project.unnamed') || 'Untitled Project');
+    const currentName = escapeHtml(
+        current?.name || i18n.t('project.unnamed') || 'Untitled Project'
+    );
 
     container.innerHTML = `
         <div class="dropdown">
@@ -61,23 +71,31 @@ function updateProjectPicker(container) {
                 </svg>
             </div>
             <ul tabindex="0" class="dropdown-content menu bg-base-100 rounded-box z-[70] w-64 p-2 shadow-lg border border-base-200 mt-2">
-                ${state.projects.map(project => {
-                    const color = sanitizeColor(project.color);
-                    const name = escapeHtml(project.name || i18n.t('project.unnamed') || 'Untitled Project');
-                    return `
+                ${state.projects
+                    .map((project) => {
+                        const color = sanitizeColor(project.color);
+                        const name = escapeHtml(
+                            project.name || i18n.t('project.unnamed') || 'Untitled Project'
+                        );
+                        return `
                     <li>
                         <a class="gap-2 ${project.id === state.currentProjectId ? 'active' : ''}" data-project-id="${project.id}">
                             <span class="w-2.5 h-2.5 rounded-full flex-shrink-0" style="background:${color}"></span>
                             <span class="truncate">${name}</span>
-                            ${project.id === state.currentProjectId ? `
+                            ${
+                                project.id === state.currentProjectId
+                                    ? `
                             <svg class="w-4 h-4 ml-auto" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                 <polyline points="20 6 9 17 4 12"/>
                             </svg>
-                            ` : ''}
+                            `
+                                    : ''
+                            }
                         </a>
                     </li>
                 `;
-                }).join('')}
+                    })
+                    .join('')}
                 <li><hr class="my-1 border-base-200"></li>
                 <li>
                     <a id="project-create-btn" class="gap-2">
@@ -100,7 +118,7 @@ function updateProjectPicker(container) {
         </div>
     `;
 
-    container.querySelectorAll('[data-project-id]').forEach(item => {
+    container.querySelectorAll('[data-project-id]').forEach((item) => {
         item.addEventListener('click', async () => {
             const projectId = item.dataset.projectId;
             if (projectId && projectId !== state.currentProjectId) {
@@ -125,8 +143,8 @@ function updateProjectPicker(container) {
     container.querySelector('#project-manage-btn')?.addEventListener('click', () => {
         document.activeElement?.blur();
         import('./ProjectModal.js')
-            .then(module => module.openProjectModal())
-            .catch(error => {
+            .then((module) => module.openProjectModal())
+            .catch((error) => {
                 console.error('[Projects] Failed to open project modal:', error);
                 showToast(i18n.t('common.operationFailed') || '操作失败', 'error');
             });

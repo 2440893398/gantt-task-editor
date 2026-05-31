@@ -4,9 +4,9 @@ import { analysisTools } from './analysisTools.js';
 import { calendarTools } from './calendarTools.js';
 
 const allTools = {
-  ...taskTools,
-  ...analysisTools,
-  ...calendarTools
+    ...taskTools,
+    ...analysisTools,
+    ...calendarTools,
 };
 
 /**
@@ -15,12 +15,12 @@ const allTools = {
  * @returns {Object} 工具子集
  */
 export function getToolsForSkill(allowedTools) {
-  if (!allowedTools || allowedTools.length === 0) return {};
-  const tools = {};
-  for (const name of allowedTools) {
-    if (allTools[name]) tools[name] = allTools[name];
-  }
-  return tools;
+    if (!allowedTools || allowedTools.length === 0) return {};
+    const tools = {};
+    for (const name of allowedTools) {
+        if (allTools[name]) tools[name] = allTools[name];
+    }
+    return tools;
 }
 
 export { allTools };

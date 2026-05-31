@@ -20,7 +20,7 @@ export default {
         viewTable: 'Table',
         viewGantt: 'Gantt',
         criticalPath: 'Critical Path',
-        lag: 'Lag (days)'
+        lag: 'Lag (days)',
     },
 
     // View
@@ -33,7 +33,7 @@ export default {
         zoomOut: 'Zoom Out',
         zoomIn: 'Zoom In',
         tablePanel: 'Task Table',
-        ganttPanel: 'Gantt Chart'
+        ganttPanel: 'Gantt Chart',
     },
 
     // Columns (table headers)
@@ -49,23 +49,22 @@ export default {
         assignee: 'Assignee',
         status: 'Status',
         summary: 'Summary',
-        description: 'Description'
+        description: 'Description',
     },
-
 
     // Enum values (internal value → localized display value)
     enums: {
         priority: {
-            'high': 'High',
-            'medium': 'Medium',
-            'low': 'Low'
+            high: 'High',
+            medium: 'Medium',
+            low: 'Low',
         },
         status: {
-            'pending': 'Pending',
-            'in_progress': 'In Progress',
-            'completed': 'Completed',
-            'suspended': 'Cancelled'
-        }
+            pending: 'Pending',
+            in_progress: 'In Progress',
+            completed: 'Completed',
+            suspended: 'Cancelled',
+        },
     },
 
     // Task
@@ -75,7 +74,7 @@ export default {
         duration: 'Duration',
         progress: 'Progress',
         parent: 'Parent Task',
-        description: 'Description'
+        description: 'Description',
     },
 
     // Tooltip
@@ -88,7 +87,7 @@ export default {
         priority: 'Priority',
         status: 'Status',
         duration: 'Duration',
-        days: 'days'
+        days: 'days',
     },
 
     // Form
@@ -98,7 +97,7 @@ export default {
         cancel: 'Cancel',
         delete: 'Delete',
         confirm: 'Confirm',
-        selectPlaceholder: 'Please select'
+        selectPlaceholder: 'Please select',
     },
 
     // Messages
@@ -117,7 +116,8 @@ export default {
         deleteTask: 'Delete this task?',
         confirmDeleteTitle: 'Delete Task',
         confirmDelete: 'Are you sure you want to delete this task? You can undo this with Ctrl+Z.',
-        confirmClearCache: 'Clear all cached data? This will delete all saved tasks and configurations.',
+        confirmClearCache:
+            'Clear all cached data? This will delete all saved tasks and configurations.',
         cacheCleared: 'Cache cleared',
         dataRestored: 'Restored {{count}} tasks',
         updateSuccess: 'Updated {{count}} tasks',
@@ -128,7 +128,7 @@ export default {
         backupImportError: 'System restore failed',
         backupValidationError: 'Backup file validation failed',
         backupOldFormat: 'Old format configuration detected, only restoring field settings',
-        backupCancelled: 'Restore cancelled'
+        backupCancelled: 'Restore cancelled',
     },
 
     // Shortcuts Panel
@@ -152,7 +152,7 @@ export default {
         completed: 'Completed',
         incomplete: 'Incomplete',
         dependency: 'Dependency',
-        close: 'Close'
+        close: 'Close',
     },
 
     // Batch Edit
@@ -163,7 +163,7 @@ export default {
         selectField: 'Select field to modify',
         fieldValue: 'Field Value',
         apply: 'Apply Changes',
-        clear: 'Clear Selection'
+        clear: 'Clear Selection',
     },
 
     // Field Management
@@ -201,7 +201,8 @@ export default {
         typeMultiselect: 'Multi-select',
         typeMultiselectDesc: 'Multi-choice dropdown',
         deleteTitle: 'Confirm Delete',
-        deleteMessage: 'Are you sure you want to delete field "{{name}}"? This action cannot be undone.',
+        deleteMessage:
+            'Are you sure you want to delete field "{{name}}"? This action cannot be undone.',
         editSystemField: 'Edit System Field',
         editSystemFieldDesc: 'Adjust field type and option configuration',
         systemFieldNameHint: 'System field name cannot be modified',
@@ -218,7 +219,7 @@ export default {
         filterEnabled: 'Enabled',
         filterDisabled: 'Disabled',
         fieldCount: '{{count}} fields',
-        editField: 'Edit'
+        editField: 'Edit',
     },
 
     // Field types
@@ -228,14 +229,14 @@ export default {
         date: 'Date',
         datetime: 'Date Time',
         select: 'Select',
-        multiselect: 'Multi-select'
+        multiselect: 'Multi-select',
     },
 
     // Lightbox
     lightbox: {
         customFields: 'Custom Fields',
         manageFields: 'Manage Fields',
-        pleaseSelect: 'Please Select'
+        pleaseSelect: 'Please Select',
     },
 
     // Validation
@@ -245,7 +246,7 @@ export default {
         invalidInput: 'Invalid Input',
         selectFromList: 'Please select from the list',
         numberRequired: 'Please enter a valid number',
-        progressRange: 'Progress must be between 0 and 100'
+        progressRange: 'Progress must be between 0 and 100',
     },
 
     // Task Details Panel
@@ -291,7 +292,8 @@ export default {
         selectTask: 'Select Task',
         confirmDelete: 'Are you sure you want to delete this task?',
         deleteTaskTitle: 'Delete Task',
-        deleteTaskConfirm: 'Are you sure you want to delete task "{{name}}"? This action cannot be undone.',
+        deleteTaskConfirm:
+            'Are you sure you want to delete task "{{name}}"? This action cannot be undone.',
         dragToResize: 'Drag bottom edge to resize',
         featureNotReady: 'Feature in development',
         // Task Entry Optimization
@@ -306,9 +308,10 @@ export default {
         // Subtask deletion
         deleteSubtask: 'Delete Subtask',
         deleteSubtaskTitle: 'Delete Subtask',
-        deleteSubtaskConfirm: 'Are you sure you want to delete this subtask? This action cannot be undone.',
+        deleteSubtaskConfirm:
+            'Are you sure you want to delete this subtask? This action cannot be undone.',
         subtaskDeleted: 'Subtask deleted',
-        openSubtask: 'Open Details'
+        openSubtask: 'Open Details',
     },
 
     // New Task Modal
@@ -320,13 +323,13 @@ export default {
         assigneePlaceholder: 'Select assignee',
         cancel: 'Cancel',
         create: 'Create',
-        nameRequired: 'Task name is required'
+        nameRequired: 'Task name is required',
     },
 
     // Summary Field
     summary: {
         viewFull: 'View full summary',
-        empty: 'No summary'
+        empty: 'No summary',
     },
 
     // Duration format (v1.5)
@@ -334,13 +337,13 @@ export default {
         format: {
             full: '{days}d {hours}h',
             daysOnly: '{days}d',
-            hoursOnly: '{hours}h'
-        }
+            hoursOnly: '{hours}h',
+        },
     },
 
     // Excel
     excel: {
-        sheetName: 'Tasks'
+        sheetName: 'Tasks',
     },
 
     // DHTMLX Gantt Labels
@@ -365,15 +368,15 @@ export default {
             link_to: 'To',
             type_task: 'Task',
             type_project: 'Project',
-            type_milestone: 'Milestone'
-        }
+            type_milestone: 'Milestone',
+        },
     },
 
     // AI Assistant
     ai: {
         // Floating Button
         floatingBtn: {
-            label: 'Open AI Assistant'
+            label: 'Open AI Assistant',
         },
         // Config Modal
         config: {
@@ -406,13 +409,18 @@ export default {
             skillTaskQueryName: 'Task Query',
             skillTaskQueryDesc: 'Query task and progress data (supports tool calling)',
             skillProgressAnalysisName: 'Progress Analysis',
-            skillProgressAnalysisDesc: 'Generate progress reports and bottleneck insights from task data',
+            skillProgressAnalysisDesc:
+                'Generate progress reports and bottleneck insights from task data',
             compatibilityNotSupportedTitle: 'Warning: Tool Calling Not Supported',
-            compatibilityNotSupportedMessage: 'This API/model does not support tool calling. AI cannot fetch realtime task data.',
+            compatibilityNotSupportedMessage:
+                'This API/model does not support tool calling. AI cannot fetch realtime task data.',
             compatibilityUnknownTitle: 'Info: Tool Calling Support Unknown',
-            compatibilityUnknownMessage: 'Unable to determine tool calling support. If errors occur after saving, switch to another model.',
-            savedWithCompatibilityWarning: 'Settings saved - warning: this config does not support tool calling',
-            savedWithCompatibilityUnknown: 'Settings saved - please run connection test to confirm tool calling support',
+            compatibilityUnknownMessage:
+                'Unable to determine tool calling support. If errors occur after saving, switch to another model.',
+            savedWithCompatibilityWarning:
+                'Settings saved - warning: this config does not support tool calling',
+            savedWithCompatibilityUnknown:
+                'Settings saved - please run connection test to confirm tool calling support',
             reasoningNoToolCall: 'Reasoning models usually do not support tool calling',
             toolTestTimeout: 'Tool-call test timed out; support cannot be determined',
             toolChoiceRequiredNoCall: 'Model did not call a tool even with required tool choice',
@@ -420,8 +428,9 @@ export default {
             connectionSuccessNoToolCall: 'Connected, but tool calling is not supported',
             connectionSuccessWithToolCall: 'Connected, tool calling is supported',
             connectionSuccessUnknownToolCall: 'Connected, tool calling support is unknown',
-            connection404Details: 'Connection failed (404): endpoint path is invalid\n\nbaseURL: {{baseUrl}}\nmodel: {{model}}\n\nPossible causes:\n1. baseURL path is incorrect (check whether /v1 is required)\n2. model name triggered incorrect endpoint selection\n3. API does not support this endpoint',
-            connectionFailed: 'Connection failed, please check your configuration'
+            connection404Details:
+                'Connection failed (404): endpoint path is invalid\n\nbaseURL: {{baseUrl}}\nmodel: {{model}}\n\nPossible causes:\n1. baseURL path is incorrect (check whether /v1 is required)\n2. model name triggered incorrect endpoint selection\n3. API does not support this endpoint',
+            connectionFailed: 'Connection failed, please check your configuration',
         },
 
         // Drawer
@@ -453,16 +462,16 @@ export default {
             attach: 'Attach',
             callingTool: 'Calling {{name}}',
             taskNotFound: 'Task not found. It may have been removed or its hierarchy changed.',
-            taskPanelUnavailable: 'Task details panel is unavailable'
+            taskPanelUnavailable: 'Task details panel is unavailable',
         },
         // Suggestions
         suggestions: {
-            todayTasks: 'Query today\'s tasks',
+            todayTasks: "Query today's tasks",
             overdueTasks: 'View overdue tasks',
             progressOverview: 'Get progress overview',
-            todayTasksPrompt: 'What are today\'s tasks?',
+            todayTasksPrompt: "What are today's tasks?",
             overdueTasksPrompt: 'Which tasks are overdue?',
-            progressOverviewPrompt: 'How is the overall project progress?'
+            progressOverviewPrompt: 'How is the overall project progress?',
         },
         // Agents
         agents: {
@@ -470,7 +479,7 @@ export default {
             chat: 'AI Chat',
             bugReport: 'Bug Report',
             taskBreakdown: 'Task Breakdown',
-            timeEstimate: 'Time Estimate'
+            timeEstimate: 'Time Estimate',
         },
         // Errors
         error: {
@@ -500,23 +509,24 @@ export default {
             unknown: 'An unknown error occurred',
             unknownMsg: 'An unknown error occurred',
             viewDetails: 'View details',
-            originalError: 'Original error details'
-        }
+            originalError: 'Original error details',
+        },
     },
     baseline: {
         save: 'Save Baseline',
         show: 'Show Baseline',
-        saveConfirm: 'Save current project state as baseline? Previous baseline will be overwritten',
+        saveConfirm:
+            'Save current project state as baseline? Previous baseline will be overwritten',
         saved: 'Baseline saved',
         delayed: 'Delayed',
-        ahead: 'Ahead'
+        ahead: 'Ahead',
     },
     resource: {
         overload: 'Resource Overload',
         on: 'on',
         workload: 'Workload',
         hours: 'hours',
-        overloadAmount: 'Overload'
+        overloadAmount: 'Overload',
     },
     export: {
         title: 'Export',
@@ -534,12 +544,12 @@ export default {
         apiNotAvailable: 'Export service unavailable, please check network',
         success: 'Export successful',
         error: 'Export failed',
-        fail: 'Export failed'
+        fail: 'Export failed',
     },
     snapping: {
         today: 'Today',
         startOf: 'Start of',
-        endOf: 'End of'
+        endOf: 'End of',
     },
     calendar: {
         title: 'Work Calendar',
@@ -555,7 +565,7 @@ export default {
             GB: 'United Kingdom',
             DE: 'Germany',
             FR: 'France',
-            SG: 'Singapore'
+            SG: 'Singapore',
         },
         weekdays: { 0: 'S', 1: 'M', 2: 'T', 3: 'W', 4: 'T', 5: 'F', 6: 'S' },
         hoursPerDay: 'Working Hours per Day',
@@ -599,7 +609,7 @@ export default {
         endDate: 'End Date',
         noLeaveThatDay: 'No leave records for this day',
         noSpecialDays: 'No special days configured',
-        noLeaves: 'Click "Add Leave" to record absences'
+        noLeaves: 'Click "Add Leave" to record absences',
     },
 
     // Project Management
@@ -614,7 +624,7 @@ export default {
         taskCount: 'Tasks',
         createdAt: 'Created',
         deleted: 'Project deleted',
-        deleteTitle: 'Delete Project'
+        deleteTitle: 'Delete Project',
     },
 
     // Share
@@ -642,7 +652,50 @@ export default {
         importReplaceHint: 'Replace all current project data, cannot be undone',
         confirmImport: 'Confirm Import',
         importSuccess: 'Import successful: {{count}} tasks',
-        importedProject: 'Imported Project'
+        importedProject: 'Imported Project',
+    },
+
+    // Feedback
+    feedback: {
+        title: 'Feedback',
+        subtitle: 'Describe the issue, add a screenshot or video, and record replay when needed.',
+        type: 'Type',
+        typeBug: 'Bug',
+        typeSuggestion: 'Suggestion',
+        typeQuestion: 'Question',
+        contact: 'Contact (optional)',
+        contactPlaceholder: 'Email / phone / handle',
+        issueTitle: 'Short summary',
+        titlePlaceholder: 'Example: Gantt chart does not refresh after switching projects',
+        description: 'Description / reproduction steps',
+        descriptionPlaceholder:
+            'What happened? What did you expect? Add reproduction steps if possible.',
+        addAttachment: 'Add screenshot/video',
+        startRecording: 'Record steps',
+        stopRecording: 'Stop recording',
+        startReplayRecording: 'Record replay',
+        replayIdleStatus: 'No replay recorded',
+        replayRecordingStatus: 'Recording replay',
+        replayReadyStatus: '{{count}} events recorded',
+        replayRecordingTitle: 'Recording replay',
+        replayRecordingHint:
+            'Continue using the system. When the issue is reproduced, finish recording to return here.',
+        finishReplayRecording: 'Finish and fill feedback',
+        previewReplay: 'Preview replay',
+        previewTitle: 'Preview replay',
+        previewSubtitle: '{{count}} events recorded. Use this to check the capture.',
+        previewHint:
+            'Preview is local only. The rrweb JSON is uploaded when feedback is submitted.',
+        attachmentHint: 'Each attachment must be under 4MB. Pasted screenshots are supported.',
+        contextHint:
+            'Page URL, browser info, current project summary, and recent console logs are included. rrweb replay events are attached after manual recording.',
+        submit: 'Submit feedback',
+        submitting: 'Submitting...',
+        submitSuccess: 'Feedback submitted',
+        submitFailed: 'Submit failed, please try again later',
+        attachmentTooLarge: 'Attachment is too large',
+        attachmentFailed: 'Could not read attachment',
+        recordingFailed: 'Recording did not start',
     },
 
     // Common
@@ -659,6 +712,6 @@ export default {
         noData: 'No data',
         success: 'Success',
         error: 'Error',
-        warning: 'Warning'
-    }
+        warning: 'Warning',
+    },
 };

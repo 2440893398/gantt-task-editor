@@ -125,7 +125,7 @@ async function applySnapshot(snapshot, mode) {
 
     showToast(
         i18n.t('share.importSuccess', { count: snapshot.tasks?.length || 0 }) ||
-        `导入成功：${snapshot.tasks?.length || 0} 个任务`,
+            `导入成功：${snapshot.tasks?.length || 0} 个任务`,
         'success',
         3000
     );
