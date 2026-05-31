@@ -28,8 +28,8 @@ function genKey(len = 8) {
 function corsHeaders() {
     return {
         'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type',
+        'Access-Control-Allow-Methods': 'GET, POST, PATCH, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     };
 }
 
@@ -182,7 +182,7 @@ function getSafePagePath(rawUrl) {
 
     try {
         const url = new URL(rawUrl);
-        return `${url.pathname}${url.hash ? url.hash.slice(0, 80) : ''}`;
+        return url.pathname;
     } catch {
         return '';
     }
@@ -233,6 +233,123 @@ function serializeAdminIssue(issue) {
     };
 }
 
+async function readFeedbackIssue(env, key) {
+    const store = getFeedbackStore(env);
+    if (!store) return null;
+
+    const value = await store.get(key);
+    if (!value) return null;
+
+    return normalizeStoredFeedback(key, JSON.parse(value));
+}
+
+async function listFeedbackIssues(env, options = {}) {
+    const store = getFeedbackStore(env);
+    if (!store) {
+        return {
+            issues: [],
+            cursor: null,
+            listComplete: true,
+        };
+    }
+
+    const limit = Math.min(Math.max(Number(options.limit) || 50, 1), 100);
+    const result = await store.list({
+        prefix: 'feedback:',
+        limit,
+        cursor: options.cursor || undefined,
+    });
+
+    const issues = [];
+    for (const item of result.keys) {
+        const issue = await readFeedbackIssue(env, item.name);
+        if (!issue) continue;
+        if (options.status && issue.workflow.status !== options.status) continue;
+        issues.push(issue);
+    }
+
+    issues.sort((a, b) => String(b.receivedAt || '').localeCompare(String(a.receivedAt || '')));
+
+    return {
+        issues,
+        cursor: result.cursor || null,
+        listComplete: Boolean(result.list_complete),
+    };
+}
+
+function validateWorkflowPatch(body) {
+    const patch = {};
+
+    if (Object.hasOwn(body, 'status')) {
+        if (!FEEDBACK_STATUSES.has(body.status)) {
+            throw new Error('INVALID_STATUS');
+        }
+        patch.status = body.status;
+    }
+
+    if (Object.hasOwn(body, 'priority')) {
+        if (!FEEDBACK_PRIORITIES.has(body.priority)) {
+            throw new Error('INVALID_PRIORITY');
+        }
+        patch.priority = body.priority;
+    }
+
+    for (const field of ['assignee', 'publicNote', 'internalNote']) {
+        if (Object.hasOwn(body, field)) {
+            patch[field] = limitText(body[field], WORKFLOW_TEXT_LIMITS[field]);
+        }
+    }
+
+    return patch;
+}
+
+function buildWorkflowHistoryItem(before, after, patch) {
+    const changes = {};
+    for (const field of ['status', 'priority', 'assignee']) {
+        if (Object.hasOwn(patch, field) && before[field] !== after[field]) {
+            changes[field] = [before[field], after[field]];
+        }
+    }
+
+    return {
+        at: after.updatedAt,
+        actor: 'admin',
+        changes,
+        publicNote: Object.hasOwn(patch, 'publicNote') ? after.publicNote : '',
+        internalNote: Object.hasOwn(patch, 'internalNote') ? after.internalNote : '',
+    };
+}
+
+async function updateFeedbackIssue(env, key, patch) {
+    const store = getFeedbackStore(env);
+    if (!store) return null;
+
+    const issue = await readFeedbackIssue(env, key);
+    if (!issue) return null;
+
+    const before = normalizeWorkflow(issue);
+    const after = {
+        ...before,
+        ...patch,
+        updatedAt: new Date().toISOString(),
+    };
+    const historyItem = buildWorkflowHistoryItem(before, after, patch);
+    const nextIssue = {
+        ...issue,
+        workflow: {
+            ...after,
+            history: [...before.history, historyItem].slice(-50),
+        },
+    };
+    delete nextIssue.key;
+
+    await store.put(key, JSON.stringify(nextIssue), {
+        expirationTtl: FEEDBACK_TTL_SECONDS,
+    });
+
+    return normalizeStoredFeedback(key, nextIssue);
+}
+
 async function pushFeedbackWebhook(env, feedbackKey, feedback) {
     if (!env.FEEDBACK_WEBHOOK_URL) return;
 
@@ -271,6 +388,19 @@ export default {
             return new Response(null, { status: 204, headers });
         }
 
+        if (request.method === 'POST' && url.pathname === '/api/feedback/admin/session') {
+            try {
+                const body = await request.json();
+                if (!env.FEEDBACK_ADMIN_PASSWORD || body.password !== env.FEEDBACK_ADMIN_PASSWORD) {
+                    return errorResponse('Unauthorized', 401, headers);
+                }
+
+                return jsonResponse(await createAdminToken(env), { headers });
+            } catch (e) {
+                return errorResponse('Unauthorized', 401, headers);
+            }
+        }
+
         // POST /api/share — 上传快照
         if (request.method === 'POST' && url.pathname === '/api/share') {
             try {
@@ -287,6 +417,69 @@ export default {
                 return Response.json({ key, expiresAt }, { headers });
             } catch (e) {
                 return new Response('Server Error: ' + e.message, { status: 500, headers });
+            }
+        }
+
+        if (request.method === 'GET' && url.pathname === '/api/feedback/issues') {
+            const status = url.searchParams.get('status') || '';
+            if (status && !FEEDBACK_STATUSES.has(status)) {
+                return errorResponse('Invalid status', 400, headers);
+            }
+
+            const isAdmin = await isValidAdminToken(request, env);
+            const result = await listFeedbackIssues(env, {
+                status,
+                limit: url.searchParams.get('limit'),
+                cursor: url.searchParams.get('cursor'),
+            });
+
+            return jsonResponse(
+                {
+                    issues: result.issues.map((issue) =>
+                        isAdmin ? serializeAdminIssue(issue) : serializePublicIssue(issue)
+                    ),
+                    cursor: result.cursor,
+                    listComplete: result.listComplete,
+                },
+                { headers }
+            );
+        }
+
+        if (url.pathname.startsWith('/api/feedback/issues/')) {
+            const key = decodeURIComponent(url.pathname.split('/api/feedback/issues/')[1] || '');
+            if (!key.startsWith('feedback:')) {
+                return errorResponse('Invalid key', 400, headers);
+            }
+
+            if (request.method === 'GET') {
+                const issue = await readFeedbackIssue(env, key);
+                if (!issue) return errorResponse('Not found', 404, headers);
+
+                const isAdmin = await isValidAdminToken(request, env);
+                return jsonResponse(
+                    {
+                        issue: isAdmin
+                            ? serializeAdminIssue(issue)
+                            : serializePublicIssue(issue, true),
+                    },
+                    { headers }
+                );
+            }
+
+            if (request.method === 'PATCH') {
+                if (!(await isValidAdminToken(request, env))) {
+                    return errorResponse('Unauthorized', 401, headers);
+                }
+
+                try {
+                    const patch = validateWorkflowPatch(await request.json());
+                    const issue = await updateFeedbackIssue(env, key, patch);
+                    if (!issue) return errorResponse('Not found', 404, headers);
+
+                    return jsonResponse({ issue: serializeAdminIssue(issue) }, { headers });
+                } catch (e) {
+                    return errorResponse('Invalid workflow update', 400, headers);
+                }
             }
         }
 
