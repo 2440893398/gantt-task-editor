@@ -643,6 +643,10 @@ export default {
             return new Response(null, { status: 204, headers });
         }
 
+        if (request.method === 'GET' && url.pathname === '/favicon.ico') {
+            return new Response(null, { status: 204, headers });
+        }
+
         if (request.method === 'GET' && url.pathname === '/feedback') {
             return new Response(renderFeedbackBoardPage(), {
                 headers: {
