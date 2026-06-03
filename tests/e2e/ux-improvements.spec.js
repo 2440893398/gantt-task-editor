@@ -390,27 +390,32 @@ test.describe('综合交互测试', () => {
         const zoomOutBtn = page.locator('#zoom-out-btn');
         // use zoom slider since level display is missing in DOM
         const slider = page.locator('#zoom-slider');
+        const viewSelector = page.locator('#view-selector');
 
         await expect(zoomInBtn).toBeVisible();
         await expect(zoomOutBtn).toBeVisible();
+        await expect(viewSelector).toHaveValue('week');
+        await expect(slider).toHaveValue('2');
 
-        // 记录初始缩放级别
+        // 记录初始密度级别
         const initialVal = await slider.inputValue();
 
-        // 点击缩小
+        // 点击缩小，只降低当前视图内的时间轴密度
         await zoomOutBtn.click();
         await page.waitForTimeout(300);
 
-        // 验证缩放级别已改变
+        // 验证密度已改变，但视图保持不变
         const newVal = await slider.inputValue();
         expect(newVal).not.toBe(initialVal);
+        await expect(viewSelector).toHaveValue('week');
 
-        // 点击放大恢复
+        // 点击放大恢复密度，视图仍保持不变
         await zoomInBtn.click();
         await page.waitForTimeout(300);
 
         const restoredVal = await slider.inputValue();
         expect(restoredVal).toBe(initialVal);
+        await expect(viewSelector).toHaveValue('week');
     });
 
     test('导出 Excel 功能应可用', async ({ page }) => {

@@ -85,24 +85,10 @@ function checkVersionCompatibility(fileVersion) {
 }
 
 /**
- * 导出配置（仅字段定义）
+ * 导出 JSON 备份（完整压缩包）
  */
-export function exportConfig() {
-    const config = {
-        customFields: state.customFields,
-        fieldOrder: state.fieldOrder,
-        exportTime: new Date().toISOString(),
-    };
-
-    const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'gantt-fields-config.json';
-    a.dispatchEvent(new MouseEvent('click'));
-    URL.revokeObjectURL(url);
-
-    showToast('配置导出成功', 'success');
+export async function exportConfig() {
+    await exportFullBackup();
 }
 
 /**
@@ -239,35 +225,24 @@ function validateBackup(backup) {
 
 /**
  * 从备份文件还原完整系统数据
- * 支持 .json.gz（压缩）和 .json（未压缩）两种格式
+ * 仅支持 .json.gz / .gz 压缩备份包
  * @param {File} file - 备份文件
  */
 export async function importFullBackup(file) {
     if (!file) return;
 
     try {
-        // 根据文件类型自动判断是否需要解压
-        let text;
-        if (file.name.endsWith('.gz')) {
-            // gzip 压缩文件 → 解压
-            text = await decompressData(file);
-        } else {
-            // 普通 JSON 文件
-            text = await file.text();
-        }
-        const backup = JSON.parse(text);
-
-        // 兼容旧格式（只有字段配置，无 version 字段）
-        // 注意：此检测必须在 validateBackup 之前，因 validateBackup 对无 version 字段会返回错误
-        if (!backup.version && backup.customFields) {
-            showToast('检测到旧格式配置文件，仅恢复字段设置', 'warning', 3000);
-            state.customFields = backup.customFields || [];
-            state.fieldOrder = backup.fieldOrder || [];
-            updateGanttColumns();
-            refreshLightbox();
-            showToast('配置恢复成功', 'success');
+        if (!file.name.endsWith('.gz')) {
+            showToast(
+                '仅支持导入 .json.gz 压缩备份包，请使用导出JSON生成的备份文件',
+                'error',
+                5000
+            );
             return;
         }
+
+        const text = await decompressData(file);
+        const backup = JSON.parse(text);
 
         // 验证备份格式（含版本兼容性检查）
         const validation = validateBackup(backup);
@@ -317,11 +292,10 @@ export async function importFullBackup(file) {
         }
 
         // 持久化到存储
-        const { saveGanttData } = await import('../../core/storage.js');
         const { persistCustomFields, persistSystemFieldSettings, persistLocale } =
             await import('../../core/store.js');
 
-        await saveGanttData(gantt.serialize());
+        await projectScope(state.currentProjectId).saveGanttData(gantt.serialize());
         persistCustomFields();
         persistSystemFieldSettings();
 
@@ -368,29 +342,10 @@ export async function importFullBackup(file) {
 }
 
 /**
- * 导入配置
+ * 导入 JSON 备份（仅压缩包）
  */
-export function importConfig(file) {
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = function (e) {
-        try {
-            const config = JSON.parse(e.target.result);
-            if (config.customFields && config.fieldOrder) {
-                state.customFields = config.customFields;
-                state.fieldOrder = config.fieldOrder;
-                updateGanttColumns();
-                refreshLightbox();
-                showToast('配置导入成功', 'success');
-            } else {
-                showToast('配置文件格式不正确', 'error', 3000);
-            }
-        } catch (error) {
-            showToast('配置文件解析失败: ' + error.message, 'error', 3000);
-        }
-    };
-    reader.readAsText(file);
+export async function importConfig(file) {
+    await importFullBackup(file);
 }
 
 /**
@@ -1320,6 +1275,11 @@ export async function importFromExcel(file) {
  * 初始化配置导入导出
  */
 export function initConfigIO() {
+    const backupFileInput = document.getElementById('config-file-input');
+    if (backupFileInput) {
+        backupFileInput.accept = '.json.gz,.gz';
+    }
+
     // 导出按钮 - 默认导出Excel
     document.getElementById('config-export-btn').addEventListener('click', exportToExcel);
 
@@ -1354,16 +1314,20 @@ export function initConfigIO() {
 
         const input = document.createElement('input');
         input.type = 'file';
-        input.accept = '.json,.json.gz,.gz';
+        input.accept = '.json.gz,.gz';
         input.onchange = async (e) => {
             await importFullBackup(e.target.files[0]);
         };
         input.click();
     });
 
-    // JSON配置导入 (备用 - 保持兼容旧功能)
+    // JSON备份导入（备用入口）
     document.getElementById('config-import-btn')?.addEventListener('click', function () {
-        document.getElementById('config-file-input').click();
+        const input = document.getElementById('config-file-input');
+        if (input) {
+            input.accept = '.json.gz,.gz';
+            input.click();
+        }
     });
 
     document.getElementById('config-file-input')?.addEventListener('change', function (e) {

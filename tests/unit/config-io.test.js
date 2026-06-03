@@ -3,7 +3,12 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { exportConfig, importConfig, initConfigIO } from '../../src/features/config/configIO.js';
+import {
+    exportConfig,
+    exportFullBackup,
+    importConfig,
+    initConfigIO,
+} from '../../src/features/config/configIO.js';
 import { state } from '../../src/core/store.js';
 
 describe('配置导出', () => {
@@ -11,12 +16,26 @@ describe('配置导出', () => {
         // Mock URL API
         global.URL.createObjectURL = vi.fn(() => 'blob:mock-url');
         global.URL.revokeObjectURL = vi.fn();
+        global.CompressionStream = class {};
+        global.Response = vi.fn(function () {
+            this.blob = vi.fn(() => Promise.resolve({ size: 128 }));
+        });
 
         // Mock Blob
         global.Blob = vi.fn((content, options) => ({
             content,
             options,
+            size: content.join('').length,
+            stream: vi.fn(() => ({
+                pipeThrough: vi.fn(() => 'compressed-stream'),
+            })),
         }));
+        global.gantt = {
+            serialize: vi.fn(() => ({
+                data: [{ id: 1, text: 'Task' }],
+                links: [],
+            })),
+        };
 
         // 设置测试数据
         state.customFields = [
@@ -35,39 +54,122 @@ describe('配置导出', () => {
         vi.spyOn(document, 'createElement').mockReturnValue(mockLink);
     });
 
-    it('应该导出配置为 JSON 文件', () => {
-        exportConfig();
+    it('应该导出配置为 JSON 文件', async () => {
+        await exportConfig();
 
         expect(document.createElement).toHaveBeenCalledWith('a');
     });
 
-    it('应该设置正确的文件名', () => {
-        exportConfig();
+    it('应该设置正确的文件名', async () => {
+        await exportConfig();
 
         const mockLink = document.createElement('a');
         expect(mockLink.download).toBeDefined();
     });
 
-    it('应该包含自定义字段和字段顺序', () => {
+    it('应该包含自定义字段和字段顺序', async () => {
         // 由于 Blob 被 mock，我们无法直接验证内容
         // 但可以验证 Blob 构造函数被调用
-        exportConfig();
+        await exportConfig();
 
         expect(global.Blob).toHaveBeenCalled();
     });
 
-    it('应该自动触发下载', () => {
-        exportConfig();
+    it('应该自动触发下载', async () => {
+        await exportConfig();
 
         const mockLink = document.createElement('a');
         // 代码使用 dispatchEvent 而不是 click
         expect(mockLink.dispatchEvent).toHaveBeenCalled();
     });
 
-    it('应该在导出后清理 URL', () => {
-        exportConfig();
+    it('应该在导出后清理 URL', async () => {
+        await exportConfig();
 
         expect(global.URL.revokeObjectURL).toHaveBeenCalled();
+    });
+});
+
+describe('JSON backup import/export', () => {
+    beforeEach(() => {
+        global.URL.createObjectURL = vi.fn(() => 'blob:mock-url');
+        global.URL.revokeObjectURL = vi.fn();
+        global.CompressionStream = class {
+            constructor(format) {
+                this.format = format;
+            }
+        };
+        global.Response = vi.fn(function () {
+            this.blob = vi.fn(() =>
+                Promise.resolve({
+                    size: 128,
+                    type: 'application/gzip',
+                })
+            );
+        });
+        global.Blob = vi.fn((content, options) => ({
+            content,
+            options,
+            size: content.join('').length,
+            stream: vi.fn(() => ({
+                pipeThrough: vi.fn(() => 'compressed-stream'),
+            })),
+        }));
+        global.gantt = {
+            serialize: vi.fn(() => ({
+                data: [{ id: 1, text: 'Current task' }],
+                links: [{ id: 1, source: 1, target: 2, type: '0' }],
+            })),
+        };
+
+        state.currentProjectId = 'project-a';
+        state.customFields = [{ name: 'owner', label: 'Owner', type: 'text' }];
+        state.fieldOrder = ['text', 'owner'];
+        state.systemFieldSettings = { enabled: { owner: true } };
+        state.viewMode = 'split';
+
+        const mockLink = {
+            href: '',
+            download: '',
+            dispatchEvent: vi.fn(),
+        };
+        vi.spyOn(document, 'createElement').mockReturnValue(mockLink);
+    });
+
+    it('exportConfig delegates to a single compressed full backup archive', async () => {
+        await exportConfig();
+
+        const mockLink = document.createElement('a');
+        expect(mockLink.download).toMatch(/^gantt-backup-\d{4}-\d{2}-\d{2}\.json\.gz$/);
+        expect(global.Blob).toHaveBeenCalledTimes(2);
+
+        const backup = JSON.parse(global.Blob.mock.calls[0][0][0]);
+        expect(backup.data.tasks).toEqual([{ id: 1, text: 'Current task' }]);
+        expect(backup.data.links).toHaveLength(1);
+        expect(backup.data.customFields).toEqual(state.customFields);
+    });
+
+    it('exportFullBackup downloads only the compressed archive', async () => {
+        await exportFullBackup();
+
+        const mockLink = document.createElement('a');
+        expect(mockLink.dispatchEvent).toHaveBeenCalledTimes(1);
+        expect(mockLink.download.endsWith('.json.gz')).toBe(true);
+        expect(mockLink.download.endsWith('.json')).toBe(false);
+    });
+
+    it('importConfig rejects plain JSON files because restore only supports compressed backups', async () => {
+        const file = new File(
+            [JSON.stringify({ customFields: [], fieldOrder: [] })],
+            'config.json',
+            {
+                type: 'application/json',
+            }
+        );
+
+        await importConfig(file);
+
+        expect(state.customFields).toEqual([{ name: 'owner', label: 'Owner', type: 'text' }]);
     });
 });
 
@@ -83,9 +185,9 @@ describe('配置导入', () => {
         };
     });
 
-    it('应该成功导入有效的配置文件', async () => {
+    it('rejects legacy field config JSON files', async () => {
         const validConfig = {
-            customFields: [{ name: 'priority', label: '优先级', type: 'text' }],
+            customFields: [{ name: 'priority', label: 'Priority', type: 'text' }],
             fieldOrder: ['text', 'priority'],
         };
 
@@ -93,27 +195,10 @@ describe('配置导入', () => {
             type: 'application/json',
         });
 
-        // Mock FileReader
-        const originalFileReader = global.FileReader;
-        global.FileReader = vi.fn(function () {
-            this.readAsText = function (file) {
-                // 模拟异步读取
-                setTimeout(() => {
-                    this.result = JSON.stringify(validConfig);
-                    this.onload({ target: { result: this.result } });
-                }, 0);
-            };
-        });
+        await importConfig(file);
 
-        importConfig(file);
-
-        await new Promise((resolve) => setTimeout(resolve, 20));
-
-        expect(state.customFields).toHaveLength(1);
-        expect(state.customFields[0].name).toBe('priority');
-        expect(state.fieldOrder).toContain('priority');
-
-        global.FileReader = originalFileReader;
+        expect(state.customFields).toHaveLength(0);
+        expect(state.fieldOrder).toHaveLength(0);
     });
 
     it('应该拒绝格式不正确的配置文件', async () => {
@@ -212,6 +297,12 @@ describe('配置导入导出初始化', () => {
         expect(addEventListenerSpy).toHaveBeenCalledWith('change', expect.any(Function));
     });
 
+    it('JSON import input accepts compressed backup archives only', () => {
+        initConfigIO();
+
+        expect(document.getElementById('config-file-input').accept).toBe('.json.gz,.gz');
+    });
+
     it('点击导入按钮应该触发文件选择', () => {
         initConfigIO();
 
@@ -225,80 +316,51 @@ describe('配置导入导出初始化', () => {
     });
 });
 
-describe('配置数据完整性', () => {
-    it('导出的配置应该包含导出时间', () => {
-        state.customFields = [{ name: 'test', label: '测试', type: 'text' }];
-        state.fieldOrder = ['test'];
-
-        // Mock Blob 以捕获内容
-        let exportedData = null;
-        global.Blob = vi.fn((content) => {
-            exportedData = JSON.parse(content[0]);
-            return { content };
-        });
-
+describe('JSON backup data integrity', () => {
+    beforeEach(() => {
         global.URL.createObjectURL = vi.fn(() => 'blob:mock');
         global.URL.revokeObjectURL = vi.fn();
+        global.CompressionStream = class {};
+        global.Response = vi.fn(function () {
+            this.blob = vi.fn(() => Promise.resolve({ size: 256 }));
+        });
+        global.gantt = {
+            serialize: vi.fn(() => ({
+                data: [{ id: 1, text: 'Task from current page' }],
+                links: [{ id: 1, source: 1, target: 2, type: '0' }],
+            })),
+        };
+    });
+
+    it('backup payload contains export time, field config, current tasks, and links', async () => {
+        state.customFields = [{ name: 'test', label: 'Test', type: 'text' }];
+        state.fieldOrder = ['text', 'test'];
+
+        let exportedData = null;
+        global.Blob = vi.fn((content) => {
+            if (!exportedData) {
+                exportedData = JSON.parse(content[0]);
+            }
+            return {
+                content,
+                size: content.join('').length,
+                stream: vi.fn(() => ({ pipeThrough: vi.fn(() => 'stream') })),
+            };
+        });
 
         const mockLink = {
             href: '',
             download: '',
-            click: vi.fn(),
             dispatchEvent: vi.fn(),
         };
         vi.spyOn(document, 'createElement').mockReturnValue(mockLink);
 
-        exportConfig();
+        await exportConfig();
 
         expect(exportedData).toHaveProperty('exportTime');
-        expect(exportedData.customFields).toHaveLength(1);
-        expect(exportedData.fieldOrder).toContain('test');
-    });
-
-    it('导入应该保留所有字段属性', async () => {
-        const config = {
-            customFields: [
-                {
-                    name: 'priority',
-                    label: '优先级',
-                    type: 'select',
-                    required: true,
-                    options: ['高', '中', '低'],
-                },
-            ],
-            fieldOrder: ['text', 'priority'],
-        };
-
-        const file = new File([JSON.stringify(config)], 'config.json', {
-            type: 'application/json',
-        });
-
-        const originalFileReader = global.FileReader;
-        global.FileReader = vi.fn(function () {
-            this.readAsText = function (file) {
-                setTimeout(() => {
-                    this.result = JSON.stringify(config);
-                    this.onload({ target: { result: this.result } });
-                }, 0);
-            };
-        });
-
-        global.gantt = {
-            config: { columns: [] },
-            render: vi.fn(),
-        };
-
-        importConfig(file);
-
-        await new Promise((resolve) => setTimeout(resolve, 20));
-
-        const imported = state.customFields[0];
-        expect(imported.name).toBe('priority');
-        expect(imported.label).toBe('优先级');
-        expect(imported.type).toBe('select');
-        expect(imported.required).toBe(true);
-        expect(imported.options).toEqual(['高', '中', '低']);
-
-        global.FileReader = originalFileReader;
+        expect(exportedData.data.customFields).toHaveLength(1);
+        expect(exportedData.data.fieldOrder).toContain('test');
+        expect(exportedData.data.tasks).toEqual([{ id: 1, text: 'Task from current page' }]);
+        expect(exportedData.data.links).toHaveLength(1);
     });
 });

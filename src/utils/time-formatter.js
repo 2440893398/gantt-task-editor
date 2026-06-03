@@ -97,6 +97,22 @@ export function exclusiveToInclusive(date) {
 }
 
 /**
+ * Format a date as YYYY-MM-DD using local calendar fields.
+ * @param {Date|string|number} date
+ * @returns {string|null}
+ */
+export function formatDateValue(date) {
+    if (!date) return null;
+    const d = date instanceof Date ? date : new Date(date);
+    if (isNaN(d.getTime())) return null;
+
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+/**
  * Format duration in days to human-readable string
  * @param {number} days - Duration in days (can be decimal)
  * @param {Object} options - Formatting options

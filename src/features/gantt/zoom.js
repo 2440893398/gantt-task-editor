@@ -280,8 +280,39 @@ function getZoomLevels() {
 // 缩放级别顺序（从细到粗）
 const ZOOM_ORDER = ['day', 'week', 'month', 'quarter', 'year'];
 
+// 时间轴密度配置（每个视图内从低密度到高密度）
+const TIMELINE_DENSITY_WIDTHS = {
+    day: [48, 64, 80, 104, 132],
+    week: [32, 42, 50, 68, 88],
+    month: [72, 96, 120, 156, 200],
+    quarter: [64, 82, 100, 132, 168],
+    year: [52, 66, 80, 104, 132],
+};
+
+const DEFAULT_DENSITY_LEVEL = 2;
+
 // 当前缩放级别
 let currentZoomLevel = 'week';
+
+// 当前时间轴密度级别
+let currentDensityLevel = DEFAULT_DENSITY_LEVEL;
+
+function getDensityWidths(level = currentZoomLevel) {
+    return TIMELINE_DENSITY_WIDTHS[level] || TIMELINE_DENSITY_WIDTHS.week;
+}
+
+function normalizeDensityLevel(level, viewLevel = currentZoomLevel) {
+    const widths = getDensityWidths(viewLevel);
+    const numericLevel = Number(level);
+    if (!Number.isFinite(numericLevel)) return DEFAULT_DENSITY_LEVEL;
+    return Math.min(widths.length - 1, Math.max(0, Math.trunc(numericLevel)));
+}
+
+function getCurrentDensityWidth(level = currentZoomLevel) {
+    const widths = getDensityWidths(level);
+    currentDensityLevel = normalizeDensityLevel(currentDensityLevel, level);
+    return widths[currentDensityLevel];
+}
 
 /**
  * 初始化缩放功能
@@ -322,12 +353,13 @@ export function setZoomLevel(level) {
 
     currentZoomLevel = level;
     const config = zoomLevels[level];
+    const minColumnWidth = getCurrentDensityWidth(level);
 
     console.log('🔍 切换缩放级别至:', config.name);
 
     // 应用新的 scales 配置
     gantt.config.scales = config.scales;
-    gantt.config.min_column_width = config.min_column_width;
+    gantt.config.min_column_width = minColumnWidth;
 
     // 重新渲染甘特图
     gantt.render();
@@ -339,26 +371,46 @@ export function setZoomLevel(level) {
 }
 
 /**
- * 放大视图（更细粒度）
+ * 设置时间轴密度
+ * @param {number} level - 密度级别：0=最低密度，4=最高密度
+ */
+export function setTimelineDensity(level) {
+    if (typeof gantt === 'undefined') {
+        console.error('Gantt instance not found');
+        return;
+    }
+
+    const nextDensityLevel = normalizeDensityLevel(level);
+    if (nextDensityLevel === currentDensityLevel) {
+        updateZoomUI();
+        return;
+    }
+
+    currentDensityLevel = nextDensityLevel;
+    gantt.config.min_column_width = getCurrentDensityWidth();
+    gantt.render();
+    updateZoomUI();
+}
+
+/**
+ * 放大视图（当前视图内更高密度）
  */
 export function zoomIn() {
-    const currentIndex = ZOOM_ORDER.indexOf(currentZoomLevel);
-    if (currentIndex > 0) {
-        setZoomLevel(ZOOM_ORDER[currentIndex - 1]);
+    if (currentDensityLevel < getDensityWidths().length - 1) {
+        setTimelineDensity(currentDensityLevel + 1);
     } else {
-        console.log('已达到最大放大级别');
+        console.log('已达到最大时间轴密度');
     }
 }
 
 /**
- * 缩小视图（更粗粒度）
+ * 缩小视图（当前视图内更低密度）
  */
 export function zoomOut() {
-    const currentIndex = ZOOM_ORDER.indexOf(currentZoomLevel);
-    if (currentIndex < ZOOM_ORDER.length - 1) {
-        setZoomLevel(ZOOM_ORDER[currentIndex + 1]);
+    if (currentDensityLevel > 0) {
+        setTimelineDensity(currentDensityLevel - 1);
     } else {
-        console.log('已达到最小缩小级别');
+        console.log('已达到最小时间轴密度');
     }
 }
 
@@ -371,11 +423,21 @@ export function getCurrentLevel() {
 }
 
 /**
+ * 获取当前时间轴密度级别
+ * @returns {number} 当前密度级别
+ */
+export function getCurrentDensityLevel() {
+    return currentDensityLevel;
+}
+
+/**
  * 重置缩放级别到默认值（用于测试）
  * @param {string} level - 要重置到的级别，默认为 'week'
+ * @param {number} densityLevel - 要重置到的密度级别，默认为中间级别
  */
-export function resetZoomLevel(level = 'week') {
+export function resetZoomLevel(level = 'week', densityLevel = DEFAULT_DENSITY_LEVEL) {
     currentZoomLevel = level;
+    currentDensityLevel = normalizeDensityLevel(densityLevel, level);
 }
 
 /**
@@ -397,6 +459,15 @@ export function getAvailableLevels() {
         key,
         name: zoomLevels[key].name,
     }));
+}
+
+/**
+ * 获取指定视图的时间轴密度选项
+ * @param {string} level - 视图级别
+ * @returns {number[]} min_column_width 选项
+ */
+export function getTimelineDensityOptions(level = currentZoomLevel) {
+    return [...getDensityWidths(level)];
 }
 
 /**
@@ -434,37 +505,32 @@ function bindWheelZoom() {
  * 绑定缩放控件事件
  */
 function bindZoomControls() {
-    // + 按钮：滑块往左移动（缩小时间跨度 → Day = 更细粒度 = Zoom In）
-    // 通常 UI 上 + 号表示放大（看更细），对应 Zoom In
+    // + 按钮：当前视图内放大时间轴密度
     const zoomInBtn = document.getElementById('zoom-in-btn');
     if (zoomInBtn) {
         zoomInBtn.addEventListener('click', (e) => {
             e.preventDefault();
-            zoomIn(); // + 放大视图 (Day)
+            zoomIn();
         });
-        console.log('🔍 缩放 + 按钮已绑定 (放大视图)');
+        console.log('🔍 缩放 + 按钮已绑定 (提高密度)');
     }
 
-    // - 按钮：滑块往右移动（扩大时间跨度 → Year = 更粗粒度 = Zoom Out）
-    // 通常 UI 上 - 号表示缩小（看更粗），对应 Zoom Out
+    // - 按钮：当前视图内缩小时间轴密度
     const zoomOutBtn = document.getElementById('zoom-out-btn');
     if (zoomOutBtn) {
         zoomOutBtn.addEventListener('click', (e) => {
             e.preventDefault();
-            zoomOut(); // - 缩小视图 (Year)
+            zoomOut();
         });
-        console.log('🔍 缩放 - 按钮已绑定 (缩小视图)');
+        console.log('🔍 缩放 - 按钮已绑定 (降低密度)');
     }
 
-    // 缩放滑块 - 滑块值: 0=day(左) 到 4=year(右)
+    // 缩放滑块 - 滑块值: 0=低密度 到 4=高密度
     const zoomSlider = document.getElementById('zoom-slider');
     if (zoomSlider) {
         zoomSlider.addEventListener('input', (e) => {
             const value = parseInt(e.target.value, 10);
-            const level = ZOOM_ORDER[value];
-            if (level && level !== currentZoomLevel) {
-                setZoomLevel(level);
-            }
+            setTimelineDensity(value);
         });
         console.log('🔍 缩放滑块已绑定');
     }
@@ -487,12 +553,14 @@ function bindViewSelector() {
  * 更新缩放 UI
  */
 function updateZoomUI() {
-    const currentIndex = ZOOM_ORDER.indexOf(currentZoomLevel);
+    currentDensityLevel = normalizeDensityLevel(currentDensityLevel);
 
     // 更新滑块值
     const zoomSlider = document.getElementById('zoom-slider');
     if (zoomSlider) {
-        zoomSlider.value = currentIndex;
+        zoomSlider.min = '0';
+        zoomSlider.max = String(getDensityWidths().length - 1);
+        zoomSlider.value = currentDensityLevel;
     }
 
     // 更新下拉框
@@ -508,16 +576,15 @@ function updateZoomUI() {
     }
 
     // 更新按钮禁用状态
-    // + 按钮 (Zoom In) 在最左侧(day, index 0)时禁用
-    // - 按钮 (Zoom Out) 在最右侧(year, index 4)时禁用
+    // + 按钮在最高密度时禁用，- 按钮在最低密度时禁用
     const zoomInBtn = document.getElementById('zoom-in-btn');
     const zoomOutBtn = document.getElementById('zoom-out-btn');
 
     if (zoomInBtn) {
-        zoomInBtn.disabled = currentIndex === 0; // + 在 day 时禁用 (最大放大)
+        zoomInBtn.disabled = currentDensityLevel === getDensityWidths().length - 1;
     }
     if (zoomOutBtn) {
-        zoomOutBtn.disabled = currentIndex === ZOOM_ORDER.length - 1; // - 在 year 时禁用 (最大缩小)
+        zoomOutBtn.disabled = currentDensityLevel === 0;
     }
 }
 

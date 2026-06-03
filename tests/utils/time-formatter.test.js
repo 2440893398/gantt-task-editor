@@ -1,6 +1,10 @@
 // tests/utils/time-formatter.test.js
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { formatDuration, parseDurationInput } from '../../src/utils/time-formatter.js';
+import {
+    formatDateValue,
+    formatDuration,
+    parseDurationInput,
+} from '../../src/utils/time-formatter.js';
 import i18n from '../../src/utils/i18n.js';
 
 describe('formatDuration', () => {
@@ -58,5 +62,11 @@ describe('parseDurationInput', () => {
         expect(parseDurationInput('1d')).toBe(1);
         expect(parseDurationInput('4h')).toBe(0.5);
         expect(parseDurationInput('1d 2h')).toBe(1.25);
+    });
+});
+
+describe('formatDateValue', () => {
+    it('formats local day-precision dates without UTC date rollback', () => {
+        expect(formatDateValue(new Date(2026, 5, 4))).toBe('2026-06-04');
     });
 });

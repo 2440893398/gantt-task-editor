@@ -316,6 +316,7 @@ test.describe('移动端适配模块 (Mobile Responsive) - P0', () => {
                     return {
                         drag_move: gantt.config.drag_move,
                         drag_resize: gantt.config.drag_resize,
+                        drag_progress: gantt.config.drag_progress,
                         drag_links: gantt.config.drag_links,
                     };
                 }
@@ -324,7 +325,8 @@ test.describe('移动端适配模块 (Mobile Responsive) - P0', () => {
 
             if (dragConfig) {
                 expect(dragConfig.drag_move).toBe(true);
-                expect(dragConfig.drag_resize).toBe(true);
+                expect(dragConfig.drag_resize).toBe(false);
+                expect(dragConfig.drag_progress).toBe(true);
                 expect(dragConfig.drag_links).toBe(true);
             }
         });

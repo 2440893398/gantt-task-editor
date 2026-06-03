@@ -588,7 +588,7 @@
         class="fixed bottom-4 right-4 z-50 flex items-center gap-1 bg-base-100/90 backdrop-blur px-2 py-1.5 rounded-lg shadow-lg border border-base-200">
         <button id="zoom-out-btn" class="btn btn-circle btn-xs btn-ghost text-base leading-none" title="缩小（更粗）"
             data-i18n-title="view.zoomOut">－</button>
-        <input type="range" id="zoom-slider" min="0" max="4" value="1" class="range range-xs range-primary w-20">
+        <input type="range" id="zoom-slider" min="0" max="4" value="2" class="range range-xs range-primary w-20">
         <button id="zoom-in-btn" class="btn btn-circle btn-xs btn-ghost text-base leading-none" title="放大（更细）"
             data-i18n-title="view.zoomIn">＋</button>
         <div class="w-px h-5 bg-base-300 mx-0.5"></div>
@@ -759,15 +759,6 @@
             document.getElementById('dropdown-import-json')?.addEventListener('click', () => {
                 dropdown.classList.remove('active');
                 document.getElementById('config-import-btn')?.click();
-            });
-
-            // 导出JSON (兼容旧ID)  
-            document.getElementById('dropdown-export-json')?.addEventListener('click', () => {
-                dropdown.classList.remove('active');
-                // 触发原有的导出功能
-                if (window.exportConfig) {
-                    window.exportConfig();
-                }
             });
 
             // 工作日历
@@ -1273,7 +1264,7 @@
     </div>
 
     <!-- 文件输入(用于导入配置) -->
-    <input type="file" id="config-file-input" class="hidden" accept=".json">
+    <input type="file" id="config-file-input" class="hidden" accept=".json.gz,.gz">
 
     <!-- 新建任务模态框 -->
     <dialog id="new-task-modal" class="modal">

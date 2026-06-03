@@ -14,18 +14,22 @@ test.describe('Gantt Chart UX Optimization', () => {
         const zoomInBtn = page.locator('#zoom-in-btn');
         const zoomOutBtn = page.locator('#zoom-out-btn');
         const viewSelector = page.locator('#view-selector');
+        const slider = page.locator('#zoom-slider');
 
         // Initial state should be Week
         await expect(viewSelector).toHaveValue('week');
+        await expect(slider).toHaveValue('2');
 
-        // Test Zoom Out (should go to Month)
+        // Test Zoom Out lowers density without changing the selected view.
         await zoomOutBtn.dispatchEvent('click');
 
-        await expect(viewSelector).toHaveValue('month');
+        await expect(viewSelector).toHaveValue('week');
+        await expect(slider).toHaveValue('1');
 
-        // Test Zoom In (should go back to Week)
+        // Test Zoom In restores density without changing the selected view.
         await zoomInBtn.dispatchEvent('click');
         await expect(viewSelector).toHaveValue('week');
+        await expect(slider).toHaveValue('2');
     });
 
     /**
@@ -267,16 +271,14 @@ test.describe('Gantt Chart UX Optimization', () => {
     });
 
     // ===== 边界测试 =====
-    /**
-     * TC-B01: 日视图缩放按钮禁用
-     * 之前失败原因: 放大按钮未禁用
-     * 修复内容: 添加缩放按钮禁用CSS样式，确保updateZoomUI正确调用
-     */
-    test('TC-B01: 日视图缩放限制', async ({ page }) => {
+    test('TC-B01: 最大时间轴密度缩放限制', async ({ page }) => {
         const zoomInBtn = page.locator('#zoom-in-btn');
-        const zoomOutBtn = page.locator('#zoom-out-btn');
+        const slider = page.locator('#zoom-slider');
+        const viewSelector = page.locator('#view-selector');
 
-        // 连续点击放大按钮直到日视图
+        await viewSelector.selectOption('week');
+
+        // 连续点击放大按钮直到最高密度
         for (let i = 0; i < 5; i++) {
             const isDisabled = await zoomInBtn.isDisabled();
             if (isDisabled) break;
@@ -284,9 +286,9 @@ test.describe('Gantt Chart UX Optimization', () => {
             await page.waitForTimeout(300);
         }
 
-        // 验证当前是日视图
-        const viewSelector = page.locator('#view-selector');
-        await expect(viewSelector).toHaveValue('day');
+        // 验证视图未改变，仅密度到达上限
+        await expect(viewSelector).toHaveValue('week');
+        await expect(slider).toHaveValue('4');
 
         // 验证放大按钮被禁用
         await expect(zoomInBtn).toBeDisabled();
@@ -296,16 +298,14 @@ test.describe('Gantt Chart UX Optimization', () => {
         expect(parseFloat(opacity)).toBeLessThanOrEqual(0.5);
     });
 
-    /**
-     * TC-B02: 年视图缩放按钮禁用
-     * 之前失败原因: 缩小按钮未禁用
-     * 修复内容: 添加缩放按钮禁用CSS样式
-     */
-    test('TC-B02: 年视图缩放限制', async ({ page }) => {
-        const zoomInBtn = page.locator('#zoom-in-btn');
+    test('TC-B02: 最小时间轴密度缩放限制', async ({ page }) => {
         const zoomOutBtn = page.locator('#zoom-out-btn');
+        const slider = page.locator('#zoom-slider');
+        const viewSelector = page.locator('#view-selector');
 
-        // 连续点击缩小按钮直到年视图
+        await viewSelector.selectOption('week');
+
+        // 连续点击缩小按钮直到最低密度
         for (let i = 0; i < 5; i++) {
             const isDisabled = await zoomOutBtn.isDisabled();
             if (isDisabled) break;
@@ -313,9 +313,9 @@ test.describe('Gantt Chart UX Optimization', () => {
             await page.waitForTimeout(300);
         }
 
-        // 验证当前是年视图
-        const viewSelector = page.locator('#view-selector');
-        await expect(viewSelector).toHaveValue('year');
+        // 验证视图未改变，仅密度到达下限
+        await expect(viewSelector).toHaveValue('week');
+        await expect(slider).toHaveValue('0');
 
         // 验证缩小按钮被禁用
         await expect(zoomOutBtn).toBeDisabled();

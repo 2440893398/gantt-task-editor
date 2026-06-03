@@ -97,7 +97,7 @@ function enableDragFeatures() {
 
     // 启用任务拖拽
     gantt.config.drag_move = true;
-    gantt.config.drag_resize = true;
+    gantt.config.drag_resize = false;
     gantt.config.drag_progress = true;
     gantt.config.drag_links = true;
 

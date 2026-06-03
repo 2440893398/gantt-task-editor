@@ -27,11 +27,14 @@ vi.mock('../../src/utils/i18n.js', () => ({
 import {
     initZoom,
     setZoomLevel,
+    setTimelineDensity,
     zoomIn,
     zoomOut,
     getCurrentLevel,
+    getCurrentDensityLevel,
     getCurrentLevelName,
     getAvailableLevels,
+    getTimelineDensityOptions,
     resetZoomLevel,
 } from '../../src/features/gantt/zoom.js';
 
@@ -44,7 +47,7 @@ describe('缩放功能初始化', () => {
       <div id="gantt_here"></div>
       <button id="zoom-in-btn"></button>
       <button id="zoom-out-btn"></button>
-      <input type="range" id="zoom-slider" min="0" max="4" value="1" />
+      <input type="range" id="zoom-slider" min="0" max="4" value="2" />
       <select id="view-selector">
         <option value="day">日视图</option>
         <option value="week" selected>周视图</option>
@@ -74,7 +77,6 @@ describe('缩放功能初始化', () => {
 
     it('应该绑定缩放按钮事件', () => {
         const zoomInBtn = document.getElementById('zoom-in-btn');
-        const zoomOutBtn = document.getElementById('zoom-out-btn');
 
         const addEventListenerSpy = vi.spyOn(zoomInBtn, 'addEventListener');
 
@@ -99,7 +101,7 @@ describe('缩放功能初始化', () => {
         const viewSelector = document.getElementById('view-selector');
         const levelDisplay = document.getElementById('zoom-level-display');
 
-        expect(slider.value).toBe('1'); // week is at index 1
+        expect(slider.value).toBe('2'); // default density is the middle level
         expect(viewSelector.value).toBe('week');
         expect(levelDisplay.textContent).toBe('周视图');
     });
@@ -194,6 +196,18 @@ describe('缩放级别设置', () => {
         expect(viewSelector.value).toBe('month');
         expect(levelDisplay.textContent).toBe('月视图');
     });
+
+    it('切换视图应保留当前时间轴密度', () => {
+        setTimelineDensity(4);
+        setZoomLevel('month');
+
+        const slider = document.getElementById('zoom-slider');
+
+        expect(getCurrentLevel()).toBe('month');
+        expect(getCurrentDensityLevel()).toBe(4);
+        expect(slider.value).toBe('4');
+        expect(gantt.config.min_column_width).toBe(200);
+    });
 });
 
 describe('放大缩小操作', () => {
@@ -204,7 +218,13 @@ describe('放大缩小操作', () => {
         document.body.innerHTML = `
       <div id="gantt_here"></div>
       <input type="range" id="zoom-slider" />
-      <select id="view-selector"></select>
+      <select id="view-selector">
+        <option value="day">日视图</option>
+        <option value="week">周视图</option>
+        <option value="month">月视图</option>
+        <option value="quarter">季度视图</option>
+        <option value="year">年视图</option>
+      </select>
       <span id="zoom-level-display"></span>
       <button id="zoom-in-btn"></button>
       <button id="zoom-out-btn"></button>
@@ -223,41 +243,53 @@ describe('放大缩小操作', () => {
         setZoomLevel('week');
     });
 
-    it('应该放大到日视图', () => {
+    it('应该在当前视图内放大时间轴密度', () => {
         zoomIn();
 
-        expect(getCurrentLevel()).toBe('day');
+        const viewSelector = document.getElementById('view-selector');
+
+        expect(getCurrentLevel()).toBe('week');
+        expect(viewSelector.value).toBe('week');
+        expect(getCurrentDensityLevel()).toBe(3);
+        expect(gantt.config.min_column_width).toBe(68);
     });
 
-    it('应该缩小到月视图', () => {
+    it('应该在当前视图内缩小时间轴密度', () => {
         zoomOut();
 
-        expect(getCurrentLevel()).toBe('month');
+        const viewSelector = document.getElementById('view-selector');
+
+        expect(getCurrentLevel()).toBe('week');
+        expect(viewSelector.value).toBe('week');
+        expect(getCurrentDensityLevel()).toBe(1);
+        expect(gantt.config.min_column_width).toBe(42);
     });
 
-    it('应该在最大放大级别时无法继续放大', () => {
-        setZoomLevel('day');
+    it('应该在最大密度时无法继续放大', () => {
+        setTimelineDensity(4);
         zoomIn();
 
-        expect(getCurrentLevel()).toBe('day');
+        expect(getCurrentLevel()).toBe('week');
+        expect(getCurrentDensityLevel()).toBe(4);
     });
 
-    it('应该在最小缩小级别时无法继续缩小', () => {
-        setZoomLevel('year');
+    it('应该在最小密度时无法继续缩小', () => {
+        setTimelineDensity(0);
         zoomOut();
 
-        expect(getCurrentLevel()).toBe('year');
+        expect(getCurrentLevel()).toBe('week');
+        expect(getCurrentDensityLevel()).toBe(0);
     });
 
-    it('应该禁用最大放大级别的放大按钮', () => {
-        setZoomLevel('day');
+    it('应该禁用最大密度的放大按钮', () => {
+        setTimelineDensity(4);
 
         const zoomInBtn = document.getElementById('zoom-in-btn');
         expect(zoomInBtn.disabled).toBe(true);
     });
 
-    it('应该禁用最小缩小级别的缩小按钮', () => {
-        setZoomLevel('year');
+    it('应该禁用最小密度的缩小按钮', () => {
+        setTimelineDensity(0);
 
         const zoomOutBtn = document.getElementById('zoom-out-btn');
         expect(zoomOutBtn.disabled).toBe(true);
@@ -287,6 +319,10 @@ describe('缩放级别信息', () => {
         expect(getCurrentLevelName()).toBe('周视图');
     });
 
+    it('应该返回当前时间轴密度级别', () => {
+        expect(getCurrentDensityLevel()).toBe(2);
+    });
+
     it('应该返回所有可用的缩放级别', () => {
         const levels = getAvailableLevels();
 
@@ -296,6 +332,10 @@ describe('缩放级别信息', () => {
         expect(levels[2]).toEqual({ key: 'month', name: '月视图' });
         expect(levels[3]).toEqual({ key: 'quarter', name: '季度视图' });
         expect(levels[4]).toEqual({ key: 'year', name: '年视图' });
+    });
+
+    it('应该返回指定视图的时间轴密度选项', () => {
+        expect(getTimelineDensityOptions('month')).toEqual([72, 96, 120, 156, 200]);
     });
 });
 
@@ -362,7 +402,7 @@ describe('滑块控件', () => {
 
         document.body.innerHTML = `
       <div id="gantt_here"></div>
-      <input type="range" id="zoom-slider" min="0" max="4" value="1" />
+      <input type="range" id="zoom-slider" min="0" max="4" value="2" />
       <select id="view-selector"></select>
       <span id="zoom-level-display"></span>
     `;
@@ -378,34 +418,53 @@ describe('滑块控件', () => {
         initZoom();
     });
 
-    it('应该通过滑块切换到日视图', () => {
+    it('应该通过滑块切换到低密度', () => {
         const slider = document.getElementById('zoom-slider');
         slider.value = 0;
         slider.dispatchEvent(new Event('input'));
 
-        expect(getCurrentLevel()).toBe('day');
+        expect(getCurrentLevel()).toBe('week');
+        expect(getCurrentDensityLevel()).toBe(0);
+        expect(gantt.config.min_column_width).toBe(32);
     });
 
-    it('应该通过滑块切换到月视图', () => {
+    it('应该通过滑块切换到默认密度', () => {
         const slider = document.getElementById('zoom-slider');
         slider.value = 2;
         slider.dispatchEvent(new Event('input'));
 
-        expect(getCurrentLevel()).toBe('month');
+        expect(getCurrentLevel()).toBe('week');
+        expect(getCurrentDensityLevel()).toBe(2);
+        expect(gantt.config.min_column_width).toBe(50);
     });
 
-    it('应该通过滑块切换到年视图', () => {
+    it('应该通过滑块切换到高密度', () => {
         const slider = document.getElementById('zoom-slider');
         slider.value = 4;
         slider.dispatchEvent(new Event('input'));
 
-        expect(getCurrentLevel()).toBe('year');
+        expect(getCurrentLevel()).toBe('week');
+        expect(getCurrentDensityLevel()).toBe(4);
+        expect(gantt.config.min_column_width).toBe(88);
     });
 
-    it('应该在缩放级别改变时更新滑块值', () => {
+    it('应该在视图改变时保留滑块值', () => {
+        setTimelineDensity(3);
         setZoomLevel('quarter');
 
         const slider = document.getElementById('zoom-slider');
         expect(slider.value).toBe('3');
+    });
+
+    it('应该通过 Ctrl+滚轮在当前视图内调整密度', () => {
+        const container = document.getElementById('gantt_here');
+        const event = new WheelEvent('wheel', { deltaY: -1, ctrlKey: true, cancelable: true });
+
+        container.dispatchEvent(event);
+
+        expect(event.defaultPrevented).toBe(true);
+        expect(getCurrentLevel()).toBe('week');
+        expect(getCurrentDensityLevel()).toBe(3);
+        expect(gantt.config.min_column_width).toBe(68);
     });
 });

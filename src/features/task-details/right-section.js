@@ -10,6 +10,7 @@ import {
     exclusiveToInclusive,
     inclusiveToExclusive,
     isDayPrecision,
+    formatDateValue,
 } from '../../utils/time-formatter.js';
 import { state, isFieldEnabled, getFieldType, getSystemFieldOptions } from '../../core/store.js';
 import undoManager from '../ai/services/undoManager.js';
@@ -1305,16 +1306,6 @@ function getDateIcon(type) {
         stop: '<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><rect x="9" y="9" width="6" height="6"/></svg>',
     };
     return icons[type] || icons.calendar;
-}
-
-/**
- * 格式化日期值为 YYYY-MM-DD
- */
-function formatDateValue(date) {
-    if (!date) return null;
-    const d = new Date(date);
-    if (isNaN(d.getTime())) return null;
-    return d.toISOString().split('T')[0];
 }
 
 /**

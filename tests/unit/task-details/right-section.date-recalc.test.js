@@ -156,6 +156,58 @@ describe('right-section date recalculation by schedule mode', () => {
         expect(task.duration).toBe(5);
     });
 
+    it('in start_end mode, selecting the same start and end day calculates one day', async () => {
+        global.gantt.calculateDuration.mockImplementation((start, end) => {
+            const millisecondsPerDay = 24 * 60 * 60 * 1000;
+            return Math.round((end - start) / millisecondsPerDay);
+        });
+
+        const { bindRightSectionEvents } =
+            await import('../../../src/features/task-details/right-section.js');
+        const panel = buildPanel();
+        const task = {
+            id: 5,
+            schedule_mode: 'start_end',
+            start_date: new Date(2026, 5, 4),
+            end_date: new Date(2026, 5, 5),
+            duration: 1,
+        };
+
+        bindRightSectionEvents(panel, task);
+
+        panel.querySelector('#task-end-date').click();
+        const call = openTaskDatePickerPopoverMock.mock.calls[0][0];
+        call.onSelect('2026-06-04');
+
+        expect(global.gantt.calculateDuration).toHaveBeenCalledTimes(1);
+        const durationCall = global.gantt.calculateDuration.mock.calls[0];
+        expectLocalYmd(durationCall[0], 2026, 6, 4);
+        expectLocalYmd(durationCall[1], 2026, 6, 5);
+        expect(task.duration).toBe(1);
+    });
+
+    it('displays selected local start date without rolling back one day', async () => {
+        const { bindRightSectionEvents } =
+            await import('../../../src/features/task-details/right-section.js');
+        const panel = buildPanel();
+        const task = {
+            id: 6,
+            schedule_mode: 'start_end',
+            start_date: new Date(2026, 5, 3),
+            end_date: new Date(2026, 5, 7),
+            duration: 4,
+        };
+
+        bindRightSectionEvents(panel, task);
+
+        panel.querySelector('#task-start-date').click();
+        const call = openTaskDatePickerPopoverMock.mock.calls[0][0];
+        call.onSelect('2026-06-04');
+
+        expectLocalYmd(task.start_date, 2026, 6, 4);
+        expect(panel.querySelector('#task-start-date').textContent).toBe('2026-06-04');
+    });
+
     it('in start_duration mode, changing end does not recalculate duration', async () => {
         const { bindRightSectionEvents } =
             await import('../../../src/features/task-details/right-section.js');

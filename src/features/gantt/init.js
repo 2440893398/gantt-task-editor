@@ -40,6 +40,7 @@ import { initRowSortable } from './row-reorder.js';
 import { buildNewTaskPayload, getTaskByAnyId, normalizeToDayStart } from './new-task-payload.js';
 import { prefetchHolidays } from '../calendar/holidayFetcher.js';
 import { getAllCustomDays, getCalendarSettings, db } from '../../core/storage.js';
+import { syncGanttWorkTimeCalendar } from './calendar-worktime.js';
 
 function toLocalDateStr(date) {
     const d = date instanceof Date ? date : new Date(date);
@@ -305,14 +306,10 @@ export function initGantt() {
     // 手动异步调度替代原生 auto_scheduling（见 scheduler.js scheduleAsyncReschedule）
     // gantt.config.auto_scheduling = false;  // 已在 plugins 中禁用
 
-    // 设置工作时间 (周一至周五)
-    gantt.setWorkTime({ day: 0, hours: false }); // 周日非工作日
-    gantt.setWorkTime({ day: 6, hours: false }); // 周六非工作日
-    gantt.setWorkTime({ day: 1, hours: true }); // 周一工作日
-    gantt.setWorkTime({ day: 2, hours: true }); // 周二工作日
-    gantt.setWorkTime({ day: 3, hours: true }); // 周三工作日
-    gantt.setWorkTime({ day: 4, hours: true }); // 周四工作日
-    gantt.setWorkTime({ day: 5, hours: true }); // 周五工作日
+    // 设置默认工作时间；完整日历规则会在 initCalendarHighlightCache 中同步
+    syncGanttWorkTimeCalendar(gantt, {
+        settings: { workdaysOfWeek: [1, 2, 3, 4, 5] },
+    });
 
     // OPT-001: Tooltip 显示控制
     // 修正: 仅在甘特图(时间轴)区域显示 Tooltip，屏蔽表格区域
@@ -1212,5 +1209,10 @@ export async function refreshHolidayHighlightCache() {
             cache.set(h.date, h.isOffDay ? 'holiday' : 'makeupday');
         }
     }
+    syncGanttWorkTimeCalendar(gantt, {
+        settings: await getCalendarSettings(),
+        holidays,
+        customs,
+    });
     gantt.render();
 }

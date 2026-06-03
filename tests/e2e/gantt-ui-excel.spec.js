@@ -104,18 +104,21 @@ test.describe('Gantt Chart UI Tests', () => {
         const zoomInBtn = page.locator('#zoom-in-btn');
         const zoomOutBtn = page.locator('#zoom-out-btn');
         const viewSelector = page.locator('#view-selector');
+        const slider = page.locator('#zoom-slider');
 
         await expect(zoomInBtn).toBeVisible();
         await expect(zoomOutBtn).toBeVisible();
         await expect(viewSelector).toBeVisible();
         await expect(viewSelector).toHaveValue('week');
+        await expect(slider).toHaveValue('2');
 
         await zoomInBtn.click();
-        await expect(viewSelector).toHaveValue('month');
+        await expect(viewSelector).toHaveValue('week');
+        await expect(slider).toHaveValue('3');
 
-        await viewSelector.selectOption('week');
         await zoomOutBtn.click();
-        await expect(viewSelector).toHaveValue('day');
+        await expect(viewSelector).toHaveValue('week');
+        await expect(slider).toHaveValue('2');
     });
 
     test('TC-UI-003: Today Button', async ({ page }) => {
