@@ -3,6 +3,8 @@ import fs from 'fs';
 import path from 'path';
 
 describe('toolbar structure in index.html', () => {
+    const entryFiles = ['index.html', 'index.cn.html'];
+
     it('includes task header and toolbar containers', () => {
         const html = fs.readFileSync(path.resolve(process.cwd(), 'index.html'), 'utf8');
         expect(html).toContain('id="task-header"');
@@ -30,5 +32,13 @@ describe('toolbar structure in index.html', () => {
     it('includes project picker mount in toolbar left area', () => {
         const html = fs.readFileSync(path.resolve(process.cwd(), 'index.html'), 'utf8');
         expect(html).toContain('id="project-picker-mount"');
+    });
+
+    it.each(entryFiles)('includes shared project and share toolbar controls in %s', (entryFile) => {
+        const html = fs.readFileSync(path.resolve(process.cwd(), entryFile), 'utf8');
+
+        expect(html).toContain('id="project-picker-mount"');
+        expect(html).toContain('id="share-btn"');
+        expect(html).toContain("import('./src/features/share/ShareDialog.js')");
     });
 });
