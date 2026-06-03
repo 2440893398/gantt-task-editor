@@ -7,7 +7,7 @@ import { i18n } from '../../utils/i18n.js';
 import { showToast } from '../../utils/toast.js';
 import { renderLeftSection, bindLeftSectionEvents } from './left-section.js';
 import { renderRightSection, bindRightSectionEvents } from './right-section.js';
-import { destroyRichTextEditor } from '../../components/rich-text-editor.js';
+import { destroyRichTextEditor, getEditorContent } from '../../components/rich-text-editor.js';
 import { showConfirmDialog } from '../../components/common/confirm-dialog.js';
 import undoManager from '../ai/services/undoManager.js';
 
@@ -426,7 +426,25 @@ function bindPanelEvents(panel, task) {
     bindRightSectionEvents(panel, task, context);
 }
 
+function syncVisibleFieldsToDraft() {
+    if (!currentPanel || !currentDraftTask) return;
+
+    const titleInput = currentPanel.querySelector('#task-title-input');
+    if (titleInput) {
+        const nextTitle = titleInput.value.trim() || i18n.t('taskDetails.newTask') || '新任务';
+        currentDraftTask.text = nextTitle;
+    }
+
+    const editorContent = getEditorContent();
+    if (editorContent) {
+        currentDraftTask.summary = editorContent;
+        currentDraftTask.description = editorContent;
+    }
+}
+
 function handleConfirmSave() {
+    syncVisibleFieldsToDraft();
+
     if (isCreatingNewTask) {
         if (!currentDraftTask) {
             showToast(i18n.t('message.error') || '保存失败', 'error');

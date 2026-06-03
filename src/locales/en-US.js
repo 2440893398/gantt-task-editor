@@ -676,6 +676,7 @@ export default {
         startReplayRecording: 'Record replay',
         replayIdleStatus: 'No replay recorded',
         replayRecordingStatus: 'Recording replay',
+        recordingStarted: 'Replay recording started',
         replayReadyStatus: '{{count}} events recorded',
         replayRecordingTitle: 'Recording replay',
         replayRecordingHint:

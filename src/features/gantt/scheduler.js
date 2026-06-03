@@ -24,6 +24,45 @@ import { rollupStatus, rollupAssignee, sumNumberField, rollupProgress } from './
 import undoManager from '../ai/services/undoManager.js';
 
 const dragSnapshotTaskIds = new Set();
+const dragDurationSnapshots = new Map();
+
+function getPositiveDuration(task) {
+    const duration = Number(task?.duration);
+    if (Number.isFinite(duration) && duration > 0) return duration;
+
+    if (
+        task?.start_date &&
+        task?.end_date &&
+        typeof gantt !== 'undefined' &&
+        typeof gantt.calculateDuration === 'function'
+    ) {
+        const calculated = Number(gantt.calculateDuration(task.start_date, task.end_date));
+        if (Number.isFinite(calculated) && calculated > 0) return calculated;
+    }
+
+    return null;
+}
+
+function preserveMoveDuration(id, mode) {
+    if (mode !== 'move') return;
+    if (typeof gantt === 'undefined' || typeof gantt.calculateEndDate !== 'function') return;
+
+    const duration = dragDurationSnapshots.get(id);
+    if (!duration) return;
+
+    const task = gantt.getTask(id);
+    if (!task?.start_date) return;
+
+    const nextEndDate = gantt.calculateEndDate(task.start_date, duration);
+    if (!nextEndDate) return;
+
+    task.duration = duration;
+    task.end_date = nextEndDate;
+
+    if (typeof gantt.updateTask === 'function') {
+        gantt.updateTask(id);
+    }
+}
 
 /**
  * 初始化调度引擎
@@ -306,7 +345,9 @@ export function updateParentDates(taskId) {
 function bindTaskChangeEvents() {
     // 任务拖拽完成后触发调度
     gantt.attachEvent('onAfterTaskDrag', function (id, mode, e) {
+        preserveMoveDuration(id, mode);
         dragSnapshotTaskIds.delete(id);
+        dragDurationSnapshots.delete(id);
         console.log('📅 任务拖拽完成，触发调度:', id);
         updateParentDates(id);
         // 异步重新调度依赖任务（不调用 gantt.autoSchedule）
@@ -366,6 +407,12 @@ function bindWBSEvents() {
         if (!dragSnapshotTaskIds.has(id)) {
             undoManager.saveState(id);
             dragSnapshotTaskIds.add(id);
+        }
+        if (mode === 'move') {
+            const duration = getPositiveDuration(task);
+            if (duration) {
+                dragDurationSnapshots.set(id, duration);
+            }
         }
         return true;
     });

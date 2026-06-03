@@ -640,6 +640,7 @@ export default {
         startReplayRecording: '再現を記録',
         replayIdleStatus: '再現記録なし',
         replayRecordingStatus: '再現を記録中',
+        recordingStarted: '再現記録を開始しました',
         replayReadyStatus: '{{count}} 件のイベントを記録済み',
         replayRecordingTitle: '再現を記録中',
         replayRecordingHint:

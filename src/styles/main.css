@@ -322,7 +322,6 @@
 .gantt_task_line.short-task .gantt_task_content {
     min-width: 20px !important;
     border: 2px solid currentColor;
-    font-size: 0;
 }
 
 .gantt_task_line .gantt_task_content {

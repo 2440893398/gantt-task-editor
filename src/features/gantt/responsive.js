@@ -11,7 +11,7 @@
 const MOBILE_BREAKPOINT = 768;
 
 // 当前模式
-let isMobileMode = false;
+let isMobileMode = null;
 
 /**
  * 初始化响应式布局
@@ -110,7 +110,7 @@ function enableDragFeatures() {
  * @returns {boolean}
  */
 export function isMobile() {
-    return isMobileMode;
+    return isMobileMode === true;
 }
 
 /**

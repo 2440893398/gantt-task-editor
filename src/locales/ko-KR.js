@@ -636,6 +636,7 @@ export default {
         startReplayRecording: '재현 기록',
         replayIdleStatus: '재현 기록 없음',
         replayRecordingStatus: '재현 기록 중',
+        recordingStarted: '재현 기록을 시작했습니다',
         replayReadyStatus: '{{count}}개 이벤트 기록됨',
         replayRecordingTitle: '재현 기록 중',
         replayRecordingHint:

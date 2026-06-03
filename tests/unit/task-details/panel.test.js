@@ -20,6 +20,7 @@ vi.mock('../../../src/components/common/confirm-dialog.js', () => ({
 
 vi.mock('../../../src/components/rich-text-editor.js', () => ({
     destroyRichTextEditor: vi.fn(),
+    getEditorContent: vi.fn(() => ''),
 }));
 
 vi.mock('../../../src/features/task-details/left-section.js', () => ({
@@ -114,6 +115,20 @@ describe('task-details panel draft workflow', () => {
         expect(global.gantt.getTask(1).text).toBe('Draft title');
         expect(global.gantt.getTask(1).assignee).toBe('Bob');
         expect(showToastMock).toHaveBeenCalled();
+    });
+
+    it('syncs title input before confirming save', async () => {
+        const panel = await import('../../../src/features/task-details/panel.js');
+
+        panel.openTaskDetailsPanel(1);
+        document.querySelector('#left-mock').innerHTML =
+            '<input id="task-title-input" value="Typed title" />';
+
+        document.querySelector('#btn-confirm-save').click();
+
+        expect(showToastMock).not.toHaveBeenCalledWith(expect.anything(), 'info');
+        expect(global.gantt.updateTask).toHaveBeenCalledTimes(1);
+        expect(global.gantt.getTask(1).text).toBe('Typed title');
     });
 
     it('shows discard confirmation when closing dirty draft', async () => {

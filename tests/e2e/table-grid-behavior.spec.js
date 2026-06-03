@@ -132,42 +132,25 @@ test.describe('table grid behavior regressions', () => {
         expect(visibility.cellVisible).toBe(true);
     });
 
-    test('gantt-only mode keeps the actions column pinned to the far right after widening the grid', async ({
-        page,
-    }) => {
+    test('gantt-only mode hides the task grid and keeps the timeline visible', async ({ page }) => {
         await page.locator('[data-view="gantt"]').click();
-        await dragResizer(page, 420);
 
-        const layout = await page.evaluate(() => {
+        const visibility = await page.evaluate(() => {
             const grid = document.querySelector('.gantt_grid');
-            const actionsHead = document.querySelector(
-                '.gantt_grid_head_cell[data-column-name="actions"]'
-            );
-            const firstRow = document.querySelector('.gantt_grid_data .gantt_row');
-            const actionCell = firstRow?.querySelector('.gantt_cell.gantt_last_cell') || null;
-
-            if (!grid || !actionsHead || !actionCell) {
-                return {
-                    gap: Number.POSITIVE_INFINITY,
-                    cellGap: Number.POSITIVE_INFINITY,
-                    btnCount: 0,
-                };
-            }
-
-            const gridRect = grid.getBoundingClientRect();
-            const headerRect = actionsHead.getBoundingClientRect();
-            const cellRect = actionCell.getBoundingClientRect();
+            const resizer = document.querySelector('#custom-resizer');
+            const timeline = document.querySelector('.gantt_task');
+            const timelineRect = timeline?.getBoundingClientRect();
 
             return {
-                gap: Math.round(gridRect.right - headerRect.right),
-                cellGap: Math.round(gridRect.right - cellRect.right),
-                btnCount: actionCell.querySelectorAll('.gantt-task-action-btn').length,
+                hasGrid: Boolean(grid),
+                hasResizer: Boolean(resizer),
+                timelineWidth: timelineRect ? Math.round(timelineRect.width) : 0,
             };
         });
 
-        expect(layout.btnCount).toBe(3);
-        expect(layout.gap).toBeLessThanOrEqual(2);
-        expect(layout.cellGap).toBeLessThanOrEqual(2);
+        expect(visibility.hasGrid).toBe(false);
+        expect(visibility.hasResizer).toBe(false);
+        expect(visibility.timelineWidth).toBeGreaterThan(0);
     });
 
     test('split mode keeps actions cells aligned after dragging the real bottom scrollbar', async ({

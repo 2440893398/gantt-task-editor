@@ -23,7 +23,7 @@ vi.mock('../../../src/utils/i18n.js', () => ({
 
 // --- Imports (after mocks) ---
 
-import { initViewToggle } from '../../../src/features/gantt/view-toggle.js';
+import { applyCurrentViewMode, initViewToggle } from '../../../src/features/gantt/view-toggle.js';
 import { getViewMode, setViewMode } from '../../../src/core/store.js';
 import { updateGanttColumns, setGanttOnlyColumns } from '../../../src/features/gantt/columns.js';
 import { i18n } from '../../../src/utils/i18n.js';
@@ -195,13 +195,18 @@ describe('applyViewMode (via initViewToggle)', () => {
 
     // ---- Gantt mode ----
 
-    it('gantt mode: should set show_grid=true, show_chart=true and set minimal columns', () => {
+    it('gantt mode: should set show_grid=false, show_chart=true and use timeline-only layout', () => {
         getViewMode.mockReturnValue('gantt');
         initViewToggle();
 
-        expect(gantt.config.show_grid).toBe(true);
+        expect(gantt.config.show_grid).toBe(false);
         expect(gantt.config.show_chart).toBe(true);
-        expect(setGanttOnlyColumns).toHaveBeenCalled();
+        expect(gantt.config.layout.cols).not.toContainEqual(
+            expect.objectContaining({
+                rows: expect.arrayContaining([expect.objectContaining({ view: 'grid' })]),
+            })
+        );
+        expect(setGanttOnlyColumns).not.toHaveBeenCalled();
         // updateGanttColumns should NOT be called for gantt mode
         expect(updateGanttColumns).not.toHaveBeenCalled();
     });
@@ -249,10 +254,32 @@ describe('applyViewMode (via initViewToggle)', () => {
 
         clickButton('gantt');
 
-        expect(gantt.config.show_grid).toBe(true);
+        expect(gantt.config.show_grid).toBe(false);
         expect(gantt.config.show_chart).toBe(true);
-        expect(setGanttOnlyColumns).toHaveBeenCalled();
+        expect(setGanttOnlyColumns).not.toHaveBeenCalled();
         expect(gantt.resetLayout).toHaveBeenCalled();
+    });
+
+    it('applyCurrentViewMode should re-apply saved gantt mode after external state changes', () => {
+        getViewMode.mockReturnValue('gantt');
+        gantt.config.layout = {
+            css: 'gantt_container',
+            cols: [
+                {
+                    rows: [{ view: 'grid' }],
+                },
+            ],
+        };
+
+        applyCurrentViewMode();
+
+        expect(gantt.config.show_grid).toBe(false);
+        expect(gantt.config.show_chart).toBe(true);
+        expect(gantt.config.layout.cols).not.toContainEqual(
+            expect.objectContaining({
+                rows: expect.arrayContaining([expect.objectContaining({ view: 'grid' })]),
+            })
+        );
     });
 });
 

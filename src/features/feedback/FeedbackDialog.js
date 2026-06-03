@@ -228,6 +228,8 @@ async function startReplayFromDialog(modal, replayStatus) {
         openFeedbackDialog();
         return;
     }
+
+    showToast(i18n.t('feedback.recordingStarted') || '复现录制已开始', 'success', 4000);
 }
 
 async function addFiles(files, attachments, updateAttachmentList) {

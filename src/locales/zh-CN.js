@@ -703,6 +703,7 @@ export default {
         startReplayRecording: '录制复现',
         replayIdleStatus: '未录制复现',
         replayRecordingStatus: '复现录制中',
+        recordingStarted: '复现录制已开始',
         replayReadyStatus: '已记录 {{count}} 条事件',
         replayRecordingTitle: '正在录制复现',
         replayRecordingHint: '现在可以继续操作系统，完成复现后点击结束，系统会回到反馈弹窗。',

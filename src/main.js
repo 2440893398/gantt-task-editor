@@ -34,12 +34,11 @@ import {
 } from './core/store.js';
 import { checkStorageAvailability } from './core/storage.js';
 import { prefetchHolidays } from './features/calendar/holidayFetcher.js';
-import { updateGanttColumns } from './features/gantt/columns.js';
 import { renderProjectPicker } from './features/projects/ProjectPicker.js';
 // 任务详情面板
 import { openTaskDetailsPanel, openNewTaskDetailsPanel } from './features/task-details/index.js';
 // 视图切换
-import { initViewToggle } from './features/gantt/view-toggle.js';
+import { applyCurrentViewMode, initViewToggle } from './features/gantt/view-toggle.js';
 import undoManager from './features/ai/services/undoManager.js';
 import { initFeedbackModule } from './features/feedback/index.js';
 
@@ -123,7 +122,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 gantt.parse({ data: [], links: [] });
             }
 
-            updateGanttColumns();
+            applyCurrentViewMode();
         } catch (error) {
             console.error('[Main] Failed to reload project after switch:', error);
             showToast(i18n.t('common.operationFailed') || '操作失败', 'error');
