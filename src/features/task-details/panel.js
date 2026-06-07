@@ -137,10 +137,7 @@ function applyDraftChanges(sourceTask, draftTask) {
 
 function isDraftDirty() {
     if (!currentDraftTask) return false;
-    if (isCreatingNewTask) {
-        return hasDraftChanges(initialDraftTask, currentDraftTask);
-    }
-    return hasDraftChanges(getCurrentSourceTask(), currentDraftTask);
+    return hasDraftChanges(initialDraftTask, currentDraftTask);
 }
 
 function resetDraftFromSource() {
@@ -230,6 +227,7 @@ export function openTaskDetailsPanel(taskId) {
     currentPanel = panel;
 
     bindPanelEvents(panel, task);
+    initialDraftTask = cloneValue(currentDraftTask);
 
     requestAnimationFrame(() => {
         overlay.classList.remove('opacity-0');
@@ -310,6 +308,7 @@ export function openNewTaskDetailsPanel(payload = {}) {
     currentPanel = panel;
 
     bindPanelEvents(panel, currentDraftTask);
+    initialDraftTask = cloneValue(currentDraftTask);
 
     requestAnimationFrame(() => {
         overlay.classList.remove('opacity-0');

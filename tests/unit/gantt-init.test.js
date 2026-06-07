@@ -3,10 +3,24 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { initGantt, setupGlobalEvents } from '../../src/features/gantt/init.js';
+import {
+    initGantt,
+    setupGlobalEvents,
+    collectHolidayHighlightYears,
+} from '../../src/features/gantt/init.js';
+import {
+    clearTaskSearchVisibility,
+    updateTaskSearchVisibility,
+} from '../../src/features/gantt/task-search.js';
+import {
+    ASSIGNEE_FOCUS_MATCH_CLASS,
+    ASSIGNEE_FOCUS_ONLY_MODE,
+    applyAssigneeFocus,
+} from '../../src/features/gantt/assignee-focus.js';
 
 describe('甘特图初始化', () => {
     beforeEach(() => {
+        clearTaskSearchVisibility();
         // 重置 DOM
         document.body.innerHTML = `
       <div id="gantt_here"></div>
@@ -18,6 +32,26 @@ describe('甘特图初始化', () => {
         global.gantt.parse = vi.fn();
         global.gantt.attachEvent = vi.fn();
         global.gantt.i18n.setLocale = vi.fn();
+    });
+
+    it('collectHolidayHighlightYears includes visible timeline and task years', () => {
+        const years = collectHolidayHighlightYears(
+            {
+                getState: () => ({
+                    min_date: new Date(2025, 9, 1),
+                    max_date: new Date(2025, 9, 31),
+                }),
+                eachTask: (callback) => {
+                    callback({
+                        start_date: new Date(2024, 11, 30),
+                        end_date: new Date(2025, 0, 3),
+                    });
+                },
+            },
+            new Date(2026, 5, 7)
+        );
+
+        expect(years).toEqual([2024, 2025, 2026, 2027]);
     });
 
     it('应该正确初始化甘特图', () => {
@@ -100,6 +134,88 @@ describe('甘特图初始化', () => {
         expect(gantt.templates.task_class).toBeDefined();
         expect(gantt.templates.grid_row_class).toBeDefined();
         expect(gantt.templates.task_row_class).toBeDefined();
+    });
+
+    it('应该让任务名搜索隐藏标记同时作用于任务条和行', () => {
+        initGantt();
+
+        const hiddenTask = {
+            id: 1,
+            text: '目标转移',
+            duration: 3,
+            progress: 0,
+        };
+        gantt.eachTask.mockImplementation((callback) => callback(hiddenTask));
+
+        updateTaskSearchVisibility(gantt, '经营');
+
+        expect(gantt.templates.task_class(new Date(), new Date(), hiddenTask)).toContain(
+            'gantt-task-search-hidden'
+        );
+        expect(gantt.templates.grid_row_class(new Date(), new Date(), hiddenTask)).toContain(
+            'gantt-task-search-hidden'
+        );
+        expect(gantt.templates.task_row_class(new Date(), new Date(), hiddenTask)).toContain(
+            'gantt-task-search-hidden'
+        );
+    });
+
+    it('should mark custom overtime days on timeline cells', () => {
+        window.__calendarHighlightCache = new Map([['2026-06-06', 'overtime']]);
+
+        initGantt();
+
+        const className = gantt.templates.timeline_cell_class({}, new Date(2026, 5, 6));
+
+        expect(className).toContain('weekend');
+        expect(className).toContain('gantt-day-overtime');
+    });
+
+    it('should apply assignee focus classes to task bars and rows', () => {
+        initGantt();
+        applyAssigneeFocus({ assignee: '张三', mode: 'dim' }, null);
+
+        const task = {
+            id: 1,
+            text: '接口开发',
+            assignee: '张三',
+            duration: 3,
+            progress: 0,
+        };
+
+        expect(gantt.templates.task_class(new Date(), new Date(), task)).toContain(
+            ASSIGNEE_FOCUS_MATCH_CLASS
+        );
+        expect(gantt.templates.grid_row_class(new Date(), new Date(), task)).toContain(
+            ASSIGNEE_FOCUS_MATCH_CLASS
+        );
+        expect(gantt.templates.task_row_class(new Date(), new Date(), task)).toContain(
+            ASSIGNEE_FOCUS_MATCH_CLASS
+        );
+    });
+
+    it('should register assignee focus display filter for only mode', () => {
+        initGantt();
+        applyAssigneeFocus({ assignee: '张三', mode: ASSIGNEE_FOCUS_ONLY_MODE }, null);
+
+        const onBeforeTaskDisplay = gantt.attachEvent.mock.calls.find(
+            ([eventName]) => eventName === 'onBeforeTaskDisplay'
+        )[1];
+
+        expect(onBeforeTaskDisplay(1, { assignee: '张三' })).toBe(true);
+        expect(onBeforeTaskDisplay(2, { assignee: '李四' })).toBe(false);
+    });
+
+    it('should escape task text when rendering assignee focus label on task bars', () => {
+        initGantt();
+
+        const html = gantt.templates.task_text(new Date(), new Date(), {
+            text: '<img src=x onerror=alert(1)>',
+            assignee: '张三',
+        });
+
+        expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;');
+        expect(html).not.toContain('<img src=x onerror=alert(1)>');
     });
 });
 

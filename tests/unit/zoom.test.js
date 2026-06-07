@@ -363,11 +363,14 @@ describe('缩放刻度配置', () => {
     });
 
     it('应该为周视图配置正确的刻度', () => {
+        window.__calendarHighlightCache = new Map([['2026-06-06', 'overtime']]);
+
         setZoomLevel('week');
 
         expect(gantt.config.scales).toHaveLength(2);
         expect(gantt.config.scales[0].unit).toBe('month');
         expect(gantt.config.scales[1].unit).toBe('day');
+        expect(gantt.config.scales[1].css(new Date(2026, 5, 6))).toContain('gantt-day-overtime');
     });
 
     it('应该为月视图配置正确的刻度', () => {

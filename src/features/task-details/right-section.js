@@ -65,6 +65,15 @@ const PRIORITY_CONFIG = {
 const dropdownWrappers = new Set();
 let hasDropdownOutsideClickListener = false;
 
+function isParentSummaryTask(task) {
+    return !!(
+        task?.id &&
+        typeof gantt !== 'undefined' &&
+        typeof gantt.hasChild === 'function' &&
+        gantt.hasChild(task.id)
+    );
+}
+
 function closeDropdownMenu(menu) {
     menu.classList.add('hidden');
     menu.classList.remove('block');
@@ -116,6 +125,7 @@ function registerDropdownWrapper(wrapper) {
  * @returns {string} HTML 字符串
  */
 export function renderRightSection(task) {
+    const isParentSummary = isParentSummaryTask(task);
     // Check which sections should be visible based on field enabled status
     const showStatus = isFieldEnabled('status');
     const showProgress = isFieldEnabled('progress');
@@ -156,9 +166,9 @@ export function renderRightSection(task) {
                 ${i18n.t('taskDetails.schedule') || '排期'}
             </h4>
             <div class="space-y-2">
-                ${renderScheduleModeRow(task)}
-                ${renderDateRow('start-date', i18n.t('taskDetails.planStart') || '开始', formatDateValue(task.start_date), 'calendar')}
-                ${renderDateRow('end-date', i18n.t('taskDetails.planEnd') || '截止', formatDateValue(exclusiveToInclusive(getEndDate(task))), 'calendar-check')}
+                ${renderScheduleModeRow(task, isParentSummary)}
+                ${renderDateRow('start-date', i18n.t('taskDetails.planStart') || '开始', formatDateValue(task.start_date), 'calendar', false, isParentSummary)}
+                ${renderDateRow('end-date', i18n.t('taskDetails.planEnd') || '截止', formatDateValue(exclusiveToInclusive(getEndDate(task))), 'calendar-check', false, isParentSummary)}
             </div>
             ${
                 showActualDates
@@ -181,7 +191,7 @@ export function renderRightSection(task) {
                 ${i18n.t('taskDetails.workload') || '工时'}
             </h4>
             <div class="space-y-2">
-                ${showDuration ? renderDurationRow(task) : ''}
+                ${showDuration ? renderDurationRow(task, isParentSummary) : ''}
                 ${showActualHours ? renderWorkloadRow('actual-hours', i18n.t('taskDetails.actualHours') || '实际', task.actual_hours, i18n.t('taskDetails.dayUnit') || '天', true) : ''}
             </div>
         </div>
@@ -219,6 +229,7 @@ export function renderRightSection(task) {
 export function bindRightSectionEvents(panel, task, context = {}) {
     const draftTask = context.draftTask || task;
     const isDraftMode = !!context.isDraftMode;
+    const isParentSummary = isParentSummaryTask(task);
     const mutateDraft = (mutator) => {
         if (typeof context.onDraftMutated === 'function') {
             context.onDraftMutated(mutator);
@@ -242,7 +253,11 @@ export function bindRightSectionEvents(panel, task, context = {}) {
     };
 
     // 「开始 + 工期」模式下，用 start_date + duration 校正 end_date（打开面板时若数据不一致则自动修正）
-    if (typeof gantt !== 'undefined' && typeof gantt.calculateEndDate === 'function') {
+    if (
+        !isParentSummary &&
+        typeof gantt !== 'undefined' &&
+        typeof gantt.calculateEndDate === 'function'
+    ) {
         const mode = normalizeScheduleMode(draftTask.schedule_mode);
         if (
             mode === 'start_duration' &&
@@ -400,25 +415,27 @@ export function bindRightSectionEvents(panel, task, context = {}) {
         },
     ];
 
-    setupSelect(
-        'task-schedule-mode',
-        scheduleModeOptions,
-        normalizeScheduleMode(draftTask.schedule_mode),
-        (value) => {
-            const nextMode = normalizeScheduleMode(value);
-            const currentMode = normalizeScheduleMode(draftTask.schedule_mode);
-            if (currentMode === nextMode) return;
-            saveTaskState();
-            mutateDraft((target) => {
-                target.schedule_mode = nextMode;
-            });
-            if (!isDraftMode) {
-                task.schedule_mode = nextMode;
-            }
-            persistIfNeeded();
-        },
-        { isMulti: false }
-    );
+    if (!isParentSummary) {
+        setupSelect(
+            'task-schedule-mode',
+            scheduleModeOptions,
+            normalizeScheduleMode(draftTask.schedule_mode),
+            (value) => {
+                const nextMode = normalizeScheduleMode(value);
+                const currentMode = normalizeScheduleMode(draftTask.schedule_mode);
+                if (currentMode === nextMode) return;
+                saveTaskState();
+                mutateDraft((target) => {
+                    target.schedule_mode = nextMode;
+                });
+                if (!isDraftMode) {
+                    task.schedule_mode = nextMode;
+                }
+                persistIfNeeded();
+            },
+            { isMulti: false }
+        );
+    }
 
     // 日期字段
     bindDateInput(panel, '#task-start-date', draftTask, 'start_date', false, {
@@ -517,8 +534,13 @@ export function bindRightSectionEvents(panel, task, context = {}) {
     const durationInput = panel.querySelector('#task-duration-input');
     const durationHint = panel.querySelector('#duration-hint');
     if (durationInput) {
+        if (isParentSummary) {
+            durationInput.disabled = true;
+            durationInput.dataset.summaryReadonly = '1';
+        }
         // 实时更新人性化提示
         durationInput.addEventListener('input', () => {
+            if (isParentSummary) return;
             const value = parseFloat(durationInput.value) || 0;
             if (durationHint) {
                 durationHint.textContent = formatDuration(value);
@@ -527,6 +549,7 @@ export function bindRightSectionEvents(panel, task, context = {}) {
 
         // 失焦时保存，支持文本输入解析（如 "4小时"、"1d 2h"）
         durationInput.addEventListener('blur', () => {
+            if (isParentSummary) return;
             let value = parseFloat(durationInput.value);
 
             // 如果不是纯数字，尝试解析文本输入
@@ -772,8 +795,8 @@ function renderPriorityRow(currentPriority) {
     `;
 }
 
-function renderScheduleModeRow(task) {
-    const currentMode = normalizeScheduleMode(task?.schedule_mode);
+function renderScheduleModeRow(task, isReadonly = false) {
+    const currentMode = isReadonly ? 'start_end' : normalizeScheduleMode(task?.schedule_mode);
     const label = i18n.t('taskDetails.scheduleMode') || '模式';
     const options = [
         {
@@ -796,7 +819,14 @@ function renderScheduleModeRow(task) {
                 <span>${label}</span>
             </div>
             <div class="w-32">
-                ${renderSelectHTML('task-schedule-mode', currentMode, options, { placeholder: '-', width: 'w-32' })}
+                ${
+                    isReadonly
+                        ? `<span id="task-schedule-mode-summary" class="text-sm text-base-content/70" data-summary-readonly="1">${options.find((option) => option.value === currentMode)?.label || '-'}</span>`
+                        : renderSelectHTML('task-schedule-mode', currentMode, options, {
+                              placeholder: '-',
+                              width: 'w-32',
+                          })
+                }
             </div>
         </div>
     `;
@@ -845,10 +875,14 @@ function renderProgressRow(progress) {
 /**
  * 渲染日期行
  */
-function renderDateRow(id, label, value, iconType, isOptional = false) {
+function renderDateRow(id, label, value, iconType, isOptional = false, isReadonly = false) {
     const displayText = value || (isOptional ? i18n.t('taskDetails.notStarted') || '未开始' : '-');
     const valueClass = value ? 'text-base-content' : 'text-base-content/40';
     const iconSvg = getDateIcon(iconType);
+    const readonlyAttrs = isReadonly ? 'disabled data-summary-readonly="1"' : '';
+    const readonlyClass = isReadonly
+        ? 'cursor-default hover:text-inherit disabled:opacity-100'
+        : 'hover:text-primary';
 
     return `
         <div class="flex items-center justify-between py-2.5">
@@ -858,8 +892,9 @@ function renderDateRow(id, label, value, iconType, isOptional = false) {
             </div>
             <button type="button"
                     id="task-${id}"
-                    class="btn btn-ghost btn-xs h-auto min-h-0 px-1 py-0 normal-case font-normal text-sm ${valueClass} hover:text-primary"
-                    data-date-optional="${isOptional ? '1' : '0'}">
+                    class="btn btn-ghost btn-xs h-auto min-h-0 px-1 py-0 normal-case font-normal text-sm ${valueClass} ${readonlyClass}"
+                    data-date-optional="${isOptional ? '1' : '0'}"
+                    ${readonlyAttrs}>
                 ${displayText}
             </button>
         </div>
@@ -869,7 +904,7 @@ function renderDateRow(id, label, value, iconType, isOptional = false) {
 /**
  * 渲染工期行 (v1.5) - 带人性化提示
  */
-function renderDurationRow(task) {
+function renderDurationRow(task, isReadonly = false) {
     const value = task.duration || task.estimated_hours || '';
     const displayValue = value !== undefined && value !== null ? value : '';
     const humanReadable = formatDuration(parseFloat(displayValue) || 0);
@@ -890,7 +925,8 @@ function renderDurationRow(task) {
                            id="task-duration-input"
                            class="input input-ghost input-xs w-20 text-right p-0"
                            value="${displayValue}"
-                           placeholder="0" />
+                           placeholder="0"
+                           ${isReadonly ? 'disabled data-summary-readonly="1"' : ''} />
                     <span class="text-base-content/60">${unit}</span>
                 </div>
                 <span id="duration-hint" class="text-xs text-base-content/50">${humanReadable}</span>
@@ -1047,6 +1083,8 @@ function renderCustomFieldInput(field, value, fieldId) {
 function bindDateInput(panel, selector, task, fieldName, isEndDate = false, options = {}) {
     const sourceTask = options.task || task;
     const isDraftMode = !!options.isDraftMode;
+    const isSummaryScheduleField =
+        (fieldName === 'start_date' || fieldName === 'end_date') && isParentSummaryTask(sourceTask);
     const saveTaskState =
         typeof options.saveTaskState === 'function' ? options.saveTaskState : () => {};
     const mutateDraft =
@@ -1060,8 +1098,13 @@ function bindDateInput(panel, selector, task, fieldName, isEndDate = false, opti
 
     const input = panel.querySelector(selector);
     if (!input) return;
+    if (isSummaryScheduleField) {
+        input.disabled = true;
+        input.dataset.summaryReadonly = '1';
+    }
 
     const applyDateChange = (dateText) => {
+        if (isSummaryScheduleField) return;
         const parts = String(dateText || '')
             .split('-')
             .map(Number);
@@ -1153,6 +1196,7 @@ function bindDateInput(panel, selector, task, fieldName, isEndDate = false, opti
 
     input.addEventListener('click', async (event) => {
         event.preventDefault();
+        if (isSummaryScheduleField) return;
         const selectedDate =
             fieldName === 'end_date'
                 ? formatDateValue(exclusiveToInclusive(task.end_date))

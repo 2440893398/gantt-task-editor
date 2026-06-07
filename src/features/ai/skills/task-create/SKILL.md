@@ -36,13 +36,18 @@ JSON 结构如下：
 - 有 start_date + end_date → duration = end_date - start_date 的自然日差
 - 有 start_date + duration（或工时） → end_date = start_date + duration 天
 - 有 end_date + duration → start_date = end_date - duration 天
-- 用户提供的"工时"列，直接作为 duration 值（单位：天）
+- `duration` 表示排期工期，不表示投入工时
+- 用户提供的"工时"或"预计工时"列，应写入 `estimated_hours`（小时）；"实际工时"写入 `actual_hours`（小时）
+- 若只能从工时推导排期，可按 duration = ceil(hours / 8) 生成排期工期，但仍应保留 `estimated_hours`
 
 ## 父子关系处理
 
 - 若用户明确指定父任务，在 `parentId` 填写父任务 ID
 - 若用户粘贴有层级结构的数据（如缩进列表），先输出父任务（`parentId: null`），再输出子任务（`parentId` 引用前一个父任务的序号位置）
 - 若无法确定父子关系，所有任务 `parentId: null`（挂在根节点下）
+- 有子任务的父任务是汇总任务：计划开始、计划结束、`duration` 由子任务自动汇总
+- 当子任务已包含排期时，父任务不要手动设置排期来覆盖汇总结果；只填写名称、负责人、优先级、状态等非排期字段
+- `estimated_hours` 和 `actual_hours` 是投入字段，父子层级分析时可以求和；不要把它们当成排期 `duration`
 
 ## 信息不完整时
 
@@ -53,7 +58,7 @@ JSON 结构如下：
 
 1. 解析用户输入，提取所有任务信息
 2. 将状态文字（已完成/进行中等）转换为枚举值
-3. 若用户只提供工时（小时），将工时转换为天数（duration = ceil(hours / 8)）
+3. 若用户只提供工时（小时），写入 `estimated_hours`；需要生成排期时再换算 `duration = ceil(hours / 8)`
 4. 按父任务在前、子任务在后的顺序构造 changes 数组
 5. 直接输出完整 JSON
 

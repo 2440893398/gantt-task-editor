@@ -255,6 +255,7 @@ export default {
 
     // DHTMLX Gantt 라벨
     gantt: {
+        dragToReorder: '드래그하여 순서 변경',
         labels: {
             new_task: '새 작업',
             icon_save: '저장',
@@ -470,6 +471,13 @@ export default {
             viewDetails: '자세히 보기',
             originalError: '원본 오류 정보',
         },
+    },
+    assigneeFocus: {
+        all: '모든 담당자',
+        unassigned: '미배정',
+        dimMode: '포커스',
+        onlyMode: '이 사람만',
+        selectLabel: '담당자 포커스',
     },
     baseline: {
         save: '기준선 저장',

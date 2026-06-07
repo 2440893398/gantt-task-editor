@@ -16,7 +16,7 @@ import { updateSelectedTasksUI, applySelectionStyles } from '../selection/select
 import { initNavigation, refreshUndoRedoButtons } from './navigation.js';
 import { initMarkers } from './markers.js';
 import { initZoom, refreshZoomBindings } from './zoom.js';
-import { initScheduler } from './scheduler.js';
+import { initScheduler, recalculateDurationsFromDates } from './scheduler.js';
 import { initResponsive } from './responsive.js';
 import { initInlineEdit, addInlineEditStyles } from './inline-edit.js';
 import { initCriticalPath } from './critical-path.js';
@@ -38,17 +38,16 @@ import { initSnapping } from './snapping.js';
 import { computeFieldOrderFromGridColumns, hasFieldOrderChanged } from './column-reorder-sync.js';
 import { initRowSortable } from './row-reorder.js';
 import { buildNewTaskPayload, getTaskByAnyId, normalizeToDayStart } from './new-task-payload.js';
-import { prefetchHolidays } from '../calendar/holidayFetcher.js';
+import { ensureHolidaysCached, prefetchHolidays } from '../calendar/holidayFetcher.js';
 import { getAllCustomDays, getCalendarSettings, db } from '../../core/storage.js';
 import { syncGanttWorkTimeCalendar } from './calendar-worktime.js';
-
-function toLocalDateStr(date) {
-    const d = date instanceof Date ? date : new Date(date);
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${y}-${m}-${day}`;
-}
+import { getCalendarDayClasses } from './calendar-day-class.js';
+import { getTaskSearchClass, isTaskVisibleForSearch } from './task-search.js';
+import {
+    getAssigneeFocusClass,
+    isTaskVisibleForAssigneeFocus,
+    renderAssigneeFocusLabel,
+} from './assignee-focus.js';
 
 function openNewTaskFlow(payload) {
     if (!payload || !payload.defaults) return;
@@ -150,6 +149,15 @@ function pickBestRichContent(task, preferredField = 'summary') {
     return { field: bestField, html: bestHtml };
 }
 
+function escapeTaskBarText(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 function syncFieldOrderFromColumns(columns) {
     const previousOrder = Array.isArray(state.fieldOrder) ? state.fieldOrder : [];
     if (previousOrder.length === 0) return;
@@ -181,6 +189,10 @@ function bindGridColumnReorderSync() {
         syncFieldOrderFromColumns(gantt.config.columns || []);
         return true;
     });
+}
+
+function getTaskDisplayClasses(task) {
+    return [getTaskSearchClass(task), getAssigneeFocusClass(task)].filter(Boolean);
 }
 
 function stretchTextColumnToGridWidth() {
@@ -522,24 +534,21 @@ export function initGantt() {
                 return date.getMonth() + 1 + '月' + date.getDate() + '日';
             },
             css: function (date) {
-                const classes = [];
-                const day = date.getDay();
-                if (day === 0 || day === 6) classes.push('weekend');
-                // 节假日背景色通过全局缓存 Map 查询（由 initCalendarHighlightCache 填充）
-                const dateStr = toLocalDateStr(date);
-                const hlType = window.__calendarHighlightCache?.get(dateStr);
-                if (hlType === 'holiday') classes.push('gantt-day-holiday');
-                if (hlType === 'makeupday') classes.push('gantt-day-makeupday');
-                if (hlType === 'overtime') classes.push('gantt-day-overtime');
-                if (hlType === 'companyday') classes.push('gantt-day-companyday');
-                return classes.join(' ');
+                return getCalendarDayClasses(date);
             },
         },
     ];
 
+    gantt.templates.timeline_cell_class = function (task, date) {
+        return getCalendarDayClasses(date);
+    };
+
     // 任务文本模板 - 恢复内部显示
     gantt.templates.task_text = function (start, end, task) {
-        return task.text;
+        const text = escapeTaskBarText(task.text || '');
+        const label = renderAssigneeFocusLabel(task);
+        if (!label) return text;
+        return `<span class="gantt-assignee-focus-content"><span class="gantt-assignee-focus-title">${text}</span>${label}</span>`;
     };
     gantt.templates.rightside_text = function () {
         return '';
@@ -552,7 +561,7 @@ export function initGantt() {
 
     // 任务样式模板
     gantt.templates.task_class = function (start, end, task) {
-        const classes = [];
+        const classes = getTaskDisplayClasses(task);
 
         // Milestone
         if (task.type === 'milestone') {
@@ -593,18 +602,26 @@ export function initGantt() {
     };
 
     gantt.templates.grid_row_class = function (start, end, task) {
+        const classes = getTaskDisplayClasses(task);
         if (isTaskSelected(task.id)) {
-            return 'gantt-selected';
+            classes.push('gantt-selected');
         }
-        return '';
+        return classes.join(' ');
     };
 
     gantt.templates.task_row_class = function (start, end, task) {
+        const classes = getTaskDisplayClasses(task);
         if (isTaskSelected(task.id)) {
-            return 'gantt-selected';
+            classes.push('gantt-selected');
         }
-        return '';
+        return classes.join(' ');
     };
+
+    gantt.attachEvent('onBeforeTaskDisplay', function (id, task) {
+        return (
+            isTaskVisibleForSearch(task) && isTaskVisibleForAssigneeFocus(task, undefined, gantt)
+        );
+    });
 
     // 从 localStorage 恢复左侧宽度
     let savedGridWidth = 600;
@@ -1171,6 +1188,32 @@ async function initCalendarHighlightCache() {
  * 从 IndexedDB 读取节假日并刷新高亮缓存
  * 在用户修改日历设置后调用
  */
+function addDateYear(years, date) {
+    const d = date instanceof Date ? date : new Date(date);
+    if (!Number.isNaN(d.getTime())) {
+        years.add(d.getFullYear());
+    }
+}
+
+export function collectHolidayHighlightYears(ganttApi = gantt, now = new Date()) {
+    const years = new Set();
+    addDateYear(years, now);
+    years.add(now.getFullYear() + 1);
+
+    const stateRange = typeof ganttApi?.getState === 'function' ? ganttApi.getState() : null;
+    addDateYear(years, stateRange?.min_date);
+    addDateYear(years, stateRange?.max_date);
+
+    if (typeof ganttApi?.eachTask === 'function') {
+        ganttApi.eachTask((task) => {
+            addDateYear(years, task?.start_date);
+            addDateYear(years, task?.end_date);
+        });
+    }
+
+    return [...years].sort((a, b) => a - b);
+}
+
 export async function refreshHolidayHighlightCache() {
     if (typeof window === 'undefined') return;
 
@@ -1195,11 +1238,13 @@ export async function refreshHolidayHighlightCache() {
         cache.set(c.date, c.isOffDay ? 'companyday' : 'overtime');
     }
 
-    const thisYear = new Date().getFullYear();
     const { countryCode } = await getCalendarSettings();
+    const years = collectHolidayHighlightYears(gantt);
+    await Promise.all(years.map((year) => ensureHolidaysCached(year, countryCode)));
+
     const holidays = await db.calendar_holidays
         .where('year')
-        .anyOf([thisYear, thisYear + 1])
+        .anyOf(years)
         .filter((h) => h.countryCode === countryCode)
         .toArray();
 
@@ -1214,5 +1259,6 @@ export async function refreshHolidayHighlightCache() {
         holidays,
         customs,
     });
+    recalculateDurationsFromDates();
     gantt.render();
 }

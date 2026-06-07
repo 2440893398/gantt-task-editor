@@ -3,13 +3,22 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import ExcelJS from 'exceljs';
 import {
     exportConfig,
     exportFullBackup,
+    importFullBackup,
     importConfig,
+    importFromExcel,
     initConfigIO,
 } from '../../src/features/config/configIO.js';
 import { state } from '../../src/core/store.js';
+
+vi.mock('../../src/features/gantt/scheduler.js', () => ({
+    recalculateAllParentRollups: vi.fn(),
+}));
+
+import { recalculateAllParentRollups } from '../../src/features/gantt/scheduler.js';
 
 describe('配置导出', () => {
     beforeEach(() => {
@@ -171,6 +180,57 @@ describe('JSON backup import/export', () => {
 
         expect(state.customFields).toEqual([{ name: 'owner', label: 'Owner', type: 'text' }]);
     });
+
+    it('importFullBackup recalculates parent rollups before persisting restored gantt data', async () => {
+        const backup = {
+            version: '2.0.0',
+            exportTime: '2026-01-01T00:00:00.000Z',
+            metadata: { taskCount: 2, linkCount: 0 },
+            data: {
+                tasks: [
+                    { id: 1, text: 'Parent', start_date: '2026-01-01', duration: 1 },
+                    { id: 2, text: 'Child', parent: 1, start_date: '2026-01-03', duration: 2 },
+                ],
+                links: [],
+            },
+        };
+        const saveGanttData = vi.fn();
+
+        global.DecompressionStream = class {};
+        global.Response = vi.fn(function () {
+            this.text = vi.fn(() => Promise.resolve(JSON.stringify(backup)));
+        });
+        global.confirm = vi.fn(() => true);
+        global.gantt = {
+            batchUpdate: vi.fn((callback) => callback()),
+            clearAll: vi.fn(),
+            parse: vi.fn(),
+            serialize: vi.fn(() => ({ data: [{ id: 1, text: 'Normalized parent' }], links: [] })),
+        };
+        state.currentProjectId = 'project-a';
+
+        const storage = await import('../../src/core/storage.js');
+        vi.spyOn(storage, 'projectScope').mockReturnValue({
+            saveGanttData,
+            saveBaseline: vi.fn(),
+            getBaseline: vi.fn(),
+        });
+
+        const file = {
+            name: 'backup.json.gz',
+            stream: vi.fn(() => ({
+                pipeThrough: vi.fn(() => 'decompressed-stream'),
+            })),
+        };
+
+        await importFullBackup(file);
+
+        expect(recalculateAllParentRollups).toHaveBeenCalled();
+        expect(saveGanttData).toHaveBeenCalledWith({
+            data: [{ id: 1, text: 'Normalized parent' }],
+            links: [],
+        });
+    });
 });
 
 describe('配置导入', () => {
@@ -258,6 +318,61 @@ describe('配置导入', () => {
         importConfig(undefined);
 
         expect(state.customFields).toHaveLength(0);
+    });
+});
+
+describe('Excel 导入', () => {
+    beforeEach(() => {
+        state.currentProjectId = 'project-a';
+        state.customFields = [];
+        state.fieldOrder = [
+            'text',
+            'priority',
+            'assignee',
+            'status',
+            'description',
+            'start_date',
+            'end_date',
+            'duration',
+            'progress',
+        ];
+
+        global.gantt = {
+            batchUpdate: vi.fn((callback) => callback()),
+            clearAll: vi.fn(),
+            parse: vi.fn(),
+            calculateDuration: vi.fn(() => 1),
+            calculateEndDate: vi.fn((date) => new Date(date)),
+        };
+    });
+
+    it('导入中文描述列后保留到任务描述字段', async () => {
+        const workbook = new ExcelJS.Workbook();
+        const worksheet = workbook.addWorksheet('任务列表');
+        worksheet.addRow(['层级', '任务名称', '描述', '计划开始', '计划截止']);
+        worksheet.addRow([
+            '1',
+            '用户组织-部门打标签功能',
+            '<p>导入的详细描述</p>',
+            '2026-06-06',
+            '2026-06-06',
+        ]);
+
+        const buffer = await workbook.xlsx.writeBuffer();
+        const file = {
+            arrayBuffer: vi.fn(async () => buffer),
+        };
+
+        await importFromExcel(file);
+
+        expect(global.gantt.parse).toHaveBeenCalledWith({
+            data: [
+                expect.objectContaining({
+                    text: '用户组织-部门打标签功能',
+                    description: '<p>导入的详细描述</p>',
+                }),
+            ],
+        });
     });
 });
 

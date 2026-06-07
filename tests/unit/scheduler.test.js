@@ -15,6 +15,7 @@
 
 import 'fake-indexeddb/auto';
 import { describe, test, expect, vi, beforeEach } from 'vitest';
+vi.unmock('../../src/features/gantt/scheduler.js');
 import {
     isWorkDay,
     getNextWorkDay,
@@ -22,6 +23,12 @@ import {
     detectCycle,
     calculateWBS,
     updateParentDates,
+    calculateTaskSubtreeDuration,
+    recalculateParentTask,
+    recalculateParentChain,
+    recalculateAllParentRollups,
+    recalculateDurationsFromDates,
+    initScheduler,
 } from '../../src/features/gantt/scheduler.js';
 
 // ========================================
@@ -278,6 +285,219 @@ describe('边界条件测试', () => {
 });
 
 describe('父任务字段联动 (Parent Field Rollup)', () => {
+    test('recalculateParentTask sets duration from direct child duration sum', () => {
+        const parent = {
+            id: 100,
+            parent: 0,
+            start_date: new Date('2026-02-01'),
+            end_date: new Date('2026-02-02'),
+            duration: 1,
+        };
+        const child1 = {
+            id: 1,
+            parent: 100,
+            start_date: new Date('2026-02-03'),
+            end_date: new Date('2026-02-05'),
+            duration: 2,
+        };
+        const child2 = {
+            id: 2,
+            parent: 100,
+            start_date: new Date('2026-02-01'),
+            end_date: new Date('2026-02-10'),
+            duration: 4,
+        };
+
+        global.gantt = {
+            getTask: vi.fn((id) => ({ 1: child1, 2: child2, 100: parent })[id]),
+            getChildren: vi.fn((id) => (id === 100 ? [1, 2] : [])),
+            calculateDuration: vi.fn(() => 7),
+            updateTask: vi.fn(),
+        };
+
+        recalculateParentTask(100);
+
+        expect(parent.start_date).toEqual(new Date('2026-02-01'));
+        expect(parent.end_date).toEqual(new Date('2026-02-10'));
+        expect(parent.duration).toBe(6);
+        expect(parent.schedule_mode).toBe('start_end');
+        expect(global.gantt.calculateDuration).not.toHaveBeenCalled();
+        expect(global.gantt.updateTask).toHaveBeenCalledWith(100);
+    });
+
+    test('recalculateParentChain updates the parent and ancestors', () => {
+        const root = {
+            id: 10,
+            parent: 0,
+            start_date: new Date('2026-01-01'),
+            end_date: new Date('2026-01-02'),
+            duration: 1,
+        };
+        const parent = {
+            id: 20,
+            parent: 10,
+            start_date: new Date('2026-01-03'),
+            end_date: new Date('2026-01-04'),
+            duration: 1,
+        };
+        const child = {
+            id: 30,
+            parent: 20,
+            start_date: new Date('2026-01-05'),
+            end_date: new Date('2026-01-08'),
+            duration: 3,
+        };
+
+        global.gantt = {
+            getTask: vi.fn((id) => ({ 10: root, 20: parent, 30: child })[id]),
+            getChildren: vi.fn((id) => {
+                if (id === 10) return [20];
+                if (id === 20) return [30];
+                return [];
+            }),
+            calculateDuration: vi.fn((start, end) => Math.round((end - start) / 86400000)),
+            updateTask: vi.fn(),
+        };
+
+        recalculateParentChain(30, { startsFromTask: true });
+
+        expect(parent.start_date).toEqual(new Date('2026-01-05'));
+        expect(parent.end_date).toEqual(new Date('2026-01-08'));
+        expect(root.start_date).toEqual(new Date('2026-01-05'));
+        expect(root.end_date).toEqual(new Date('2026-01-08'));
+        expect(global.gantt.updateTask).toHaveBeenNthCalledWith(1, 20);
+        expect(global.gantt.updateTask).toHaveBeenNthCalledWith(2, 10);
+    });
+
+    test('recalculateAllParentRollups updates deepest parents before ancestors', () => {
+        const root = {
+            id: 10,
+            parent: 0,
+            start_date: new Date('2026-01-01'),
+            end_date: new Date('2026-01-02'),
+            duration: 1,
+        };
+        const parent = {
+            id: 20,
+            parent: 10,
+            start_date: new Date('2026-01-03'),
+            end_date: new Date('2026-01-04'),
+            duration: 1,
+        };
+        const child = {
+            id: 30,
+            parent: 20,
+            start_date: new Date('2026-01-05'),
+            end_date: new Date('2026-01-08'),
+            duration: 3,
+        };
+        const tasks = { 10: root, 20: parent, 30: child };
+
+        global.gantt = {
+            getTask: vi.fn((id) => tasks[id]),
+            getChildren: vi.fn((id) => {
+                if (id === 10) return [20];
+                if (id === 20) return [30];
+                return [];
+            }),
+            eachTask: vi.fn((callback) => {
+                callback(root);
+                callback(parent);
+                callback(child);
+            }),
+            calculateDuration: vi.fn((start, end) => Math.round((end - start) / 86400000)),
+            updateTask: vi.fn(),
+        };
+
+        recalculateAllParentRollups();
+
+        expect(global.gantt.updateTask).toHaveBeenNthCalledWith(1, 20);
+        expect(global.gantt.updateTask).toHaveBeenNthCalledWith(2, 10);
+        expect(root.start_date).toEqual(new Date('2026-01-05'));
+        expect(root.end_date).toEqual(new Date('2026-01-08'));
+    });
+
+    test('recalculateDurationsFromDates updates durations without moving dates', () => {
+        const parent = {
+            id: 10,
+            parent: 0,
+            start_date: new Date('2026-01-01'),
+            end_date: new Date('2026-01-10'),
+            duration: 1,
+        };
+        const child = {
+            id: 20,
+            parent: 10,
+            start_date: new Date('2026-01-02'),
+            end_date: new Date('2026-01-08'),
+            duration: 1,
+        };
+        const originalStart = child.start_date;
+        const originalEnd = child.end_date;
+        const tasks = { 10: parent, 20: child };
+
+        global.gantt = {
+            getTask: vi.fn((id) => tasks[id]),
+            getChildren: vi.fn((id) => (id === 10 ? [20] : [])),
+            eachTask: vi.fn((callback) => {
+                callback(parent);
+                callback(child);
+            }),
+            calculateDuration: vi.fn((start, end) => Math.round((end - start) / 86400000)),
+            updateTask: vi.fn(),
+        };
+
+        recalculateDurationsFromDates();
+
+        expect(child.start_date).toBe(originalStart);
+        expect(child.end_date).toBe(originalEnd);
+        expect(child.duration).toBe(6);
+        expect(parent.duration).toBe(6);
+    });
+
+    test('calculateTaskSubtreeDuration ignores parent span durations and sums nested child durations', () => {
+        const parent = {
+            id: 100,
+            parent: 0,
+            duration: 45,
+        };
+        const summaryChild = {
+            id: 200,
+            parent: 100,
+            duration: 27,
+        };
+        const leafChild = {
+            id: 201,
+            parent: 200,
+            duration: 1,
+        };
+        const directLeaf = {
+            id: 202,
+            parent: 100,
+            duration: 3,
+        };
+        const tasks = {
+            100: parent,
+            200: summaryChild,
+            201: leafChild,
+            202: directLeaf,
+        };
+
+        global.gantt = {
+            getTask: vi.fn((id) => tasks[id]),
+            getChildren: vi.fn((id) => {
+                if (id === 100) return [200, 202];
+                if (id === 200) return [201];
+                return [];
+            }),
+            calculateDuration: vi.fn(() => 99),
+        };
+
+        expect(calculateTaskSubtreeDuration(100)).toBe(4);
+        expect(calculateTaskSubtreeDuration(200)).toBe(1);
+        expect(calculateTaskSubtreeDuration(202)).toBe(3);
+    });
+
     test('updateParentDates should roll up status assignee and hours', () => {
         const parent = {
             id: 100,
@@ -296,6 +516,7 @@ describe('父任务字段联动 (Parent Field Rollup)', () => {
             parent: 100,
             start_date: new Date('2026-02-02'),
             end_date: new Date('2026-02-04'),
+            duration: 2,
             status: 'completed',
             progress: 1,
             assignee: '张三',
@@ -308,6 +529,7 @@ describe('父任务字段联动 (Parent Field Rollup)', () => {
             parent: 100,
             start_date: new Date('2026-02-04'),
             end_date: new Date('2026-02-06'),
+            duration: 2,
             status: 'completed',
             progress: 0.5,
             assignee: '张三',
@@ -369,5 +591,91 @@ describe('父任务字段联动 (Parent Field Rollup)', () => {
         updateParentDates(3);
         expect(parent.assignee).toBe('项目经理');
         expect(parent.status).toBe('in_progress');
+    });
+});
+
+describe('scheduler parent rollup events', () => {
+    test('duration recalculation does not reschedule successor tasks through update events', () => {
+        const predecessor = {
+            id: 1,
+            parent: 0,
+            start_date: new Date('2026-02-01'),
+            end_date: new Date('2026-02-06'),
+            duration: 1,
+        };
+        const successor = {
+            id: 2,
+            parent: 0,
+            start_date: new Date('2026-02-10'),
+            end_date: new Date('2026-02-12'),
+            duration: 2,
+        };
+        const handlers = {};
+
+        global.gantt = {
+            attachEvent: vi.fn((name, handler) => {
+                handlers[name] = handler;
+            }),
+            getTask: vi.fn((id) => ({ 1: predecessor, 2: successor })[id]),
+            getChildren: vi.fn(() => []),
+            getLinks: vi.fn(() => [{ source: 1, target: 2, type: '0' }]),
+            eachTask: vi.fn((callback) => {
+                callback(predecessor);
+                callback(successor);
+            }),
+            calculateDuration: vi.fn(() => 5),
+            updateTask: vi.fn((id) => {
+                handlers.onAfterTaskUpdate?.(id, global.gantt.getTask(id));
+            }),
+        };
+
+        initScheduler();
+        recalculateDurationsFromDates();
+
+        expect(global.gantt.getLinks).not.toHaveBeenCalled();
+        expect(successor.start_date).toEqual(new Date('2026-02-10'));
+        expect(successor.end_date).toEqual(new Date('2026-02-12'));
+    });
+
+    test('task add/delete events recalculate the affected parent chain', () => {
+        const parent = {
+            id: 100,
+            parent: 0,
+            start_date: new Date('2026-02-01'),
+            end_date: new Date('2026-02-02'),
+            duration: 1,
+        };
+        const child = {
+            id: 1,
+            parent: 100,
+            start_date: new Date('2026-02-03'),
+            end_date: new Date('2026-02-06'),
+            duration: 3,
+        };
+        const handlers = {};
+
+        global.gantt = {
+            attachEvent: vi.fn((name, handler) => {
+                handlers[name] = handler;
+            }),
+            getTask: vi.fn((id) => ({ 1: child, 100: parent })[id]),
+            getChildren: vi.fn((id) => (id === 100 ? [1] : [])),
+            getLinks: vi.fn(() => []),
+            calculateDuration: vi.fn(() => 3),
+            updateTask: vi.fn(),
+        };
+
+        initScheduler();
+
+        handlers.onAfterTaskAdd(1, child);
+        expect(global.gantt.updateTask).toHaveBeenCalledWith(100);
+
+        parent.duration = 1;
+        global.gantt.updateTask.mockClear();
+
+        expect(handlers.onBeforeTaskDelete(1, child)).toBe(true);
+        handlers.onAfterTaskDelete(1, child);
+
+        expect(global.gantt.updateTask).toHaveBeenCalledWith(100);
     });
 });

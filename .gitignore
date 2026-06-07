@@ -28,6 +28,8 @@ Thumbs.db
 # .env -- 包含公开追踪 ID (GA4/Clarity)，可提交
 .env.local
 .env.*.local
+.dev.vars
+.wrangler/
 
 # Testing
 .playwright-report/

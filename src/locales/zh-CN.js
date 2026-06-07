@@ -354,6 +354,7 @@ export default {
 
     // DHTMLX Gantt 标签
     gantt: {
+        dragToReorder: '拖动调整顺序',
         labels: {
             new_task: '新任务',
             icon_save: '保存',
@@ -534,6 +535,13 @@ export default {
             viewDetails: '查看详情',
             originalError: '原始错误信息',
         },
+    },
+    assigneeFocus: {
+        all: '全部负责人',
+        unassigned: '未分配',
+        dimMode: '聚焦',
+        onlyMode: '只看此人',
+        selectLabel: '负责人聚焦',
     },
     baseline: {
         save: '保存基线',

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import undoManager, {
     saveState,
+    saveReorderState,
     undo,
     redo,
     canUndo,
@@ -9,6 +10,12 @@ import undoManager, {
     getRedoStackSize,
     clearHistory,
 } from '../../../../src/features/ai/services/undoManager.js';
+
+vi.mock('../../../../src/features/gantt/scheduler.js', () => ({
+    recalculateParentChain: vi.fn(),
+}));
+
+import { recalculateParentChain } from '../../../../src/features/gantt/scheduler.js';
 
 // Mock global gantt
 const mockTask = {
@@ -56,6 +63,15 @@ describe('UndoManager (F-201)', () => {
             summary: 'Task summary',
             parent: 0,
             open: true,
+        };
+        global.gantt = {
+            getTask: vi.fn((id) => {
+                if (id === mockTask.id) {
+                    return currentTaskState;
+                }
+                return null;
+            }),
+            updateTask: vi.fn(),
         };
     });
 
@@ -189,6 +205,45 @@ describe('UndoManager (F-201)', () => {
             redo();
 
             expect(getUndoStackSize()).toBe(1);
+        });
+    });
+
+    describe('reorder undo/redo rollup', () => {
+        it('should recalculate affected parent chains when applying reorder snapshots', () => {
+            const tasks = {
+                1: { id: '1', parent: 0, sortorder: 0 },
+                2: { id: '2', parent: 0, sortorder: 1 },
+                3: { id: '3', parent: '2', sortorder: 0 },
+            };
+
+            global.gantt = {
+                getTask: vi.fn((id) => tasks[String(id)]),
+                updateTask: vi.fn(),
+                render: vi.fn(),
+            };
+
+            saveReorderState(
+                [
+                    { id: '1', parent: 0, sortorder: 0 },
+                    { id: '2', parent: 0, sortorder: 1 },
+                    { id: '3', parent: '1', sortorder: 0 },
+                ],
+                [
+                    { id: '1', parent: 0, sortorder: 0 },
+                    { id: '2', parent: 0, sortorder: 1 },
+                    { id: '3', parent: '2', sortorder: 0 },
+                ]
+            );
+
+            expect(undo()).toBe(true);
+            expect(recalculateParentChain).toHaveBeenCalledWith('2');
+            expect(recalculateParentChain).toHaveBeenCalledWith('1');
+
+            vi.mocked(recalculateParentChain).mockClear();
+
+            expect(redo()).toBe(true);
+            expect(recalculateParentChain).toHaveBeenCalledWith('1');
+            expect(recalculateParentChain).toHaveBeenCalledWith('2');
         });
     });
 

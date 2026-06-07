@@ -19,6 +19,7 @@ import { refreshLightbox } from '../lightbox/customization.js';
 import { i18n } from '../../utils/i18n.js';
 import { INTERNAL_PRIORITY_VALUES, INTERNAL_STATUS_VALUES } from '../../config/constants.js';
 import { inclusiveToExclusive } from '../../utils/time-formatter.js';
+import { recalculateAllParentRollups } from '../gantt/scheduler.js';
 
 /**
  * 当前备份文件的 Schema 版本号。
@@ -279,6 +280,7 @@ export async function importFullBackup(file) {
                 links: backup.data.links || [],
             });
         });
+        recalculateAllParentRollups();
 
         // 还原字段配置
         if (backup.data.customFields) {
@@ -442,6 +444,7 @@ function getAllColumnNameMappings() {
         'priority',
         'assignee',
         'status',
+        'description',
         'hierarchy',
     ];
 
@@ -1141,6 +1144,10 @@ export async function importFromExcel(file) {
                             : 0,
                 };
 
+                if (fieldIndexMap['description'] !== undefined) {
+                    task.description = rowData[fieldIndexMap['description']] || '';
+                }
+
                 // 若 Excel 提供了结束日期，将其转为 DHTMLX exclusive 边界后显式存入 end_date，
                 // 避免 DHTMLX 从 start_date+duration 重新计算（work_time 模式下会跳过周末导致偏移）。
                 if (endDate) {
@@ -1243,23 +1250,7 @@ export async function importFromExcel(file) {
         // 导入后，从叶子任务向上重新推算父任务时间
         // （gantt.parse 时父子关系尚未建立，onAfterTaskUpdate 不能正确聚合父级时间）
         try {
-            const { updateParentDates } = await import('../gantt/scheduler.js');
-            // 找出所有叶子任务（无子任务的任务），从它们开始向上更新
-            const leafTasks = [];
-            gantt.eachTask((task) => {
-                if (!gantt.hasChild(task.id)) {
-                    leafTasks.push(task.id);
-                }
-            });
-            // 去重后逐一触发父级时间聚合（updateParentDates 会递归向上）
-            const triggeredParents = new Set();
-            leafTasks.forEach((id) => {
-                const task = gantt.getTask(id);
-                if (task.parent && task.parent !== 0 && !triggeredParents.has(task.parent)) {
-                    updateParentDates(id);
-                    triggeredParents.add(task.parent);
-                }
-            });
+            recalculateAllParentRollups();
         } catch (e) {
             console.warn('[Import] 父任务时间聚合失败:', e);
         }

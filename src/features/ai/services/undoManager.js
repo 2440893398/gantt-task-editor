@@ -11,6 +11,8 @@
  * - 支持 add/delete 操作快照 (扩展)
  */
 
+import { recalculateParentChain } from '../../gantt/scheduler.js';
+
 // 撤回栈最大保存条数
 const MAX_HISTORY_SIZE = 50;
 
@@ -480,12 +482,20 @@ export function saveReorderState(before, after) {
 function _applyReorderSnapshot(items) {
     // 直接使用快照中的 sortorder 值，不重新计算
     // 因为快照已经记录了正确的顺序
+    const affectedParents = new Set();
+
     items.forEach(({ id, parent, sortorder }) => {
         try {
             const task = gantt.getTask(id);
             if (!task) {
                 console.warn('[UndoManager] _applyReorderSnapshot: task not found', id);
                 return;
+            }
+            if (task.parent && task.parent !== 0) {
+                affectedParents.add(task.parent);
+            }
+            if (parent && parent !== 0) {
+                affectedParents.add(parent);
             }
             // 直接恢复 parent 和 sortorder
             task.parent = parent ?? 0;
@@ -496,6 +506,7 @@ function _applyReorderSnapshot(items) {
         }
     });
 
+    affectedParents.forEach((parentId) => recalculateParentChain(parentId));
     gantt.render();
 }
 

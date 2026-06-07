@@ -24,6 +24,14 @@ Single test: `npx vitest run tests/unit/xxx.test.js`
 
 Vitest: jsdom, `pool: 'forks'`. Playwright: Chromium only.
 
+## AI Quality Gates
+
+Before code changes, classify the task using `docs/ai-development-quality-gates.md`.
+Use the minimum sufficient tier: Tier 0 for trivial/no-runtime changes, Tier 1 for small
+local fixes, Tier 2 for user-visible interactions, and Tier 3 for core flows such as
+drag/drop, hierarchy, links, persistence, calendar cache/worktime, batch operations, or
+undo/redo. Keep verification targeted, but include fresh evidence in the final response.
+
 ## Project Structure
 
 ```

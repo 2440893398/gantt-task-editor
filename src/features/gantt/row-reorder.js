@@ -7,6 +7,7 @@ import Sortable from 'sortablejs';
 import { state } from '../../core/store.js';
 import undoManager from '../ai/services/undoManager.js';
 import { showToast } from '../../utils/toast.js';
+import { recalculateParentChain } from './scheduler.js';
 
 const DROP_INDICATOR_CLASSES = [
     'row-drop-indicator-before',
@@ -79,7 +80,11 @@ function isSameParent(firstParent, secondParent) {
 }
 
 function getRowTaskId(row) {
-    return row ? row.getAttribute('task_id') : null;
+    const taskId = row ? row.getAttribute('task_id') : null;
+    if (taskId == null || taskId === '' || taskId === 'null' || taskId === 'undefined') {
+        return null;
+    }
+    return getTaskSafe(taskId) ? taskId : null;
 }
 
 function clearDropIndicator(row) {
@@ -114,8 +119,14 @@ function canDropAsChild(draggedTaskId, targetTaskId) {
 function resolveDropIntent(evt, draggedTaskId) {
     const relatedRow =
         evt.related && evt.related.closest ? evt.related.closest('.gantt_row') : null;
+    if (!draggedTaskId || !getTaskSafe(draggedTaskId)) {
+        return null;
+    }
     const relatedTaskId = getRowTaskId(relatedRow);
     const relatedTask = getTaskSafe(relatedTaskId);
+    if (!relatedTaskId || !relatedTask) {
+        return null;
+    }
     const pointerRatio = getPointerRatioInRow(relatedRow, evt.originalEvent);
 
     const isMiddleDrop =
@@ -266,9 +277,9 @@ function captureOrderSnapshot() {
         // 从 DOM 中按显示顺序读取任务 ID
         const rows = gridData.querySelectorAll('.gantt_row[task_id]');
         rows.forEach((row, index) => {
-            const taskId = row.getAttribute('task_id');
+            const taskId = getRowTaskId(row);
             if (!taskId) return;
-            const task = gantt.getTask(taskId);
+            const task = getTaskSafe(taskId);
             if (!task) return;
             snapshot.push({
                 id: task.id,
@@ -356,6 +367,14 @@ export function initRowSortable() {
             onMove(evt) {
                 const draggedTaskId = getRowTaskId(evt.dragged) || getRowTaskId(evt.item);
                 const intent = resolveDropIntent(evt, draggedTaskId);
+                if (!intent) {
+                    if (indicatorRow) {
+                        clearDropIndicator(indicatorRow);
+                    }
+                    indicatorRow = null;
+                    pendingDropIntent = null;
+                    return false;
+                }
                 const relatedRow = intent.row;
 
                 if (indicatorRow && indicatorRow !== relatedRow) {
@@ -421,7 +440,9 @@ export function initRowSortable() {
 
                 try {
                     // 获取新位置的上方兄弟行（用于推断 parent）
-                    const allRows = Array.from(gridData.querySelectorAll('.gantt_row[task_id]'));
+                    const allRows = Array.from(
+                        gridData.querySelectorAll('.gantt_row[task_id]')
+                    ).filter((row) => !!getRowTaskId(row));
                     const prevRow = newIndex > 0 ? allRows[newIndex - 1] : null;
                     const prevTaskId = getRowTaskId(prevRow);
 
@@ -431,6 +452,7 @@ export function initRowSortable() {
                         beforeSnapshot = null;
                         return;
                     }
+                    const oldParent = normalizeParent(draggedTask.parent);
 
                     const newParent = dropIntent?.parent ?? inferDropParent(prevTaskId);
 
@@ -450,6 +472,14 @@ export function initRowSortable() {
                         newParent
                     );
                     moveTaskToDropPosition(draggedTask, newParent, targetIndex);
+                    const movedTask = getTaskSafe(draggedTaskId);
+                    const movedParent = normalizeParent(movedTask?.parent ?? newParent);
+                    if (!isRootParent(oldParent)) {
+                        recalculateParentChain(oldParent);
+                    }
+                    if (!isRootParent(movedParent) && !isSameParent(oldParent, movedParent)) {
+                        recalculateParentChain(movedParent);
+                    }
 
                     // 重新渲染 Gantt 以同步 DOM 和数据
                     gantt.render();

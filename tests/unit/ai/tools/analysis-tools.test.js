@@ -131,6 +131,23 @@ describe('analysisTools', () => {
             expect(result.workload['Alice'].task_count).toBe(2);
             expect(result.workload['Bob'].task_count).toBe(1);
         });
+
+        it('excludes parent summary tasks from workload totals', async () => {
+            setupGantt([
+                { id: 1, text: 'Parent', assignee: 'Alice', duration: 10 },
+                { id: 2, text: 'Child A', assignee: 'Alice', duration: 3, _parent: 1 },
+                { id: 3, text: 'Child B', assignee: 'Alice', duration: 5, _parent: 1 },
+            ]);
+
+            const result = await analysisTools.get_resource_workload.execute();
+
+            expect(result.workload['Alice'].task_count).toBe(2);
+            expect(result.workload['Alice'].total_duration).toBe(8);
+            expect(result.workload['Alice'].tasks).toEqual([
+                { id: 2, text: 'Child A' },
+                { id: 3, text: 'Child B' },
+            ]);
+        });
     });
 
     describe('get_tasks_by_assignee', () => {

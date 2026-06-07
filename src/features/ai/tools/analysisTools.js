@@ -26,6 +26,12 @@ const taskIdSchema = jsonSchema({
     additionalProperties: false,
 });
 
+function isParentSummaryTask(task) {
+    if (typeof gantt === 'undefined' || typeof gantt.getChildren !== 'function') return false;
+    const children = gantt.getChildren(task.id) || [];
+    return children.length > 0;
+}
+
 /**
  * 13 个分析/读取工具
  */
@@ -134,6 +140,7 @@ export const analysisTools = {
             if (typeof gantt === 'undefined') return { error: 'Gantt 未初始化' };
             const workload = {};
             gantt.eachTask((task) => {
+                if (isParentSummaryTask(task)) return;
                 const assignee = task.assignee || '未分配';
                 if (!workload[assignee]) {
                     workload[assignee] = { task_count: 0, total_duration: 0, tasks: [] };

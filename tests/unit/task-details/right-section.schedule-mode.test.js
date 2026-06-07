@@ -157,4 +157,44 @@ describe('right-section schedule mode selector', () => {
         expect(global.gantt.updateTask).not.toHaveBeenCalled();
         expect(showToastMock).not.toHaveBeenCalled();
     });
+
+    it('renders parent task schedule fields as start/end read-only and ignores schedule mutations', async () => {
+        global.gantt.hasChild = vi.fn(() => true);
+        global.gantt.calculateEndDate = vi.fn(() => new Date('2026-03-10'));
+        const { renderRightSection, bindRightSectionEvents } =
+            await import('../../../src/features/task-details/right-section.js');
+
+        const task = {
+            id: 10,
+            text: 'Parent',
+            start_date: new Date('2026-03-01'),
+            end_date: new Date('2026-03-08'),
+            duration: 5,
+            progress: 0,
+        };
+        const html = renderRightSection(task);
+        expect(html).toContain('data-summary-readonly="1"');
+        expect(html).toContain('disabled');
+        expect(html).toContain('id="task-schedule-mode-summary"');
+        expect(renderSelectHTMLMock).not.toHaveBeenCalled();
+
+        const panel = document.createElement('div');
+        panel.innerHTML = html;
+        bindRightSectionEvents(panel, task);
+
+        const scheduleModeCall = setupSelectMock.mock.calls.find(
+            ([id]) => id === 'task-schedule-mode'
+        );
+        expect(scheduleModeCall).toBeFalsy();
+
+        const durationInput = panel.querySelector('#task-duration-input');
+        durationInput.value = '9';
+        durationInput.dispatchEvent(new Event('blur'));
+
+        expect(task.duration).toBe(5);
+        expect(task.end_date).toEqual(new Date('2026-03-08'));
+        expect(global.gantt.calculateEndDate).not.toHaveBeenCalled();
+        expect(saveStateMock).not.toHaveBeenCalled();
+        expect(global.gantt.updateTask).not.toHaveBeenCalled();
+    });
 });

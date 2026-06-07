@@ -22,6 +22,11 @@ vi.mock('../../../src/features/ai/services/undoManager.js', () => ({
     },
 }));
 
+vi.mock('../../../src/features/gantt/scheduler.js', () => ({
+    recalculateParentChain: vi.fn(),
+}));
+
+import { recalculateParentChain } from '../../../src/features/gantt/scheduler.js';
 import {
     initRowSortable,
     wouldCreateHierarchyCycle,
@@ -204,6 +209,61 @@ describe('row reorder move position', () => {
 
         expect(gantt.moveTask).toHaveBeenCalledWith('3', 0, '1');
         expect(gantt.render).toHaveBeenCalled();
+    });
+
+    test('recalculates old and new parent chains after moving between parents', () => {
+        document.body.innerHTML = `
+            <div class="gantt_grid_data">
+                <div class="gantt_row" task_id="1"><span class="gantt-drag-handle"></span></div>
+                <div class="gantt_row" task_id="2"><span class="gantt-drag-handle"></span></div>
+                <div class="gantt_row" task_id="3"><span class="gantt-drag-handle"></span></div>
+            </div>
+        `;
+
+        const tasks = {
+            1: { id: '1', parent: 0 },
+            2: { id: '2', parent: 0 },
+            3: { id: '3', parent: '1' },
+        };
+        const gridData = document.querySelector('.gantt_grid_data');
+        const newParentRow = gridData.querySelector('[task_id="2"]');
+        const draggedRow = gridData.querySelector('[task_id="3"]');
+
+        newParentRow.getBoundingClientRect = vi.fn(() => ({
+            top: 100,
+            height: 40,
+        }));
+
+        vi.stubGlobal('gantt', {
+            $grid_data: gridData,
+            getTask: vi.fn((id) => tasks[String(id)]),
+            getLinks: vi.fn(() => []),
+            hasChild: vi.fn((id) => String(id) === '1'),
+            moveTask: vi.fn((id, index, parent) => {
+                tasks[String(id)].parent = parent;
+            }),
+            updateTask: vi.fn(),
+            render: vi.fn(),
+        });
+
+        initRowSortable();
+
+        const sortableOptions = Sortable.create.mock.calls[0][1];
+        sortableOptions.onMove({
+            dragged: draggedRow,
+            related: newParentRow,
+            willInsertAfter: false,
+            originalEvent: { clientY: 120 },
+        });
+
+        sortableOptions.onEnd({
+            item: draggedRow,
+            oldIndex: 2,
+            newIndex: 2,
+        });
+
+        expect(recalculateParentChain).toHaveBeenCalledWith('1');
+        expect(recalculateParentChain).toHaveBeenCalledWith('2');
     });
 
     test('uses a line indicator at the top edge of a parent row', () => {
@@ -462,5 +522,55 @@ describe('row reorder move position', () => {
 
         expect(gantt.moveTask).toHaveBeenCalledWith('3', 1, 0);
         expect(gantt.render).toHaveBeenCalled();
+    });
+
+    test('ignores placeholder rows without valid task ids', () => {
+        document.body.innerHTML = `
+            <div class="gantt_grid_data">
+                <div class="gantt_row" task_id="1"><span class="gantt-drag-handle"></span></div>
+                <div class="gantt_row" task_id="null"><span class="gantt-drag-handle"></span></div>
+            </div>
+        `;
+
+        const tasks = {
+            1: { id: '1', parent: 0 },
+        };
+        const gridData = document.querySelector('.gantt_grid_data');
+        const validRow = gridData.querySelector('[task_id="1"]');
+        const placeholderRow = gridData.querySelector('[task_id="null"]');
+
+        vi.stubGlobal('gantt', {
+            $grid_data: gridData,
+            getTask: vi.fn((id) => {
+                const task = tasks[String(id)];
+                if (!task) throw new Error(`Task not found id=${id}`);
+                return task;
+            }),
+            getLinks: vi.fn(() => []),
+            hasChild: vi.fn(() => false),
+            moveTask: vi.fn(),
+            render: vi.fn(),
+        });
+
+        initRowSortable();
+
+        const sortableOptions = Sortable.create.mock.calls[0][1];
+        expect(
+            sortableOptions.onMove({
+                dragged: placeholderRow,
+                related: validRow,
+                willInsertAfter: false,
+                originalEvent: { clientY: 104 },
+            })
+        ).toBe(false);
+
+        sortableOptions.onEnd({
+            item: placeholderRow,
+            oldIndex: 1,
+            newIndex: 0,
+        });
+
+        expect(gantt.moveTask).not.toHaveBeenCalled();
+        expect(gantt.render).not.toHaveBeenCalled();
     });
 });

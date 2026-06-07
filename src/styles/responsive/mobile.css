@@ -12,7 +12,6 @@
    ======================================== */
 
 @media (max-width: 767px) {
-
     /* 隐藏时间轴区域 */
     .gantt_task,
     .gantt_task_scale,
@@ -49,6 +48,68 @@
         display: none !important;
     }
 
+    #task-toolbar {
+        align-items: stretch !important;
+        flex-wrap: wrap !important;
+        overflow: hidden !important;
+        padding: 8px !important;
+    }
+
+    #task-toolbar > .flex:first-child {
+        order: 1 !important;
+        flex: 1 1 100% !important;
+        flex-wrap: wrap !important;
+        gap: 6px !important;
+        min-width: 0 !important;
+    }
+
+    #task-toolbar > .flex:last-child {
+        order: 2 !important;
+        flex: 1 1 100% !important;
+        justify-content: flex-start !important;
+        min-width: 0 !important;
+        overflow-x: auto !important;
+        padding-bottom: 2px !important;
+    }
+
+    #project-picker-mount {
+        max-width: 130px !important;
+        min-width: 0 !important;
+    }
+
+    #assignee-focus-control {
+        flex: 1 1 auto !important;
+        min-width: 0 !important;
+        max-width: calc(100vw - 158px) !important;
+    }
+
+    .assignee-focus-control {
+        gap: 4px !important;
+        max-width: 100% !important;
+    }
+
+    .assignee-focus-select {
+        flex: 1 1 84px !important;
+        min-width: 84px !important;
+        max-width: 112px !important;
+        padding-left: 8px !important;
+    }
+
+    .assignee-focus-mode {
+        flex-shrink: 0 !important;
+    }
+
+    .assignee-focus-mode-btn {
+        padding: 0 7px !important;
+    }
+
+    #task-toolbar .relative.w-full.max-w-md {
+        order: 4 !important;
+        flex: 1 1 100% !important;
+        max-width: none !important;
+        min-width: 0 !important;
+    }
+
     /* 甘特图容器调整 */
     .gantt_container {
         padding-top: 100px !important;
@@ -57,7 +118,7 @@
 
     /* 任务行卡片化 */
     .gantt_row {
-        border: 1px solid var(--border-color, #E5E7EB) !important;
+        border: 1px solid var(--border-color, #e5e7eb) !important;
         border-radius: 12px !important;
         margin: 8px 12px !important;
         padding: 12px !important;
@@ -84,27 +145,27 @@
     }
 
     /* 任务名称突出显示 */
-    .gantt_cell[data-column-name="text"] {
+    .gantt_cell[data-column-name='text'] {
         flex: 1 1 100% !important;
         font-size: 16px !important;
         font-weight: 600 !important;
-        color: #1F2937 !important;
+        color: #1f2937 !important;
     }
 
     /* 日期、状态、负责人横排显示 */
-    .gantt_cell[data-column-name="start_date"],
-    .gantt_cell[data-column-name="status"],
-    .gantt_cell[data-column-name="assignee"] {
+    .gantt_cell[data-column-name='start_date'],
+    .gantt_cell[data-column-name='status'],
+    .gantt_cell[data-column-name='assignee'] {
         flex: 0 0 auto !important;
-        background: #F3F4F6 !important;
+        background: #f3f4f6 !important;
         border-radius: 6px !important;
         font-size: 12px !important;
     }
 
     /* 隐藏不必要的列 */
-    .gantt_cell[data-column-name="duration"],
-    .gantt_cell[data-column-name="progress"],
-    .gantt_cell[data-column-name="add"] {
+    .gantt_cell[data-column-name='duration'],
+    .gantt_cell[data-column-name='progress'],
+    .gantt_cell[data-column-name='add'] {
         display: none !important;
     }
 

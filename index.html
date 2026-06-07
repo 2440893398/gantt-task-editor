@@ -198,6 +198,7 @@
             <!-- Left: Search -->
             <div class="flex items-center gap-3 flex-1 min-w-0">
                 <div id="project-picker-mount" class="flex-shrink-0"></div>
+                <div id="assignee-focus-control" class="flex-shrink-0"></div>
                 <div class="relative w-full max-w-md">
                     <span
                         class="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-muted-foreground)] w-4 h-4 flex items-center justify-center shrink-0">
@@ -740,19 +741,6 @@
                         state.scale_mode === 'month' ? 'month' : 'quarter';
                 const newDate = gantt.date.add(state.min_date, 1, unit);
                 gantt.scrollTo(newDate);
-            });
-
-            // 任务搜索
-            const searchInput = document.getElementById('task-search-input');
-            searchInput?.addEventListener('input', (e) => {
-                const query = e.target.value.toLowerCase().trim();
-                gantt.eachTask(task => {
-                    const matches = !query || task.text.toLowerCase().includes(query);
-                    const el = gantt.getTaskRowNode(task.id);
-                    if (el) {
-                        el.style.display = matches ? '' : 'none';
-                    }
-                });
             });
 
             // 导入JSON

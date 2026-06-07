@@ -348,6 +348,7 @@ export default {
 
     // DHTMLX Gantt Labels
     gantt: {
+        dragToReorder: 'Drag to reorder',
         labels: {
             new_task: 'New Task',
             icon_save: 'Save',
@@ -511,6 +512,13 @@ export default {
             viewDetails: 'View details',
             originalError: 'Original error details',
         },
+    },
+    assigneeFocus: {
+        all: 'All assignees',
+        unassigned: 'Unassigned',
+        dimMode: 'Focus',
+        onlyMode: 'Only this person',
+        selectLabel: 'Assignee focus',
     },
     baseline: {
         save: 'Save Baseline',

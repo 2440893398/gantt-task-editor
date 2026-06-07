@@ -25,22 +25,96 @@ import undoManager from '../ai/services/undoManager.js';
 
 const dragSnapshotTaskIds = new Set();
 const dragDurationSnapshots = new Map();
+let pendingDeletedTaskParent = null;
+let suppressTaskUpdateReschedule = false;
 
-function getPositiveDuration(task) {
+function isRootParent(parentId) {
+    return parentId === null || parentId === undefined || parentId === 0 || parentId === '0';
+}
+
+function getTaskSafe(taskId) {
+    if (
+        isRootParent(taskId) ||
+        typeof gantt === 'undefined' ||
+        typeof gantt.getTask !== 'function'
+    ) {
+        return null;
+    }
+
+    try {
+        return gantt.getTask(taskId);
+    } catch {
+        return null;
+    }
+}
+
+function getParentDepth(parentId) {
+    let depth = 0;
+    let current = getTaskSafe(parentId);
+    const visited = new Set();
+
+    while (current && !isRootParent(current.parent)) {
+        const currentId = String(current.id);
+        if (visited.has(currentId)) break;
+        visited.add(currentId);
+        depth++;
+        current = getTaskSafe(current.parent);
+    }
+
+    return depth;
+}
+
+function getDefaultGanttApi() {
+    return typeof gantt === 'undefined' ? null : gantt;
+}
+
+function getPositiveDuration(task, ganttApi = getDefaultGanttApi()) {
     const duration = Number(task?.duration);
     if (Number.isFinite(duration) && duration > 0) return duration;
 
     if (
         task?.start_date &&
         task?.end_date &&
-        typeof gantt !== 'undefined' &&
-        typeof gantt.calculateDuration === 'function'
+        ganttApi &&
+        typeof ganttApi.calculateDuration === 'function'
     ) {
-        const calculated = Number(gantt.calculateDuration(task.start_date, task.end_date));
+        const calculated = Number(ganttApi.calculateDuration(task.start_date, task.end_date));
         if (Number.isFinite(calculated) && calculated > 0) return calculated;
     }
 
     return null;
+}
+
+export function calculateTaskSubtreeDuration(
+    taskOrId,
+    ganttApi = getDefaultGanttApi(),
+    visited = new Set()
+) {
+    if (!ganttApi) return 0;
+
+    const task =
+        taskOrId && typeof taskOrId === 'object'
+            ? taskOrId
+            : typeof ganttApi.getTask === 'function'
+              ? ganttApi.getTask(taskOrId)
+              : null;
+    if (!task) return 0;
+
+    const taskId = task.id ?? taskOrId;
+    const taskKey = String(taskId);
+    if (visited.has(taskKey)) return 0;
+    visited.add(taskKey);
+
+    const childIds =
+        typeof ganttApi.getChildren === 'function' ? ganttApi.getChildren(taskId) || [] : [];
+    if (!childIds.length) {
+        return getPositiveDuration(task, ganttApi) || 0;
+    }
+
+    return childIds.reduce((sum, childId) => {
+        const child = typeof ganttApi.getTask === 'function' ? ganttApi.getTask(childId) : null;
+        return sum + calculateTaskSubtreeDuration(child || childId, ganttApi, visited);
+    }, 0);
 }
 
 function preserveMoveDuration(id, mode) {
@@ -257,82 +331,173 @@ export function calculateWBS(parentId) {
 }
 
 /**
+ * Recalculate one parent task from its direct children.
+ * @param {string|number} parentId - Parent task ID
+ * @returns {boolean} true when the parent changed
+ */
+export function recalculateParentTask(parentId) {
+    const parent = getTaskSafe(parentId);
+    if (!parent) return false;
+
+    const wbs = calculateWBS(parentId);
+    if (!wbs) return false;
+
+    let changed = false;
+
+    const childIds = gantt.getChildren(parentId) || [];
+    const childTasks = childIds.map((id) => getTaskSafe(id)).filter(Boolean);
+
+    if (!parent.start_date || parent.start_date.getTime() !== wbs.start_date.getTime()) {
+        parent.start_date = wbs.start_date;
+        changed = true;
+    }
+
+    if (!parent.end_date || parent.end_date.getTime() !== wbs.end_date.getTime()) {
+        parent.end_date = wbs.end_date;
+        changed = true;
+    }
+
+    const nextDuration = childTasks.reduce(
+        (sum, child) => sum + calculateTaskSubtreeDuration(child),
+        0
+    );
+    if ((parent.duration || 0) !== nextDuration) {
+        parent.duration = nextDuration;
+        changed = true;
+    }
+
+    if (parent.schedule_mode !== 'start_end') {
+        parent.schedule_mode = 'start_end';
+        changed = true;
+    }
+
+    const nextStatus = rollupStatus(childTasks.map((c) => c.status));
+    if (nextStatus && parent.status !== nextStatus) {
+        parent.status = nextStatus;
+        changed = true;
+    }
+
+    const nextEstimatedHours = sumNumberField(childTasks.map((c) => c.estimated_hours));
+    if ((parent.estimated_hours || 0) !== nextEstimatedHours) {
+        parent.estimated_hours = nextEstimatedHours;
+        changed = true;
+    }
+
+    const nextActualHours = sumNumberField(childTasks.map((c) => c.actual_hours));
+    if ((parent.actual_hours || 0) !== nextActualHours) {
+        parent.actual_hours = nextActualHours;
+        changed = true;
+    }
+
+    const nextProgress = rollupProgress(childTasks);
+    if ((parent.progress || 0) !== nextProgress) {
+        parent.progress = nextProgress;
+        changed = true;
+    }
+
+    const lockAssignee = !!parent.parent_assignee_locked;
+    const nextAssignee = rollupAssignee(
+        childTasks.map((c) => c.assignee),
+        lockAssignee,
+        parent.assignee || ''
+    );
+    if ((parent.assignee || '') !== (nextAssignee || '')) {
+        parent.assignee = nextAssignee;
+        changed = true;
+    }
+
+    if (changed) {
+        gantt.updateTask(parentId);
+    }
+
+    return changed;
+}
+
+/**
+ * Recalculate a parent chain upward.
+ * @param {string|number} parentIdOrTaskId - Parent ID, or task ID when startsFromTask is true
+ * @param {{startsFromTask?: boolean}} options
+ */
+export function recalculateParentChain(parentIdOrTaskId, { startsFromTask = false } = {}) {
+    let parentId = parentIdOrTaskId;
+    if (startsFromTask) {
+        const task = getTaskSafe(parentIdOrTaskId);
+        parentId = task?.parent ?? 0;
+    }
+
+    const visited = new Set();
+    while (!isRootParent(parentId)) {
+        const parent = getTaskSafe(parentId);
+        if (!parent) return;
+
+        const parentKey = String(parentId);
+        if (visited.has(parentKey)) return;
+        visited.add(parentKey);
+
+        recalculateParentTask(parentId);
+        parentId = parent.parent ?? 0;
+    }
+}
+
+/**
+ * Recalculate every parent task, deepest parents first.
+ */
+export function recalculateAllParentRollups() {
+    if (typeof gantt === 'undefined' || typeof gantt.eachTask !== 'function') return;
+
+    const parentIds = new Set();
+    gantt.eachTask((task) => {
+        if (task && !isRootParent(task.parent)) {
+            parentIds.add(task.parent);
+        }
+    });
+
+    Array.from(parentIds)
+        .sort((a, b) => getParentDepth(b) - getParentDepth(a))
+        .forEach((parentId) => recalculateParentTask(parentId));
+}
+
+/**
+ * Recalculate task durations from existing dates under the current work calendar.
+ * Dates are not moved.
+ */
+export function recalculateDurationsFromDates() {
+    if (
+        typeof gantt === 'undefined' ||
+        typeof gantt.eachTask !== 'function' ||
+        typeof gantt.calculateDuration !== 'function'
+    ) {
+        return;
+    }
+
+    suppressTaskUpdateReschedule = true;
+    try {
+        gantt.eachTask((task) => {
+            if (!task?.start_date || !task?.end_date) return;
+
+            const nextDuration = gantt.calculateDuration(task.start_date, task.end_date);
+            if (!Number.isFinite(Number(nextDuration)) || nextDuration < 0) return;
+
+            if ((task.duration || 0) !== nextDuration) {
+                task.duration = nextDuration;
+                if (typeof gantt.updateTask === 'function') {
+                    gantt.updateTask(task.id);
+                }
+            }
+        });
+
+        recalculateAllParentRollups();
+    } finally {
+        suppressTaskUpdateReschedule = false;
+    }
+}
+
+/**
  * 更新父任务时间（递归向上）
  * @param {number} taskId - 任务 ID
  */
 export function updateParentDates(taskId) {
-    const task = gantt.getTask(taskId);
-    if (!task.parent || task.parent === 0) {
-        return;
-    }
-
-    const parentId = task.parent;
-    const parent = gantt.getTask(parentId);
-    const wbs = calculateWBS(parentId);
-
-    if (wbs) {
-        let changed = false;
-
-        const childIds = gantt.getChildren(parentId) || [];
-        const childTasks = childIds.map((id) => gantt.getTask(id)).filter(Boolean);
-
-        if (parent.start_date.getTime() !== wbs.start_date.getTime()) {
-            parent.start_date = wbs.start_date;
-            changed = true;
-        }
-
-        if (parent.end_date.getTime() !== wbs.end_date.getTime()) {
-            parent.end_date = wbs.end_date;
-            changed = true;
-        }
-
-        const nextDuration = gantt.calculateDuration(parent.start_date, parent.end_date);
-        if ((parent.duration || 0) !== nextDuration) {
-            parent.duration = nextDuration;
-            changed = true;
-        }
-
-        const nextStatus = rollupStatus(childTasks.map((c) => c.status));
-        if (nextStatus && parent.status !== nextStatus) {
-            parent.status = nextStatus;
-            changed = true;
-        }
-
-        const nextEstimatedHours = sumNumberField(childTasks.map((c) => c.estimated_hours));
-        if ((parent.estimated_hours || 0) !== nextEstimatedHours) {
-            parent.estimated_hours = nextEstimatedHours;
-            changed = true;
-        }
-
-        const nextActualHours = sumNumberField(childTasks.map((c) => c.actual_hours));
-        if ((parent.actual_hours || 0) !== nextActualHours) {
-            parent.actual_hours = nextActualHours;
-            changed = true;
-        }
-
-        const nextProgress = rollupProgress(childTasks);
-        if ((parent.progress || 0) !== nextProgress) {
-            parent.progress = nextProgress;
-            changed = true;
-        }
-
-        const lockAssignee = !!parent.parent_assignee_locked;
-        const nextAssignee = rollupAssignee(
-            childTasks.map((c) => c.assignee),
-            lockAssignee,
-            parent.assignee || ''
-        );
-        if ((parent.assignee || '') !== (nextAssignee || '')) {
-            parent.assignee = nextAssignee;
-            changed = true;
-        }
-
-        if (changed) {
-            gantt.updateTask(parentId);
-            // 递归更新祖父任务
-            updateParentDates(parentId);
-        }
-    }
+    recalculateParentChain(taskId, { startsFromTask: true });
 }
 
 // ========================================
@@ -358,7 +523,26 @@ function bindTaskChangeEvents() {
     // 任务更新后更新父任务
     gantt.attachEvent('onAfterTaskUpdate', function (id, task) {
         updateParentDates(id);
-        scheduleAsyncReschedule(id);
+        if (!suppressTaskUpdateReschedule) {
+            scheduleAsyncReschedule(id);
+        }
+        return true;
+    });
+
+    gantt.attachEvent('onAfterTaskAdd', function (id, task) {
+        const parentId = task?.parent ?? getTaskSafe(id)?.parent ?? 0;
+        recalculateParentChain(parentId);
+        return true;
+    });
+
+    gantt.attachEvent('onBeforeTaskDelete', function (id, task) {
+        pendingDeletedTaskParent = task?.parent ?? getTaskSafe(id)?.parent ?? 0;
+        return true;
+    });
+
+    gantt.attachEvent('onAfterTaskDelete', function () {
+        recalculateParentChain(pendingDeletedTaskParent);
+        pendingDeletedTaskParent = null;
         return true;
     });
 }

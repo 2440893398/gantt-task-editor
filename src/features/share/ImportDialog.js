@@ -8,6 +8,7 @@ import { createProject } from '../projects/manager.js';
 import { i18n } from '../../utils/i18n.js';
 import { showToast } from '../../utils/toast.js';
 import { updateGanttColumns } from '../gantt/columns.js';
+import { recalculateAllParentRollups } from '../gantt/scheduler.js';
 
 const MODAL_ID = 'import-share-modal';
 
@@ -93,7 +94,7 @@ export function openImportDialog(snapshot) {
     modal.showModal();
 }
 
-async function applySnapshot(snapshot, mode) {
+export async function applySnapshot(snapshot, mode) {
     let targetProjectId = state.currentProjectId;
 
     if (mode === 'new') {
@@ -121,6 +122,8 @@ async function applySnapshot(snapshot, mode) {
 
     // 切换到目标项目并刷新 UI
     await switchProject(targetProjectId);
+    recalculateAllParentRollups();
+    await scope.saveGanttData(gantt.serialize());
     updateGanttColumns();
 
     showToast(

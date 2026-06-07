@@ -257,6 +257,7 @@ export default {
 
     // DHTMLX Gantt ラベル
     gantt: {
+        dragToReorder: 'ドラッグして並べ替え',
         labels: {
             new_task: '新規タスク',
             icon_save: '保存',
@@ -473,6 +474,13 @@ export default {
             viewDetails: '詳細を見る',
             originalError: '元のエラー情報',
         },
+    },
+    assigneeFocus: {
+        all: 'すべての担当者',
+        unassigned: '未割り当て',
+        dimMode: 'フォーカス',
+        onlyMode: 'この人のみ',
+        selectLabel: '担当者フォーカス',
     },
     baseline: {
         save: 'ベースライン保存',

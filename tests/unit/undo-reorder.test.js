@@ -2,12 +2,41 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock gantt global
 const mockTasks = {
-    task1: { id: 'task1', parent: 0, $index: 0 },
-    task2: { id: 'task2', parent: 0, $index: 1 },
-    task3: { id: 'task3', parent: 'task1', $index: 0 },
+    task1: {
+        id: 'task1',
+        parent: 0,
+        $index: 0,
+        start_date: new Date('2026-01-01'),
+        end_date: new Date('2026-01-03'),
+        duration: 2,
+    },
+    task2: {
+        id: 'task2',
+        parent: 0,
+        $index: 1,
+        start_date: new Date('2026-01-04'),
+        end_date: new Date('2026-01-06'),
+        duration: 2,
+    },
+    task3: {
+        id: 'task3',
+        parent: 'task1',
+        $index: 0,
+        start_date: new Date('2026-01-02'),
+        end_date: new Date('2026-01-05'),
+        duration: 3,
+    },
 };
 global.gantt = {
     getTask: vi.fn((id) => mockTasks[id]),
+    getChildren: vi.fn((id) =>
+        Object.values(mockTasks)
+            .filter((task) => task.parent === id)
+            .map((task) => task.id)
+    ),
+    calculateDuration: vi.fn((startDate, endDate) =>
+        Math.max(0, Math.round((endDate - startDate) / (1000 * 60 * 60 * 24)))
+    ),
     updateTask: vi.fn(), // _applyReorderSnapshot sets task props then calls updateTask
     moveTask: vi.fn(),
     render: vi.fn(),

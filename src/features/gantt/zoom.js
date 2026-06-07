@@ -6,6 +6,7 @@
  */
 
 import { i18n } from '../../utils/i18n.js';
+import { getCalendarDayClasses } from './calendar-day-class.js';
 
 // 月份名称配置（各语言）
 const MONTH_NAMES = {
@@ -178,10 +179,7 @@ function getZoomLevels() {
                         return fmt.dayWeekday(date);
                     },
                     css: function (date) {
-                        if (date.getDay() === 0 || date.getDay() === 6) {
-                            return 'weekend';
-                        }
-                        return '';
+                        return getCalendarDayClasses(date);
                     },
                 },
             ],
@@ -204,10 +202,7 @@ function getZoomLevels() {
                         return fmt.monthDay(date);
                     },
                     css: function (date) {
-                        if (date.getDay() === 0 || date.getDay() === 6) {
-                            return 'weekend';
-                        }
-                        return '';
+                        return getCalendarDayClasses(date);
                     },
                 },
             ],

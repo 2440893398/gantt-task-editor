@@ -22,6 +22,7 @@ import { buildNewTaskPayload, getTaskByAnyId } from './new-task-payload.js';
 import { i18n } from '../../utils/i18n.js';
 import { showConfirmDialog } from '../../components/common/confirm-dialog.js';
 import { showToast } from '../../utils/toast.js';
+import { calculateTaskSubtreeDuration } from './scheduler.js';
 
 let taskActionHandlersBound = false;
 
@@ -374,7 +375,7 @@ export function updateGanttColumns() {
                 min_width: 56,
                 resize: true,
                 template: function (task) {
-                    const duration = task.duration || 0;
+                    const duration = calculateTaskSubtreeDuration(task) || task.duration || 0;
                     const formatted = formatDuration(duration);
                     return `<span title="${formatted}">${formatted}</span>`;
                 },

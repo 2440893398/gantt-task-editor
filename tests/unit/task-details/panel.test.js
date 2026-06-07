@@ -151,6 +151,23 @@ describe('task-details panel draft workflow', () => {
         expect(document.getElementById('task-details-overlay')).toBeNull();
     });
 
+    it('does not show discard confirmation for draft normalization during open', async () => {
+        const rightSection = await import('../../../src/features/task-details/right-section.js');
+        rightSection.bindRightSectionEvents.mockImplementationOnce((panel, task, context) => {
+            context.onDraftMutated((draft) => {
+                draft.end_date = new Date('2026-03-03');
+            });
+        });
+        const panel = await import('../../../src/features/task-details/panel.js');
+
+        panel.openTaskDetailsPanel(1);
+        panel.closeTaskDetailsPanel();
+        vi.runAllTimers();
+
+        expect(showConfirmDialogMock).not.toHaveBeenCalled();
+        expect(document.getElementById('task-details-overlay')).toBeNull();
+    });
+
     it('creates a new task only after confirm save in new-task flow', async () => {
         const panel = await import('../../../src/features/task-details/panel.js');
 

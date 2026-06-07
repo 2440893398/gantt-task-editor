@@ -10,6 +10,7 @@ import './styles/pages/gantt.css';
 
 // ========== 功能模块导入 ==========
 import { initGantt, setupGlobalEvents } from './features/gantt/init.js';
+import { bindTaskSearchInput } from './features/gantt/task-search.js';
 import { initCustomFieldsUI } from './features/customFields/manager.js';
 import { initBatchEdit } from './features/selection/batchEdit.js';
 import { initConfigIO, exportConfig } from './features/config/configIO.js';
@@ -41,6 +42,7 @@ import { openTaskDetailsPanel, openNewTaskDetailsPanel } from './features/task-d
 import { applyCurrentViewMode, initViewToggle } from './features/gantt/view-toggle.js';
 import undoManager from './features/ai/services/undoManager.js';
 import { initFeedbackModule } from './features/feedback/index.js';
+import { initAssigneeFocusControl } from './features/gantt/assignee-focus.js';
 
 // 挂载 exportConfig 到 window 以便 HTML 中调用
 window.exportConfig = exportConfig;
@@ -131,6 +133,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // 初始化甘特图（传入缓存恢复函数）
     await initGanttWithCache();
+
+    initAssigneeFocusControl(document.getElementById('assignee-focus-control'), gantt);
+    bindTaskSearchInput(document.getElementById('task-search-input'), gantt);
 
     // 检测并处理分享链接参数
     const { checkShareParam } = await import('./features/share/ImportDialog.js');
