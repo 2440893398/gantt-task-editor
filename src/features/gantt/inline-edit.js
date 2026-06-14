@@ -13,6 +13,7 @@ import { i18n } from '../../utils/i18n.js';
 import undoManager from '../ai/services/undoManager.js';
 // F-112: 任务详情面板
 import { openTaskDetailsPanel } from '../task-details/index.js';
+import { isReadOnlyCloudViewActive } from '../share/readOnlyCloudView.js';
 
 // 当前活跃的编辑器
 let activeEditor = null;
@@ -77,6 +78,8 @@ function bindDoubleClickEdit() {
     gantt.config.details_on_dblclick = false;
 
     gantt.attachEvent('onTaskDblClick', function (id, e) {
+        if (isReadOnlyCloudViewActive()) return false;
+
         const target = e.target;
         const cell = target.closest('.gantt_cell');
 

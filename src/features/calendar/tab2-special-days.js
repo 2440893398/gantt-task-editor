@@ -11,6 +11,7 @@ import { ensureHolidaysCached } from './holidayFetcher.js';
 import { refreshHolidayHighlightCache } from '../gantt/init.js';
 import { i18n } from '../../utils/i18n.js';
 import { resolveCountryByLocale } from './locale-country.js';
+import { notifyProjectSnapshotChanged } from '../share/cloudChangeEvent.js';
 
 let currentYear = new Date().getFullYear();
 let currentMonth = new Date().getMonth();
@@ -174,6 +175,7 @@ function showSpecialDayPopup(dateStr, dayEl, customs, parentContainer, event) {
     popup.querySelector('#popup-delete')?.addEventListener('click', async () => {
         await deleteCustomDay(existing.id);
         await refreshHolidayHighlightCache();
+        notifyProjectSnapshotChanged();
         closePopup();
         const newCustoms = await getAllCustomDays();
         const calView = parentContainer.querySelector('#t2-cal-view');
@@ -195,6 +197,7 @@ function showSpecialDayPopup(dateStr, dayEl, customs, parentContainer, event) {
         };
         await saveCustomDay(record);
         await refreshHolidayHighlightCache();
+        notifyProjectSnapshotChanged();
         closePopup();
         const newCustoms = await getAllCustomDays();
         const calView = parentContainer.querySelector('#t2-cal-view');
@@ -272,6 +275,7 @@ function renderTab2List(el, customs, parentContainer) {
         btn.addEventListener('click', async () => {
             await deleteCustomDay(btn.dataset.id);
             await refreshHolidayHighlightCache();
+            notifyProjectSnapshotChanged();
             const newCustoms = await getAllCustomDays();
             renderTab2List(el, newCustoms, parentContainer);
         });

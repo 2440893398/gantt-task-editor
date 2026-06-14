@@ -834,6 +834,8 @@ export function initGantt() {
 
     // 动态调整图例位置
     function updateLegendPosition() {
+        if (typeof document === 'undefined') return;
+
         const gridWidth = gantt.config.layout.cols[0].width;
         const resizerWidth = gantt.config.layout.cols[1].width || 6;
         const legend = document.getElementById('gantt-legend');

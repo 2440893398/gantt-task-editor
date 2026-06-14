@@ -16,6 +16,7 @@ const mockGetProjectTaskCount = vi.fn(async (id) => (id === 'prj_a' ? 3 : 1));
 const mockCreateProject = vi.fn(async ({ name, color }) => ({ id: 'prj_new', name, color }));
 const mockShowToast = vi.fn();
 const showConfirmDialogMock = vi.fn();
+const mockNotifyProjectSnapshotChanged = vi.fn();
 
 vi.mock('../../src/core/store.js', () => ({
     state: mockState,
@@ -44,6 +45,10 @@ vi.mock('../../src/components/common/confirm-dialog.js', () => ({
     showConfirmDialog: showConfirmDialogMock,
 }));
 
+vi.mock('../../src/features/share/cloudChangeEvent.js', () => ({
+    notifyProjectSnapshotChanged: mockNotifyProjectSnapshotChanged,
+}));
+
 describe('ProjectModal', () => {
     async function flushAsync() {
         await Promise.resolve();
@@ -66,6 +71,7 @@ describe('ProjectModal', () => {
         mockGetProjectTaskCount.mockImplementation(async (id) => (id === 'prj_a' ? 3 : 1));
         mockShowToast.mockReset();
         showConfirmDialogMock.mockReset();
+        mockNotifyProjectSnapshotChanged.mockReset();
 
         HTMLDialogElement.prototype.showModal = vi.fn();
         HTMLDialogElement.prototype.close = vi.fn();
@@ -98,6 +104,7 @@ describe('ProjectModal', () => {
         expect(dispatchSpy).toHaveBeenCalledWith(
             expect.objectContaining({ type: 'projectsUpdated' })
         );
+        expect(mockNotifyProjectSnapshotChanged).toHaveBeenCalledWith('prj_a');
         dispatchSpy.mockRestore();
     });
 
@@ -153,6 +160,7 @@ describe('ProjectModal', () => {
         expect(dispatchSpy).toHaveBeenCalledWith(
             expect.objectContaining({ type: 'projectsUpdated' })
         );
+        expect(mockNotifyProjectSnapshotChanged).toHaveBeenCalledWith('prj_a');
         dispatchSpy.mockRestore();
     });
 

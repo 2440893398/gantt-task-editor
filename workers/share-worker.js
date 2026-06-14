@@ -6,6 +6,8 @@
 
 const TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
 const FEEDBACK_TTL_SECONDS = 180 * 24 * 60 * 60; // 180 days
+const CLOUD_DOC_TTL_SECONDS = 365 * 24 * 60 * 60; // 365 days
+const CLOUD_DOC_CREATE_ATTEMPTS = 3;
 const MAX_FEEDBACK_BYTES = 18 * 1024 * 1024;
 const KEY_CHARS = 'abcdefghijklmnopqrstuvwxyz0123456789';
 const ADMIN_SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
@@ -28,7 +30,7 @@ function genKey(len = 8) {
 function corsHeaders() {
     return {
         'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, POST, PATCH, OPTIONS',
+        'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     };
 }
@@ -45,6 +47,255 @@ function jsonResponse(data, init = {}) {
 
 function errorResponse(message, status, headers = corsHeaders()) {
     return Response.json({ error: message }, { status, headers });
+}
+
+function isValidCloudDocId(value) {
+    return /^[a-z0-9]{16}$/.test(String(value || ''));
+}
+
+function isValidCloudDocToken(value) {
+    return /^[a-z0-9]{24}$/.test(String(value || ''));
+}
+
+function normalizeCloudDocSnapshot(data) {
+    if (!data || typeof data !== 'object') return null;
+    if (!Array.isArray(data.tasks) || !Array.isArray(data.links)) return null;
+
+    return {
+        schemaVersion: Number(data.schemaVersion) || 1,
+        exportedAt: data.exportedAt || new Date().toISOString(),
+        project: {
+            name: String(data.project?.name || ''),
+            color: String(data.project?.color || '#4f46e5'),
+            description: String(data.project?.description || ''),
+        },
+        tasks: data.tasks,
+        links: data.links,
+        customFields: Array.isArray(data.customFields) ? data.customFields : [],
+        fieldOrder: Array.isArray(data.fieldOrder) ? data.fieldOrder : [],
+        systemFieldSettings:
+            data.systemFieldSettings && typeof data.systemFieldSettings === 'object'
+                ? data.systemFieldSettings
+                : {},
+        baseline: data.baseline || null,
+        calendar: {
+            settings: data.calendar?.settings || null,
+            customDays: Array.isArray(data.calendar?.customDays) ? data.calendar.customDays : [],
+            leaves: Array.isArray(data.calendar?.leaves) ? data.calendar.leaves : [],
+        },
+    };
+}
+
+function getCloudDocStub(env, docId) {
+    if (!env.CLOUD_DOCS || typeof env.CLOUD_DOCS.idFromName !== 'function') {
+        return null;
+    }
+
+    return env.CLOUD_DOCS.get(env.CLOUD_DOCS.idFromName(docId));
+}
+
+function getCloudDocIdFromPath(pathname) {
+    const raw = pathname.split('/api/cloud-docs/')[1] || '';
+    const docId = decodeURIComponent(raw.split('/')[0] || '');
+
+    return isValidCloudDocId(docId) ? docId : '';
+}
+
+function isCloudDocExpired(document) {
+    const expiresAt = Date.parse(document?.expiresAt || '');
+    return Number.isFinite(expiresAt) && expiresAt <= Date.now();
+}
+
+export class CloudDocDurableObject {
+    constructor(state) {
+        this.state = state;
+    }
+
+    async readDocument() {
+        return (await this.state.storage.get('document')) || null;
+    }
+
+    async writeDocument(document) {
+        await this.state.storage.put('document', document);
+    }
+
+    async deleteDocument() {
+        if (typeof this.state.storage.delete === 'function') {
+            await this.state.storage.delete('document');
+        }
+    }
+
+    async rejectExpiredDocument(document) {
+        if (!isCloudDocExpired(document)) {
+            return null;
+        }
+
+        await this.deleteDocument();
+        return errorResponse('Document expired', 410);
+    }
+
+    serializeDocument(document, token) {
+        const permission = token === document.editToken ? 'edit' : 'view';
+
+        return {
+            docId: document.docId,
+            version: document.version,
+            permission,
+            data: document.data,
+            createdAt: document.createdAt,
+            updatedAt: document.updatedAt,
+            expiresAt: document.expiresAt,
+        };
+    }
+
+    async createDocument(body) {
+        const existing = await this.readDocument();
+        if (existing) {
+            return errorResponse('Document id already exists', 409);
+        }
+
+        const data = normalizeCloudDocSnapshot(body.data);
+        if (!data) {
+            return errorResponse('Invalid payload', 400);
+        }
+
+        const now = new Date().toISOString();
+        const document = {
+            docId: body.docId,
+            viewToken: genKey(24),
+            editToken: genKey(24),
+            version: 1,
+            data,
+            createdAt: now,
+            updatedAt: now,
+            expiresAt: new Date(Date.now() + CLOUD_DOC_TTL_SECONDS * 1000).toISOString(),
+        };
+
+        await this.writeDocument(document);
+
+        return jsonResponse({
+            docId: document.docId,
+            viewToken: document.viewToken,
+            editToken: document.editToken,
+            version: document.version,
+            updatedAt: document.updatedAt,
+            expiresAt: document.expiresAt,
+        });
+    }
+
+    async readWithToken(url) {
+        const token = url.searchParams.get('token') || '';
+        if (!isValidCloudDocToken(token)) {
+            return errorResponse('Unauthorized', 401);
+        }
+
+        const document = await this.readDocument();
+        if (!document) {
+            return errorResponse('Not found', 404);
+        }
+
+        const expiredResponse = await this.rejectExpiredDocument(document);
+        if (expiredResponse) {
+            return expiredResponse;
+        }
+
+        if (token !== document.viewToken && token !== document.editToken) {
+            return errorResponse('Forbidden', 403);
+        }
+
+        return jsonResponse(this.serializeDocument(document, token));
+    }
+
+    async updateWithToken(request) {
+        let body;
+        try {
+            body = await request.json();
+        } catch {
+            return errorResponse('Invalid JSON', 400);
+        }
+
+        const token = body.token || '';
+        if (!isValidCloudDocToken(token)) {
+            return errorResponse('Unauthorized', 401);
+        }
+
+        const document = await this.readDocument();
+        if (!document) {
+            return errorResponse('Not found', 404);
+        }
+
+        const expiredResponse = await this.rejectExpiredDocument(document);
+        if (expiredResponse) {
+            return expiredResponse;
+        }
+
+        if (token !== document.editToken) {
+            return errorResponse('Forbidden', 403);
+        }
+
+        const baseVersion = Number(body.baseVersion);
+        if (!Number.isInteger(baseVersion) || baseVersion < 1) {
+            return errorResponse('Invalid baseVersion', 400);
+        }
+
+        if (baseVersion !== document.version) {
+            return jsonResponse(
+                {
+                    error: 'Version conflict',
+                    currentVersion: document.version,
+                    updatedAt: document.updatedAt,
+                },
+                { status: 409 }
+            );
+        }
+
+        const data = normalizeCloudDocSnapshot(body.data);
+        if (!data) {
+            return errorResponse('Invalid payload', 400);
+        }
+
+        const updated = {
+            ...document,
+            version: document.version + 1,
+            data: {
+                ...data,
+                exportedAt: new Date().toISOString(),
+            },
+            updatedAt: new Date().toISOString(),
+            expiresAt: new Date(Date.now() + CLOUD_DOC_TTL_SECONDS * 1000).toISOString(),
+        };
+
+        await this.writeDocument(updated);
+
+        return jsonResponse({
+            docId: updated.docId,
+            version: updated.version,
+            updatedAt: updated.updatedAt,
+            expiresAt: updated.expiresAt,
+        });
+    }
+
+    async fetch(request) {
+        const url = new URL(request.url);
+
+        if (request.method === 'POST') {
+            try {
+                return await this.createDocument(await request.json());
+            } catch (error) {
+                return errorResponse(`Server Error: ${error.message}`, 500);
+            }
+        }
+
+        if (request.method === 'GET') {
+            return await this.readWithToken(url);
+        }
+
+        if (request.method === 'PUT') {
+            return await this.updateWithToken(request);
+        }
+
+        return errorResponse('Method not allowed', 405);
+    }
 }
 
 function getFeedbackStore(env) {
@@ -1706,6 +1957,67 @@ export default {
                 return jsonResponse(await createAdminToken(env), { headers });
             } catch {
                 return errorResponse('Unauthorized', 401, headers);
+            }
+        }
+
+        if (request.method === 'POST' && url.pathname === '/api/cloud-docs') {
+            let body;
+            try {
+                body = await request.json();
+            } catch {
+                return errorResponse('Invalid JSON', 400, headers);
+            }
+
+            for (let attempt = 0; attempt < CLOUD_DOC_CREATE_ATTEMPTS; attempt += 1) {
+                const docId = genKey(16);
+                const stub = getCloudDocStub(env, docId);
+                if (!stub) {
+                    return errorResponse('Cloud document storage is not configured', 500, headers);
+                }
+
+                const response = await stub.fetch(
+                    new Request(`https://cloud-doc.internal/${docId}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ ...body, docId }),
+                    })
+                );
+
+                if (response.status !== 409) {
+                    return response;
+                }
+            }
+
+            return errorResponse('Could not allocate document id', 503, headers);
+        }
+
+        if (url.pathname.startsWith('/api/cloud-docs/')) {
+            const docId = getCloudDocIdFromPath(url.pathname);
+            if (!docId) {
+                return errorResponse('Invalid document id', 400, headers);
+            }
+
+            const stub = getCloudDocStub(env, docId);
+            if (!stub) {
+                return errorResponse('Cloud document storage is not configured', 500, headers);
+            }
+
+            if (request.method === 'GET') {
+                return await stub.fetch(
+                    new Request(`https://cloud-doc.internal/${docId}${url.search}`, {
+                        method: 'GET',
+                    })
+                );
+            }
+
+            if (request.method === 'PUT') {
+                return await stub.fetch(
+                    new Request(`https://cloud-doc.internal/${docId}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: await request.text(),
+                    })
+                );
             }
         }
 

@@ -12,17 +12,14 @@ import {
     renderProgressBar,
 } from './templates.js';
 import { extractPlainText, escapeAttr } from '../../utils/dom.js';
-import {
-    formatDuration,
-    exclusiveToInclusive,
-    isDayPrecision,
-} from '../../utils/time-formatter.js';
+import { formatDuration, exclusiveToInclusive } from '../../utils/time-formatter.js';
 import { applySavedColumnWidths, loadColumnWidthPrefs } from './column-widths.js';
 import { buildNewTaskPayload, getTaskByAnyId } from './new-task-payload.js';
 import { i18n } from '../../utils/i18n.js';
 import { showConfirmDialog } from '../../components/common/confirm-dialog.js';
 import { showToast } from '../../utils/toast.js';
 import { calculateTaskSubtreeDuration } from './scheduler.js';
+import { isReadOnlyCloudViewActive } from '../share/readOnlyCloudView.js';
 
 let taskActionHandlersBound = false;
 
@@ -185,6 +182,7 @@ function ensureTaskActionHandlersBound() {
         const taskId = actionBtn.dataset.taskId;
         const action = actionBtn.dataset.action;
         if (!taskId || !action) return;
+        if (isReadOnlyCloudViewActive()) return;
 
         if (action === 'edit') {
             const task = getTaskByAnyId(gantt, taskId);
@@ -275,6 +273,10 @@ function ensureTaskActionHandlersBound() {
 }
 
 function renderTaskActionsCell(task) {
+    if (isReadOnlyCloudViewActive()) {
+        return '<span class="text-xs text-base-content/40">-</span>';
+    }
+
     const editLabel = i18n.t('shortcuts.editTask') || '编辑';
     const addChildLabel = i18n.t('taskDetails.addSubtask') || '添加子任务';
     const deleteLabel = i18n.t('form.delete') || '删除';
@@ -307,16 +309,18 @@ export function updateGanttColumns() {
     const columns = [];
 
     // Checkbox 选择列 - 宽度38px匹配设计稿
-    columns.push({
-        name: 'buttons',
-        label: '<input type="checkbox" id="select-all-checkbox" style="cursor: pointer;">',
-        width: 38,
-        align: 'center',
-        template: function (task) {
-            const checked = state.selectedTasks.has(task.id) ? 'checked' : '';
-            return `<input type="checkbox" class="gantt-checkbox-selection" data-task-id="${task.id}" ${checked} style="cursor: pointer;">`;
-        },
-    });
+    if (!isReadOnlyCloudViewActive()) {
+        columns.push({
+            name: 'buttons',
+            label: '<input type="checkbox" id="select-all-checkbox" style="cursor: pointer;">',
+            width: 38,
+            align: 'center',
+            template: function (task) {
+                const checked = state.selectedTasks.has(task.id) ? 'checked' : '';
+                return `<input type="checkbox" class="gantt-checkbox-selection" data-task-id="${task.id}" ${checked} style="cursor: pointer;">`;
+            },
+        });
+    }
 
     // Filter out disabled system fields and internal fields
     const visibleFields = state.fieldOrder.filter((fieldName) => {
@@ -337,8 +341,9 @@ export function updateGanttColumns() {
                     const text = task.text || '';
                     let html = '';
 
-                    // 拖拽排序手柄（悬停时显示）
-                    html += `<span class="gantt-drag-handle" title="${i18n.t('gantt.dragToReorder') || '拖动调整顺序'}">⠿</span>`;
+                    if (!isReadOnlyCloudViewActive()) {
+                        html += `<span class="gantt-drag-handle" title="${i18n.t('gantt.dragToReorder') || '拖动调整顺序'}">⠿</span>`;
+                    }
 
                     // 如果是项目（父任务），添加项目编号徽章
                     if (task.type === 'project' || (task.parent === 0 && gantt.hasChild(task.id))) {
@@ -516,30 +521,32 @@ export function updateGanttColumns() {
         }
     });
 
-    // 添加列 - 打开草稿编辑面板（不立即创建）
-    columns.push({
-        name: 'quick_add',
-        label: '',
-        width: 44,
-        min_width: 44,
-        template: function (task) {
-            const taskId = escapeAttr(task.id);
-            const addLabel = i18n.t('taskDetails.addSubtask') || '添加';
-            return `<button type="button" class="gantt-task-action-btn gantt-grid-add-btn" data-action="quick-add" data-task-id="${taskId}" title="${addLabel}" aria-label="${addLabel}">${TASK_ACTION_ICONS.addChild}</button>`;
-        },
-    });
+    if (!isReadOnlyCloudViewActive()) {
+        // 添加列 - 打开草稿编辑面板（不立即创建）
+        columns.push({
+            name: 'quick_add',
+            label: '',
+            width: 44,
+            min_width: 44,
+            template: function (task) {
+                const taskId = escapeAttr(task.id);
+                const addLabel = i18n.t('taskDetails.addSubtask') || '添加';
+                return `<button type="button" class="gantt-task-action-btn gantt-grid-add-btn" data-action="quick-add" data-task-id="${taskId}" title="${addLabel}" aria-label="${addLabel}">${TASK_ACTION_ICONS.addChild}</button>`;
+            },
+        });
 
-    columns.push({
-        name: 'actions',
-        label: i18n.t('shortcuts.taskOperations') || '操作',
-        align: 'center',
-        width: 96,
-        min_width: 96,
-        resize: false,
-        template: function (task) {
-            return renderTaskActionsCell(task);
-        },
-    });
+        columns.push({
+            name: 'actions',
+            label: i18n.t('shortcuts.taskOperations') || '操作',
+            align: 'center',
+            width: 96,
+            min_width: 96,
+            resize: false,
+            template: function (task) {
+                return renderTaskActionsCell(task);
+            },
+        });
+    }
 
     gantt.config.columns = applySavedColumnWidths(columns, loadColumnWidthPrefs());
 

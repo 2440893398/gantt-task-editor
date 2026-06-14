@@ -5,7 +5,13 @@
  */
 
 import { state } from '../../core/store.js';
-import { projectScope, db } from '../../core/storage.js';
+import {
+    DEFAULT_PROJECT_ID,
+    getAllCustomDays,
+    getAllLeaves,
+    getCalendarSettings,
+    projectScope,
+} from '../../core/storage.js';
 
 function getShareApiBase() {
     const base =
@@ -15,6 +21,21 @@ function getShareApiBase() {
 
 function cloneSnapshotData(data) {
     return JSON.parse(JSON.stringify(data ?? null));
+}
+
+async function parseJsonResponse(response) {
+    try {
+        return await response.json();
+    } catch (error) {
+        throw new Error(`SHARE_INVALID_RESPONSE: ${error.message}`);
+    }
+}
+
+function createCloudConflictError(body = {}) {
+    const error = new Error('CLOUD_SHARE_CONFLICT');
+    error.currentVersion = body.currentVersion;
+    error.updatedAt = body.updatedAt;
+    return error;
 }
 
 /**
@@ -29,12 +50,23 @@ export async function serializeProject(projectId) {
     }
 
     const scope = projectScope(projectId);
-    const [ganttData, baseline] = await Promise.all([scope.getGanttData(), scope.getBaseline()]);
+    const liveGantt = globalThis.gantt ?? globalThis.window?.gantt;
+    const isCurrentProject = projectId === (state.currentProjectId ?? DEFAULT_PROJECT_ID);
+    let ganttData;
+
+    if (isCurrentProject && typeof liveGantt?.serialize === 'function') {
+        ganttData = liveGantt.serialize();
+        await scope.saveGanttData(ganttData);
+    } else {
+        ganttData = await scope.getGanttData();
+    }
+
+    const baseline = await scope.getBaseline();
 
     const [calendarSettings, customDays, leaves] = await Promise.all([
-        db.calendar_settings.where('project_id').equals(projectId).first(),
-        db.calendar_custom.where('project_id').equals(projectId).toArray(),
-        db.person_leaves.where('project_id').equals(projectId).toArray(),
+        getCalendarSettings(),
+        getAllCustomDays(),
+        getAllLeaves(),
     ]);
 
     return {
@@ -126,4 +158,115 @@ export async function downloadShare(key) {
     } catch (error) {
         throw new Error(`SHARE_INVALID_RESPONSE: ${error.message}`);
     }
+}
+
+/**
+ * 创建可持续更新的云端副本。
+ * @param {string} projectId
+ * @returns {Promise<Object>}
+ */
+export async function createCloudShare(projectId) {
+    const snapshot = await serializeProject(projectId);
+    let response;
+
+    try {
+        response = await fetch(`${getShareApiBase()}/api/cloud-docs`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ data: snapshot }),
+        });
+    } catch (error) {
+        throw new Error(`SHARE_NETWORK_ERROR: ${error.message}`);
+    }
+
+    if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+            throw new Error('CLOUD_SHARE_FORBIDDEN');
+        }
+        throw new Error(`Cloud share create failed: ${response.status}`);
+    }
+
+    return await parseJsonResponse(response);
+}
+
+/**
+ * 读取云端副本最新快照。
+ * @param {string} docId
+ * @param {string} token
+ * @returns {Promise<Object>}
+ */
+export async function getCloudShare(docId, token) {
+    const params = new URLSearchParams({ token });
+    let response;
+
+    try {
+        response = await fetch(
+            `${getShareApiBase()}/api/cloud-docs/${encodeURIComponent(docId)}?${params}`
+        );
+    } catch (error) {
+        throw new Error(`SHARE_NETWORK_ERROR: ${error.message}`);
+    }
+
+    if (response.status === 404) {
+        throw new Error('CLOUD_SHARE_NOT_FOUND');
+    }
+
+    if (response.status === 401 || response.status === 403) {
+        throw new Error('CLOUD_SHARE_FORBIDDEN');
+    }
+
+    if (!response.ok) {
+        throw new Error(`Cloud share download failed: ${response.status}`);
+    }
+
+    return await parseJsonResponse(response);
+}
+
+/**
+ * 使用版本号更新云端副本。
+ * @param {string} docId
+ * @param {string} token
+ * @param {number} baseVersion
+ * @param {string} projectId
+ * @returns {Promise<Object>}
+ */
+export async function updateCloudShare(docId, token, baseVersion, projectId) {
+    const snapshot = await serializeProject(projectId);
+    let response;
+
+    try {
+        response = await fetch(`${getShareApiBase()}/api/cloud-docs/${encodeURIComponent(docId)}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                token,
+                baseVersion,
+                data: snapshot,
+            }),
+        });
+    } catch (error) {
+        throw new Error(`SHARE_NETWORK_ERROR: ${error.message}`);
+    }
+
+    if (response.status === 409) {
+        throw createCloudConflictError(await parseJsonResponse(response));
+    }
+
+    if (response.status === 404) {
+        throw new Error('CLOUD_SHARE_NOT_FOUND');
+    }
+
+    if (response.status === 401 || response.status === 403) {
+        throw new Error('CLOUD_SHARE_FORBIDDEN');
+    }
+
+    if (!response.ok) {
+        throw new Error(`Cloud share update failed: ${response.status}`);
+    }
+
+    return await parseJsonResponse(response);
 }

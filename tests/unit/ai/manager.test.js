@@ -62,6 +62,25 @@ describe('AI Manager', () => {
             expect(AiService.retryCurrentAgent).toHaveBeenCalled();
         });
 
+        it('should not bind duplicate global events on repeated initialization', async () => {
+            initAiModule();
+            initAiModule();
+            AiService.getSmartContext.mockReturnValue({
+                text: 'context text',
+                taskId: '1',
+                source: 'task',
+            });
+
+            const event = new CustomEvent('aiAgentSelected', {
+                detail: { agentId: 'test-agent' },
+            });
+            document.dispatchEvent(event);
+
+            await new Promise((resolve) => setTimeout(resolve, 0));
+
+            expect(AiService.invokeAgent).toHaveBeenCalledTimes(1);
+        });
+
         it('should handle aiAgentSelected event with context', async () => {
             initAiModule();
             AiService.getSmartContext.mockReturnValue({

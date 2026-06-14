@@ -7,6 +7,7 @@ import { createProject, updateProject, deleteProject, getProjectTaskCount } from
 import { i18n } from '../../utils/i18n.js';
 import { showToast } from '../../utils/toast.js';
 import { showConfirmDialog } from '../../components/common/confirm-dialog.js';
+import { notifyProjectSnapshotChanged } from '../share/cloudChangeEvent.js';
 
 const MODAL_ID = 'project-manage-modal';
 const COLORS = ['#4f46e5', '#0891b2', '#059669', '#d97706', '#dc2626', '#7c3aed', '#db2777'];
@@ -95,14 +96,15 @@ export function openProjectModal() {
         document.body.appendChild(modal);
     }
 
-    renderModal(modal)
-        .then(() => {
+    (async () => {
+        try {
+            await renderModal(modal);
             openModalDialog(modal);
-        })
-        .catch((error) => {
+        } catch (error) {
             console.error('[Projects] Failed to render project modal:', error);
             showToast(i18n.t('common.operationFailed') || '操作失败', 'error');
-        });
+        }
+    })();
 }
 
 async function renderModal(modal) {
@@ -259,6 +261,7 @@ function bindModalEvents(modal) {
                 await updateProject(projectId, { color });
                 await refreshProjects();
                 document.dispatchEvent(new CustomEvent('projectsUpdated'));
+                notifyProjectSnapshotChanged(projectId);
                 await renderModal(modal);
             } catch (error) {
                 console.error('[Projects] Failed to update project color:', error);
@@ -286,6 +289,7 @@ function bindModalEvents(modal) {
                 await updateProject(projectId, { name });
                 await refreshProjects();
                 document.dispatchEvent(new CustomEvent('projectsUpdated'));
+                notifyProjectSnapshotChanged(projectId);
             } catch (error) {
                 console.error('[Projects] Failed to rename project:', error);
                 showToast(i18n.t('common.operationFailed') || '操作失败', 'error');

@@ -6,6 +6,10 @@ vi.mock('../../../src/features/gantt/init.js', () => ({
     refreshHolidayHighlightCache: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock('../../../src/features/calendar/holidayFetcher.js', () => ({
+    ensureHolidaysCached: vi.fn().mockResolvedValue(undefined),
+}));
+
 async function resetCalendarDB() {
     await db.calendar_custom.clear();
     await db.calendar_holidays.clear();

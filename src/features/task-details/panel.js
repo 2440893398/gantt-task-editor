@@ -10,6 +10,7 @@ import { renderRightSection, bindRightSectionEvents } from './right-section.js';
 import { destroyRichTextEditor, getEditorContent } from '../../components/rich-text-editor.js';
 import { showConfirmDialog } from '../../components/common/confirm-dialog.js';
 import undoManager from '../ai/services/undoManager.js';
+import { isReadOnlyCloudViewActive } from '../share/readOnlyCloudView.js';
 
 let currentPanel = null;
 let currentTaskId = null;
@@ -184,6 +185,8 @@ export function getCurrentTaskId() {
  * @param {string|number} taskId - 任务ID
  */
 export function openTaskDetailsPanel(taskId) {
+    if (isReadOnlyCloudViewActive()) return;
+
     const task = getTaskSafely(taskId);
     if (!task) {
         showToast(i18n.t('message.error'), 'error');
@@ -266,6 +269,8 @@ function buildDraftTaskFromPayload(payload = {}) {
 }
 
 export function openNewTaskDetailsPanel(payload = {}) {
+    if (isReadOnlyCloudViewActive()) return;
+
     if (currentPanel) {
         const overlay = document.getElementById('task-details-overlay');
         destroyRichTextEditor();

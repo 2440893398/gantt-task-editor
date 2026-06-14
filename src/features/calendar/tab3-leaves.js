@@ -8,6 +8,7 @@ import { getAllLeaves, saveLeave, deleteLeave } from '../../core/storage.js';
 import { getFieldType, getSystemFieldOptions } from '../../core/store.js';
 import { renderMiniCalendar } from './mini-calendar.js';
 import { i18n } from '../../utils/i18n.js';
+import { notifyProjectSnapshotChanged } from '../share/cloudChangeEvent.js';
 
 let currentYear = new Date().getFullYear();
 let currentMonth = new Date().getMonth();
@@ -240,6 +241,7 @@ function showLeavePopup(dateStr, dayEl, leaves, parentContainer, event) {
     popup.querySelectorAll('[data-leave-id]').forEach((btn) => {
         btn.addEventListener('click', async () => {
             await deleteLeave(btn.dataset.leaveId);
+            notifyProjectSnapshotChanged();
             popup.remove();
             await renderTab3View(parentContainer);
         });
@@ -266,6 +268,7 @@ function showLeavePopup(dateStr, dayEl, leaves, parentContainer, event) {
             type,
             note,
         });
+        notifyProjectSnapshotChanged();
 
         popup.remove();
         await renderTab3View(parentContainer);
@@ -373,6 +376,7 @@ function renderTab3List(el, leaves, parentContainer) {
     el.querySelectorAll('.cal-list__del-btn').forEach((btn) => {
         btn.addEventListener('click', async () => {
             await deleteLeave(btn.dataset.id);
+            notifyProjectSnapshotChanged();
             const newLeaves = await getAllLeaves();
             renderTab3List(el, newLeaves, parentContainer);
         });
@@ -408,6 +412,7 @@ function renderTab3List(el, leaves, parentContainer) {
             type,
             note,
         });
+        notifyProjectSnapshotChanged();
         const newLeaves = await getAllLeaves();
         renderTab3List(el, newLeaves, parentContainer);
     });

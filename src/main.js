@@ -43,6 +43,9 @@ import { applyCurrentViewMode, initViewToggle } from './features/gantt/view-togg
 import undoManager from './features/ai/services/undoManager.js';
 import { initFeedbackModule } from './features/feedback/index.js';
 import { initAssigneeFocusControl } from './features/gantt/assignee-focus.js';
+import { scheduleCloudSync } from './features/share/cloudSync.js';
+import { PROJECT_SNAPSHOT_CHANGED_EVENT } from './features/share/cloudChangeEvent.js';
+import { isReadOnlyCloudViewActive } from './features/share/readOnlyCloudView.js';
 
 // 挂载 exportConfig 到 window 以便 HTML 中调用
 window.exportConfig = exportConfig;
@@ -176,6 +179,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // 设置数据变化时自动保存
     setupAutoSave();
+    setupCloudSnapshotSyncEvents();
 
     // 隐藏 loading 遮罩层，显示主内容
     hideLoadingScreen();
@@ -238,9 +242,13 @@ function setupAutoSave() {
     let saveTimeout = null;
 
     const debouncedSave = () => {
+        if (isReadOnlyCloudViewActive()) return;
+
         if (saveTimeout) clearTimeout(saveTimeout);
         saveTimeout = setTimeout(async () => {
+            if (isReadOnlyCloudViewActive()) return;
             await persistGanttData();
+            scheduleCloudSync(state.currentProjectId);
         }, 1000); // 1秒防抖
     };
 
@@ -284,4 +292,13 @@ function setupAutoSave() {
     });
 
     console.log('💾 自动保存已启用');
+}
+
+function setupCloudSnapshotSyncEvents() {
+    document.addEventListener(PROJECT_SNAPSHOT_CHANGED_EVENT, (event) => {
+        if (isReadOnlyCloudViewActive()) return;
+
+        const projectId = event.detail?.projectId || state.currentProjectId;
+        scheduleCloudSync(projectId);
+    });
 }

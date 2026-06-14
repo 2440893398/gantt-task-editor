@@ -12,13 +12,22 @@ vi.mock('../../src/core/store.js', () => ({
     },
     switchProject: vi.fn().mockResolvedValue(undefined),
     refreshProjects: vi.fn().mockResolvedValue(undefined),
+    persistCustomFields: vi.fn(),
+    persistSystemFieldSettings: vi.fn(),
 }));
 
 vi.mock('../../src/core/storage.js', () => ({
+    deleteCustomDay: vi.fn().mockResolvedValue(undefined),
+    deleteLeave: vi.fn().mockResolvedValue(undefined),
+    getAllCustomDays: vi.fn().mockResolvedValue([]),
+    getAllLeaves: vi.fn().mockResolvedValue([]),
     projectScope: vi.fn(() => ({
         saveGanttData: mockSaveGanttData,
         saveBaseline: mockSaveBaseline,
     })),
+    saveCalendarSettings: vi.fn().mockResolvedValue(undefined),
+    saveCustomDay: vi.fn().mockResolvedValue(undefined),
+    saveLeave: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('../../src/features/projects/manager.js', () => ({
@@ -35,6 +44,16 @@ vi.mock('../../src/features/gantt/scheduler.js', () => ({
 
 vi.mock('../../src/features/share/shareService.js', () => ({
     downloadShare: vi.fn(),
+    getCloudShare: vi.fn(),
+}));
+
+vi.mock('../../src/features/share/cloudBinding.js', () => ({
+    clearCloudBinding: vi.fn(),
+    saveCloudBinding: vi.fn(),
+}));
+
+vi.mock('../../src/features/share/readOnlyCloudView.js', () => ({
+    openReadOnlyCloudView: vi.fn(),
 }));
 
 vi.mock('../../src/utils/i18n.js', () => ({
@@ -56,6 +75,8 @@ describe('share import dialog', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         global.gantt = {
+            clearAll: vi.fn(),
+            parse: vi.fn(),
             serialize: vi.fn(() => ({ data: [{ id: 1, text: 'Normalized parent' }], links: [] })),
         };
     });
@@ -71,7 +92,12 @@ describe('share import dialog', () => {
         );
 
         expect(projectScope).toHaveBeenCalledWith('project-a');
-        expect(switchProject).toHaveBeenCalledWith('project-a');
+        expect(switchProject).not.toHaveBeenCalled();
+        expect(gantt.clearAll).toHaveBeenCalled();
+        expect(gantt.parse).toHaveBeenCalledWith({
+            data: [{ id: 1, text: 'Parent' }],
+            links: [],
+        });
         expect(recalculateAllParentRollups).toHaveBeenCalled();
         expect(mockSaveGanttData).toHaveBeenLastCalledWith({
             data: [{ id: 1, text: 'Normalized parent' }],

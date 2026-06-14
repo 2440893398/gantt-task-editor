@@ -24,6 +24,7 @@ import { addOptionInput, setOnOptionsChangeCallback, escapeAttr } from '../../ut
 import { i18n } from '../../utils/i18n.js';
 import { refreshTaskDetailsPanel } from '../task-details/index.js';
 import { showConfirmDialog } from '../../components/common/confirm-dialog.js';
+import { notifyProjectSnapshotChanged } from '../share/cloudChangeEvent.js';
 
 let sortableInstance = null;
 const DEFAULT_FIELD_ICON = '📝';
@@ -407,6 +408,7 @@ export function renderFieldList() {
             updateGanttColumns();
             refreshLightbox();
             refreshTaskDetailsPanel();
+            notifyProjectSnapshotChanged(state.currentProjectId);
         });
     });
 
@@ -434,6 +436,7 @@ export function renderFieldList() {
         updateGanttColumns();
         refreshLightbox();
         persistCustomFields();
+        notifyProjectSnapshotChanged(state.currentProjectId);
     };
 
     // Native HTML5 drag fallback (works even if Sortable callback chain is blocked)
@@ -1094,6 +1097,7 @@ function openSystemFieldEditModal(fieldName) {
         refreshLightbox();
         renderFieldList();
         refreshTaskDetailsPanel();
+        notifyProjectSnapshotChanged(state.currentProjectId);
         showToast(i18n.t('message.saveSuccess'), 'success');
         closeModal();
     });
@@ -1124,6 +1128,7 @@ export function showDeleteConfirmModal(fieldName) {
 
             // 持久化字段配置到缓存
             persistCustomFields();
+            notifyProjectSnapshotChanged(state.currentProjectId);
 
             showToast(i18n.t('message.deleteSuccess'), 'success');
         },
@@ -1445,6 +1450,7 @@ export function initCustomFieldsUI() {
 
         // 持久化字段配置到缓存
         persistCustomFields();
+        notifyProjectSnapshotChanged(state.currentProjectId);
 
         modal.classList.remove('show');
         setTimeout(() => {

@@ -9,6 +9,8 @@ import { initAiFloatingBtn } from './components/AiFloatingBtn.js';
 import { initAiDrawer } from './components/AiDrawer.js';
 import AiService from './services/aiService.js';
 
+let globalEventsBound = false;
+
 /**
  * 从甘特图数据构建任务数据对象（用于 AI 抽屉中展示富卡片）
  * @param {string} taskId
@@ -93,6 +95,9 @@ export function initAiModule() {
  * 绑定全局事件监听
  */
 function bindGlobalEvents() {
+    if (globalEventsBound) return;
+    globalEventsBound = true;
+
     // 智能体选择事件
     document.addEventListener('aiAgentSelected', async (e) => {
         const { agentId } = e.detail;

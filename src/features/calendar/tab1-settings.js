@@ -17,6 +17,7 @@ import { ensureHolidaysCached } from './holidayFetcher.js';
 import { refreshHolidayHighlightCache } from '../gantt/init.js';
 import { i18n } from '../../utils/i18n.js';
 import { resolveCountryByLocale } from './locale-country.js';
+import { notifyProjectSnapshotChanged } from '../share/cloudChangeEvent.js';
 
 const COUNTRIES = [
     { code: 'CN', flag: '🇨🇳', name: '中国' },
@@ -181,6 +182,7 @@ export async function renderTab1(container) {
         await ensureHolidaysCached(thisYear);
         await ensureHolidaysCached(thisYear + 1);
         await refreshHolidayHighlightCache();
+        notifyProjectSnapshotChanged();
         btn.textContent = i18n.t('calendar.fetched') || '已更新';
         btn.disabled = false;
     });
@@ -205,6 +207,7 @@ export async function renderTab1(container) {
         await ensureHolidaysCached(thisYear);
         await ensureHolidaysCached(thisYear + 1);
         await refreshHolidayHighlightCache();
+        notifyProjectSnapshotChanged();
     };
     document.addEventListener('calendar:save', saveHandler);
 }

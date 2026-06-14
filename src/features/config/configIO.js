@@ -20,6 +20,7 @@ import { i18n } from '../../utils/i18n.js';
 import { INTERNAL_PRIORITY_VALUES, INTERNAL_STATUS_VALUES } from '../../config/constants.js';
 import { inclusiveToExclusive } from '../../utils/time-formatter.js';
 import { recalculateAllParentRollups } from '../gantt/scheduler.js';
+import { notifyProjectSnapshotChanged } from '../share/cloudChangeEvent.js';
 
 /**
  * 当前备份文件的 Schema 版本号。
@@ -300,6 +301,7 @@ export async function importFullBackup(file) {
         await projectScope(state.currentProjectId).saveGanttData(gantt.serialize());
         persistCustomFields();
         persistSystemFieldSettings();
+        notifyProjectSnapshotChanged(state.currentProjectId);
 
         // 还原 baseline（如果存在，按当前项目隔离）
         if (backup.data.baseline) {
