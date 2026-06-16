@@ -287,4 +287,53 @@ describe('feedback issue board Worker routes', () => {
         expect(JSON.stringify(publicBody)).not.toContain('Check replay JSON.');
         expect(stored.workflow.status).toBe('in_progress');
     });
+
+    it('accepts Codex agent workflow statuses and exposes them in filters', async () => {
+        const sessionResponse = await request(
+            '/api/feedback/admin/session',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: 'admin-pass' }),
+            },
+            env
+        );
+        const session = await json(sessionResponse);
+        const agentStatuses = ['queued', 'testing', 'test_failed', 'needs_human'];
+
+        for (const status of agentStatuses) {
+            const updateResponse = await request(
+                `/api/feedback/issues/${encodeURIComponent(feedbackKey)}`,
+                {
+                    method: 'PATCH',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${session.token}`,
+                    },
+                    body: JSON.stringify({ status }),
+                },
+                env
+            );
+            const updated = await json(updateResponse);
+            const filteredResponse = await request(
+                `/api/feedback/issues?status=${status}`,
+                {},
+                env
+            );
+            const filtered = await json(filteredResponse);
+
+            expect(updateResponse.status).toBe(200);
+            expect(updated.issue.workflow.status).toBe(status);
+            expect(filteredResponse.status).toBe(200);
+            expect(filtered.issues).toHaveLength(1);
+            expect(filtered.issues[0].status).toBe(status);
+        }
+
+        const pageResponse = await request('/feedback', {}, env);
+        const html = await pageResponse.text();
+
+        for (const status of agentStatuses) {
+            expect(html).toContain(status);
+        }
+    });
 });

@@ -11,7 +11,16 @@ const CLOUD_DOC_CREATE_ATTEMPTS = 3;
 const MAX_FEEDBACK_BYTES = 18 * 1024 * 1024;
 const KEY_CHARS = 'abcdefghijklmnopqrstuvwxyz0123456789';
 const ADMIN_SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
-const FEEDBACK_STATUSES = new Set(['open', 'in_progress', 'resolved', 'closed']);
+const FEEDBACK_STATUSES = new Set([
+    'open',
+    'queued',
+    'in_progress',
+    'testing',
+    'resolved',
+    'test_failed',
+    'needs_human',
+    'closed',
+]);
 const FEEDBACK_PRIORITIES = new Set(['low', 'medium', 'high', 'urgent']);
 const WORKFLOW_TEXT_LIMITS = {
     assignee: 120,
@@ -641,8 +650,12 @@ async function pushFeedbackWebhook(env, feedbackKey, feedback) {
 function renderFeedbackBoardPage() {
     const statusTextZh = {
         open: '待处理',
+        queued: '已排队',
         in_progress: '进行中',
+        testing: '测试中',
         resolved: '已解决',
+        test_failed: '测试失败',
+        needs_human: '需人工处理',
         closed: '已关闭',
     };
     const priorityTextZh = { low: '低', medium: '中', high: '高', urgent: '紧急' };
@@ -953,8 +966,12 @@ function renderFeedbackBoardPage() {
     }
 
     .badge.open { color: #ef4444; border-color: rgba(239, 68, 68, 0.3); background: var(--danger-glow); }
+    .badge.queued { color: #2563eb; border-color: rgba(59, 130, 246, 0.3); background: rgba(59, 130, 246, 0.1); }
     .badge.in_progress { color: #d97706; border-color: rgba(245, 158, 11, 0.3); background: var(--warn-glow); }
+    .badge.testing { color: #7c3aed; border-color: rgba(124, 58, 237, 0.3); background: rgba(124, 58, 237, 0.1); }
     .badge.resolved { color: #16a34a; border-color: rgba(16, 185, 129, 0.3); background: var(--ok-glow); }
+    .badge.test_failed { color: #dc2626; border-color: rgba(220, 38, 38, 0.3); background: var(--danger-glow); }
+    .badge.needs_human { color: #be123c; border-color: rgba(190, 18, 60, 0.3); background: rgba(244, 63, 94, 0.1); }
     .badge.closed { color: #4b5563; background: rgba(156, 163, 175, 0.1); }
 
     .detail {
@@ -1412,7 +1429,8 @@ function renderFeedbackBoardPage() {
     </form>
   </template>
   <script>
-    const statusLabels = { all: '全部', open: '待处理', in_progress: '进行中', resolved: '已解决', closed: '已关闭' };
+    const workflowStatuses = ['open', 'queued', 'in_progress', 'testing', 'resolved', 'test_failed', 'needs_human', 'closed'];
+    const statusLabels = { all: '全部', open: '待处理', queued: '已排队', in_progress: '进行中', testing: '测试中', resolved: '已解决', test_failed: '测试失败', needs_human: '需人工处理', closed: '已关闭' };
     const priorityLabels = { low: '低', medium: '中', high: '高', urgent: '紧急' };
     const tokenKey = 'feedbackAdminSession';
     let state = { issues: [], selectedKey: '', status: 'all', admin: readAdminSession() };
@@ -1655,7 +1673,7 @@ function renderFeedbackBoardPage() {
       });
     }
     function renderFilters() {
-      document.getElementById('filters').innerHTML = ['all', 'open', 'in_progress', 'resolved', 'closed'].map((status) =>
+      document.getElementById('filters').innerHTML = ['all', ...workflowStatuses].map((status) =>
         '<button type="button" class="' + (state.status === status ? 'active' : '') + '" data-status="' + status + '">' + statusLabels[status] + '</button>'
       ).join('');
       document.querySelectorAll('[data-status]').forEach((button) => button.addEventListener('click', async () => {
