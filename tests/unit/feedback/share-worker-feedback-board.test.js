@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { JSDOM } from 'jsdom';
 import worker from '../../../workers/share-worker.js';
 
 class MemoryKV {
@@ -99,6 +100,33 @@ async function json(response) {
     return response.json();
 }
 
+function replayDataUrl(events = [{ type: 4, data: { width: 1280, height: 720 } }]) {
+    const payload = JSON.stringify({
+        kind: 'rrweb-replay',
+        eventCount: events.length,
+        events,
+    });
+
+    return `data:application/json;base64,${Buffer.from(payload, 'utf8').toString('base64')}`;
+}
+
+async function waitFor(assertion) {
+    const startedAt = Date.now();
+    let lastError;
+
+    while (Date.now() - startedAt < 1000) {
+        try {
+            assertion();
+            return;
+        } catch (error) {
+            lastError = error;
+            await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+    }
+
+    throw lastError;
+}
+
 describe('feedback issue board Worker routes', () => {
     let env;
 
@@ -116,6 +144,242 @@ describe('feedback issue board Worker routes', () => {
         expect(response.headers.get('Content-Type')).toContain('text/html');
         expect(html).toContain('Feedback Issues');
         expect(html).toContain('/api/feedback/issues');
+    });
+
+    it('renders admin workflow controls for admin issues without context', async () => {
+        const noContextIssue = createIssue({ context: undefined });
+        const sessionResponse = await request(
+            '/api/feedback/admin/session',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: 'admin-pass' }),
+            },
+            env
+        );
+        const session = await json(sessionResponse);
+        const pageResponse = await request('/feedback', {}, env);
+        const html = await pageResponse.text();
+        const dom = new JSDOM(html, {
+            runScripts: 'dangerously',
+            url: 'https://worker.test/feedback',
+            beforeParse(window) {
+                window.alert = () => {};
+                window.fetch = async (path, options = {}) => {
+                    if (path === '/api/feedback/issues') {
+                        return Response.json({
+                            issues: [
+                                {
+                                    key: feedbackKey,
+                                    title: noContextIssue.title,
+                                    descriptionPreview: noContextIssue.description,
+                                    receivedAt: noContextIssue.receivedAt,
+                                    status: 'open',
+                                    priority: 'medium',
+                                    attachmentCount: 0,
+                                    replayEventCount: 0,
+                                },
+                            ],
+                        });
+                    }
+
+                    if (path === `/api/feedback/issues/${encodeURIComponent(feedbackKey)}`) {
+                        if (options.method === 'PATCH') {
+                            const body = JSON.parse(options.body);
+                            return Response.json({
+                                issue: {
+                                    ...noContextIssue,
+                                    ...body,
+                                    key: feedbackKey,
+                                    workflow: {
+                                        status: body.status || 'open',
+                                        priority: body.priority || 'medium',
+                                        assignee: body.assignee || '',
+                                        publicNote: body.publicNote || '',
+                                        internalNote: body.internalNote || '',
+                                        history: [],
+                                    },
+                                },
+                            });
+                        }
+
+                        return Response.json({
+                            issue: {
+                                ...noContextIssue,
+                                key: feedbackKey,
+                                workflow: {
+                                    status: 'open',
+                                    priority: 'medium',
+                                    assignee: '',
+                                    publicNote: '',
+                                    internalNote: '',
+                                    history: [],
+                                },
+                            },
+                        });
+                    }
+
+                    return Response.json({ error: 'not found' }, { status: 404 });
+                };
+                window.localStorage.setItem(
+                    'feedbackAdminSession',
+                    JSON.stringify({
+                        token: session.token,
+                        expiresAt: '2099-01-01T00:00:00.000Z',
+                    })
+                );
+            },
+        });
+
+        await waitFor(() => {
+            expect(dom.window.document.querySelector('#workflowForm')).toBeTruthy();
+        });
+
+        expect(dom.window.document.querySelector('[name="title"]')).toBeTruthy();
+        expect(dom.window.document.querySelector('[name="description"]')).toBeTruthy();
+        expect(dom.window.document.querySelector('[name="status"]')).toBeTruthy();
+        expect(dom.window.document.querySelector('[name="publicNote"]')).toBeTruthy();
+    });
+
+    it('renders a replay play action for rrweb JSON attachments with nonstandard names', async () => {
+        const replayIssue = createIssue({
+            attachments: [
+                {
+                    name: 'user-operation-replay.json',
+                    type: 'application/json',
+                    size: 180,
+                    dataUrl: replayDataUrl(),
+                },
+            ],
+            context: {
+                replay: { eventCount: 1 },
+            },
+        });
+        const pageResponse = await request('/feedback', {}, env);
+        const html = await pageResponse.text();
+        const dom = new JSDOM(html, {
+            runScripts: 'dangerously',
+            url: 'https://worker.test/feedback',
+            beforeParse(window) {
+                window.alert = () => {};
+                window.fetch = async (path) => {
+                    if (path === '/api/feedback/issues') {
+                        return Response.json({
+                            issues: [
+                                {
+                                    key: feedbackKey,
+                                    title: replayIssue.title,
+                                    descriptionPreview: replayIssue.description,
+                                    receivedAt: replayIssue.receivedAt,
+                                    status: 'open',
+                                    priority: 'medium',
+                                    attachmentCount: 1,
+                                    replayEventCount: 1,
+                                },
+                            ],
+                        });
+                    }
+
+                    if (path === `/api/feedback/issues/${encodeURIComponent(feedbackKey)}`) {
+                        return Response.json({
+                            issue: {
+                                ...replayIssue,
+                                key: feedbackKey,
+                                workflow: {
+                                    status: 'open',
+                                    priority: 'medium',
+                                    assignee: '',
+                                    publicNote: '',
+                                    internalNote: '',
+                                    history: [],
+                                },
+                            },
+                        });
+                    }
+
+                    return Response.json({ error: 'not found' }, { status: 404 });
+                };
+                window.localStorage.setItem(
+                    'feedbackAdminSession',
+                    JSON.stringify({
+                        token: 'unit-token',
+                        expiresAt: '2099-01-01T00:00:00.000Z',
+                    })
+                );
+            },
+        });
+
+        await waitFor(() => {
+            expect(dom.window.document.querySelector('.btn-play-replay')).toBeTruthy();
+        });
+    });
+
+    it('explains when replay event counts exist but replay JSON is missing', async () => {
+        const replayIssue = createIssue({
+            attachments: [],
+            context: {
+                replay: { eventCount: 8 },
+            },
+        });
+        const pageResponse = await request('/feedback', {}, env);
+        const html = await pageResponse.text();
+        const dom = new JSDOM(html, {
+            runScripts: 'dangerously',
+            url: 'https://worker.test/feedback',
+            beforeParse(window) {
+                window.alert = () => {};
+                window.fetch = async (path) => {
+                    if (path === '/api/feedback/issues') {
+                        return Response.json({
+                            issues: [
+                                {
+                                    key: feedbackKey,
+                                    title: replayIssue.title,
+                                    descriptionPreview: replayIssue.description,
+                                    receivedAt: replayIssue.receivedAt,
+                                    status: 'open',
+                                    priority: 'medium',
+                                    attachmentCount: 0,
+                                    replayEventCount: 8,
+                                },
+                            ],
+                        });
+                    }
+
+                    if (path === `/api/feedback/issues/${encodeURIComponent(feedbackKey)}`) {
+                        return Response.json({
+                            issue: {
+                                ...replayIssue,
+                                key: feedbackKey,
+                                workflow: {
+                                    status: 'open',
+                                    priority: 'medium',
+                                    assignee: '',
+                                    publicNote: '',
+                                    internalNote: '',
+                                    history: [],
+                                },
+                            },
+                        });
+                    }
+
+                    return Response.json({ error: 'not found' }, { status: 404 });
+                };
+                window.localStorage.setItem(
+                    'feedbackAdminSession',
+                    JSON.stringify({
+                        token: 'unit-token',
+                        expiresAt: '2099-01-01T00:00:00.000Z',
+                    })
+                );
+            },
+        });
+
+        await waitFor(() => {
+            expect(
+                dom.window.document.querySelector('.replay-missing')?.textContent || ''
+            ).toContain('缺少可回放的 rrweb JSON 附件');
+        });
     });
 
     it('returns sanitized public issue summaries', async () => {
@@ -286,6 +550,51 @@ describe('feedback issue board Worker routes', () => {
         expect(publicBody.issue.publicNote).toBe('Reproduced and under investigation.');
         expect(JSON.stringify(publicBody)).not.toContain('Check replay JSON.');
         expect(stored.workflow.status).toBe('in_progress');
+    });
+
+    it('updates editable feedback content with a valid admin token', async () => {
+        const sessionResponse = await request(
+            '/api/feedback/admin/session',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: 'admin-pass' }),
+            },
+            env
+        );
+        const session = await json(sessionResponse);
+        const updateResponse = await request(
+            `/api/feedback/issues/${encodeURIComponent(feedbackKey)}`,
+            {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${session.token}`,
+                },
+                body: JSON.stringify({
+                    title: 'Clarified save failure',
+                    description: 'The task disappears after clicking save.',
+                    type: 'bug',
+                }),
+            },
+            env
+        );
+        const updated = await json(updateResponse);
+        const publicResponse = await request(
+            `/api/feedback/issues/${encodeURIComponent(feedbackKey)}`,
+            {},
+            env
+        );
+        const publicBody = await json(publicResponse);
+        const stored = JSON.parse(await env.FEEDBACK_KV.get(feedbackKey));
+
+        expect(updateResponse.status).toBe(200);
+        expect(updated.issue.title).toBe('Clarified save failure');
+        expect(updated.issue.description).toBe('The task disappears after clicking save.');
+        expect(publicBody.issue.title).toBe('Clarified save failure');
+        expect(publicBody.issue.description).toBe('The task disappears after clicking save.');
+        expect(stored.title).toBe('Clarified save failure');
+        expect(stored.description).toBe('The task disappears after clicking save.');
     });
 
     it('accepts Codex agent workflow statuses and exposes them in filters', async () => {

@@ -27,6 +27,11 @@ const WORKFLOW_TEXT_LIMITS = {
     publicNote: 2000,
     internalNote: 4000,
 };
+const FEEDBACK_CONTENT_LIMITS = {
+    type: 40,
+    title: 240,
+    description: 12000,
+};
 
 function genKey(len = 8) {
     const arr = new Uint8Array(len);
@@ -548,6 +553,13 @@ async function listFeedbackIssues(env, options = {}) {
 
 function validateWorkflowPatch(body) {
     const patch = {};
+    const content = {};
+
+    for (const field of ['type', 'title', 'description']) {
+        if (Object.hasOwn(body, field)) {
+            content[field] = limitText(body[field], FEEDBACK_CONTENT_LIMITS[field]);
+        }
+    }
 
     if (Object.hasOwn(body, 'status')) {
         if (!FEEDBACK_STATUSES.has(body.status)) {
@@ -569,23 +581,27 @@ function validateWorkflowPatch(body) {
         }
     }
 
-    return patch;
+    return { workflow: patch, content };
 }
 
-function buildWorkflowHistoryItem(before, after, patch) {
+function buildWorkflowHistoryItem(before, after, workflowPatch, contentChanges) {
     const changes = {};
     for (const field of ['status', 'priority', 'assignee']) {
-        if (Object.hasOwn(patch, field) && before[field] !== after[field]) {
+        if (Object.hasOwn(workflowPatch, field) && before[field] !== after[field]) {
             changes[field] = [before[field], after[field]];
         }
+    }
+
+    for (const [field, values] of Object.entries(contentChanges)) {
+        changes[field] = values;
     }
 
     return {
         at: after.updatedAt,
         actor: 'admin',
         changes,
-        publicNote: Object.hasOwn(patch, 'publicNote') ? after.publicNote : '',
-        internalNote: Object.hasOwn(patch, 'internalNote') ? after.internalNote : '',
+        publicNote: Object.hasOwn(workflowPatch, 'publicNote') ? after.publicNote : '',
+        internalNote: Object.hasOwn(workflowPatch, 'internalNote') ? after.internalNote : '',
     };
 }
 
@@ -596,15 +612,27 @@ async function updateFeedbackIssue(env, key, patch) {
     const issue = await readFeedbackIssue(env, key);
     if (!issue) return null;
 
+    const workflowPatch = patch.workflow || {};
+    const contentPatch = patch.content || {};
+    const contentChanges = {};
+    const nextContent = {};
+    for (const field of ['type', 'title', 'description']) {
+        if (Object.hasOwn(contentPatch, field) && issue[field] !== contentPatch[field]) {
+            contentChanges[field] = [issue[field] || '', contentPatch[field]];
+            nextContent[field] = contentPatch[field];
+        }
+    }
+
     const before = normalizeWorkflow(issue);
     const after = {
         ...before,
-        ...patch,
+        ...workflowPatch,
         updatedAt: new Date().toISOString(),
     };
-    const historyItem = buildWorkflowHistoryItem(before, after, patch);
+    const historyItem = buildWorkflowHistoryItem(before, after, workflowPatch, contentChanges);
     const nextIssue = {
         ...issue,
+        ...nextContent,
         workflow: {
             ...after,
             history: [...before.history, historyItem].slice(-50),
@@ -1134,6 +1162,10 @@ function renderFeedbackBoardPage() {
       border-radius: 10px;
     }
 
+    .admin-box .section {
+      background: #ffffff;
+    }
+
     .admin-title-row {
       font-size: 14px;
       font-weight: 700;
@@ -1142,6 +1174,28 @@ function renderFeedbackBoardPage() {
       display: flex;
       align-items: center;
       gap: 6px;
+    }
+
+    .admin-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    .save-status {
+      min-height: 18px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .save-status.ok {
+      color: var(--ok);
+    }
+
+    .save-status.error {
+      color: var(--danger);
     }
 
     .form-row {
@@ -1296,6 +1350,16 @@ function renderFeedbackBoardPage() {
     .btn-download-file:hover {
       background: rgba(156, 163, 175, 0.25);
     }
+    .replay-missing {
+      margin-top: 12px;
+      padding: 10px 12px;
+      border: 1px solid rgba(245, 158, 11, 0.35);
+      border-radius: 8px;
+      background: var(--warn-glow);
+      color: #92400e;
+      font-size: 12px;
+      line-height: 1.5;
+    }
 
     .modal-overlay {
       position: fixed;
@@ -1419,13 +1483,22 @@ function renderFeedbackBoardPage() {
   <template id="adminFormTemplate">
     <form id="workflowForm" class="section">
       <div class="form-row">
+        <label class="form-group"><div class="label">标题</div><input name="title" maxlength="${FEEDBACK_CONTENT_LIMITS.title}"></label>
+        <label class="form-group"><div class="label">类型</div><input name="type" maxlength="${FEEDBACK_CONTENT_LIMITS.type}"></label>
+        <label class="form-group"><div class="label">负责人</div><input name="assignee" maxlength="${WORKFLOW_TEXT_LIMITS.assignee}"></label>
+      </div>
+      <div class="form-row">
         <label class="form-group"><div class="label">状态</div><select name="status">${statusOptions}</select></label>
         <label class="form-group"><div class="label">优先级</div><select name="priority">${priorityOptions}</select></label>
-        <label class="form-group"><div class="label">负责人</div><input name="assignee"></label>
+        <label class="form-group"><div class="label">快速回复建议</div><input id="replyHint" value="说明处理进展或需要用户补充的信息" disabled></label>
       </div>
-      <label class="form-group" style="margin-top: 12px;"><div class="label">公开回复</div><textarea name="publicNote"></textarea></label>
-      <label class="form-group" style="margin-top: 12px;"><div class="label">内部备注</div><textarea name="internalNote"></textarea></label>
-      <div style="margin-top: 16px;"><button class="primary" type="submit">保存工作流</button></div>
+      <label class="form-group" style="margin-top: 12px;"><div class="label">问题描述</div><textarea name="description" maxlength="${FEEDBACK_CONTENT_LIMITS.description}" style="min-height: 120px;"></textarea></label>
+      <label class="form-group" style="margin-top: 12px;"><div class="label">公开回复</div><textarea name="publicNote" maxlength="${WORKFLOW_TEXT_LIMITS.publicNote}" placeholder="用户可见，用于说明处理进展、解决方案或需要补充的信息。"></textarea></label>
+      <label class="form-group" style="margin-top: 12px;"><div class="label">内部备注</div><textarea name="internalNote" maxlength="${WORKFLOW_TEXT_LIMITS.internalNote}" placeholder="仅管理员可见，记录排查线索、复现步骤和后续动作。"></textarea></label>
+      <div class="admin-actions">
+        <button id="saveWorkflowBtn" class="primary" type="submit">保存处理结果</button>
+        <span id="saveWorkflowStatus" class="save-status" role="status" aria-live="polite"></span>
+      </div>
     </form>
   </template>
   <script>
@@ -1467,6 +1540,29 @@ function renderFeedbackBoardPage() {
       return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
     }
 
+    function getReplayEventsFromDataUrl(dataUrl) {
+      if (!dataUrl || !String(dataUrl).startsWith('data:')) return [];
+
+      try {
+        const base64 = String(dataUrl).split(',')[1] || '';
+        const json = atob(base64);
+        const payload = JSON.parse(json);
+        const events = payload.events || payload;
+        return Array.isArray(events) ? events : [];
+      } catch {
+        return [];
+      }
+    }
+
+    function isReplayAttachment(att) {
+      const name = String(att.name || '').toLowerCase();
+      const type = String(att.type || '').toLowerCase();
+      if (name.startsWith('feedback-rrweb-') && name.endsWith('.json')) return true;
+      if (type.includes('json') && getReplayEventsFromDataUrl(att.dataUrl).length > 0) return true;
+      if (name.includes('replay') && name.endsWith('.json') && getReplayEventsFromDataUrl(att.dataUrl).length > 0) return true;
+      return false;
+    }
+
     window.viewImage = function(dataUrl) {
       document.getElementById('imageModalSrc').src = dataUrl;
       document.getElementById('imageModal').style.display = 'flex';
@@ -1483,10 +1579,7 @@ function renderFeedbackBoardPage() {
       document.getElementById('replayModal').style.display = 'flex';
 
       try {
-        const base64 = dataUrl.split(',')[1];
-        const json = atob(base64);
-        const payload = JSON.parse(json);
-        const events = payload.events || payload;
+        const events = getReplayEventsFromDataUrl(dataUrl);
 
         if (!events || !events.length) {
           throw new Error('No events found in replay JSON');
@@ -1650,14 +1743,39 @@ function renderFeedbackBoardPage() {
     }
     async function updateIssue(event) {
       event.preventDefault();
-      const body = Object.fromEntries(new FormData(event.currentTarget).entries());
-      const response = await api('/api/feedback/issues/' + encodeURIComponent(state.selectedKey), {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      renderDetail(response.issue);
-      await loadIssues();
+      const form = event.currentTarget;
+      const button = document.getElementById('saveWorkflowBtn');
+      const statusEl = document.getElementById('saveWorkflowStatus');
+      const body = Object.fromEntries(new FormData(form).entries());
+
+      if (button) button.disabled = true;
+      if (statusEl) {
+        statusEl.className = 'save-status';
+        statusEl.textContent = '保存中...';
+      }
+
+      try {
+        const response = await api('/api/feedback/issues/' + encodeURIComponent(state.selectedKey), {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        renderDetail(response.issue);
+        await loadIssues();
+        const nextStatusEl = document.getElementById('saveWorkflowStatus');
+        if (nextStatusEl) {
+          nextStatusEl.className = 'save-status ok';
+          nextStatusEl.textContent = '已保存';
+        }
+      } catch (error) {
+        if (statusEl) {
+          statusEl.className = 'save-status error';
+          statusEl.textContent = '保存失败，请重试';
+        }
+      } finally {
+        const nextButton = document.getElementById('saveWorkflowBtn') || button;
+        if (nextButton) nextButton.disabled = false;
+      }
     }
     function renderAdmin() {
       const area = document.getElementById('adminArea');
@@ -1734,16 +1852,18 @@ function renderFeedbackBoardPage() {
       const workflow = issue.workflow || issue;
       const status = workflow.status || issue.status;
       const priority = workflow.priority || issue.priority;
-      const isAdminDetail = Boolean(state.admin && issue.context);
+      const isAdminDetail = Boolean(state.admin);
 
       const attCount = issue.attachmentCount ?? issue.attachments?.length ?? 0;
       const repCount = issue.replayEventCount ?? issue.context?.replay?.eventCount ?? 0;
+      let hasReplayAttachment = false;
 
       let attachmentsHtml = '';
       if (issue.attachments && issue.attachments.length > 0) {
         const cards = issue.attachments.map(att => {
           const isImage = att.type && att.type.startsWith('image/');
-          const isReplay = att.name && att.name.startsWith('feedback-rrweb-') && att.name.endsWith('.json');
+          const isReplay = isReplayAttachment(att);
+          if (isReplay) hasReplayAttachment = true;
 
           let previewOrAction = '';
           let iconHtml = '';
@@ -1774,6 +1894,15 @@ function renderFeedbackBoardPage() {
           '            <div class="attachments-grid">' +
           cards +
           '            </div>' +
+          '          </div>';
+      }
+
+      if (!hasReplayAttachment && repCount > 0) {
+        attachmentsHtml += '          <div class="section attachments-section">' +
+          '            <div class="section-title">' +
+          svgPlay + ' 录屏回放' +
+          '            </div>' +
+          '            <div class="replay-missing">已记录 ' + esc(repCount) + ' 条录屏事件，但本条反馈缺少可回放的 rrweb JSON 附件。请让用户重新提交并保留录屏附件。</div>' +
           '          </div>';
       }
 
@@ -1839,11 +1968,15 @@ function renderFeedbackBoardPage() {
       setTimeout(() => {
         const form = document.getElementById('workflowForm');
         if (!form) return;
-        form.status.value = workflow.status || 'open';
-        form.priority.value = workflow.priority || 'medium';
-        form.assignee.value = workflow.assignee || '';
-        form.publicNote.value = workflow.publicNote || '';
-        form.internalNote.value = workflow.internalNote || '';
+        const fields = form.elements;
+        fields.namedItem('status').value = workflow.status || 'open';
+        fields.namedItem('priority').value = workflow.priority || 'medium';
+        fields.namedItem('title').value = issue.title || '';
+        fields.namedItem('type').value = issue.type || 'manual';
+        fields.namedItem('description').value = issue.description || issue.descriptionPreview || '';
+        fields.namedItem('assignee').value = workflow.assignee || '';
+        fields.namedItem('publicNote').value = workflow.publicNote || '';
+        fields.namedItem('internalNote').value = workflow.internalNote || '';
       });
       const attachmentsJson = JSON.stringify(issue.attachments || [], null, 2);
       const contextJson = JSON.stringify(issue.context || {}, null, 2);
