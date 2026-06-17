@@ -170,7 +170,9 @@ export async function submitFeedback(feedback) {
     }
 
     const payload = {
-        type: feedback.type || 'manual',
+        type: feedback.sourceType || feedback.type || 'manual',
+        sourceType: feedback.sourceType || feedback.type || 'manual',
+        submittedType: feedback.submittedType || 'unclear',
         title: feedback.title || '',
         description: feedback.description || '',
         contact: feedback.contact || '',
@@ -215,6 +217,8 @@ export async function reportRuntimeError(errorInfo) {
 
     return submitFeedback({
         type: 'auto_error',
+        sourceType: 'auto_error',
+        submittedType: 'bug',
         title: errorInfo.message || 'Runtime error',
         description: errorInfo.stack || errorInfo.reason || '',
         context: {

@@ -382,6 +382,125 @@ describe('feedback issue board Worker routes', () => {
         });
     });
 
+    it('renders classification and structured agent workflow panels in admin detail', async () => {
+        const internalNote = [
+            '[feedback-agent-human-action]',
+            'type=design_decision',
+            'requestedAction=Approve or revise the generated design.',
+            'evidenceInspected=Read user description and replay summary.',
+            'returnPath=queued if approved, closed if rejected',
+            '[/feedback-agent-human-action]',
+            '[feedback-agent-design]',
+            'businessType=requirement',
+            'scope=large',
+            'problem=Users need approval before publishing schedules.',
+            'currentBehavior=Schedules publish immediately.',
+            'proposedChange=Add an approval gate before publish.',
+            'userValue=Prevents accidental publication.',
+            'affectedAreas=share,feedback',
+            'acceptanceCriteria=Approver can approve or reject',
+            'risks=Permission model scope',
+            'implementationOutline=Add pending approval state',
+            'verificationPlan=Unit tests and publish smoke test',
+            'decisionNeeded=approve',
+            '[/feedback-agent-design]',
+            '[feedback-agent-candidate]',
+            `feedbackKey=${feedbackKey}`,
+            'candidateWorktree=C:\\Users\\24408\\.codex\\worktrees\\abcd\\gantt-task-editor',
+            'candidateBranch=codex/feedback-abcd',
+            'baseCommit=abc123',
+            'changeCommit=def456',
+            'changedFiles=workers/share-worker.js',
+            'verification=npx vitest passed',
+            'candidateStatus=needs_human',
+            'createdAt=2026-06-17T12:00:00.000Z',
+            '[/feedback-agent-candidate]',
+        ].join('\n');
+        const issue = createIssue({
+            submittedType: 'requirement',
+            ai: {
+                businessType: 'requirement',
+                scope: 'large',
+                automationDecision: 'design_required',
+                confidence: 'high',
+            },
+            workflow: {
+                status: 'needs_human',
+                priority: 'medium',
+                assignee: '',
+                publicNote: '',
+                internalNote,
+                updatedAt: '2026-06-17T12:00:00.000Z',
+                history: [],
+            },
+        });
+        const pageResponse = await request('/feedback', {}, env);
+        const html = await pageResponse.text();
+        const dom = new JSDOM(html, {
+            runScripts: 'dangerously',
+            url: 'https://worker.test/feedback',
+            beforeParse(window) {
+                window.alert = () => {};
+                window.fetch = async (path) => {
+                    if (path === '/api/feedback/issues') {
+                        return Response.json({
+                            issues: [
+                                {
+                                    key: feedbackKey,
+                                    title: issue.title,
+                                    descriptionPreview: issue.description,
+                                    receivedAt: issue.receivedAt,
+                                    status: 'needs_human',
+                                    priority: 'medium',
+                                    submittedType: 'requirement',
+                                    businessType: 'requirement',
+                                    scope: 'large',
+                                    attachmentCount: 0,
+                                    replayEventCount: 0,
+                                },
+                            ],
+                        });
+                    }
+
+                    if (path === `/api/feedback/issues/${encodeURIComponent(feedbackKey)}`) {
+                        return Response.json({
+                            issue: {
+                                ...issue,
+                                key: feedbackKey,
+                            },
+                        });
+                    }
+
+                    return Response.json({ error: 'not found' }, { status: 404 });
+                };
+                window.localStorage.setItem(
+                    'feedbackAdminSession',
+                    JSON.stringify({
+                        token: 'unit-token',
+                        expiresAt: '2099-01-01T00:00:00.000Z',
+                    })
+                );
+            },
+        });
+
+        await waitFor(() => {
+            expect(
+                dom.window.document.querySelector('[data-agent-panel="classification"]')
+            ).toBeTruthy();
+        });
+
+        const text = dom.window.document.body.textContent;
+        expect(text).toContain('AI 分类');
+        expect(text).toContain('requirement');
+        expect(text).toContain('large');
+        expect(text).toContain('人工动作');
+        expect(text).toContain('Approve or revise the generated design.');
+        expect(text).toContain('设计草案');
+        expect(text).toContain('Add an approval gate before publish.');
+        expect(text).toContain('候选实现');
+        expect(text).toContain('codex/feedback-abcd');
+    });
+
     it('returns sanitized public issue summaries', async () => {
         const response = await request('/api/feedback/issues', {}, env);
         const body = await json(response);
@@ -390,6 +509,10 @@ describe('feedback issue board Worker routes', () => {
         expect(body.issues).toHaveLength(1);
         expect(body.issues[0]).toMatchObject({
             key: feedbackKey,
+            sourceType: 'manual',
+            submittedType: 'unclear',
+            businessType: 'unclear',
+            scope: 'unclear',
             title: 'Cannot save task',
             status: 'open',
             priority: 'medium',
@@ -414,9 +537,61 @@ describe('feedback issue board Worker routes', () => {
         expect(body.issue.key).toBe(feedbackKey);
         expect(body.issue.projectName).toBe('Demo Project');
         expect(body.issue.pagePath).toBe('/');
+        expect(body.issue.sourceType).toBe('manual');
+        expect(body.issue.submittedType).toBe('unclear');
+        expect(body.issue.businessType).toBe('unclear');
+        expect(body.issue.scope).toBe('unclear');
         expect(JSON.stringify(body)).not.toContain('user@example.com');
         expect(JSON.stringify(body)).not.toContain('secret-image');
         expect(JSON.stringify(body)).not.toContain('secret stack');
+    });
+
+    it('normalizes submitted feedback classification fields', async () => {
+        const response = await request(
+            '/api/feedback',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    sourceType: 'manual',
+                    submittedType: 'requirement',
+                    title: 'Add approval workflow',
+                    description: 'We need an approval step before publishing a schedule.',
+                }),
+            },
+            env
+        );
+        const body = await json(response);
+        const stored = JSON.parse(await env.FEEDBACK_KV.get(body.key));
+
+        expect(response.status).toBe(200);
+        expect(stored.type).toBe('manual');
+        expect(stored.sourceType).toBe('manual');
+        expect(stored.submittedType).toBe('requirement');
+        expect(stored.ai.businessType).toBe('unclear');
+        expect(stored.ai.scope).toBe('unclear');
+        expect(stored.ai.automationDecision).toBe('');
+    });
+
+    it('defaults missing submitted type to unclear', async () => {
+        const response = await request(
+            '/api/feedback',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    title: 'Missing classification',
+                    description: 'User skipped the selector.',
+                }),
+            },
+            env
+        );
+        const body = await json(response);
+        const stored = JSON.parse(await env.FEEDBACK_KV.get(body.key));
+
+        expect(response.status).toBe(200);
+        expect(stored.sourceType).toBe('manual');
+        expect(stored.submittedType).toBe('unclear');
     });
 
     it('rejects an invalid admin password', async () => {
@@ -458,6 +633,13 @@ describe('feedback issue board Worker routes', () => {
         expect(session.expiresAt).toBeTruthy();
         expect(detailResponse.status).toBe(200);
         expect(detail.issue.contact).toBe('user@example.com');
+        expect(detail.issue.sourceType).toBe('manual');
+        expect(detail.issue.submittedType).toBe('unclear');
+        expect(detail.issue.ai).toMatchObject({
+            businessType: 'unclear',
+            scope: 'unclear',
+            automationDecision: '',
+        });
         expect(detail.issue.attachments[0].dataUrl).toContain('secret-image');
         expect(detail.issue.context.logs[0].args[0]).toBe('secret stack');
     });
@@ -496,6 +678,36 @@ describe('feedback issue board Worker routes', () => {
                     Authorization: `Bearer ${session.token}`,
                 },
                 body: JSON.stringify({ status: 'unknown' }),
+            },
+            env
+        );
+
+        expect(response.status).toBe(400);
+    });
+
+    it('rejects invalid classification values', async () => {
+        const sessionResponse = await request(
+            '/api/feedback/admin/session',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: 'admin-pass' }),
+            },
+            env
+        );
+        const session = await json(sessionResponse);
+        const response = await request(
+            `/api/feedback/issues/${encodeURIComponent(feedbackKey)}`,
+            {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${session.token}`,
+                },
+                body: JSON.stringify({
+                    submittedType: 'roadmap',
+                    ai: { businessType: 'unknown' },
+                }),
             },
             env
         );
@@ -575,6 +787,13 @@ describe('feedback issue board Worker routes', () => {
                     title: 'Clarified save failure',
                     description: 'The task disappears after clicking save.',
                     type: 'bug',
+                    submittedType: 'bug',
+                    ai: {
+                        businessType: 'bug',
+                        scope: 'small',
+                        automationDecision: 'auto_fix',
+                        confidence: 'high',
+                    },
                 }),
             },
             env
@@ -591,10 +810,20 @@ describe('feedback issue board Worker routes', () => {
         expect(updateResponse.status).toBe(200);
         expect(updated.issue.title).toBe('Clarified save failure');
         expect(updated.issue.description).toBe('The task disappears after clicking save.');
+        expect(updated.issue.submittedType).toBe('bug');
+        expect(updated.issue.ai.businessType).toBe('bug');
+        expect(updated.issue.ai.scope).toBe('small');
+        expect(updated.issue.ai.automationDecision).toBe('auto_fix');
+        expect(updated.issue.ai.confidence).toBe('high');
         expect(publicBody.issue.title).toBe('Clarified save failure');
         expect(publicBody.issue.description).toBe('The task disappears after clicking save.');
+        expect(publicBody.issue.submittedType).toBe('bug');
+        expect(publicBody.issue.businessType).toBe('bug');
+        expect(publicBody.issue.scope).toBe('small');
         expect(stored.title).toBe('Clarified save failure');
         expect(stored.description).toBe('The task disappears after clicking save.');
+        expect(stored.submittedType).toBe('bug');
+        expect(stored.ai.businessType).toBe('bug');
     });
 
     it('accepts Codex agent workflow statuses and exposes them in filters', async () => {
@@ -608,7 +837,13 @@ describe('feedback issue board Worker routes', () => {
             env
         );
         const session = await json(sessionResponse);
-        const agentStatuses = ['queued', 'testing', 'test_failed', 'needs_human'];
+        const agentStatuses = [
+            'queued',
+            'testing',
+            'test_failed',
+            'needs_human',
+            'ready_for_deploy',
+        ];
 
         for (const status of agentStatuses) {
             const updateResponse = await request(

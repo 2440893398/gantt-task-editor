@@ -3,10 +3,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockShowToast = vi.fn();
 const mockStartReplayRecording = vi.fn();
+const mockSubmitFeedback = vi.fn();
 
 vi.mock('../../../src/utils/i18n.js', () => ({
     i18n: {
-        t: () => undefined,
+        t: (key) => {
+            const values = {
+                'feedback.typeBug': 'Bug',
+                'feedback.typeImprovement': 'Optimization',
+                'feedback.typeRequirement': 'Requirement',
+                'feedback.typeOther': 'Other',
+                'feedback.typeUnclear': 'Not sure',
+            };
+            return values[key];
+        },
     },
 }));
 
@@ -24,7 +34,7 @@ vi.mock('../../../src/features/feedback/feedbackReplay.js', () => ({
 
 vi.mock('../../../src/features/feedback/feedbackService.js', () => ({
     fileToAttachment: vi.fn(),
-    submitFeedback: vi.fn(),
+    submitFeedback: mockSubmitFeedback,
 }));
 
 describe('FeedbackDialog', () => {
@@ -34,6 +44,8 @@ describe('FeedbackDialog', () => {
         mockShowToast.mockReset();
         mockStartReplayRecording.mockReset();
         mockStartReplayRecording.mockResolvedValue(true);
+        mockSubmitFeedback.mockReset();
+        mockSubmitFeedback.mockResolvedValue({ key: 'feedback:1' });
 
         HTMLDialogElement.prototype.showModal = vi.fn(function () {
             this.open = true;
@@ -63,6 +75,31 @@ describe('FeedbackDialog', () => {
             '\u590d\u73b0\u5f55\u5236\u5df2\u5f00\u59cb',
             'success',
             4000
+        );
+    });
+
+    it('renders business type options and submits the selected type', async () => {
+        const { openFeedbackDialog } =
+            await import('../../../src/features/feedback/FeedbackDialog.js');
+
+        openFeedbackDialog();
+
+        const typeSelect = document.getElementById('feedback-type');
+        const labels = Array.from(typeSelect.options).map((option) => option.textContent);
+        expect(labels).toEqual(['Not sure', 'Bug', 'Optimization', 'Requirement', 'Other']);
+
+        typeSelect.value = 'requirement';
+        document.getElementById('feedback-title').value = 'Approval flow';
+        document.getElementById('feedback-description').value = 'Need an approval step.';
+        document.getElementById('feedback-form').dispatchEvent(new Event('submit'));
+        await Promise.resolve();
+
+        expect(mockSubmitFeedback).toHaveBeenCalledWith(
+            expect.objectContaining({
+                submittedType: 'requirement',
+                title: 'Approval flow',
+                description: 'Need an approval step.',
+            })
         );
     });
 });

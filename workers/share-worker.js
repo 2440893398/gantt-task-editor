@@ -19,9 +19,23 @@ const FEEDBACK_STATUSES = new Set([
     'resolved',
     'test_failed',
     'needs_human',
+    'ready_for_deploy',
     'closed',
 ]);
 const FEEDBACK_PRIORITIES = new Set(['low', 'medium', 'high', 'urgent']);
+const FEEDBACK_SOURCE_TYPES = new Set(['manual', 'auto_error', 'admin']);
+const FEEDBACK_BUSINESS_TYPES = new Set(['bug', 'improvement', 'requirement', 'other', 'unclear']);
+const FEEDBACK_SCOPES = new Set(['small', 'medium', 'large', 'unclear']);
+const FEEDBACK_AUTOMATION_DECISIONS = new Set([
+    '',
+    'auto_fix',
+    'design_required',
+    'need_reproduction',
+    'review_required',
+    'developer_fix_required',
+    'close',
+]);
+const FEEDBACK_AI_CONFIDENCE = new Set(['', 'low', 'medium', 'high']);
 const WORKFLOW_TEXT_LIMITS = {
     assignee: 120,
     publicNote: 2000,
@@ -320,6 +334,35 @@ function limitText(value, max = 4000) {
     return String(value || '').slice(0, max);
 }
 
+function normalizeEnumValue(value, allowedValues, fallback = '') {
+    const normalized = String(value || '').trim();
+    return allowedValues.has(normalized) ? normalized : fallback;
+}
+
+function normalizeSourceType(value, fallback = 'manual') {
+    return normalizeEnumValue(value, FEEDBACK_SOURCE_TYPES, fallback);
+}
+
+function normalizeSubmittedType(value, fallback = 'unclear') {
+    return normalizeEnumValue(value, FEEDBACK_BUSINESS_TYPES, fallback);
+}
+
+function normalizeAiClassification(feedback = {}) {
+    const ai = feedback.ai && typeof feedback.ai === 'object' ? feedback.ai : {};
+
+    return {
+        businessType: normalizeEnumValue(ai.businessType, FEEDBACK_BUSINESS_TYPES, 'unclear'),
+        scope: normalizeEnumValue(ai.scope, FEEDBACK_SCOPES, 'unclear'),
+        automationDecision: normalizeEnumValue(
+            ai.automationDecision,
+            FEEDBACK_AUTOMATION_DECISIONS,
+            ''
+        ),
+        classifiedAt: limitText(ai.classifiedAt, 80),
+        confidence: normalizeEnumValue(ai.confidence, FEEDBACK_AI_CONFIDENCE, ''),
+    };
+}
+
 function escapeHtml(value) {
     return String(value || '')
         .replace(/&/g, '&amp;')
@@ -409,11 +452,19 @@ function normalizeFeedbackPayload(body, request) {
               dataUrl: limitText(item.dataUrl, MAX_FEEDBACK_BYTES),
           }))
         : [];
+    const sourceType = normalizeSourceType(body.sourceType || body.type, 'manual');
+    const submittedType = normalizeSubmittedType(
+        body.submittedType || body.businessType,
+        'unclear'
+    );
 
     return {
         schemaVersion: 1,
         receivedAt: new Date().toISOString(),
-        type: limitText(body.type, 40) || 'manual',
+        type: sourceType,
+        sourceType,
+        submittedType,
+        ai: normalizeAiClassification(body),
         title: limitText(body.title, 240),
         description: limitText(body.description, 12000),
         contact: limitText(body.contact, 240),
@@ -444,9 +495,19 @@ function normalizeWorkflow(feedback) {
 }
 
 function normalizeStoredFeedback(key, feedback) {
+    const legacyType = String(feedback.type || '').trim();
+    const sourceType = normalizeSourceType(feedback.sourceType || legacyType, 'manual');
+
     return {
         ...feedback,
         key,
+        type: feedback.type || sourceType,
+        sourceType,
+        submittedType: normalizeSubmittedType(
+            feedback.submittedType || feedback.businessType,
+            'unclear'
+        ),
+        ai: normalizeAiClassification(feedback),
         workflow: normalizeWorkflow(feedback),
     };
 }
@@ -472,6 +533,10 @@ function serializePublicIssue(issue, detail = false) {
     const base = {
         key: issue.key,
         type: issue.type || 'manual',
+        sourceType: issue.sourceType,
+        submittedType: issue.submittedType,
+        businessType: issue.ai.businessType,
+        scope: issue.ai.scope,
         title: issue.title || '',
         descriptionPreview: getDescriptionPreview(issue.description),
         receivedAt: issue.receivedAt || '',
@@ -503,6 +568,7 @@ function serializePublicIssue(issue, detail = false) {
 function serializeAdminIssue(issue) {
     return {
         ...issue,
+        ai: normalizeAiClassification(issue),
         workflow: normalizeWorkflow(issue),
     };
 }
@@ -554,10 +620,59 @@ async function listFeedbackIssues(env, options = {}) {
 function validateWorkflowPatch(body) {
     const patch = {};
     const content = {};
+    const ai = {};
 
     for (const field of ['type', 'title', 'description']) {
         if (Object.hasOwn(body, field)) {
             content[field] = limitText(body[field], FEEDBACK_CONTENT_LIMITS[field]);
+        }
+    }
+
+    if (Object.hasOwn(body, 'sourceType')) {
+        if (!FEEDBACK_SOURCE_TYPES.has(body.sourceType)) {
+            throw new Error('INVALID_SOURCE_TYPE');
+        }
+        content.sourceType = body.sourceType;
+    }
+
+    if (Object.hasOwn(body, 'submittedType')) {
+        if (!FEEDBACK_BUSINESS_TYPES.has(body.submittedType)) {
+            throw new Error('INVALID_SUBMITTED_TYPE');
+        }
+        content.submittedType = body.submittedType;
+    }
+
+    if (body.ai && typeof body.ai === 'object') {
+        if (Object.hasOwn(body.ai, 'businessType')) {
+            if (!FEEDBACK_BUSINESS_TYPES.has(body.ai.businessType)) {
+                throw new Error('INVALID_BUSINESS_TYPE');
+            }
+            ai.businessType = body.ai.businessType;
+        }
+
+        if (Object.hasOwn(body.ai, 'scope')) {
+            if (!FEEDBACK_SCOPES.has(body.ai.scope)) {
+                throw new Error('INVALID_SCOPE');
+            }
+            ai.scope = body.ai.scope;
+        }
+
+        if (Object.hasOwn(body.ai, 'automationDecision')) {
+            if (!FEEDBACK_AUTOMATION_DECISIONS.has(body.ai.automationDecision)) {
+                throw new Error('INVALID_AUTOMATION_DECISION');
+            }
+            ai.automationDecision = body.ai.automationDecision;
+        }
+
+        if (Object.hasOwn(body.ai, 'confidence')) {
+            if (!FEEDBACK_AI_CONFIDENCE.has(body.ai.confidence)) {
+                throw new Error('INVALID_AI_CONFIDENCE');
+            }
+            ai.confidence = body.ai.confidence;
+        }
+
+        if (Object.hasOwn(body.ai, 'classifiedAt')) {
+            ai.classifiedAt = limitText(body.ai.classifiedAt, 80);
         }
     }
 
@@ -581,7 +696,7 @@ function validateWorkflowPatch(body) {
         }
     }
 
-    return { workflow: patch, content };
+    return { workflow: patch, content, ai };
 }
 
 function buildWorkflowHistoryItem(before, after, workflowPatch, contentChanges) {
@@ -614,12 +729,31 @@ async function updateFeedbackIssue(env, key, patch) {
 
     const workflowPatch = patch.workflow || {};
     const contentPatch = patch.content || {};
+    const aiPatch = patch.ai || {};
     const contentChanges = {};
     const nextContent = {};
-    for (const field of ['type', 'title', 'description']) {
+    for (const field of ['type', 'sourceType', 'submittedType', 'title', 'description']) {
         if (Object.hasOwn(contentPatch, field) && issue[field] !== contentPatch[field]) {
             contentChanges[field] = [issue[field] || '', contentPatch[field]];
             nextContent[field] = contentPatch[field];
+        }
+    }
+
+    const beforeAi = normalizeAiClassification(issue);
+    const nextAi = {
+        ...beforeAi,
+        ...aiPatch,
+    };
+    const normalizedNextAi = normalizeAiClassification({ ai: nextAi });
+    for (const field of [
+        'businessType',
+        'scope',
+        'automationDecision',
+        'classifiedAt',
+        'confidence',
+    ]) {
+        if (Object.hasOwn(aiPatch, field) && beforeAi[field] !== normalizedNextAi[field]) {
+            contentChanges[`ai.${field}`] = [beforeAi[field] || '', normalizedNextAi[field] || ''];
         }
     }
 
@@ -633,6 +767,7 @@ async function updateFeedbackIssue(env, key, patch) {
     const nextIssue = {
         ...issue,
         ...nextContent,
+        ai: normalizedNextAi,
         workflow: {
             ...after,
             history: [...before.history, historyItem].slice(-50),
@@ -653,6 +788,8 @@ async function pushFeedbackWebhook(env, feedbackKey, feedback) {
     const payload = {
         key: feedbackKey,
         type: feedback.type,
+        sourceType: feedback.sourceType,
+        submittedType: feedback.submittedType,
         title: feedback.title,
         description: feedback.description,
         contact: feedback.contact,
@@ -684,6 +821,7 @@ function renderFeedbackBoardPage() {
         resolved: '已解决',
         test_failed: '测试失败',
         needs_human: '需人工处理',
+        ready_for_deploy: '待部署',
         closed: '已关闭',
     };
     const priorityTextZh = { low: '低', medium: '中', high: '高', urgent: '紧急' };
@@ -1000,6 +1138,7 @@ function renderFeedbackBoardPage() {
     .badge.resolved { color: #16a34a; border-color: rgba(16, 185, 129, 0.3); background: var(--ok-glow); }
     .badge.test_failed { color: #dc2626; border-color: rgba(220, 38, 38, 0.3); background: var(--danger-glow); }
     .badge.needs_human { color: #be123c; border-color: rgba(190, 18, 60, 0.3); background: rgba(244, 63, 94, 0.1); }
+    .badge.ready_for_deploy { color: #047857; border-color: rgba(5, 150, 105, 0.3); background: rgba(16, 185, 129, 0.12); }
     .badge.closed { color: #4b5563; background: rgba(156, 163, 175, 0.1); }
 
     .detail {
@@ -1502,8 +1641,8 @@ function renderFeedbackBoardPage() {
     </form>
   </template>
   <script>
-    const workflowStatuses = ['open', 'queued', 'in_progress', 'testing', 'resolved', 'test_failed', 'needs_human', 'closed'];
-    const statusLabels = { all: '全部', open: '待处理', queued: '已排队', in_progress: '进行中', testing: '测试中', resolved: '已解决', test_failed: '测试失败', needs_human: '需人工处理', closed: '已关闭' };
+    const workflowStatuses = ['open', 'queued', 'in_progress', 'testing', 'resolved', 'test_failed', 'needs_human', 'ready_for_deploy', 'closed'];
+    const statusLabels = { all: '全部', open: '待处理', queued: '已排队', in_progress: '进行中', testing: '测试中', resolved: '已解决', test_failed: '测试失败', needs_human: '需人工处理', ready_for_deploy: '待部署', closed: '已关闭' };
     const priorityLabels = { low: '低', medium: '中', high: '高', urgent: '紧急' };
     const tokenKey = 'feedbackAdminSession';
     let state = { issues: [], selectedKey: '', status: 'all', admin: readAdminSession() };
@@ -1848,6 +1987,100 @@ function renderFeedbackBoardPage() {
       }).join('');
       document.querySelectorAll('[data-key]').forEach((button) => button.addEventListener('click', () => loadDetail(button.dataset.key)));
     }
+    function parseAgentBlock(note, name) {
+      const text = String(note || '');
+      const start = '[' + name + ']';
+      const end = '[/' + name + ']';
+      const startIndex = text.indexOf(start);
+      const endIndex = text.indexOf(end);
+      if (startIndex < 0 || endIndex < 0 || endIndex <= startIndex) return null;
+
+      const result = {};
+      const body = text.slice(startIndex + start.length, endIndex).trim();
+      body.split(/\\r?\\n/).forEach((line) => {
+        const index = line.indexOf('=');
+        if (index <= 0) return;
+        const key = line.slice(0, index).trim();
+        const value = line.slice(index + 1).trim();
+        if (key && value) result[key] = value;
+      });
+      return Object.keys(result).length ? result : null;
+    }
+    function renderAgentPanel(panelName, title, rows) {
+      const visibleRows = rows.filter((row) => row.value !== undefined && row.value !== null && String(row.value).trim() !== '');
+      if (!visibleRows.length) return '';
+
+      return '<div class="section" data-agent-panel="' + esc(panelName) + '">' +
+        '<div class="section-title">' + esc(title) + '</div>' +
+        '<div class="grid">' +
+        visibleRows.map((row) =>
+          '<div class="field">' +
+          '<div class="label">' + esc(row.label) + '</div>' +
+          '<div class="value">' + esc(row.value) + '</div>' +
+          '</div>'
+        ).join('') +
+        '</div>' +
+        '</div>';
+    }
+    function renderAgentWorkflowPanels(issue) {
+      const workflow = issue.workflow || {};
+      const ai = issue.ai || {};
+      const note = workflow.internalNote || '';
+      const humanAction = parseAgentBlock(note, 'feedback-agent-human-action');
+      const design = parseAgentBlock(note, 'feedback-agent-design');
+      const candidate = parseAgentBlock(note, 'feedback-agent-candidate');
+
+      let html = renderAgentPanel('classification', 'AI 分类', [
+        { label: '提交来源', value: issue.sourceType || issue.type || 'manual' },
+        { label: '用户提交类型', value: issue.submittedType || 'unclear' },
+        { label: 'AI 分类', value: ai.businessType || issue.businessType || 'unclear' },
+        { label: '范围', value: ai.scope || issue.scope || 'unclear' },
+        { label: '自动决策', value: ai.automationDecision || '' },
+        { label: '置信度', value: ai.confidence || '' },
+      ]);
+
+      if (humanAction) {
+        html += renderAgentPanel('human-action', '人工动作', [
+          { label: '动作类型', value: humanAction.type },
+          { label: '处理要求', value: humanAction.requestedAction },
+          { label: '已检查证据', value: humanAction.evidenceInspected },
+          { label: '返回路径', value: humanAction.returnPath },
+        ]);
+      }
+
+      if (design) {
+        html += renderAgentPanel('design', '设计草案', [
+          { label: '业务类型', value: design.businessType },
+          { label: '范围', value: design.scope },
+          { label: '问题', value: design.problem },
+          { label: '当前行为', value: design.currentBehavior },
+          { label: '建议变更', value: design.proposedChange },
+          { label: '用户价值', value: design.userValue },
+          { label: '影响范围', value: design.affectedAreas },
+          { label: '验收标准', value: design.acceptanceCriteria },
+          { label: '风险', value: design.risks },
+          { label: '实现思路', value: design.implementationOutline },
+          { label: '验证计划', value: design.verificationPlan },
+          { label: '需要决策', value: design.decisionNeeded },
+        ]);
+      }
+
+      if (candidate) {
+        html += renderAgentPanel('candidate', '候选实现', [
+          { label: '反馈 Key', value: candidate.feedbackKey },
+          { label: '候选 Worktree', value: candidate.candidateWorktree },
+          { label: '候选分支', value: candidate.candidateBranch },
+          { label: '基础提交', value: candidate.baseCommit },
+          { label: '变更提交', value: candidate.changeCommit },
+          { label: '变更文件', value: candidate.changedFiles },
+          { label: '验证结果', value: candidate.verification },
+          { label: '候选状态', value: candidate.candidateStatus },
+          { label: '创建时间', value: candidate.createdAt },
+        ]);
+      }
+
+      return html;
+    }
     function renderDetail(issue) {
       const workflow = issue.workflow || issue;
       const status = workflow.status || issue.status;
@@ -1998,6 +2231,7 @@ function renderFeedbackBoardPage() {
               <div class="value" style="font-family: monospace; font-size: 11px;">\${esc(issue.key)}</div>
             </div>
           </div>
+          \${renderAgentWorkflowPanels(issue)}
           \${template}
           <div class="section">
             <div class="section-title">

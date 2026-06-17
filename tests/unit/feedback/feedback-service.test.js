@@ -31,7 +31,7 @@ describe('feedbackService', () => {
         recordFeedbackLog('error', ['apiKey="secret-token"', new Error('boom sk-123456789abc')]);
 
         await submitFeedback({
-            type: 'bug',
+            submittedType: 'bug',
             title: 'Cannot save task',
             description: 'Click save and it fails',
             contact: 'user@example.com',
@@ -41,10 +41,29 @@ describe('feedbackService', () => {
         const [, options] = fetch.mock.calls[0];
         const body = JSON.parse(options.body);
 
-        expect(body.type).toBe('bug');
+        expect(body.type).toBe('manual');
+        expect(body.sourceType).toBe('manual');
+        expect(body.submittedType).toBe('bug');
         expect(body.context.project.name).toBe('Demo Project');
         expect(JSON.stringify(body.context.logs)).toContain('apiKey=***');
         expect(JSON.stringify(body.context.logs)).toContain('sk-***');
+    });
+
+    it('defaults manual feedback submitted type to unclear', async () => {
+        const { submitFeedback } =
+            await import('../../../src/features/feedback/feedbackService.js');
+
+        await submitFeedback({
+            title: 'No selected type',
+            description: 'The user skipped the selector',
+        });
+
+        const [, options] = fetch.mock.calls[0];
+        const body = JSON.parse(options.body);
+
+        expect(body.type).toBe('manual');
+        expect(body.sourceType).toBe('manual');
+        expect(body.submittedType).toBe('unclear');
     });
 
     it('rejects attachments larger than the client limit', async () => {
@@ -70,7 +89,7 @@ describe('feedbackService', () => {
         });
 
         await submitFeedback({
-            type: 'bug',
+            submittedType: 'bug',
             title: 'Replay needed',
             description: 'The UI entered a bad state',
         });
@@ -96,7 +115,7 @@ describe('feedbackService', () => {
             await import('../../../src/features/feedback/feedbackService.js');
 
         await submitFeedback({
-            type: 'bug',
+            submittedType: 'bug',
             title: 'No replay',
             description: 'Manual note only',
         });
@@ -107,5 +126,22 @@ describe('feedbackService', () => {
         expect(body.attachments).toHaveLength(0);
         expect(body.context.replay.eventCount).toBe(0);
         expect(body.context.replay.enabled).toBe(false);
+    });
+
+    it('reports runtime errors as auto error bugs', async () => {
+        const { reportRuntimeError } =
+            await import('../../../src/features/feedback/feedbackService.js');
+
+        await reportRuntimeError({
+            message: 'Boom',
+            stack: 'Error: Boom',
+        });
+
+        const [, options] = fetch.mock.calls[0];
+        const body = JSON.parse(options.body);
+
+        expect(body.type).toBe('auto_error');
+        expect(body.sourceType).toBe('auto_error');
+        expect(body.submittedType).toBe('bug');
     });
 });

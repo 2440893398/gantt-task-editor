@@ -51,9 +51,11 @@ function renderFeedbackDialog(modal, defaults) {
                     <div class="space-y-1.5">
                         <label for="feedback-type" class="block text-xs font-medium text-base-content/75">${i18n.t('feedback.type') || '类型'}</label>
                         <select id="feedback-type" class="select select-bordered select-sm h-9 min-h-9 w-full text-sm">
+                            <option value="unclear">${i18n.t('feedback.typeUnclear') || '不确定'}</option>
                             <option value="bug">${i18n.t('feedback.typeBug') || 'Bug'}</option>
-                            <option value="suggestion">${i18n.t('feedback.typeSuggestion') || '建议'}</option>
-                            <option value="question">${i18n.t('feedback.typeQuestion') || '疑问'}</option>
+                            <option value="improvement">${i18n.t('feedback.typeImprovement') || '优化'}</option>
+                            <option value="requirement">${i18n.t('feedback.typeRequirement') || '需求'}</option>
+                            <option value="other">${i18n.t('feedback.typeOther') || '其他'}</option>
                         </select>
                     </div>
                     <div class="space-y-1.5">
@@ -254,7 +256,7 @@ async function submitForm(modal, attachments) {
 
     try {
         await submitFeedback({
-            type: modal.querySelector('#feedback-type').value,
+            submittedType: modal.querySelector('#feedback-type').value,
             title: modal.querySelector('#feedback-title').value.trim(),
             description: modal.querySelector('#feedback-description').value.trim(),
             contact: modal.querySelector('#feedback-contact').value.trim(),
