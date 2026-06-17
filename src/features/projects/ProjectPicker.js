@@ -2,7 +2,7 @@
  * 顶部项目切换下拉组件
  */
 
-import { state, switchProject, refreshProjects } from '../../core/store.js';
+import { state, switchProject } from '../../core/store.js';
 import { i18n } from '../../utils/i18n.js';
 import { showToast } from '../../utils/toast.js';
 const pickerControllers = new WeakMap();

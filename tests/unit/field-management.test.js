@@ -14,9 +14,9 @@ import {
 } from '../../src/features/customFields/manager.js';
 import {
     state,
-    addCustomField,
-    removeCustomField,
-    getCustomFieldByName,
+    addCustomField as _addCustomField,
+    removeCustomField as _removeCustomField,
+    getCustomFieldByName as _getCustomFieldByName,
     reorderFields,
 } from '../../src/core/store.js';
 

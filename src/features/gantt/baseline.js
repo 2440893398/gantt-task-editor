@@ -4,7 +4,6 @@ import { projectScope } from '../../core/storage.js';
 import { showToast } from '../../utils/toast.js';
 import i18n from '../../utils/i18n.js';
 
-let baselineLayer = null;
 let isBaselineVisible = false;
 
 /**
@@ -13,7 +12,7 @@ let isBaselineVisible = false;
  */
 export function initBaseline() {
     if (gantt.addTaskLayer) {
-        baselineLayer = gantt.addTaskLayer({
+        gantt.addTaskLayer({
             renderer: {
                 render: function (task) {
                     if (!task.baseline_start || !task.baseline_end) return false;

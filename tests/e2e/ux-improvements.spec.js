@@ -151,7 +151,7 @@ test.describe('交互体验优化模块 (UX Improvements) - P1', () => {
             const treeContent = taskRow.locator('.gantt_tree_content').first();
 
             if ((await treeContent.count()) > 0) {
-                const originalText = await treeContent.textContent();
+                const _originalText = await treeContent.textContent();
 
                 // 双击进入编辑模式
                 await treeContent.dblclick();
@@ -331,7 +331,7 @@ test.describe('交互体验优化模块 (UX Improvements) - P1', () => {
             await page.waitForTimeout(500);
 
             // 验证视图已滚动（今日线应该可见）
-            const todayMarker = page.locator('.gantt_marker.today');
+            const _todayMarker = page.locator('.gantt_marker.today');
             // 今日标记可能存在也可能不存在，取决于当前视图范围
         });
     });

@@ -31,7 +31,6 @@ let isOpen = false;
 let currentText = '';
 let onApplyCallback = null;
 let currentAgentId = null;
-let isStreaming = false; // 流式输出状态
 // 对话历史 (F-106)
 let conversationHistory = [];
 
@@ -997,7 +996,6 @@ function handleSuggestionClick(event) {
  */
 export function startStreaming() {
     currentText = '';
-    isStreaming = true;
 
     // 添加 AI 消息占位
     const messageId = addMessage('assistant', '', { streaming: true });
@@ -1053,7 +1051,6 @@ export function appendText(text) {
  */
 export function finishStreaming(usage = {}) {
     showLoading(false);
-    isStreaming = false;
 
     // 找到最后一条 AI 消息
     const lastMsg = conversationHistory.filter((m) => m.role === 'assistant').pop();
@@ -1195,8 +1192,6 @@ function hideError() {
 }
 
 function clearStreamingStateOnError() {
-    isStreaming = false;
-
     const lastMsg = conversationHistory.filter((m) => m.role === 'assistant').pop();
     if (!lastMsg) return;
     if (!lastMsg.streaming) return;

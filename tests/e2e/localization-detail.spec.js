@@ -411,9 +411,9 @@ test.describe('Localization Detail Tests - 本地化细节测试', () => {
                 );
 
                 // 检查是否包含期望的本地化文本
-                const hasDay = options.some((o) => o.includes(expected.dayView));
-                const hasWeek = options.some((o) => o.includes(expected.weekView));
-                const hasMonth = options.some((o) => o.includes(expected.monthView));
+                const _hasDay = options.some((o) => o.includes(expected.dayView));
+                const _hasWeek = options.some((o) => o.includes(expected.weekView));
+                const _hasMonth = options.some((o) => o.includes(expected.monthView));
 
                 // 检测本地化遗漏（非中文环境下仍显示中文）
                 if (lang !== 'zh-CN') {

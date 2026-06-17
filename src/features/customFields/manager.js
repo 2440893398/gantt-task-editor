@@ -11,8 +11,6 @@ import {
     isFieldEnabled,
     toggleSystemFieldEnabled,
     setSystemFieldType,
-    getSystemFieldOptions,
-    getSystemFieldDefaultValue,
 } from '../../core/store.js';
 
 import { SYSTEM_FIELD_CONFIG, INTERNAL_FIELDS } from '../../data/fields.js';
@@ -60,20 +58,6 @@ function attachFieldConfigEscClose() {
         closeFieldConfigModal();
     };
     document.addEventListener('keydown', fieldConfigEscHandler);
-}
-
-function openFieldManagementBackdrop() {
-    const backdrop = document.getElementById('field-management-backdrop');
-    if (!backdrop) return;
-    backdrop.classList.remove('hidden');
-    requestAnimationFrame(() => backdrop.classList.remove('opacity-0'));
-}
-
-function closeFieldManagementBackdrop() {
-    const backdrop = document.getElementById('field-management-backdrop');
-    if (!backdrop) return;
-    backdrop.classList.add('opacity-0');
-    setTimeout(() => backdrop.classList.add('hidden'), 200);
 }
 
 function attachFieldDrawerEscClose() {
@@ -1206,7 +1190,6 @@ export function initCustomFieldsUI() {
 
     // 筛选下拉菜单功能
     const filterLabelEl = document.getElementById('field-filter-label');
-    const filterBtn = document.getElementById('field-filter-btn');
     let currentFilter = 'all';
     const filterI18nKeyMap = {
         all: 'fieldManagement.filterAll',

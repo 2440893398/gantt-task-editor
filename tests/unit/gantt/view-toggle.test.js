@@ -26,7 +26,7 @@ vi.mock('../../../src/utils/i18n.js', () => ({
 import { applyCurrentViewMode, initViewToggle } from '../../../src/features/gantt/view-toggle.js';
 import { getViewMode, setViewMode } from '../../../src/core/store.js';
 import { updateGanttColumns, setGanttOnlyColumns } from '../../../src/features/gantt/columns.js';
-import { i18n } from '../../../src/utils/i18n.js';
+import { i18n as _i18n } from '../../../src/utils/i18n.js';
 
 // --- Helpers ---
 

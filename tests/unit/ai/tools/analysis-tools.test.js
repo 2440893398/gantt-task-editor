@@ -1,4 +1,11 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import {
+    describe,
+    expect,
+    it,
+    vi as _vi,
+    beforeEach as _beforeEach,
+    afterEach as _afterEach,
+} from 'vitest';
 import { analysisTools } from '../../../../src/features/ai/tools/analysisTools.js';
 
 // Mock gantt globally

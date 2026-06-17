@@ -153,7 +153,7 @@ test.describe('用户反馈优化测试套件', () => {
 
             if ((await textCell.count()) > 0) {
                 // 获取原始值
-                const originalText = await textCell.textContent();
+                const _originalText = await textCell.textContent();
 
                 // 双击进入编辑模式
                 await textCell.dblclick();

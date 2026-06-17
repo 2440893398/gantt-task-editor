@@ -9,7 +9,6 @@ import {
     parseDurationInput,
     exclusiveToInclusive,
     inclusiveToExclusive,
-    isDayPrecision,
     formatDateValue,
 } from '../../utils/time-formatter.js';
 import { state, isFieldEnabled, getFieldType, getSystemFieldOptions } from '../../core/store.js';
@@ -661,28 +660,6 @@ function renderStatusSelect(currentStatus) {
     `;
 
     return renderDropdownHTML('task-status', options, currentStatus, renderLabel, '选择状态');
-}
-
-/**
- * 渲染属性行
- */
-function renderPropertyRow(id, label, value, iconType) {
-    const iconSvg = getPropertyIcon(iconType);
-    const displayValue = value || '';
-
-    return `
-        <div class="flex items-center justify-between py-2.5">
-            <div class="flex items-center gap-2 text-sm text-base-content/70">
-                ${iconSvg}
-                <span>${label}</span>
-            </div>
-            <input type="text" 
-                   id="task-${id}-input" 
-                   class="input input-ghost input-xs w-24 text-right p-0" 
-                   value="${escapeHtml(displayValue)}" 
-                   placeholder="-" />
-        </div>
-    `;
 }
 
 /**

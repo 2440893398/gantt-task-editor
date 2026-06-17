@@ -131,7 +131,7 @@ test.describe('AI Agent Undo Functionality (F-201)', () => {
         // 1. Get a task
         const taskLocator = page.locator('.gantt_task_line').first();
         const taskId = await taskLocator.getAttribute('data-task-id');
-        const initialText = await page.evaluate((id) => gantt.getTask(id).text, taskId);
+        const _initialText = await page.evaluate((id) => gantt.getTask(id).text, taskId);
 
         // 2. Apply first modification
         const firstChange = 'First Change ' + Date.now();

@@ -106,7 +106,7 @@ function escapeHtml(text) {
  */
 function taskRefineRenderer(data, options = {}) {
     const { original, optimized, reasoning } = data;
-    const { onApply, onUndo, applied = false, canApply = true } = options;
+    const { applied = false, canApply = true } = options;
 
     return `
         <div class="card bg-base-200 shadow-sm ai-result-card" data-type="task_refine">

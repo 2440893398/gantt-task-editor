@@ -12,7 +12,16 @@ export default [
         },
         rules: {
             'no-console': 'off',
-            'no-unused-vars': 'warn',
+            'no-unused-vars': [
+                'warn',
+                {
+                    args: 'none',
+                    caughtErrors: 'none',
+                    destructuredArrayIgnorePattern: '^_',
+                    ignoreRestSiblings: true,
+                    varsIgnorePattern: '^_',
+                },
+            ],
             'no-var': 'error',
             'prefer-const': 'warn',
         },

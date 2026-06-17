@@ -10,22 +10,6 @@ import { showToast } from '../../utils/toast.js';
 const MODAL_ID = 'project-create-modal';
 const COLORS = ['#4f46e5', '#0891b2', '#059669', '#d97706', '#dc2626', '#7c3aed', '#db2777'];
 
-function escapeHtml(value) {
-    return String(value ?? '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-}
-
-function sanitizeColor(value) {
-    if (typeof value === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(value.trim())) {
-        return value.trim();
-    }
-    return '#4f46e5';
-}
-
 /**
  * 打开新建项目弹窗
  */

@@ -2,7 +2,7 @@
  * 甘特图模板函数
  */
 
-import { PRIORITY_COLORS, STATUS_COLORS, STATUS_ICONS } from '../../config/constants.js';
+import { PRIORITY_COLORS, STATUS_COLORS } from '../../config/constants.js';
 
 /**
  * 获取枚举值的本地化翻译

@@ -86,7 +86,7 @@ describe('tab1-settings: calendar:save 监听器不重复注册', () => {
         await renderTab1(container);
 
         let saveCount = 0;
-        const origSave = (await import('../../../src/core/storage.js')).saveCalendarSettings;
+        const _origSave = (await import('../../../src/core/storage.js')).saveCalendarSettings;
         const saveSpy = vi
             .spyOn(await import('../../../src/core/storage.js'), 'saveCalendarSettings')
             .mockImplementation(async () => {

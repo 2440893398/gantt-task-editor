@@ -12,10 +12,10 @@ import {
     configureLightbox,
     registerNameInput,
 } from '../lightbox/customization.js';
-import { updateSelectedTasksUI, applySelectionStyles } from '../selection/selectionManager.js';
+import { updateSelectedTasksUI } from '../selection/selectionManager.js';
 import { initNavigation, refreshUndoRedoButtons } from './navigation.js';
 import { initMarkers } from './markers.js';
-import { initZoom, refreshZoomBindings } from './zoom.js';
+import { initZoom } from './zoom.js';
 import { initScheduler, recalculateDurationsFromDates } from './scheduler.js';
 import { initResponsive } from './responsive.js';
 import { initInlineEdit, addInlineEditStyles } from './inline-edit.js';

@@ -8,8 +8,6 @@
  * - 关键路径高亮: Float = 0 的任务
  */
 
-import { i18n } from '../../utils/i18n.js';
-
 // 状态：是否显示关键路径
 let showCriticalPath = false;
 

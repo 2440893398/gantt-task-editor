@@ -21,12 +21,6 @@ function t(key, fallback) {
     return val && val !== key ? val : fallback;
 }
 
-const MODE_LABELS = {
-    polish: () => i18n.t('ai.inputBubble.polish') || '润色',
-    split: () => i18n.t('ai.inputBubble.split') || '拆分',
-    mention: () => i18n.t('ai.inputBubble.mention') || '引用',
-};
-
 const STATUS_MAP = {
     pending: '待开始',
     in_progress: '进行中',
@@ -64,9 +58,6 @@ function pill(icon, text) {
  * @returns {string} HTML 字符串
  */
 export function renderTaskInputBubble(taskData, options = {}) {
-    const { mode = 'polish' } = options;
-    const modeLabel = MODE_LABELS[mode] ? MODE_LABELS[mode]() : mode;
-
     const {
         text = '',
         priority,

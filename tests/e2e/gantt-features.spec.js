@@ -16,7 +16,7 @@ test.describe('Gantt v1.5 Features', () => {
     });
 
     test('Page loads without syntax errors', async ({ page }) => {
-        const title = await page.title();
+        const _title = await page.title();
         // Default Vite app title might be "Vite App" or similar, check something specific
         // Or just check that #gantt_here exists
         await expect(page.locator('#gantt_here')).toBeVisible();

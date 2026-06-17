@@ -95,7 +95,7 @@ test.describe('AI @ Mention Search', () => {
             await input.dispatchEvent('input');
 
             // Verify popup has list items
-            const mentionItems = page.locator(
+            const _mentionItems = page.locator(
                 '.mention-popup .mention-item, [data-mention-popup] [data-mention-item]'
             );
             // Should have at least one result or show empty state

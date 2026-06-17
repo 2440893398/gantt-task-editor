@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import AiService, {
+import { describe, it, expect, vi, beforeEach, afterEach as _afterEach } from 'vitest';
+import _AiService, {
     invokeAgent,
     getSmartContext,
     applyToInput,
@@ -128,7 +128,7 @@ describe('AI Service', () => {
             await invokeAgent('test-agent', mockContext);
 
             // Get the callbacks passed to runAgentStream
-            const [agent, ctx, onChunk, onFinish, onError] = runAgentStream.mock.calls[0];
+            const [_agent, _ctx, onChunk, onFinish, onError] = runAgentStream.mock.calls[0];
 
             // Test onChunk
             onChunk('chunk');

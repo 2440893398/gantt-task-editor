@@ -3,7 +3,7 @@
  * not plain text. This verifies the fix for the bug where contextTaskData
  * was never passed for the task_refine (polish) agent.
  */
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi as _vi, beforeEach as _beforeEach } from 'vitest';
 import { renderUserMessageContent } from '../../../../src/features/ai/components/AiDrawer.js';
 
 describe('polish agent task input bubble', () => {

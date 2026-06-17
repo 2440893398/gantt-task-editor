@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach as _beforeEach } from 'vitest';
 
 vi.mock('../../../../src/utils/i18n.js', () => ({
     i18n: { t: vi.fn((key) => null) },

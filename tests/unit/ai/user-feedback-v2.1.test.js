@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach as _afterEach } from 'vitest';
 import AiService from '../../../src/features/ai/services/aiService.js';
 import AiDrawer from '../../../src/features/ai/components/AiDrawer.js';
 import { initAiDrawer } from '../../../src/features/ai/components/AiDrawer.js';

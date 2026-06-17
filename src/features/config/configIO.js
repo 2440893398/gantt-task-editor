@@ -6,7 +6,6 @@
 import ExcelJS from 'exceljs';
 import {
     state,
-    isFieldEnabled,
     getSystemFieldOptions,
     getFieldType,
     getCustomFieldByName,

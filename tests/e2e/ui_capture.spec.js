@@ -1,6 +1,5 @@
-import { test, expect } from '@playwright/test';
+import { test, expect as _expect } from '@playwright/test';
 import fs from 'fs';
-import path from 'path';
 
 test('capture ui screenshots with mocked state', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });

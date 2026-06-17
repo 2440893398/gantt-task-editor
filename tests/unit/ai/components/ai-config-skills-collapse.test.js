@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi as _vi, beforeEach } from 'vitest';
 
 /**
  * Test the skills section collapse behavior in AiConfigModal.

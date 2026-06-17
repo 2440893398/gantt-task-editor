@@ -439,7 +439,6 @@ export async function testConnection(config = null) {
         // 第二步：测试函数调用支持
         console.log('[Test Connection] Step 2: Testing function calling support...');
         let toolCallSupported = false;
-        let toolCallError = null;
 
         try {
             const { tool, jsonSchema } = await import('ai');
@@ -483,7 +482,6 @@ export async function testConnection(config = null) {
                     '[Test Connection] Step 2: ⚠ Reasoning model detected, skipping tool call test'
                 );
                 toolCallSupported = false;
-                toolCallError = i18n.t('ai.config.reasoningNoToolCall');
             } else {
                 // 使用 toolChoice: 'required' 强制模型调用工具
                 // 这样可以准确测试 API 是否支持函数调用
@@ -549,7 +547,6 @@ export async function testConnection(config = null) {
                         // 使用了 toolChoice: required 但还是没调用工具
                         // 可能是 API 不支持 toolChoice，我们认为支持是未知的
                         toolCallSupported = null;
-                        toolCallError = i18n.t('ai.config.toolChoiceRequiredNoCall');
                         console.log(
                             '[Test Connection] Step 2: ⚠ Cannot determine - no tool call with required choice'
                         );
@@ -558,14 +555,12 @@ export async function testConnection(config = null) {
                     if (streamError.message === 'Tool test timeout') {
                         console.warn('[Test Connection] Step 2: ⚠ Tool test timed out');
                         toolCallSupported = null;
-                        toolCallError = i18n.t('ai.config.toolTestTimeout');
                     } else {
                         throw streamError; // Re-throw other errors
                     }
                 }
             }
         } catch (toolError) {
-            toolCallError = toolError.message;
             console.error('[Test Connection] Step 2: Tool call test failed:', {
                 message: toolError.message,
                 status: toolError.status,

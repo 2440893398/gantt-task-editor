@@ -22,7 +22,7 @@ test.describe('AI Analysis Skills Routing', () => {
         await page.route('https://api.openai.com/v1/chat/completions', async (route) => {
             const request = route.request();
             const postData = request.postDataJSON();
-            const userMsg = postData.messages?.find((m) => m.role === 'user');
+            const _userMsg = postData.messages?.find((m) => m.role === 'user');
 
             // Check if the system prompt contains dependency analysis skill context
             const systemMsg = postData.messages?.find((m) => m.role === 'system');

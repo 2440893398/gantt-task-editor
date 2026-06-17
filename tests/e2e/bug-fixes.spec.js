@@ -44,7 +44,7 @@ test.describe('Bug Fixes Verification', () => {
         await expect(lightbox).toBeHidden();
 
         // 4. Verify NO error message (dhtmlx_message_area)
-        const errorArea = page.locator('.dhtmlx_message_area');
+        const _errorArea = page.locator('.dhtmlx_message_area');
         // It might exist but empty, or not exist.
         // If error, usually text "Text is invalid" or similar.
         const errorMsg = page.locator('.dhtmlx_error');

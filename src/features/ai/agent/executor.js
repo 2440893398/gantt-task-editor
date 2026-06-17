@@ -291,7 +291,6 @@ export async function executeGeneralChat(
         modelOrProvider,
         typeof modelIdOrCallbacks === 'string' ? modelIdOrCallbacks : undefined
     );
-    const callbacks = typeof modelIdOrCallbacks === 'string' ? maybeCallbacks : modelIdOrCallbacks;
     const { language, languageName } = getLanguageInstruction();
     const importGuidance = hasAttachmentContext(messages)
         ? `\n\nAttachment detected. Prefer import-analysis style output with structured task diff JSON.`

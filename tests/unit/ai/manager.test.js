@@ -1,9 +1,12 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach as _afterEach } from 'vitest';
 import { initAiModule, attachAiTrigger } from '../../../src/features/ai/manager.js';
 import AiService from '../../../src/features/ai/services/aiService.js';
 import { restoreAiConfig } from '../../../src/core/store.js';
 import { initAiConfigModal } from '../../../src/features/ai/components/AiConfigModal.js';
-import { initAiFloatingBtn, openMenu } from '../../../src/features/ai/components/AiFloatingBtn.js';
+import {
+    initAiFloatingBtn,
+    openMenu as _openMenu,
+} from '../../../src/features/ai/components/AiFloatingBtn.js';
 import { initAiDrawer } from '../../../src/features/ai/components/AiDrawer.js';
 import { showToast } from '../../../src/utils/toast.js';
 

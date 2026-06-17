@@ -1,7 +1,14 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import {
+    describe,
+    expect,
+    it,
+    vi as _vi,
+    beforeEach as _beforeEach,
+    afterEach as _afterEach,
+} from 'vitest';
 import {
     buildHierarchyMap,
-    attachHierarchyIds,
+    attachHierarchyIds as _attachHierarchyIds,
 } from '../../../../src/features/ai/utils/hierarchy-id.js';
 import {
     generateToolSummary,
