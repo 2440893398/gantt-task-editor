@@ -510,8 +510,8 @@ describe('feedback issue board Worker routes', () => {
         expect(body.issues[0]).toMatchObject({
             key: feedbackKey,
             sourceType: 'manual',
-            submittedType: 'unclear',
-            businessType: 'unclear',
+            submittedType: 'bug',
+            businessType: 'bug',
             scope: 'unclear',
             title: 'Cannot save task',
             status: 'open',
@@ -523,6 +523,27 @@ describe('feedback issue board Worker routes', () => {
         expect(JSON.stringify(body)).not.toContain('secret-image');
         expect(JSON.stringify(body)).not.toContain('secret stack');
         expect(JSON.stringify(body)).not.toContain('Full UA');
+    });
+
+    it('preserves legacy type values as submitted business type', async () => {
+        const legacyEnv = createEnv({
+            [feedbackKey]: JSON.stringify(
+                createIssue({
+                    type: 'suggestion',
+                })
+            ),
+        });
+
+        const response = await request('/api/feedback/issues', {}, legacyEnv);
+        const body = await json(response);
+
+        expect(response.status).toBe(200);
+        expect(body.issues[0]).toMatchObject({
+            type: 'manual',
+            sourceType: 'manual',
+            submittedType: 'improvement',
+            businessType: 'improvement',
+        });
     });
 
     it('returns sanitized public issue detail', async () => {
@@ -538,8 +559,8 @@ describe('feedback issue board Worker routes', () => {
         expect(body.issue.projectName).toBe('Demo Project');
         expect(body.issue.pagePath).toBe('/');
         expect(body.issue.sourceType).toBe('manual');
-        expect(body.issue.submittedType).toBe('unclear');
-        expect(body.issue.businessType).toBe('unclear');
+        expect(body.issue.submittedType).toBe('bug');
+        expect(body.issue.businessType).toBe('bug');
         expect(body.issue.scope).toBe('unclear');
         expect(JSON.stringify(body)).not.toContain('user@example.com');
         expect(JSON.stringify(body)).not.toContain('secret-image');
@@ -571,6 +592,30 @@ describe('feedback issue board Worker routes', () => {
         expect(stored.ai.businessType).toBe('unclear');
         expect(stored.ai.scope).toBe('unclear');
         expect(stored.ai.automationDecision).toBe('');
+    });
+
+    it('normalizes legacy submitted type payloads from older clients', async () => {
+        const response = await request(
+            '/api/feedback',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    type: 'bug',
+                    title: 'Legacy bug payload',
+                    description: 'Older client still sends type as business category.',
+                }),
+            },
+            env
+        );
+        const body = await json(response);
+        const stored = JSON.parse(await env.FEEDBACK_KV.get(body.key));
+
+        expect(response.status).toBe(200);
+        expect(stored.type).toBe('manual');
+        expect(stored.sourceType).toBe('manual');
+        expect(stored.submittedType).toBe('bug');
+        expect(stored.ai.businessType).toBe('bug');
     });
 
     it('defaults missing submitted type to unclear', async () => {
@@ -634,9 +679,9 @@ describe('feedback issue board Worker routes', () => {
         expect(detailResponse.status).toBe(200);
         expect(detail.issue.contact).toBe('user@example.com');
         expect(detail.issue.sourceType).toBe('manual');
-        expect(detail.issue.submittedType).toBe('unclear');
+        expect(detail.issue.submittedType).toBe('bug');
         expect(detail.issue.ai).toMatchObject({
-            businessType: 'unclear',
+            businessType: 'bug',
             scope: 'unclear',
             automationDecision: '',
         });
@@ -824,6 +869,115 @@ describe('feedback issue board Worker routes', () => {
         expect(stored.description).toBe('The task disappears after clicking save.');
         expect(stored.submittedType).toBe('bug');
         expect(stored.ai.businessType).toBe('bug');
+    });
+
+    it('admin board submits submitted type instead of legacy type', async () => {
+        const pageResponse = await request('/feedback', {}, env);
+        const html = await pageResponse.text();
+        const patchBodies = [];
+        const dom = new JSDOM(html, {
+            runScripts: 'dangerously',
+            url: 'https://worker.test/feedback',
+            beforeParse(window) {
+                window.alert = () => {};
+                window.fetch = async (path, options = {}) => {
+                    if (path === '/api/feedback/issues') {
+                        return Response.json({
+                            issues: [
+                                {
+                                    key: feedbackKey,
+                                    type: 'manual',
+                                    sourceType: 'manual',
+                                    submittedType: 'improvement',
+                                    title: 'Cannot save task',
+                                    descriptionPreview: 'Click save and it fails',
+                                    receivedAt: '2026-05-31T08:00:00.000Z',
+                                    status: 'open',
+                                    priority: 'medium',
+                                    attachmentCount: 0,
+                                    replayEventCount: 0,
+                                },
+                            ],
+                        });
+                    }
+
+                    if (path === `/api/feedback/issues/${encodeURIComponent(feedbackKey)}`) {
+                        if (options.method === 'PATCH') {
+                            patchBodies.push(JSON.parse(options.body));
+                            return Response.json({
+                                issue: {
+                                    ...createIssue({
+                                        type: 'manual',
+                                        sourceType: 'manual',
+                                        submittedType: 'bug',
+                                    }),
+                                    key: feedbackKey,
+                                    workflow: {
+                                        status: 'open',
+                                        priority: 'medium',
+                                        assignee: '',
+                                        publicNote: '',
+                                        internalNote: '',
+                                        updatedAt: '2026-05-31T08:00:00.000Z',
+                                        history: [],
+                                    },
+                                },
+                            });
+                        }
+
+                        return Response.json({
+                            issue: {
+                                ...createIssue({
+                                    type: 'manual',
+                                    sourceType: 'manual',
+                                    submittedType: 'improvement',
+                                }),
+                                key: feedbackKey,
+                                workflow: {
+                                    status: 'open',
+                                    priority: 'medium',
+                                    assignee: '',
+                                    publicNote: '',
+                                    internalNote: '',
+                                    updatedAt: '2026-05-31T08:00:00.000Z',
+                                    history: [],
+                                },
+                            },
+                        });
+                    }
+
+                    return Response.json({ error: 'not found' }, { status: 404 });
+                };
+                window.localStorage.setItem(
+                    'feedbackAdminSession',
+                    JSON.stringify({
+                        token: 'unit-token',
+                        expiresAt: '2099-01-01T00:00:00.000Z',
+                    })
+                );
+            },
+        });
+
+        await waitFor(() => {
+            expect(dom.window.document.querySelector('[name="submittedType"]')).toBeTruthy();
+        });
+
+        expect(dom.window.document.querySelector('[name="type"]')).toBeNull();
+        const submittedTypeSelect = dom.window.document.querySelector('[name="submittedType"]');
+        await waitFor(() => {
+            expect(submittedTypeSelect.value).toBe('improvement');
+        });
+        submittedTypeSelect.value = 'bug';
+        dom.window.document
+            .querySelector('#workflowForm')
+            .dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+
+        await waitFor(() => {
+            expect(patchBodies).toHaveLength(1);
+        });
+
+        expect(patchBodies[0]).toMatchObject({ submittedType: 'bug' });
+        expect(patchBodies[0]).not.toHaveProperty('type');
     });
 
     it('accepts Codex agent workflow statuses and exposes them in filters', async () => {

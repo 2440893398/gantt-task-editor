@@ -36,6 +36,11 @@ const FEEDBACK_AUTOMATION_DECISIONS = new Set([
     'close',
 ]);
 const FEEDBACK_AI_CONFIDENCE = new Set(['', 'low', 'medium', 'high']);
+const LEGACY_FEEDBACK_TYPE_TO_BUSINESS_TYPE = {
+    bug: 'bug',
+    suggestion: 'improvement',
+    question: 'unclear',
+};
 const WORKFLOW_TEXT_LIMITS = {
     assignee: 120,
     publicNote: 2000,
@@ -343,15 +348,26 @@ function normalizeSourceType(value, fallback = 'manual') {
     return normalizeEnumValue(value, FEEDBACK_SOURCE_TYPES, fallback);
 }
 
+function normalizeLegacySubmittedType(value) {
+    const normalized = String(value || '').trim();
+    if (FEEDBACK_BUSINESS_TYPES.has(normalized)) return normalized;
+    return LEGACY_FEEDBACK_TYPE_TO_BUSINESS_TYPE[normalized] || '';
+}
+
 function normalizeSubmittedType(value, fallback = 'unclear') {
-    return normalizeEnumValue(value, FEEDBACK_BUSINESS_TYPES, fallback);
+    return normalizeLegacySubmittedType(value) || fallback;
 }
 
 function normalizeAiClassification(feedback = {}) {
     const ai = feedback.ai && typeof feedback.ai === 'object' ? feedback.ai : {};
+    const fallbackBusinessType = normalizeLegacySubmittedType(feedback.type) || 'unclear';
 
     return {
-        businessType: normalizeEnumValue(ai.businessType, FEEDBACK_BUSINESS_TYPES, 'unclear'),
+        businessType: normalizeEnumValue(
+            ai.businessType,
+            FEEDBACK_BUSINESS_TYPES,
+            fallbackBusinessType
+        ),
         scope: normalizeEnumValue(ai.scope, FEEDBACK_SCOPES, 'unclear'),
         automationDecision: normalizeEnumValue(
             ai.automationDecision,
@@ -452,9 +468,12 @@ function normalizeFeedbackPayload(body, request) {
               dataUrl: limitText(item.dataUrl, MAX_FEEDBACK_BYTES),
           }))
         : [];
-    const sourceType = normalizeSourceType(body.sourceType || body.type, 'manual');
+    const legacySubmittedType = normalizeLegacySubmittedType(body.type);
+    const sourceType = legacySubmittedType
+        ? normalizeSourceType(body.sourceType, 'manual')
+        : normalizeSourceType(body.sourceType || body.type, 'manual');
     const submittedType = normalizeSubmittedType(
-        body.submittedType || body.businessType,
+        body.submittedType || body.businessType || legacySubmittedType,
         'unclear'
     );
 
@@ -496,18 +515,22 @@ function normalizeWorkflow(feedback) {
 
 function normalizeStoredFeedback(key, feedback) {
     const legacyType = String(feedback.type || '').trim();
-    const sourceType = normalizeSourceType(feedback.sourceType || legacyType, 'manual');
+    const legacySubmittedType = normalizeLegacySubmittedType(legacyType);
+    const sourceType = legacySubmittedType
+        ? normalizeSourceType(feedback.sourceType, 'manual')
+        : normalizeSourceType(feedback.sourceType || legacyType, 'manual');
+    const submittedType = normalizeSubmittedType(
+        feedback.submittedType || feedback.businessType || legacySubmittedType,
+        'unclear'
+    );
 
     return {
         ...feedback,
         key,
-        type: feedback.type || sourceType,
+        type: sourceType,
         sourceType,
-        submittedType: normalizeSubmittedType(
-            feedback.submittedType || feedback.businessType,
-            'unclear'
-        ),
-        ai: normalizeAiClassification(feedback),
+        submittedType,
+        ai: normalizeAiClassification({ ...feedback, submittedType }),
         workflow: normalizeWorkflow(feedback),
     };
 }
@@ -836,6 +859,19 @@ function renderFeedbackBoardPage() {
         .map(
             (priority) =>
                 `<option value="${escapeHtml(priority)}">${escapeHtml(priorityTextZh[priority] || priority)}</option>`
+        )
+        .join('');
+    const submittedTypeLabels = {
+        unclear: '不确定',
+        bug: 'Bug',
+        improvement: '优化',
+        requirement: '需求',
+        other: '其他',
+    };
+    const submittedTypeOptions = Array.from(FEEDBACK_BUSINESS_TYPES)
+        .map(
+            (type) =>
+                `<option value="${escapeHtml(type)}">${escapeHtml(submittedTypeLabels[type] || type)}</option>`
         )
         .join('');
 
@@ -1623,7 +1659,7 @@ function renderFeedbackBoardPage() {
     <form id="workflowForm" class="section">
       <div class="form-row">
         <label class="form-group"><div class="label">标题</div><input name="title" maxlength="${FEEDBACK_CONTENT_LIMITS.title}"></label>
-        <label class="form-group"><div class="label">类型</div><input name="type" maxlength="${FEEDBACK_CONTENT_LIMITS.type}"></label>
+        <label class="form-group"><div class="label">用户提交类型</div><select name="submittedType">${submittedTypeOptions}</select></label>
         <label class="form-group"><div class="label">负责人</div><input name="assignee" maxlength="${WORKFLOW_TEXT_LIMITS.assignee}"></label>
       </div>
       <div class="form-row">
@@ -2205,7 +2241,7 @@ function renderFeedbackBoardPage() {
         fields.namedItem('status').value = workflow.status || 'open';
         fields.namedItem('priority').value = workflow.priority || 'medium';
         fields.namedItem('title').value = issue.title || '';
-        fields.namedItem('type').value = issue.type || 'manual';
+        fields.namedItem('submittedType').value = issue.submittedType || 'unclear';
         fields.namedItem('description').value = issue.description || issue.descriptionPreview || '';
         fields.namedItem('assignee').value = workflow.assignee || '';
         fields.namedItem('publicNote').value = workflow.publicNote || '';
