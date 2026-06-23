@@ -23,6 +23,7 @@ import { initAnalytics, trackEvent } from './utils/analytics.js';
 import { injectStructuredData } from './utils/structuredData.js';
 import { initGeoSeo, updateMetaForLanguage } from './utils/geoSeo.js';
 import {
+    state,
     restoreStateFromCache,
     restoreGanttDataFromCache,
     persistGanttData,
@@ -139,6 +140,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     initAssigneeFocusControl(document.getElementById('assignee-focus-control'), gantt);
     bindTaskSearchInput(document.getElementById('task-search-input'), gantt);
+    bindWorkCalendarMenu();
 
     // 检测并处理分享链接参数
     const { checkShareParam } = await import('./features/share/ImportDialog.js');
@@ -237,6 +239,13 @@ async function initGanttWithCache() {
 /**
  * 设置自动保存
  */
+function bindWorkCalendarMenu() {
+    document.getElementById('open-work-calendar')?.addEventListener('click', () => {
+        document.getElementById('more-actions-dropdown')?.classList.remove('active');
+        window.openCalendarPanel?.();
+    });
+}
+
 function setupAutoSave() {
     // 保存数据的防抖定时器
     let saveTimeout = null;

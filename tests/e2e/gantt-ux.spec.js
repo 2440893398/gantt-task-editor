@@ -165,6 +165,14 @@ test.describe('Gantt Chart UX Optimization', () => {
         await expect(dropdownMenu.locator('text=导入JSON')).toBeVisible();
     });
 
+    test('TC-013b: Work calendar menu item should open calendar panel', async ({ page }) => {
+        await page.locator('#more-actions-dropdown label').click();
+        await page.locator('#open-work-calendar').click();
+
+        await expect(page.locator('.calendar-panel-overlay')).toBeVisible();
+        await expect(page.locator('.calendar-panel__title')).toContainText('工作日历');
+    });
+
     test.skip('TC-014: Dropdown should close when clicking outside', async ({ page }) => {
         const moreActionsBtn = page.locator('#more-actions-dropdown .more-btn');
         const dropdownMenu = page.locator('#more-actions-dropdown .dropdown-content');
