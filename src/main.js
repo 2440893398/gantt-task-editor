@@ -253,11 +253,12 @@ function setupAutoSave() {
     const debouncedSave = () => {
         if (isReadOnlyCloudViewActive()) return;
 
+        const projectId = state.currentProjectId;
         if (saveTimeout) clearTimeout(saveTimeout);
         saveTimeout = setTimeout(async () => {
             if (isReadOnlyCloudViewActive()) return;
             await persistGanttData();
-            scheduleCloudSync(state.currentProjectId);
+            scheduleCloudSync(projectId);
         }, 1000); // 1秒防抖
     };
 
