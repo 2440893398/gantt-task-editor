@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { JSDOM } from 'jsdom';
+import { TextDecoder } from 'node:util';
 import worker from '../../../workers/share-worker.js';
 
 class MemoryKV {
@@ -306,6 +307,7 @@ describe('feedback issue board Worker routes', () => {
             url: 'https://worker.test/feedback',
             beforeParse(window) {
                 window.alert = () => {};
+                window.TextDecoder = TextDecoder;
                 window.fetch = async (path) => {
                     if (path === '/api/feedback/issues') {
                         return Response.json({
@@ -358,6 +360,94 @@ describe('feedback issue board Worker routes', () => {
         });
     });
 
+    it('decodes replay JSON attachments as UTF-8 before playback', async () => {
+        const events = [
+            { type: 4, data: { width: 1280, height: 720 } },
+            { type: 3, data: { source: 0, text: '问题反馈复现' } },
+        ];
+        const replayIssue = createIssue({
+            attachments: [
+                {
+                    name: 'feedback-rrweb-1780194478721.json',
+                    type: 'application/json',
+                    size: 180,
+                    dataUrl: replayDataUrl(events),
+                },
+            ],
+            context: {
+                replay: { eventCount: events.length },
+            },
+        });
+        const pageResponse = await request('/feedback', {}, env);
+        const html = await pageResponse.text();
+        let playerEvents = [];
+        const dom = new JSDOM(html, {
+            runScripts: 'dangerously',
+            url: 'https://worker.test/feedback',
+            beforeParse(window) {
+                window.alert = () => {};
+                window.TextDecoder = TextDecoder;
+                window.rrwebPlayer = function FakePlayer(options) {
+                    playerEvents = options.props.events;
+                    return { pause: () => {} };
+                };
+                window.fetch = async (path) => {
+                    if (path === '/api/feedback/issues') {
+                        return Response.json({
+                            issues: [
+                                {
+                                    key: feedbackKey,
+                                    title: replayIssue.title,
+                                    descriptionPreview: replayIssue.description,
+                                    receivedAt: replayIssue.receivedAt,
+                                    status: 'open',
+                                    priority: 'medium',
+                                    attachmentCount: 1,
+                                    replayEventCount: events.length,
+                                },
+                            ],
+                        });
+                    }
+
+                    if (path === `/api/feedback/issues/${encodeURIComponent(feedbackKey)}`) {
+                        return Response.json({
+                            issue: {
+                                ...replayIssue,
+                                key: feedbackKey,
+                                workflow: {
+                                    status: 'open',
+                                    priority: 'medium',
+                                    assignee: '',
+                                    publicNote: '',
+                                    internalNote: '',
+                                    history: [],
+                                },
+                            },
+                        });
+                    }
+
+                    return Response.json({ error: 'not found' }, { status: 404 });
+                };
+                window.localStorage.setItem(
+                    'feedbackAdminSession',
+                    JSON.stringify({
+                        token: 'unit-token',
+                        expiresAt: '2099-01-01T00:00:00.000Z',
+                    })
+                );
+            },
+        });
+
+        await waitFor(() => {
+            expect(dom.window.document.querySelector('.btn-play-replay')).toBeTruthy();
+        });
+
+        dom.window.document.querySelector('.btn-play-replay').click();
+        await new Promise((resolve) => setTimeout(resolve, 150));
+
+        expect(playerEvents[1].data.text).toBe('问题反馈复现');
+    });
+
     it('explains when replay event counts exist but replay JSON is missing', async () => {
         const replayIssue = createIssue({
             attachments: [],
@@ -372,6 +462,7 @@ describe('feedback issue board Worker routes', () => {
             url: 'https://worker.test/feedback',
             beforeParse(window) {
                 window.alert = () => {};
+                window.TextDecoder = TextDecoder;
                 window.fetch = async (path) => {
                     if (path === '/api/feedback/issues') {
                         return Response.json({
@@ -499,6 +590,7 @@ describe('feedback issue board Worker routes', () => {
             url: 'https://worker.test/feedback',
             beforeParse(window) {
                 window.alert = () => {};
+                window.TextDecoder = TextDecoder;
                 window.fetch = async (path) => {
                     if (path === '/api/feedback/issues') {
                         return Response.json({

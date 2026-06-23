@@ -18,6 +18,15 @@ function escapeHtml(value) {
         .replaceAll("'", '&#039;');
 }
 
+function getDraftFromModal(modal) {
+    return {
+        submittedType: modal.querySelector('#feedback-type')?.value || 'unclear',
+        title: modal.querySelector('#feedback-title')?.value || '',
+        description: modal.querySelector('#feedback-description')?.value || '',
+        contact: modal.querySelector('#feedback-contact')?.value || '',
+    };
+}
+
 export function openFeedbackDialog(defaults = {}) {
     let modal = document.getElementById(MODAL_ID);
     if (!modal) {
@@ -61,6 +70,7 @@ function renderFeedbackDialog(modal, defaults) {
                     <div class="space-y-1.5">
                         <label for="feedback-contact" class="block text-xs font-medium text-base-content/75">${i18n.t('feedback.contact') || '联系方式（可选）'}</label>
                         <input id="feedback-contact" class="input input-bordered input-sm h-9 min-h-9 w-full text-sm" type="text" autocomplete="off"
+                            value="${escapeHtml(defaults.contact || '')}"
                             placeholder="${escapeHtml(i18n.t('feedback.contactPlaceholder') || '邮箱/微信/手机号')}" />
                     </div>
                 </div>
@@ -74,7 +84,7 @@ function renderFeedbackDialog(modal, defaults) {
 
                 <div class="space-y-1.5">
                     <label for="feedback-description" class="block text-xs font-medium text-base-content/75">${i18n.t('feedback.description') || '问题描述 / 复现步骤'}</label>
-                    <textarea id="feedback-description" class="textarea textarea-bordered min-h-28 w-full resize-y text-sm leading-6" required
+                    <textarea id="feedback-description" class="textarea textarea-bordered min-h-28 w-full resize-y text-sm leading-6"
                         placeholder="${escapeHtml(i18n.t('feedback.descriptionPlaceholder') || '发生了什么？你期望看到什么？如果可以，请写下复现步骤。')}">${escapeHtml(defaults.description || '')}</textarea>
                 </div>
 
@@ -132,6 +142,8 @@ function renderFeedbackDialog(modal, defaults) {
     const replayStatus = modal.querySelector('#feedback-replay-status');
     const previewReplayBtn = modal.querySelector('#feedback-preview-replay-btn');
 
+    modal.querySelector('#feedback-type').value = defaults.submittedType || 'unclear';
+
     const updateAttachmentList = () => {
         list.innerHTML = attachments
             .map(
@@ -174,7 +186,7 @@ function renderFeedbackDialog(modal, defaults) {
     });
 
     startReplayBtn.addEventListener('click', async () => {
-        await startReplayFromDialog(modal, replayStatus);
+        await startReplayFromDialog(modal, replayStatus, getDraftFromModal(modal));
     });
 
     previewReplayBtn?.addEventListener('click', async () => {
@@ -219,7 +231,15 @@ function updateReplayStatus(statusEl) {
     `;
 }
 
-async function startReplayFromDialog(modal, replayStatus) {
+async function startReplayFromDialog(modal, replayStatus, draft = {}) {
+    const feedbackButton = document.getElementById('feedback-btn');
+    if (feedbackButton) {
+        feedbackButton.dataset.feedbackDraftSubmittedType = draft.submittedType || 'unclear';
+        feedbackButton.dataset.feedbackDraftTitle = draft.title || '';
+        feedbackButton.dataset.feedbackDraftDescription = draft.description || '';
+        feedbackButton.dataset.feedbackDraftContact = draft.contact || '';
+    }
+
     modal.close();
     await new Promise((resolve) => requestAnimationFrame(resolve));
 
@@ -227,7 +247,7 @@ async function startReplayFromDialog(modal, replayStatus) {
     if (!started) {
         showToast(i18n.t('feedback.recordingFailed') || '录制未开始', 'error');
         updateReplayStatus(replayStatus);
-        openFeedbackDialog();
+        openFeedbackDialog(draft);
         return;
     }
 
@@ -252,13 +272,15 @@ async function addFiles(files, attachments, updateAttachmentList) {
 async function submitForm(modal, attachments) {
     const submitBtn = modal.querySelector('#feedback-submit-btn');
     submitBtn.disabled = true;
+    const title = modal.querySelector('#feedback-title').value.trim();
+    const description = modal.querySelector('#feedback-description').value.trim();
     submitBtn.textContent = i18n.t('feedback.submitting') || '提交中...';
 
     try {
         await submitFeedback({
             submittedType: modal.querySelector('#feedback-type').value,
-            title: modal.querySelector('#feedback-title').value.trim(),
-            description: modal.querySelector('#feedback-description').value.trim(),
+            title,
+            description: description || title,
             contact: modal.querySelector('#feedback-contact').value.trim(),
             attachments,
         });

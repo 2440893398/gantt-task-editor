@@ -69,7 +69,16 @@ export function initFeedbackToolbarControl(openDialog) {
 
         if (getFeedbackReplayContext().enabled) {
             stopFeedbackReplayRecording();
-            openDialog();
+            openDialog({
+                submittedType: button.dataset.feedbackDraftSubmittedType || 'unclear',
+                title: button.dataset.feedbackDraftTitle || '',
+                description: button.dataset.feedbackDraftDescription || '',
+                contact: button.dataset.feedbackDraftContact || '',
+            });
+            delete button.dataset.feedbackDraftSubmittedType;
+            delete button.dataset.feedbackDraftTitle;
+            delete button.dataset.feedbackDraftDescription;
+            delete button.dataset.feedbackDraftContact;
             return;
         }
 

@@ -1753,7 +1753,9 @@ function renderFeedbackBoardPage(apiBase = '') {
 
       try {
         const base64 = String(dataUrl).split(',')[1] || '';
-        const json = atob(base64);
+        const binary = atob(base64);
+        const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+        const json = new TextDecoder().decode(bytes);
         const payload = JSON.parse(json);
         const events = payload.events || payload;
         return Array.isArray(events) ? events : [];
