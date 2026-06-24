@@ -835,7 +835,20 @@ async function pushFeedbackWebhook(env, feedbackKey, feedback) {
     });
 }
 
-function renderFeedbackBoardPage() {
+function getFeedbackBoardApiBase(request, env) {
+    const url = new URL(request.url);
+    const configuredBase = String(env.FEEDBACK_API_URL || '').replace(/\/+$/, '');
+
+    if (configuredBase) return configuredBase;
+    if (url.hostname === 'gantt-task-editor.pages.dev') {
+        return 'https://gantt-share.ch451314.workers.dev';
+    }
+
+    return '';
+}
+
+function renderFeedbackBoardPage(apiBase = '') {
+    const feedbackApiBase = String(apiBase || '').replace(/\/+$/, '');
     const statusTextZh = {
         open: '待处理',
         queued: '已排队',
@@ -1535,6 +1548,18 @@ function renderFeedbackBoardPage() {
       font-size: 12px;
       line-height: 1.5;
     }
+    .candidate-evidence {
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px dashed var(--line);
+    }
+    .candidate-evidence-title {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+    }
 
     .modal-overlay {
       position: fixed;
@@ -1680,7 +1705,15 @@ function renderFeedbackBoardPage() {
     const workflowStatuses = ['open', 'queued', 'in_progress', 'testing', 'resolved', 'test_failed', 'needs_human', 'ready_for_deploy', 'closed'];
     const statusLabels = { all: '全部', open: '待处理', queued: '已排队', in_progress: '进行中', testing: '测试中', resolved: '已解决', test_failed: '测试失败', needs_human: '需人工处理', ready_for_deploy: '待部署', closed: '已关闭' };
     const priorityLabels = { low: '低', medium: '中', high: '高', urgent: '紧急' };
+    const sourceTypeLabels = { manual: '手动反馈', auto_error: '自动错误', admin: '管理员录入' };
+    const businessTypeLabels = { unclear: '不确定', bug: '缺陷', improvement: '优化', requirement: '需求', other: '其他' };
+    const scopeLabels = { small: '小', medium: '中', large: '大', unclear: '不确定' };
+    const automationDecisionLabels = { auto_fix: '可自动修复', design_required: '需要设计确认', need_reproduction: '需要补充复现', review_required: '需要人工审核', developer_fix_required: '需要开发处理', close: '可关闭' };
+    const confidenceLabels = { low: '低', medium: '中', high: '高' };
+    const candidateStatusLabels = { needs_human: '待人工审批', ready_for_deploy: '待部署', merged: '已合并', abandoned: '已放弃' };
+    const humanActionTypeLabels = { design_decision: '设计决策', review_required: '需要人工审核', need_reproduction: '需要补充复现', ready_for_deploy: '待部署确认', close: '关闭确认' };
     const tokenKey = 'feedbackAdminSession';
+    const feedbackApiBase = '${feedbackApiBase}';
     let state = { issues: [], selectedKey: '', status: 'all', admin: readAdminSession() };
 
     const svgAttachment = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;margin-right:2px;"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>';
@@ -1827,8 +1860,72 @@ function renderFeedbackBoardPage() {
     function authHeaders(extra = {}) { return state.admin ? { ...extra, Authorization: 'Bearer ' + state.admin.token } : extra; }
     function esc(value) { return String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[char])); }
     function fmt(value) { return value ? new Date(value).toLocaleString() : ''; }
+    function apiUrl(path) { return feedbackApiBase + path; }
+    function labelFrom(map, value) {
+      const raw = String(value || '').trim();
+      if (!raw) return '';
+      return map[raw] || raw;
+    }
+    function translateAgentText(value) {
+      let text = String(value || '').trim();
+      if (!text) return '';
+
+      text = text.replace(/Review candidate commit ([a-f0-9]+) and set status to ready_for_deploy if approved\\.?/i, '请审核候选提交 $1；如果效果符合预期，请将状态改为“待部署”。');
+      text = text.replace(/Approve or revise the generated design\\.?/i, '请审批或调整生成的设计方案。');
+      text = text.replace(/Read user description and replay summary\\.?/i, '已查看用户描述和录屏摘要。');
+      text = text.replace(/queued if approved, closed if rejected/i, '通过后排队处理；拒绝后关闭。');
+      return text;
+    }
+    function hasEncodingArtifacts(value) {
+      const text = String(value || '').trim();
+      if (!text) return false;
+      const questionRuns = (text.match(/\\?{4,}/g) || []).length;
+      if (questionRuns > 0 && /UTF-?8|rrweb|JSON/i.test(text)) return true;
+      if (questionRuns > 0 && !/[\\u4e00-\\u9fff]/.test(text)) return true;
+      return /[锟�]{2,}|[ÃÂ][\\u0080-\\u00ff]|�/.test(text);
+    }
+    function getPublicNoteDisplay(issue) {
+      const workflow = issue.workflow || issue;
+      const raw = workflow.publicNote || issue.publicNote || '';
+      if (hasEncodingArtifacts(raw)) {
+        return {
+          text: '公开回复内容疑似编码异常，已隐藏乱码。请重新用中文填写处理进展、解决方案或需要用户补充的信息。',
+          isPlaceholder: false,
+        };
+      }
+      return {
+        text: raw || '暂无公开回复。',
+        isPlaceholder: !raw,
+      };
+    }
+    function renderAttachmentCard(att, options = {}) {
+      const isImage = att.type && att.type.startsWith('image/');
+      const isReplay = isReplayAttachment(att);
+      const evidenceLabel = isReplay ? 'rrweb 录屏' : isImage ? '截图' : '附件';
+      let previewOrAction = '';
+      let iconHtml = '';
+      if (isImage) {
+        previewOrAction = '<img class="attachment-thumb" src="' + esc(att.dataUrl) + '" data-url="' + esc(att.dataUrl) + '" alt="' + esc(att.name) + '" style="cursor:pointer;">';
+      } else if (isReplay) {
+        iconHtml = '<div style="width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; background: var(--primary-glow); border-radius: 6px; border: 1px solid rgba(14, 165, 233, 0.3);">' + svgPlay + '</div>';
+        previewOrAction = '<button type="button" class="btn-play-replay" data-url="' + esc(att.dataUrl) + '" data-name="' + esc(att.name) + '">播放</button>';
+      } else {
+        iconHtml = '<div style="width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; background: rgba(156, 163, 175, 0.1); border-radius: 6px; border: 1px solid var(--line);">' + svgAttachment + '</div>';
+        previewOrAction = '<a href="' + esc(att.dataUrl) + '" download="' + esc(att.name) + '" class="btn-download-file">下载</a>';
+      }
+
+      return '            <div class="attachment-card">' +
+        (isImage ? previewOrAction : iconHtml) +
+        '              <div class="attachment-info">' +
+        (options.showEvidenceLabel ? '                <span class="attachment-size">' + evidenceLabel + '</span>' : '') +
+        '                <span class="attachment-name" title="' + esc(att.name) + '">' + esc(att.name) + '</span>' +
+        '                <span class="attachment-size">' + formatBytes(att.size || 0) + '</span>' +
+        '              </div>' +
+        (!isImage ? previewOrAction : '') +
+        '            </div>';
+    }
     async function api(path, options = {}) {
-      const response = await fetch(path, { ...options, headers: authHeaders(options.headers || {}) });
+      const response = await fetch(apiUrl(path), { ...options, headers: authHeaders(options.headers || {}) });
       if (response.status === 401 && state.admin) logout(false);
       if (!response.ok) throw new Error(await response.text());
       return response.json();
@@ -1896,7 +1993,7 @@ function renderFeedbackBoardPage() {
     }
     async function login() {
       const input = document.getElementById('adminPassword');
-      const response = await fetch('/api/feedback/admin/session', {
+      const response = await fetch(apiUrl('/api/feedback/admin/session'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password: input.value }),
@@ -2058,6 +2155,26 @@ function renderFeedbackBoardPage() {
         '</div>' +
         '</div>';
     }
+    function renderCandidateEvidence(issue) {
+      const attachments = Array.isArray(issue.attachments) ? issue.attachments : [];
+      const replayAttachments = attachments.filter((att) => isReplayAttachment(att));
+      const imageAttachments = attachments.filter((att) => att.type && att.type.startsWith('image/'));
+      const evidence = [...replayAttachments, ...imageAttachments].slice(0, 4);
+
+      if (!evidence.length) {
+        return '<div class="candidate-evidence">' +
+          '<div class="candidate-evidence-title">审批证据</div>' +
+          '<div class="replay-missing">暂无调整后的 rrweb 录屏或截图。请候选实现完成后补充可视化证据，便于直接审批效果。</div>' +
+          '</div>';
+      }
+
+      return '<div class="candidate-evidence">' +
+        '<div class="candidate-evidence-title">审批证据</div>' +
+        '<div class="attachments-grid">' +
+        evidence.map((att) => renderAttachmentCard(att, { showEvidenceLabel: true })).join('') +
+        '</div>' +
+        '</div>';
+    }
     function renderAgentWorkflowPanels(issue) {
       const workflow = issue.workflow || {};
       const ai = issue.ai || {};
@@ -2067,27 +2184,27 @@ function renderFeedbackBoardPage() {
       const candidate = parseAgentBlock(note, 'feedback-agent-candidate');
 
       let html = renderAgentPanel('classification', 'AI 分类', [
-        { label: '提交来源', value: issue.sourceType || issue.type || 'manual' },
-        { label: '用户提交类型', value: issue.submittedType || 'unclear' },
-        { label: 'AI 分类', value: ai.businessType || issue.businessType || 'unclear' },
-        { label: '范围', value: ai.scope || issue.scope || 'unclear' },
-        { label: '自动决策', value: ai.automationDecision || '' },
-        { label: '置信度', value: ai.confidence || '' },
+        { label: '提交来源', value: labelFrom(sourceTypeLabels, issue.sourceType || issue.type || 'manual') },
+        { label: '用户提交类型', value: labelFrom(businessTypeLabels, issue.submittedType || 'unclear') },
+        { label: 'AI 分类', value: labelFrom(businessTypeLabels, ai.businessType || issue.businessType || 'unclear') },
+        { label: '范围', value: labelFrom(scopeLabels, ai.scope || issue.scope || 'unclear') },
+        { label: '自动决策', value: labelFrom(automationDecisionLabels, ai.automationDecision || '') },
+        { label: '置信度', value: labelFrom(confidenceLabels, ai.confidence || '') },
       ]);
 
       if (humanAction) {
         html += renderAgentPanel('human-action', '人工动作', [
-          { label: '动作类型', value: humanAction.type },
-          { label: '处理要求', value: humanAction.requestedAction },
-          { label: '已检查证据', value: humanAction.evidenceInspected },
-          { label: '返回路径', value: humanAction.returnPath },
+          { label: '动作类型', value: labelFrom(humanActionTypeLabels, humanAction.type) },
+          { label: '处理要求', value: translateAgentText(humanAction.requestedAction) },
+          { label: '已检查证据', value: translateAgentText(humanAction.evidenceInspected) },
+          { label: '返回路径', value: translateAgentText(humanAction.returnPath) },
         ]);
       }
 
       if (design) {
         html += renderAgentPanel('design', '设计草案', [
-          { label: '业务类型', value: design.businessType },
-          { label: '范围', value: design.scope },
+          { label: '业务类型', value: labelFrom(businessTypeLabels, design.businessType) },
+          { label: '范围', value: labelFrom(scopeLabels, design.scope) },
           { label: '问题', value: design.problem },
           { label: '当前行为', value: design.currentBehavior },
           { label: '建议变更', value: design.proposedChange },
@@ -2110,9 +2227,10 @@ function renderFeedbackBoardPage() {
           { label: '变更提交', value: candidate.changeCommit },
           { label: '变更文件', value: candidate.changedFiles },
           { label: '验证结果', value: candidate.verification },
-          { label: '候选状态', value: candidate.candidateStatus },
+          { label: '候选状态', value: labelFrom(candidateStatusLabels, candidate.candidateStatus) },
           { label: '创建时间', value: candidate.createdAt },
         ]);
+        html += renderCandidateEvidence(issue);
       }
 
       return html;
@@ -2122,6 +2240,7 @@ function renderFeedbackBoardPage() {
       const status = workflow.status || issue.status;
       const priority = workflow.priority || issue.priority;
       const isAdminDetail = Boolean(state.admin);
+      const publicNote = getPublicNoteDisplay(issue);
 
       const attCount = issue.attachmentCount ?? issue.attachments?.length ?? 0;
       const repCount = issue.replayEventCount ?? issue.context?.replay?.eventCount ?? 0;
@@ -2130,30 +2249,9 @@ function renderFeedbackBoardPage() {
       let attachmentsHtml = '';
       if (issue.attachments && issue.attachments.length > 0) {
         const cards = issue.attachments.map(att => {
-          const isImage = att.type && att.type.startsWith('image/');
           const isReplay = isReplayAttachment(att);
           if (isReplay) hasReplayAttachment = true;
-
-          let previewOrAction = '';
-          let iconHtml = '';
-          if (isImage) {
-            previewOrAction = '<img class="attachment-thumb" src="' + esc(att.dataUrl) + '" data-url="' + esc(att.dataUrl) + '" alt="' + esc(att.name) + '" style="cursor:pointer;">';
-          } else if (isReplay) {
-            iconHtml = '<div style="width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; background: var(--primary-glow); border-radius: 6px; border: 1px solid rgba(14, 165, 233, 0.3);">' + svgPlay + '</div>';
-            previewOrAction = '<button type="button" class="btn-play-replay" data-url="' + esc(att.dataUrl) + '" data-name="' + esc(att.name) + '">播放</button>';
-          } else {
-            iconHtml = '<div style="width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; background: rgba(156, 163, 175, 0.1); border-radius: 6px; border: 1px solid var(--line);">' + svgAttachment + '</div>';
-            previewOrAction = '<a href="' + esc(att.dataUrl) + '" download="' + esc(att.name) + '" class="btn-download-file">下载</a>';
-          }
-
-          return '            <div class="attachment-card">' +
-            (isImage ? previewOrAction : iconHtml) +
-            '              <div class="attachment-info">' +
-            '                <span class="attachment-name" title="' + esc(att.name) + '">' + esc(att.name) + '</span>' +
-            '                <span class="attachment-size">' + formatBytes(att.size || 0) + '</span>' +
-            '              </div>' +
-            (!isImage ? previewOrAction : '') +
-            '            </div>';
+          return renderAttachmentCard(att);
         }).join('');
 
         attachmentsHtml = '          <div class="section attachments-section">' +
@@ -2224,7 +2322,7 @@ function renderFeedbackBoardPage() {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
             公开回复
           </div>
-          <div class="section-content" style="font-style: \${workflow.publicNote || issue.publicNote ? 'normal' : 'italic'}">\${esc(workflow.publicNote || issue.publicNote || '暂无公开回复。')}</div>
+          <div class="section-content" style="font-style: \${publicNote.isPlaceholder ? 'italic' : 'normal'}">\${esc(publicNote.text)}</div>
         </div>
         \${attachmentsHtml}
         \${isAdminDetail ? renderAdminDetail(issue) : ''}\`;
@@ -2360,7 +2458,7 @@ export default {
         }
 
         if (request.method === 'GET' && url.pathname === '/feedback') {
-            return new Response(renderFeedbackBoardPage(), {
+            return new Response(renderFeedbackBoardPage(getFeedbackBoardApiBase(request, env)), {
                 headers: {
                     ...headers,
                     'Content-Type': 'text/html; charset=utf-8',
@@ -2578,6 +2676,10 @@ export default {
             return new Response(value, {
                 headers: { ...headers, 'Content-Type': 'application/json' },
             });
+        }
+
+        if (!url.pathname.startsWith('/api/') && env.ASSETS?.fetch) {
+            return env.ASSETS.fetch(request);
         }
 
         return new Response('Not Found', { status: 404, headers });

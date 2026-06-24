@@ -83,6 +83,15 @@ function createEnv(seed = {}) {
     };
 }
 
+function createEnvWithAssets(seed = {}, assetsFetch = async () => new Response('asset response')) {
+    return {
+        ...createEnv(seed),
+        ASSETS: {
+            fetch: assetsFetch,
+        },
+    };
+}
+
 async function request(path, options = {}, env = createEnv()) {
     const response = await worker.fetch(
         new Request(`https://worker.test${path}`, {
@@ -144,6 +153,41 @@ describe('feedback issue board Worker routes', () => {
         expect(response.headers.get('Content-Type')).toContain('text/html');
         expect(html).toContain('Feedback Issues');
         expect(html).toContain('/api/feedback/issues');
+    });
+
+    it('points the Pages-hosted feedback board at the configured feedback API backend', async () => {
+        const pageEnv = {
+            ...env,
+            FEEDBACK_API_URL: 'https://gantt-share.ch451314.workers.dev',
+        };
+        const response = await worker.fetch(
+            new Request('https://gantt-task-editor.pages.dev/feedback'),
+            pageEnv
+        );
+        const html = await response.text();
+
+        expect(response.status).toBe(200);
+        expect(html).toContain(
+            "const feedbackApiBase = 'https://gantt-share.ch451314.workers.dev';"
+        );
+        expect(html).toContain('fetch(apiUrl(path)');
+        expect(html).toContain("apiUrl('/api/feedback/admin/session')");
+    });
+
+    it('passes non-api routes through to Pages static assets', async () => {
+        const assetRequests = [];
+        const assetEnv = createEnvWithAssets({}, async (assetRequest) => {
+            assetRequests.push(new URL(assetRequest.url).pathname);
+            return new Response('static index', {
+                headers: { 'Content-Type': 'text/html; charset=utf-8' },
+            });
+        });
+
+        const response = await request('/projects/alpha', {}, assetEnv);
+
+        expect(response.status).toBe(200);
+        expect(await response.text()).toBe('static index');
+        expect(assetRequests).toEqual(['/projects/alpha']);
     });
 
     it('renders admin workflow controls for admin issues without context', async () => {
@@ -385,8 +429,8 @@ describe('feedback issue board Worker routes', () => {
     it('renders classification and structured agent workflow panels in admin detail', async () => {
         const internalNote = [
             '[feedback-agent-human-action]',
-            'type=design_decision',
-            'requestedAction=Approve or revise the generated design.',
+            'type=review_required',
+            'requestedAction=Review candidate commit def456 and set status to ready_for_deploy if approved.',
             'evidenceInspected=Read user description and replay summary.',
             'returnPath=queued if approved, closed if rejected',
             '[/feedback-agent-human-action]',
@@ -418,17 +462,31 @@ describe('feedback issue board Worker routes', () => {
         ].join('\n');
         const issue = createIssue({
             submittedType: 'requirement',
+            attachments: [
+                {
+                    name: 'after-change-replay.json',
+                    type: 'application/json',
+                    size: 180,
+                    dataUrl: replayDataUrl(),
+                },
+                {
+                    name: 'after-change-screenshot.png',
+                    type: 'image/png',
+                    size: 120,
+                    dataUrl: 'data:image/png;base64,preview-image',
+                },
+            ],
             ai: {
                 businessType: 'requirement',
                 scope: 'large',
-                automationDecision: 'design_required',
+                automationDecision: 'review_required',
                 confidence: 'high',
             },
             workflow: {
                 status: 'needs_human',
                 priority: 'medium',
                 assignee: '',
-                publicNote: '',
+                publicNote: '?????????? UTF-8?? rrweb JSON,?????????',
                 internalNote,
                 updatedAt: '2026-06-17T12:00:00.000Z',
                 history: [],
@@ -491,14 +549,42 @@ describe('feedback issue board Worker routes', () => {
 
         const text = dom.window.document.body.textContent;
         expect(text).toContain('AI 分类');
-        expect(text).toContain('requirement');
-        expect(text).toContain('large');
+        expect(
+            dom.window.document.querySelector('[data-agent-panel="classification"]').textContent
+        ).toContain('需求');
+        expect(
+            dom.window.document.querySelector('[data-agent-panel="classification"]').textContent
+        ).toContain('大');
+        expect(
+            dom.window.document.querySelector('[data-agent-panel="classification"]').textContent
+        ).toContain('需要人工审核');
+        expect(
+            dom.window.document.querySelector('[data-agent-panel="classification"]').textContent
+        ).toContain('高');
         expect(text).toContain('人工动作');
-        expect(text).toContain('Approve or revise the generated design.');
+        expect(
+            dom.window.document.querySelector('[data-agent-panel="human-action"]').textContent
+        ).toContain('需要人工审核');
+        expect(
+            dom.window.document.querySelector('[data-agent-panel="human-action"]').textContent
+        ).toContain('请审核候选提交 def456');
         expect(text).toContain('设计草案');
         expect(text).toContain('Add an approval gate before publish.');
         expect(text).toContain('候选实现');
+        expect(
+            dom.window.document.querySelector('[data-agent-panel="candidate"]').textContent
+        ).toContain('待人工审批');
         expect(text).toContain('codex/feedback-abcd');
+        expect(text).toContain('审批证据');
+        expect(text).toContain('rrweb 录屏');
+        expect(text).toContain('截图');
+        expect(text).toContain('公开回复内容疑似编码异常');
+        expect(
+            dom.window.document.querySelector('.candidate-evidence .btn-play-replay')
+        ).toBeTruthy();
+        expect(
+            dom.window.document.querySelector('.candidate-evidence .attachment-thumb')
+        ).toBeTruthy();
     });
 
     it('returns sanitized public issue summaries', async () => {
