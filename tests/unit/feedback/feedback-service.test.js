@@ -66,6 +66,20 @@ describe('feedbackService', () => {
         expect(body.submittedType).toBe('unclear');
     });
 
+    it('submits to same-origin feedback API when no API base is configured', async () => {
+        const { submitFeedback } =
+            await import('../../../src/features/feedback/feedbackService.js');
+
+        await submitFeedback({
+            title: 'Same origin endpoint',
+            description: 'Use the deployed Pages Worker by default.',
+        });
+
+        const [url] = fetch.mock.calls[0];
+
+        expect(url).toBe('/api/feedback');
+    });
+
     it('rejects attachments larger than the client limit', async () => {
         const { fileToAttachment } =
             await import('../../../src/features/feedback/feedbackService.js');

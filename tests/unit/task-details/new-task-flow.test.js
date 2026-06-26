@@ -13,9 +13,9 @@ describe('new task modal flow', () => {
         expect(html).toContain('openTaskDetailsWithRetry(taskId);');
     });
 
-    it('uses retry helper to open task details after create in index.cn.html', () => {
-        const html = readHtml('index.cn.html');
-        expect(html).toContain('function openTaskDetailsWithRetry(taskId, retries = 20)');
-        expect(html).toContain('openTaskDetailsWithRetry(taskId);');
+    it('uses shared index.html for the CN build entry', () => {
+        const source = fs.readFileSync(path.resolve(process.cwd(), 'vite.config.cn.js'), 'utf8');
+
+        expect(source).toContain("input: 'index.html'");
     });
 });

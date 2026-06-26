@@ -20,10 +20,7 @@ let lastAutoReportAt = 0;
 let errorListenersInstalled = false;
 
 function getFeedbackApiBase() {
-    const base =
-        import.meta.env.VITE_FEEDBACK_API_URL ||
-        import.meta.env.VITE_SHARE_API_URL ||
-        'https://gantt-share.your-worker.workers.dev';
+    const base = import.meta.env.VITE_FEEDBACK_API_URL || import.meta.env.VITE_SHARE_API_URL || '';
     return base.replace(/\/+$/, '');
 }
 
