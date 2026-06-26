@@ -8,7 +8,7 @@
     "build": "vite build",
     "build:cn": "vite build --config vite.config.cn.js && node scripts/prepare-cloudflare-pages.js",
     "check:artifacts": "node scripts/prepare-cloudflare-pages.js --check",
-    "deploy:cn": "npm run build:cn && npx wrangler pages deploy dist-cn --project-name gantt-task-editor",
+    "deploy:cn": "npm run build:cn && npx wrangler pages deploy dist-cn --project-name gantt-task-editor --branch master",
     "preview": "vite preview",
     "test": "vitest",
     "test:ui": "vitest --ui",

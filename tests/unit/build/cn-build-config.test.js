@@ -8,6 +8,12 @@ function readRootFile(fileName) {
 }
 
 describe('CN build configuration', () => {
+    it('deploys the CN Pages build explicitly to the production branch', () => {
+        const packageJson = JSON.parse(readRootFile('package.json'));
+
+        expect(packageJson.scripts['deploy:cn']).toContain('--branch master');
+    });
+
     it('uses index.html as the only maintained HTML entry', () => {
         expect(readRootFile('vite.config.cn.js')).toContain("input: 'index.html'");
         expect(fs.existsSync(path.resolve(process.cwd(), 'index.cn.html'))).toBe(false);
