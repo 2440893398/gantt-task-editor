@@ -39,7 +39,15 @@ describe('toolbar structure in index.html', () => {
 
         expect(html).toContain('id="project-picker-mount"');
         expect(html).toContain('id="share-btn"');
-        expect(html).toContain("import('./src/features/share/ShareDialog.js')");
+        expect(html).toContain('window.openShareDialog?.()');
+        expect(html).not.toContain("import('./src/features/share/ShareDialog.js')");
+    });
+
+    it('registers share dialog through the Vite module graph', () => {
+        const source = fs.readFileSync(path.resolve(process.cwd(), 'src/main.js'), 'utf8');
+
+        expect(source).toContain("import('./features/share/ShareDialog.js')");
+        expect(source).toContain('window.openShareDialog');
     });
 
     it.each(entryFiles)(
