@@ -679,6 +679,111 @@ describe('feedback issue board Worker routes', () => {
         ).toBeTruthy();
     });
 
+    it('does not render actionable review panels for terminal workflow statuses', async () => {
+        const internalNote = [
+            '[feedback-agent-human-action]',
+            'type=review_required',
+            'requestedAction=请审核候选实现；如果效果符合预期，请将状态改为 ready_for_deploy。',
+            'evidenceInspected=已检查截图证据。',
+            'returnPath=批准后设置为 ready_for_deploy；不通过则关闭。',
+            '[/feedback-agent-human-action]',
+            '[feedback-agent-candidate]',
+            `feedbackKey=${feedbackKey}`,
+            'candidateWorktree=C:\\Users\\24408\\.codex\\worktrees\\abcd\\gantt-task-editor',
+            'candidateBranch=codex/feedback-abcd',
+            'baseCommit=abc123',
+            'changeCommit=def456',
+            'changedFiles=workers/share-worker.js',
+            'verification=npx vitest passed',
+            'candidateStatus=needs_human',
+            'createdAt=2026-06-17T12:00:00.000Z',
+            '[/feedback-agent-candidate]',
+        ].join('\n');
+        const issue = createIssue({
+            ai: {
+                businessType: 'bug',
+                scope: 'small',
+                automationDecision: 'review_required',
+                confidence: 'high',
+            },
+            workflow: {
+                status: 'resolved',
+                priority: 'medium',
+                assignee: '',
+                publicNote: '',
+                internalNote,
+                updatedAt: '2026-06-17T12:00:00.000Z',
+                history: [],
+            },
+        });
+        const pageResponse = await request('/feedback', {}, env);
+        const html = await pageResponse.text();
+        const dom = new JSDOM(html, {
+            runScripts: 'dangerously',
+            url: 'https://worker.test/feedback',
+            beforeParse(window) {
+                window.alert = () => {};
+                window.TextDecoder = TextDecoder;
+                window.fetch = async (path) => {
+                    if (path === '/api/feedback/issues') {
+                        return Response.json({
+                            issues: [
+                                {
+                                    key: feedbackKey,
+                                    title: issue.title,
+                                    descriptionPreview: issue.description,
+                                    receivedAt: issue.receivedAt,
+                                    status: 'resolved',
+                                    priority: 'medium',
+                                    attachmentCount: 0,
+                                    replayEventCount: 0,
+                                },
+                            ],
+                        });
+                    }
+
+                    if (path === `/api/feedback/issues/${encodeURIComponent(feedbackKey)}`) {
+                        return Response.json({
+                            issue: {
+                                ...issue,
+                                key: feedbackKey,
+                            },
+                        });
+                    }
+
+                    return Response.json({ error: 'not found' }, { status: 404 });
+                };
+                window.localStorage.setItem(
+                    'feedbackAdminSession',
+                    JSON.stringify({
+                        token: 'unit-token',
+                        expiresAt: '2099-01-01T00:00:00.000Z',
+                    })
+                );
+            },
+        });
+
+        await waitFor(() => {
+            expect(
+                dom.window.document.querySelector('[data-agent-panel="classification"]')
+            ).toBeTruthy();
+        });
+
+        expect(dom.window.document.querySelector('[data-agent-panel="human-action"]')).toBeNull();
+        expect(dom.window.document.querySelector('[data-agent-panel="candidate"]')).toBeNull();
+        expect(dom.window.document.querySelector('.candidate-evidence')).toBeNull();
+    });
+
+    it('keeps feedback status filters at stable readable widths while loading', async () => {
+        const pageResponse = await request('/feedback', {}, env);
+        const html = await pageResponse.text();
+
+        expect(html).toContain('.filters button');
+        expect(html).toContain('min-width: 56px;');
+        expect(html).toContain('min-height: 32px;');
+        expect(html).toContain('white-space: nowrap;');
+    });
+
     it('returns sanitized public issue summaries', async () => {
         const response = await request('/api/feedback/issues', {}, env);
         const body = await json(response);

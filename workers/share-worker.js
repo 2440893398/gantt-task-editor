@@ -1103,6 +1103,10 @@ function renderFeedbackBoardPage(apiBase = '') {
       padding: 6px 10px;
       font-size: 11px;
       border-radius: 6px;
+      min-width: 56px;
+      min-height: 32px;
+      white-space: nowrap;
+      flex: 0 0 auto;
     }
 
     .list {
@@ -2181,6 +2185,8 @@ function renderFeedbackBoardPage(apiBase = '') {
       const workflow = issue.workflow || {};
       const ai = issue.ai || {};
       const note = workflow.internalNote || '';
+      const status = workflow.status || issue.status || 'open';
+      const isTerminal = status === 'resolved' || status === 'closed';
       const humanAction = parseAgentBlock(note, 'feedback-agent-human-action');
       const design = parseAgentBlock(note, 'feedback-agent-design');
       const candidate = parseAgentBlock(note, 'feedback-agent-candidate');
@@ -2194,7 +2200,7 @@ function renderFeedbackBoardPage(apiBase = '') {
         { label: '置信度', value: labelFrom(confidenceLabels, ai.confidence || '') },
       ]);
 
-      if (humanAction) {
+      if (humanAction && !isTerminal) {
         html += renderAgentPanel('human-action', '人工动作', [
           { label: '动作类型', value: labelFrom(humanActionTypeLabels, humanAction.type) },
           { label: '处理要求', value: translateAgentText(humanAction.requestedAction) },
@@ -2220,7 +2226,7 @@ function renderFeedbackBoardPage(apiBase = '') {
         ]);
       }
 
-      if (candidate) {
+      if (candidate && !isTerminal) {
         html += renderAgentPanel('candidate', '候选实现', [
           { label: '反馈 Key', value: candidate.feedbackKey },
           { label: '候选 Worktree', value: candidate.candidateWorktree },
