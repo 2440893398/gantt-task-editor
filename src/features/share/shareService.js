@@ -14,8 +14,7 @@ import {
 } from '../../core/storage.js';
 
 function getShareApiBase() {
-    const base =
-        import.meta.env.VITE_SHARE_API_URL || 'https://gantt-share.your-worker.workers.dev';
+    const base = import.meta.env.VITE_SHARE_API_URL || '';
     return base.replace(/\/+$/, '');
 }
 

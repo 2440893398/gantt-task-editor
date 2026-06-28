@@ -123,6 +123,23 @@ describe('shareService', () => {
         expect(result.key).toBe('abc12345');
     });
 
+    it('uploadShare posts to same-origin share API when no API base is configured', async () => {
+        const fetchMock = vi.fn(async () => ({
+            ok: true,
+            json: async () => ({ key: 'abc12345' }),
+        }));
+        vi.stubGlobal('fetch', fetchMock);
+
+        const { uploadShare } = await import('../../src/features/share/shareService.js');
+
+        await uploadShare('p1');
+
+        expect(fetchMock).toHaveBeenCalledWith(
+            '/api/share',
+            expect.objectContaining({ method: 'POST' })
+        );
+    });
+
     it('uploadShare throws on non-ok response', async () => {
         vi.stubEnv('VITE_SHARE_API_URL', 'http://share.local/');
         const fetchMock = vi.fn(async () => ({

@@ -893,22 +893,24 @@ function renderFeedbackBoardPage(apiBase = '') {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Feedback Issues - 用户反馈记录</title>
+  <title>Feedback Issues - 反馈处理工作台</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/rrweb-player@latest/dist/style.css">
   <script src="https://cdn.jsdelivr.net/npm/rrweb-player@latest/dist/index.js"></script>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
     :root {
       color-scheme: light;
-      --bg: #f7f8fa;
-      --panel: rgba(255, 255, 255, 0.85);
-      --panel-hover: rgba(248, 250, 252, 0.95);
-      --line: #e2e8f0;
-      --text: #0f172a;
-      --muted: #64748b;
-      --primary: #0ea5e9;
-      --primary-hover: #0284c7;
-      --primary-glow: rgba(14, 165, 233, 0.15);
+      --bg: #f4f5f8;
+      --panel: #ffffff;
+      --panel-hover: #f7f9fc;
+      --line: #e7eaf0;
+      --line-strong: #d8dee8;
+      --text: #19202e;
+      --muted: #7a8395;
+      --primary: #2f6bff;
+      --primary-hover: #2458d6;
+      --primary-glow: rgba(47, 107, 255, 0.12);
+      --primary-soft: #eef4ff;
       --danger: #dc2626;
       --danger-glow: rgba(220, 38, 38, 0.1);
       --ok: #22c55e;
@@ -919,14 +921,12 @@ function renderFeedbackBoardPage(apiBase = '') {
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      background: var(--bg);
+      background: #f4f5f8;
       color: var(--text);
-      font-family: 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif;
+      font-family: 'Plus Jakarta Sans', "Segoe UI", "PingFang SC", "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif;
       font-size: 13px;
       line-height: 1.6;
-      display: flex;
-      flex-direction: column;
-      height: 100vh;
+      min-height: 100vh;
       overflow: hidden;
     }
     button, input, select, textarea { font: inherit; }
@@ -939,7 +939,7 @@ function renderFeedbackBoardPage(apiBase = '') {
       background: rgba(255, 255, 255, 0.8);
       color: var(--text);
       border-radius: 8px;
-      padding: 8px 14px;
+      padding: 7px 12px;
       cursor: pointer;
       font-weight: 500;
       transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
@@ -949,8 +949,8 @@ function renderFeedbackBoardPage(apiBase = '') {
       border-color: rgba(14, 165, 233, 0.4);
     }
     button.primary {
-      background: linear-gradient(135deg, var(--primary) 0%, var(--primary-hover) 100%);
-      border: none;
+      background: var(--primary);
+      border-color: var(--primary);
       color: #fff;
       font-weight: 600;
       box-shadow: 0 4px 12px var(--primary-glow);
@@ -966,7 +966,7 @@ function renderFeedbackBoardPage(apiBase = '') {
       border-color: var(--primary);
       color: var(--primary-hover);
       background: var(--primary-glow);
-      box-shadow: inset 0 0 8px rgba(14, 165, 233, 0.2);
+      box-shadow: inset 0 0 0 1px rgba(47, 107, 255, 0.08);
     }
     input, select, textarea {
       width: 100%;
@@ -985,14 +985,15 @@ function renderFeedbackBoardPage(apiBase = '') {
     }
     textarea { min-height: 80px; resize: vertical; }
 
-    .app {
-      max-width: 1380px;
+    .feedback-workbench {
+      max-width: 100%;
       width: 100%;
-      margin: 0 auto;
-      padding: 20px;
-      display: flex;
-      flex-direction: column;
+      margin: 0;
+      padding: 0;
+      display: grid;
+      grid-template-rows: auto auto 1fr;
       height: 100vh;
+      min-height: 0;
     }
 
     .header {
@@ -1000,13 +1001,14 @@ function renderFeedbackBoardPage(apiBase = '') {
       justify-content: space-between;
       gap: 16px;
       align-items: center;
-      margin-bottom: 16px;
-      padding: 16px 20px;
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      backdrop-filter: blur(20px);
-      box-shadow: 0 2px 10px rgba(15, 23, 42, 0.05);
+      height: 52px;
+      padding: 0 22px;
+      background: rgba(255, 255, 255, 0.94);
+      border-bottom: 1px solid var(--line);
+      backdrop-filter: saturate(1.2) blur(6px);
+      position: sticky;
+      top: 0;
+      z-index: 20;
     }
 
     .brand {
@@ -1017,16 +1019,15 @@ function renderFeedbackBoardPage(apiBase = '') {
 
     h1 {
       margin: 0;
-      font-size: 20px;
-      font-weight: 700;
-      background: linear-gradient(135deg, var(--text) 0%, var(--primary) 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
+      font-size: 14.5px;
+      line-height: 1.15;
+      font-weight: 750;
+      color: var(--text);
     }
 
     .summary {
       color: var(--muted);
-      font-size: 11px;
+      font-size: 11.5px;
       margin-top: 2px;
       font-weight: 500;
     }
@@ -1048,29 +1049,71 @@ function renderFeedbackBoardPage(apiBase = '') {
       padding: 7px 10px;
     }
 
+    .stat-strip {
+      display: grid;
+      grid-template-columns: 1.35fr repeat(4, minmax(120px, 1fr));
+      gap: 10px;
+      padding: 12px 22px;
+      background: linear-gradient(180deg, #fbfcfe, #f4f5f8);
+      border-bottom: 1px solid #ebeef3;
+    }
+
+    .stat-card {
+      border: 1px solid var(--line);
+      border-radius: 11px;
+      background: #fff;
+      padding: 11px 13px;
+      min-width: 0;
+      box-shadow: 0 1px 2px rgba(20, 28, 45, 0.03);
+    }
+
+    .stat-card.primary-stat {
+      border-color: #cbdcff;
+      background: linear-gradient(135deg, #fff, #eef4ff);
+    }
+
+    .stat-label {
+      color: #6b7689;
+      font-size: 11px;
+      font-weight: 650;
+    }
+
+    .stat-value {
+      margin-top: 2px;
+      font-size: 19px;
+      line-height: 1.05;
+      font-weight: 760;
+      letter-spacing: 0;
+    }
+
+    .stat-note {
+      margin-top: 3px;
+      color: #97a0b0;
+      font-size: 11px;
+    }
+
     .layout {
       display: grid;
-      grid-template-columns: 380px 1fr;
-      gap: 16px;
-      flex: 1;
-      height: calc(100vh - 120px);
+      grid-template-columns: 300px minmax(460px, 1fr) 344px;
+      gap: 12px;
+      padding: 12px 22px 22px;
+      height: 100%;
       min-height: 0;
     }
 
     .sidebar {
-      display: flex;
-      flex-direction: column;
+      display: grid;
+      grid-template-rows: auto auto 1fr;
       background: var(--panel);
       border: 1px solid var(--line);
-      border-radius: 12px;
-      backdrop-filter: blur(20px);
+      border-radius: 13px;
       overflow: hidden;
       box-shadow: 0 2px 10px rgba(15, 23, 42, 0.05);
     }
 
     .search-box {
       position: relative;
-      padding: 12px;
+      padding: 11px 14px;
       border-bottom: 1px solid var(--line);
     }
 
@@ -1096,7 +1139,7 @@ function renderFeedbackBoardPage(apiBase = '') {
       flex-wrap: wrap;
       padding: 12px;
       border-bottom: 1px solid var(--line);
-      background: rgba(15, 23, 42, 0.03);
+      background: #fff;
     }
 
     .filters button {
@@ -1130,7 +1173,7 @@ function renderFeedbackBoardPage(apiBase = '') {
     }
 
     .item.selected {
-      background: var(--primary-glow);
+      background: linear-gradient(90deg, var(--primary-soft), #fff 72%);
       border-left: 3px solid var(--primary);
       padding-left: 13px;
     }
@@ -1190,15 +1233,18 @@ function renderFeedbackBoardPage(apiBase = '') {
     .badge.ready_for_deploy { color: #047857; border-color: rgba(5, 150, 105, 0.3); background: rgba(16, 185, 129, 0.12); }
     .badge.closed { color: #4b5563; background: rgba(156, 163, 175, 0.1); }
 
-    .detail {
+    .detail, .evidence-panel {
       background: var(--panel);
       border: 1px solid var(--line);
-      border-radius: 12px;
+      border-radius: 13px;
       overflow-y: auto;
-      padding: 24px;
-      backdrop-filter: blur(20px);
+      padding: 0;
       box-shadow: 0 2px 10px rgba(15, 23, 42, 0.05);
       animation: fadeIn 0.25s ease-out;
+    }
+
+    .detail-inner, .evidence-inner {
+      padding: 14px 18px 20px;
     }
 
     @keyframes fadeIn {
@@ -1343,11 +1389,7 @@ function renderFeedbackBoardPage(apiBase = '') {
     }
 
     .admin-box {
-      border-top: 1px dashed var(--line);
-      margin-top: 24px;
-      padding: 20px;
-      background: rgba(14, 165, 233, 0.03);
-      border-radius: 10px;
+      margin-top: 14px;
     }
 
     .admin-box .section {
@@ -1357,7 +1399,7 @@ function renderFeedbackBoardPage(apiBase = '') {
     .admin-title-row {
       font-size: 14px;
       font-weight: 700;
-      color: var(--primary);
+      color: var(--text);
       margin-bottom: 16px;
       display: flex;
       align-items: center;
@@ -1368,7 +1410,7 @@ function renderFeedbackBoardPage(apiBase = '') {
       display: flex;
       align-items: center;
       gap: 10px;
-      margin-top: 16px;
+      margin-top: 12px;
     }
 
     .save-status {
@@ -1459,9 +1501,9 @@ function renderFeedbackBoardPage(apiBase = '') {
     }
     .attachments-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-      gap: 12px;
-      margin-top: 12px;
+      grid-template-columns: 1fr;
+      gap: 10px;
+      margin-top: 10px;
     }
     .attachment-card {
       display: flex;
@@ -1553,6 +1595,147 @@ function renderFeedbackBoardPage(apiBase = '') {
       padding-top: 12px;
       border-top: 1px dashed var(--line);
     }
+
+    .workbench-panel-head {
+      padding: 12px 14px;
+      border-bottom: 1px solid #eef1f5;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      background: #fff;
+    }
+
+    .workbench-panel-title {
+      font-size: 12.5px;
+      font-weight: 750;
+      color: var(--text);
+    }
+
+    .workbench-panel-subtitle {
+      margin-top: 1px;
+      color: #8a93a3;
+      font-size: 11px;
+    }
+
+    .detail-header {
+      padding: 15px 18px 14px;
+      border-bottom: 1px solid #eef1f5;
+      margin: 0;
+      background: linear-gradient(180deg, #fff, #fbfcfe);
+    }
+
+    .detail-key-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      color: #8a93a3;
+      font-size: 11.5px;
+      margin-bottom: 9px;
+    }
+
+    .detail-key {
+      font-family: ui-monospace, Menlo, Consolas, monospace;
+      background: #f3f5f8;
+      border: 1px solid #eaedf2;
+      border-radius: 6px;
+      padding: 2px 8px;
+      color: #6b7689;
+      overflow-wrap: anywhere;
+    }
+
+    .decision-card {
+      border: 1px solid #e7d9bd;
+      border-radius: 13px;
+      background: linear-gradient(180deg, #fffdf6, #fff9ec);
+      padding: 15px;
+      margin-bottom: 14px;
+      box-shadow: 0 2px 10px rgba(180, 130, 20, 0.07);
+    }
+
+    .decision-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14.5px;
+      font-weight: 780;
+      color: #7c4d05;
+    }
+
+    .decision-copy {
+      color: #7a5310;
+      margin-top: 6px;
+      font-size: 12.5px;
+      line-height: 1.55;
+      white-space: pre-wrap;
+    }
+
+    .decision-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding-top: 3px;
+      margin-top: 12px;
+    }
+
+    .danger-button {
+      border-color: #f0c4bd;
+      background: #fdecea;
+      color: #c0392b;
+      font-weight: 600;
+    }
+
+    .panel-card {
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: #fff;
+      overflow: hidden;
+      margin-bottom: 14px;
+    }
+
+    .panel-card > .section-title {
+      height: 44px;
+      margin: 0;
+      padding: 0 14px;
+      border-bottom: 1px solid #f0f2f6;
+      background: #fafbfd;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .panel-card-body {
+      padding: 13px 14px;
+    }
+
+    .raw-details {
+      border: 1px solid #eef1f5;
+      border-radius: 9px;
+      background: #fff;
+      overflow: hidden;
+      margin-top: 10px;
+    }
+
+    .raw-details summary {
+      cursor: pointer;
+      padding: 10px 12px;
+      font-weight: 700;
+      font-size: 12px;
+      color: #2e3850;
+      list-style: none;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .raw-details pre {
+      border: 0;
+      border-top: 1px solid #f0f2f6;
+      border-radius: 0;
+      max-height: 220px;
+    }
     .candidate-evidence-title {
       color: var(--muted);
       font-size: 11px;
@@ -1635,27 +1818,41 @@ function renderFeedbackBoardPage(apiBase = '') {
       background: #000 !important;
     }
 
-    @media (max-width: 900px) {
+    @media (max-width: 1100px) {
       body { overflow: auto; height: auto; }
-      .app { height: auto; }
-      .header { flex-direction: column; align-items: stretch; gap: 12px; }
-      .toolbar { justify-content: space-between; }
-      .layout { grid-template-columns: 1fr; height: auto; }
-      .sidebar { max-height: 450px; }
-      .list { max-height: 350px; }
-      .detail { height: auto; overflow: visible; }
-      .form-row { grid-template-columns: 1fr; }
+      .feedback-workbench { height: auto; min-height: 100vh; }
+      .header { height: auto; min-height: 52px; padding: 10px 14px; flex-wrap: wrap; }
+      .toolbar { margin-left: auto; }
+      .stat-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 10px 14px; }
+      .stat-card.primary-stat { grid-column: 1 / -1; }
+      .layout { grid-template-columns: 1fr; height: auto; padding: 10px 14px 18px; }
+      .sidebar { max-height: 420px; }
+      .list { max-height: 300px; }
+      .detail, .evidence-panel { height: auto; overflow: visible; }
+      .form-row, .grid { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 640px) {
+      .toolbar { width: 100%; justify-content: space-between; }
+      .login { flex: 1; }
+      .login input { width: 100%; }
+      .stat-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .detail { order: 1; }
+      .sidebar { order: 2; }
+      .evidence-panel { order: 3; }
+      .detail-key-row, .detail-title-row { flex-direction: column; align-items: flex-start; }
+      .decision-actions button, .admin-actions button { width: 100%; }
     }
   </style>
 </head>
 <body>
-  <main class="app">
+  <main class="feedback-workbench">
     <header class="header">
       <div class="brand">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="url(#logoGrad)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><defs><linearGradient id="logoGrad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#818cf8"/><stop offset="100%" stop-color="#3b82f6"/></linearGradient></defs><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
         <div>
-          <h1>用户反馈记录</h1>
-          <div id="summary" class="summary">正在加载反馈...</div>
+          <h1>反馈处理工作台</h1>
+          <div class="summary">问题反馈记录页 · 面向管理员的处理流</div>
         </div>
       </div>
       <div class="toolbar">
@@ -1666,8 +1863,41 @@ function renderFeedbackBoardPage(apiBase = '') {
         <div id="adminArea" class="login"></div>
       </div>
     </header>
+    <section class="stat-strip" aria-label="反馈统计">
+      <div class="stat-card primary-stat">
+        <div class="stat-label">当前筛选</div>
+        <div id="summary" class="stat-value">正在加载反馈...</div>
+        <div class="stat-note">优先显示卡住自动化的反馈</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">待处理</div>
+        <div id="statOpen" class="stat-value">0</div>
+        <div class="stat-note">Open / Queued</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">需人工</div>
+        <div id="statHuman" class="stat-value" style="color:#c0392b">0</div>
+        <div class="stat-note">设计确认或候选审核</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">待部署</div>
+        <div id="statDeploy" class="stat-value" style="color:#1f8a52">0</div>
+        <div class="stat-note">Approved</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">本次筛选</div>
+        <div id="statVisible" class="stat-value">0</div>
+        <div class="stat-note">当前列表数量</div>
+      </div>
+    </section>
     <section class="layout">
       <aside class="sidebar">
+        <div class="workbench-panel-head">
+          <div>
+            <div class="workbench-panel-title">反馈队列</div>
+            <div class="workbench-panel-subtitle">按状态、类型与证据快速定位</div>
+          </div>
+        </div>
         <div class="search-box">
           <span class="search-icon-wrapper">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
@@ -1678,6 +1908,7 @@ function renderFeedbackBoardPage(apiBase = '') {
         <div id="issueList" class="list"><div class="empty">加载中...</div></div>
       </aside>
       <section id="detail" class="detail"><div class="empty">请选择一条反馈以查看详情。</div></section>
+      <aside id="evidencePanel" class="evidence-panel"><div class="empty">请选择一条反馈以查看证据。</div></aside>
     </section>
   </main>
   <template id="adminFormTemplate">
@@ -1868,6 +2099,24 @@ function renderFeedbackBoardPage(apiBase = '') {
       if (!raw) return '';
       return map[raw] || raw;
     }
+    function getIssueStatus(issue) {
+      return issue.status ?? issue.workflow?.status ?? 'open';
+    }
+    function getIssuePriority(issue) {
+      return issue.priority ?? issue.workflow?.priority ?? 'medium';
+    }
+    function setText(id, value) {
+      const node = document.getElementById(id);
+      if (node) node.textContent = value;
+    }
+    function renderStats(visibleIssues = getFilteredIssues()) {
+      const countByStatus = (statuses) => state.issues.filter((issue) => statuses.includes(getIssueStatus(issue))).length;
+      setText('summary', (statusLabels[state.status] || state.status || '全部') + ' · ' + visibleIssues.length + ' 条');
+      setText('statOpen', countByStatus(['open', 'queued']));
+      setText('statHuman', countByStatus(['needs_human', 'test_failed']));
+      setText('statDeploy', countByStatus(['ready_for_deploy']));
+      setText('statVisible', visibleIssues.length);
+    }
     function translateAgentText(value) {
       let text = String(value || '').trim();
       if (!text) return '';
@@ -1898,6 +2147,47 @@ function renderFeedbackBoardPage(apiBase = '') {
       return {
         text: raw || '暂无公开回复。',
         isPlaceholder: !raw,
+      };
+    }
+    function getPrimaryDecision(issue) {
+      const workflow = issue.workflow || issue;
+      const status = workflow.status || issue.status || 'open';
+      const ai = issue.ai || {};
+      const humanAction = parseAgentBlock(workflow.internalNote || '', 'feedback-agent-human-action');
+      const candidate = parseAgentBlock(workflow.internalNote || '', 'feedback-agent-candidate');
+      const type = humanAction?.type || ai.automationDecision || status;
+      let title = status === 'needs_human' ? '需要人工处理' : '下一步动作';
+      let tag = statusLabels[status] || status;
+      let copy = '根据当前状态更新处理进展，并在保存后写回反馈记录。';
+
+      if (candidate?.changeCommit || type === 'review_required') {
+        title = '需要人工审核候选实现';
+        tag = '阻塞自动化';
+        copy = translateAgentText(humanAction?.requestedAction) || '已生成候选提交，自动化等待管理员审核效果；确认无误后将状态改为“待部署”。';
+      } else if (type === 'design_required' || type === 'design_decision') {
+        title = '需要确认产品方案';
+        tag = '待设计';
+        copy = translateAgentText(humanAction?.requestedAction) || '需求范围较大，需先确认方案、验收标准和排期路径。';
+      } else if (status === 'queued') {
+        title = '等待自动复现或排期';
+        tag = '排队中';
+        copy = '当前反馈已进入队列，可在证据补齐后提升为进行中。';
+      } else if (status === 'testing') {
+        title = '候选修复测试中';
+        tag = '测试中';
+        copy = '等待回归结果；通过后可进入待部署，失败则退回人工处理。';
+      } else if (status === 'ready_for_deploy') {
+        title = '已批准，等待部署';
+        tag = '待部署';
+        copy = '该反馈已准备进入发布流程，请在部署后更新公开回复或关闭记录。';
+      }
+
+      return {
+        title,
+        tag,
+        copy,
+        evidence: translateAgentText(humanAction?.evidenceInspected) || '查看公开描述、附件、录屏和结构化 AI 信息。',
+        returnPath: translateAgentText(humanAction?.returnPath) || '批准 → 待部署；不通过 → 排队或关闭。',
       };
     }
     function renderAttachmentCard(att, options = {}) {
@@ -1955,6 +2245,7 @@ function renderFeedbackBoardPage(apiBase = '') {
               该筛选条件下无反馈记录。
             </div>
           \`;
+          document.getElementById('evidencePanel').innerHTML = '<div class="empty">该筛选条件下无证据。</div>';
         }
       } catch {
         document.getElementById('issueList').innerHTML = \`
@@ -1981,6 +2272,7 @@ function renderFeedbackBoardPage(apiBase = '') {
           <div class="skeleton skeleton-body"></div>
         </div>
       \`;
+      document.getElementById('evidencePanel').innerHTML = '<div class="empty">正在加载证据...</div>';
       try {
         const body = await api('/api/feedback/issues/' + encodeURIComponent(key));
         renderDetail(body.issue);
@@ -2084,7 +2376,7 @@ function renderFeedbackBoardPage(apiBase = '') {
     }
     function renderList() {
       const issues = getFilteredIssues();
-      document.getElementById('summary').textContent = issues.length + ' 条相关反馈';
+      renderStats(issues);
       if (!issues.length) {
         document.getElementById('issueList').innerHTML = \`
           <div class="empty">
@@ -2097,8 +2389,8 @@ function renderFeedbackBoardPage(apiBase = '') {
       document.getElementById('issueList').innerHTML = issues.map((issue) => {
         const attCount = issue.attachmentCount ?? issue.attachments?.length ?? 0;
         const repCount = issue.replayEventCount ?? issue.context?.replay?.eventCount ?? 0;
-        const status = issue.status ?? issue.workflow?.status ?? 'open';
-        const priority = issue.priority ?? issue.workflow?.priority ?? 'medium';
+        const status = getIssueStatus(issue);
+        const priority = getIssuePriority(issue);
 
         let badges = '';
         if (attCount > 0) {
@@ -2145,8 +2437,9 @@ function renderFeedbackBoardPage(apiBase = '') {
       const visibleRows = rows.filter((row) => row.value !== undefined && row.value !== null && String(row.value).trim() !== '');
       if (!visibleRows.length) return '';
 
-      return '<div class="section" data-agent-panel="' + esc(panelName) + '">' +
+      return '<div class="panel-card" data-agent-panel="' + esc(panelName) + '">' +
         '<div class="section-title">' + esc(title) + '</div>' +
+        '<div class="panel-card-body">' +
         '<div class="grid">' +
         visibleRows.map((row) =>
           '<div class="field">' +
@@ -2154,6 +2447,7 @@ function renderFeedbackBoardPage(apiBase = '') {
           '<div class="value">' + esc(row.value) + '</div>' +
           '</div>'
         ).join('') +
+        '</div>' +
         '</div>' +
         '</div>';
     }
@@ -2237,97 +2531,140 @@ function renderFeedbackBoardPage(apiBase = '') {
 
       return html;
     }
+    function renderRawDetails(title, body) {
+      return '<details class="raw-details">' +
+        '<summary>' + esc(title) + '<span style="color:#9aa3b2;font-size:11px;font-weight:600">展开</span></summary>' +
+        '<pre>' + esc(body) + '</pre>' +
+        '</details>';
+    }
+    function renderEvidencePanel(issue) {
+      const workflow = issue.workflow || {};
+      const attachments = Array.isArray(issue.attachments) ? issue.attachments : [];
+      const attachmentsJson = JSON.stringify(attachments, null, 2);
+      const contextJson = JSON.stringify(issue.context || {}, null, 2);
+      const historyJson = JSON.stringify(workflow.history || [], null, 2);
+      const cards = attachments.map((att) => renderAttachmentCard(att, { showEvidenceLabel: true })).join('');
+      const repCount = issue.replayEventCount ?? issue.context?.replay?.eventCount ?? 0;
+      const hasReplayAttachment = attachments.some((att) => isReplayAttachment(att));
+      const candidate = parseAgentBlock(workflow.internalNote || '', 'feedback-agent-candidate');
+      const candidateRows = candidate ? [
+        { label: '候选分支', value: candidate.candidateBranch },
+        { label: '变更提交', value: candidate.changeCommit },
+        { label: '变更文件', value: candidate.changedFiles },
+        { label: '验证结果', value: candidate.verification },
+      ].filter((row) => row.value) : [];
+
+      const candidateHtml = candidateRows.length ? '<section class="panel-card">' +
+        '<div class="section-title">候选元数据</div>' +
+        '<div class="panel-card-body">' +
+        candidateRows.map((row) =>
+          '<div class="field" style="margin-bottom:9px">' +
+          '<div class="label">' + esc(row.label) + '</div>' +
+          '<div class="value">' + esc(row.value) + '</div>' +
+          '</div>'
+        ).join('') +
+        '</div>' +
+        '</section>' : '';
+
+      document.getElementById('evidencePanel').innerHTML = '<div class="workbench-panel-head">' +
+        '<div><div class="workbench-panel-title">证据与原始数据</div><div class="workbench-panel-subtitle">附件、候选信息、历史和 JSON</div></div>' +
+        '</div>' +
+        '<div class="evidence-inner">' +
+        '<section class="panel-card">' +
+        '<div class="section-title">' + svgAttachment + ' 附件与录屏回放</div>' +
+        '<div class="panel-card-body">' +
+        (cards ? '<div class="attachments-grid">' + cards + '</div>' : '<div class="field"><div class="value">暂无附件。</div></div>') +
+        (!hasReplayAttachment && repCount > 0 ? '<div class="replay-missing">已记录 ' + esc(repCount) + ' 条录屏事件，但本条反馈缺少可回放的 rrweb JSON 附件。请让用户重新提交并保留录屏附件。</div>' : '') +
+        '</div>' +
+        '</section>' +
+        candidateHtml +
+        '<section class="panel-card">' +
+        '<div class="section-title">处理历史</div>' +
+        '<div class="panel-card-body">' +
+        ((workflow.history || []).length ? (workflow.history || []).map((entry) =>
+          '<div class="field" style="margin-bottom:9px">' +
+          '<div class="label">' + esc(entry.actor || 'system') + ' · ' + esc(fmt(entry.at || entry.updatedAt)) + '</div>' +
+          '<div class="value">' + esc(JSON.stringify(entry.changes || entry, null, 2)) + '</div>' +
+          '</div>'
+        ).join('') : '<div class="replay-missing">暂无变更历史。</div>') +
+        '</div>' +
+        '</section>' +
+        '<section class="panel-card">' +
+        '<div class="section-title">原始数据</div>' +
+        '<div class="panel-card-body">' +
+        renderRawDetails('附件 JSON', attachmentsJson) +
+        renderRawDetails('上下文 JSON', contextJson) +
+        renderRawDetails('变更历史 JSON', historyJson) +
+        '</div>' +
+        '</section>' +
+        '</div>';
+    }
     function renderDetail(issue) {
       const workflow = issue.workflow || issue;
       const status = workflow.status || issue.status;
       const priority = workflow.priority || issue.priority;
       const isAdminDetail = Boolean(state.admin);
       const publicNote = getPublicNoteDisplay(issue);
-
       const attCount = issue.attachmentCount ?? issue.attachments?.length ?? 0;
       const repCount = issue.replayEventCount ?? issue.context?.replay?.eventCount ?? 0;
-      let hasReplayAttachment = false;
-
-      let attachmentsHtml = '';
-      if (issue.attachments && issue.attachments.length > 0) {
-        const cards = issue.attachments.map(att => {
-          const isReplay = isReplayAttachment(att);
-          if (isReplay) hasReplayAttachment = true;
-          return renderAttachmentCard(att);
-        }).join('');
-
-        attachmentsHtml = '          <div class="section attachments-section">' +
-          '            <div class="section-title">' +
-          svgAttachment + ' 附件与录屏回放' +
-          '            </div>' +
-          '            <div class="attachments-grid">' +
-          cards +
-          '            </div>' +
-          '          </div>';
-      }
-
-      if (!hasReplayAttachment && repCount > 0) {
-        attachmentsHtml += '          <div class="section attachments-section">' +
-          '            <div class="section-title">' +
-          svgPlay + ' 录屏回放' +
-          '            </div>' +
-          '            <div class="replay-missing">已记录 ' + esc(repCount) + ' 条录屏事件，但本条反馈缺少可回放的 rrweb JSON 附件。请让用户重新提交并保留录屏附件。</div>' +
-          '          </div>';
-      }
+      const decision = getPrimaryDecision(issue);
+      renderEvidencePanel(issue);
 
       document.getElementById('detail').innerHTML = \`
         <div class="detail-header">
+          <div class="detail-key-row">
+            <span class="detail-key">\${esc(issue.key || '')}</span>
+            <span>创建于 \${esc(fmt(issue.receivedAt))}</span>
+          </div>
           <div class="detail-title-row">
             <h2>\${esc(issue.title || '无标题反馈')}</h2>
           </div>
           <div class="item-meta">
             <span class="badge \${esc(status)}">\${esc(statusLabels[status] || status)}</span>
             <span class="badge">\${esc(priorityLabels[priority] || priority)}</span>
-            <span class="badge">\${svgTag} \${esc(issue.type)}</span>
+            <span class="badge">\${svgTag} \${esc(labelFrom(sourceTypeLabels, issue.sourceType || issue.type || 'manual'))}</span>
+            <span class="badge">\${esc(labelFrom(businessTypeLabels, issue.submittedType || 'unclear'))}</span>
           </div>
         </div>
-        <div class="grid">
-          <div class="field">
-            <div class="label">\${svgCalendar} 接收时间</div>
-            <div class="value">\${esc(fmt(issue.receivedAt))}</div>
-          </div>
-          <div class="field">
-            <div class="label">\${svgCalendar} 更新时间</div>
-            <div class="value">\${esc(fmt(workflow.updatedAt || issue.updatedAt))}</div>
-          </div>
-          <div class="field">
-            <div class="label">\${svgProject} 所属项目</div>
-            <div class="value">\${esc(issue.projectName || issue.context?.project?.name || '无')}</div>
-          </div>
-          <div class="field">
-            <div class="label">\${svgLink} 页面路径</div>
-            <div class="value" title="\${esc(issue.pagePath || issue.context?.url || '')}">\${esc(issue.pagePath || '') || '无'}</div>
-          </div>
-          <div class="field">
-            <div class="label">\${svgAttachment} 附件数量</div>
-            <div class="value">\${esc(attCount)}</div>
-          </div>
-          <div class="field">
-            <div class="label">\${svgPlay} 录屏事件数</div>
-            <div class="value">\${esc(repCount)}</div>
-          </div>
-        </div>
-        <div class="section">
-          <div class="section-title">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
-            问题描述
-          </div>
-          <div class="section-content">\${esc(issue.description || issue.descriptionPreview || '未提供描述。')}</div>
-        </div>
-        <div class="section">
-          <div class="section-title">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
-            公开回复
-          </div>
-          <div class="section-content" style="font-style: \${publicNote.isPlaceholder ? 'italic' : 'normal'}">\${esc(publicNote.text)}</div>
-        </div>
-        \${attachmentsHtml}
-        \${isAdminDetail ? renderAdminDetail(issue) : ''}\`;
+        <div class="detail-inner">
+          <section class="decision-card">
+            <div style="display:flex;justify-content:space-between;gap:14px;align-items:flex-start">
+              <div>
+                <div class="decision-title">
+                  <span style="width:24px;height:24px;border-radius:7px;background:#fbe7c0;display:grid;place-items:center">!</span>
+                  \${esc(decision.title)}
+                </div>
+                <div class="decision-copy">\${esc(decision.copy)}</div>
+              </div>
+              <span class="badge" style="background:#fdf2e0;color:#9a6206;border-color:#f0d9a8">\${esc(decision.tag)}</span>
+            </div>
+            <div class="grid" style="margin:13px 0 0">
+              <div class="field"><div class="label">处理要求</div><div class="value">\${esc(decision.copy)}</div></div>
+              <div class="field"><div class="label">已检查证据</div><div class="value">\${esc(decision.evidence)}</div></div>
+              <div class="field"><div class="label">返回路径</div><div class="value">\${esc(decision.returnPath)}</div></div>
+            </div>
+            \${isAdminDetail ? '<div class="decision-actions"><button type="button" class="primary" data-quick-status="ready_for_deploy">批准并设为待部署</button><button type="button" data-quick-status="queued">退回排队</button><button type="button" class="danger-button" data-quick-status="closed">关闭</button></div>' : ''}
+          </section>
+
+          <section class="panel-card">
+            <div class="section-title">公开信息 <span class="badge" style="background:#e9f6ef;color:#1f8a52;border-color:#bfe3cd">用户可见</span></div>
+            <div class="panel-card-body">
+              <div class="grid">
+                <div class="field"><div class="label">\${svgCalendar} 更新时间</div><div class="value">\${esc(fmt(workflow.updatedAt || issue.updatedAt))}</div></div>
+                <div class="field"><div class="label">\${svgProject} 所属项目</div><div class="value">\${esc(issue.projectName || issue.context?.project?.name || '无')}</div></div>
+                <div class="field"><div class="label">\${svgLink} 页面路径</div><div class="value" title="\${esc(issue.pagePath || issue.context?.url || '')}">\${esc(issue.pagePath || issue.context?.url || '无')}</div></div>
+                <div class="field"><div class="label">\${svgAttachment} 附件数量</div><div class="value">\${esc(attCount)}</div></div>
+                <div class="field"><div class="label">\${svgPlay} 录屏事件数</div><div class="value">\${esc(repCount)}</div></div>
+                <div class="field"><div class="label">负责人</div><div class="value">\${esc(workflow.assignee || '未分配')}</div></div>
+              </div>
+              <div class="grid" style="grid-template-columns:1fr 1fr">
+                <div class="field"><div class="label">问题描述</div><div class="section-content">\${esc(issue.description || issue.descriptionPreview || '未提供描述。')}</div></div>
+                <div class="field"><div class="label">公开回复</div><div class="section-content" style="font-style: \${publicNote.isPlaceholder ? 'italic' : 'normal'}">\${esc(publicNote.text)}</div></div>
+              </div>
+            </div>
+          </section>
+          \${isAdminDetail ? renderAdminDetail(issue) : ''}
+        </div>\`;
       const form = document.getElementById('workflowForm');
       if (form) form.addEventListener('submit', updateIssue);
     }
@@ -2347,9 +2684,6 @@ function renderFeedbackBoardPage(apiBase = '') {
         fields.namedItem('publicNote').value = workflow.publicNote || '';
         fields.namedItem('internalNote').value = workflow.internalNote || '';
       });
-      const attachmentsJson = JSON.stringify(issue.attachments || [], null, 2);
-      const contextJson = JSON.stringify(issue.context || {}, null, 2);
-      const historyJson = JSON.stringify(workflow.history || [], null, 2);
 
       return \`
         <div class="admin-box">
@@ -2369,30 +2703,6 @@ function renderFeedbackBoardPage(apiBase = '') {
           </div>
           \${renderAgentWorkflowPanels(issue)}
           \${template}
-          <div class="section">
-            <div class="section-title">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
-              附件 JSON
-              <button class="btn-copy" style="margin-left:auto;" onclick="window.copyToClipboard(decodeURIComponent('\${encodeURIComponent(attachmentsJson)}'), this)">复制 JSON</button>
-            </div>
-            <pre>\${esc(attachmentsJson)}</pre>
-          </div>
-          <div class="section">
-            <div class="section-title">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
-              上下文 JSON
-              <button class="btn-copy" style="margin-left:auto;" onclick="window.copyToClipboard(decodeURIComponent('\${encodeURIComponent(contextJson)}'), this)">复制 JSON</button>
-            </div>
-            <pre>\${esc(contextJson)}</pre>
-          </div>
-          <div class="section">
-            <div class="section-title">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
-              变更历史 JSON
-              <button class="btn-copy" style="margin-left:auto;" onclick="window.copyToClipboard(decodeURIComponent('\${encodeURIComponent(historyJson)}'), this)">复制 JSON</button>
-            </div>
-            <pre>\${esc(historyJson)}</pre>
-          </div>
         </div>\`;
     }
     document.getElementById('refreshBtn').addEventListener('click', loadIssues);
@@ -2409,6 +2719,25 @@ function renderFeedbackBoardPage(apiBase = '') {
       if (playBtn) {
         window.playReplay(playBtn.dataset.url, playBtn.dataset.name);
         return;
+      }
+      const quickStatus = e.target.closest('[data-quick-status]');
+      if (quickStatus) {
+        const form = document.getElementById('workflowForm');
+        if (!form) return;
+        const statusField = form.elements.namedItem('status');
+        if (statusField) statusField.value = quickStatus.dataset.quickStatus;
+        form.requestSubmit();
+      }
+    });
+    document.getElementById('evidencePanel').addEventListener('click', (e) => {
+      const thumb = e.target.closest('.attachment-thumb');
+      if (thumb) {
+        window.viewImage(thumb.dataset.url);
+        return;
+      }
+      const playBtn = e.target.closest('.btn-play-replay');
+      if (playBtn) {
+        window.playReplay(playBtn.dataset.url, playBtn.dataset.name);
       }
     });
     renderAdmin();

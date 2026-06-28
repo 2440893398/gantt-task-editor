@@ -156,6 +156,18 @@ describe('feedback issue board Worker routes', () => {
         expect(html).toContain('/api/feedback/issues');
     });
 
+    it('serves the feedback handling workbench layout at /feedback', async () => {
+        const response = await request('/feedback', {}, env);
+        const html = await response.text();
+
+        expect(response.status).toBe(200);
+        expect(html).toContain('反馈处理工作台');
+        expect(html).toContain('class="feedback-workbench"');
+        expect(html).toContain('id="evidencePanel"');
+        expect(html).toContain('grid-template-columns: 300px minmax(460px, 1fr) 344px');
+        expect(html).toContain('@media (max-width: 1100px)');
+    });
+
     it('points the Pages-hosted feedback board at the configured feedback API backend', async () => {
         const pageEnv = {
             ...env,
