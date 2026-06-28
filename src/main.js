@@ -59,6 +59,10 @@ window.openNewTaskDetailsPanel = openNewTaskDetailsPanel;
 window.openCalendarPanel = () =>
     import('./features/calendar/panel.js').then((m) => m.openCalendarPanel());
 
+// 挂载分享弹窗（动态 import 必须在 Vite 模块图内才能正确打包）
+window.openShareDialog = () =>
+    import('./features/share/ShareDialog.js').then((m) => m.openShareDialog());
+
 // 挂载缓存管理函数到 window（供清除缓存按钮使用）
 window.clearGanttCache = async () => {
     if (

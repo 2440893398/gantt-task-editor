@@ -108,6 +108,8 @@ global.gantt = {
         return true;
     }),
     eachTask: vi.fn(),
+    getTaskByTime: vi.fn(() => []),
+    hasChild: vi.fn(() => false),
     getTask: vi.fn(),
     updateTask: vi.fn(),
     hideLightbox: vi.fn(),

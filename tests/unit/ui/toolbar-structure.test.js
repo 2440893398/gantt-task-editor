@@ -32,15 +32,29 @@ describe('toolbar structure in index.html', () => {
         expect(html).toContain('id="project-picker-mount"');
     });
 
-    it('includes shared project and share toolbar controls in the single entry file', () => {
+    it('includes shared project and share toolbar controls in the shared entry', () => {
         const html = fs.readFileSync(path.resolve(process.cwd(), 'index.html'), 'utf8');
 
         expect(html).toContain('id="project-picker-mount"');
         expect(html).toContain('id="share-btn"');
-        expect(html).toContain("import('./src/features/share/ShareDialog.js')");
+        expect(html).toContain('window.openShareDialog?.()');
+        expect(html).not.toContain("import('./src/features/share/ShareDialog.js')");
     });
 
-    it('includes assignee focus control mount in toolbar left area', () => {
+    it('registers share dialog through the Vite module graph', () => {
+        const source = fs.readFileSync(path.resolve(process.cwd(), 'src/main.js'), 'utf8');
+
+        expect(source).toContain("import('./features/share/ShareDialog.js')");
+        expect(source).toContain('window.openShareDialog');
+    });
+
+    it('uses shared index.html for the CN build entry', () => {
+        const source = fs.readFileSync(path.resolve(process.cwd(), 'vite.config.cn.js'), 'utf8');
+
+        expect(source).toContain("input: 'index.html'");
+    });
+
+    it('includes assignee focus control mount in toolbar left area in the shared entry', () => {
         const html = fs.readFileSync(path.resolve(process.cwd(), 'index.html'), 'utf8');
         const projectPickerPos = html.indexOf('id="project-picker-mount"');
         const assigneeFocusPos = html.indexOf('id="assignee-focus-control"');

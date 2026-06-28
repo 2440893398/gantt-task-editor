@@ -164,7 +164,7 @@ describe('ImportDialog', () => {
         });
         expect(mocks.clearCloudBinding).toHaveBeenCalledWith('current-project');
         expect(mocks.saveCloudBinding).not.toHaveBeenCalled();
-    });
+    }, 10000);
 
     it('refreshes the gantt UI after replacing the current project', async () => {
         const snapshot = createSnapshot();

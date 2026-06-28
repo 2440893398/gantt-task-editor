@@ -679,7 +679,7 @@
 
             // 分享按钮 - 打开分享弹窗
             document.getElementById('share-btn')?.addEventListener('click', () => {
-                import('./src/features/share/ShareDialog.js').then(m => m.openShareDialog());
+                window.openShareDialog?.();
             });
 
             // 新建任务表单提交事件
