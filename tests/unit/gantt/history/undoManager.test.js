@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach as _afterEach } from 'vitest';
 import undoManager, {
     saveState,
+    saveAddState,
     saveReorderState,
     undo,
     redo,
@@ -9,7 +10,7 @@ import undoManager, {
     getUndoStackSize,
     getRedoStackSize,
     clearHistory,
-} from '../../../../src/features/ai/services/undoManager.js';
+} from '../../../../src/features/gantt/history/undoManager.js';
 
 vi.mock('../../../../src/features/gantt/scheduler.js', () => ({
     recalculateParentChain: vi.fn(),
@@ -171,6 +172,36 @@ describe('UndoManager (F-201)', () => {
             expect(currentTaskState.priority).toBe('medium');
             expect(currentTaskState.status).toBe('in_progress');
             expect(currentTaskState.assignee).toBe('John');
+        });
+
+        it('should not corrupt redoStack if deleteTask throws while undoing add', () => {
+            clearHistory();
+            currentTaskState = {
+                id: '1',
+                text: 'Throw',
+                start_date: new Date('2024-01-01'),
+                end_date: new Date('2024-01-02'),
+                duration: 1,
+            };
+            saveAddState('1');
+
+            global.gantt.deleteTask = vi.fn(() => {
+                throw new Error('gantt error');
+            });
+
+            expect(undo()).toBe(false);
+            expect(canRedo()).toBe(false);
+        });
+
+        it('should restore custom fields', () => {
+            currentTaskState.customField = 'original';
+            saveState('1');
+
+            currentTaskState.customField = 'changed';
+
+            undo();
+
+            expect(currentTaskState.customField).toBe('original');
         });
     });
 

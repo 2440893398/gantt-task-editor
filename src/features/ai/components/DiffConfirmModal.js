@@ -1,4 +1,4 @@
-import undoManager from '../services/undoManager.js';
+import undoManager from '../../gantt/history/undoManager.js';
 import { showToast } from '../../../utils/toast.js';
 
 const OP_LABELS = {

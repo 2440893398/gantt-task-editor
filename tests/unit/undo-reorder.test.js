@@ -50,7 +50,7 @@ describe('UndoManager reorder', () => {
 
     it('saveReorderState 应能压入 reorder 快照', async () => {
         const { saveReorderState, canUndo, getUndoStackSize, clearHistory } =
-            await import('../../src/features/ai/services/undoManager.js');
+            await import('../../src/features/gantt/history/undoManager.js');
         clearHistory();
 
         const before = [{ id: 'task1', parent: 0, sortorder: 0 }];
@@ -65,7 +65,7 @@ describe('UndoManager reorder', () => {
 
     it('saveReorderState 对无效参数应返回 false', async () => {
         const { saveReorderState, clearHistory } =
-            await import('../../src/features/ai/services/undoManager.js');
+            await import('../../src/features/gantt/history/undoManager.js');
         clearHistory();
 
         expect(saveReorderState(null, [])).toBe(false);
@@ -75,7 +75,7 @@ describe('UndoManager reorder', () => {
 
     it('undo reorder 应调用 gantt.updateTask 恢复 before 状态并 render', async () => {
         const { saveReorderState, undo, clearHistory } =
-            await import('../../src/features/ai/services/undoManager.js');
+            await import('../../src/features/gantt/history/undoManager.js');
         clearHistory();
 
         const before = [{ id: 'task1', parent: 0, sortorder: 0 }];
@@ -92,7 +92,7 @@ describe('UndoManager reorder', () => {
 
     it('redo reorder 应调用 gantt.updateTask 恢复 after 状态并 render', async () => {
         const { saveReorderState, undo, redo, clearHistory, canRedo } =
-            await import('../../src/features/ai/services/undoManager.js');
+            await import('../../src/features/gantt/history/undoManager.js');
         clearHistory();
 
         const before = [{ id: 'task1', parent: 0, sortorder: 0 }];
@@ -112,7 +112,7 @@ describe('UndoManager reorder', () => {
 
     it('undo reorder 后 canRedo 应为 true', async () => {
         const { saveReorderState, undo, canRedo, clearHistory } =
-            await import('../../src/features/ai/services/undoManager.js');
+            await import('../../src/features/gantt/history/undoManager.js');
         clearHistory();
 
         const before = [{ id: 'task1', parent: 0, sortorder: 0 }];

@@ -4,7 +4,7 @@
  * 实现拖拽平移和"回到今天"功能
  */
 
-import undoManager from '../ai/services/undoManager.js';
+import undoManager from './history/undoManager.js';
 
 /**
  * 初始化导航功能

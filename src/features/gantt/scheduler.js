@@ -21,7 +21,7 @@ import {
     isPersonOnLeave,
 } from '../../core/storage.js';
 import { rollupStatus, rollupAssignee, sumNumberField, rollupProgress } from './parent-rollup.js';
-import undoManager from '../ai/services/undoManager.js';
+import undoManager from './history/undoManager.js';
 
 const dragSnapshotTaskIds = new Set();
 const dragDurationSnapshots = new Map();

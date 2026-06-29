@@ -11,7 +11,7 @@
  * - 支持 add/delete 操作快照 (扩展)
  */
 
-import { recalculateParentChain } from '../../gantt/scheduler.js';
+import { recalculateParentChain } from '../scheduler.js';
 
 // 撤回栈最大保存条数
 const MAX_HISTORY_SIZE = 50;

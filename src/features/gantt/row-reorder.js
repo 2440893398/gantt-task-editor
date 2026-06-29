@@ -5,7 +5,7 @@
 
 import Sortable from 'sortablejs';
 import { state } from '../../core/store.js';
-import undoManager from '../ai/services/undoManager.js';
+import undoManager from './history/undoManager.js';
 import { showToast } from '../../utils/toast.js';
 import { recalculateParentChain } from './scheduler.js';
 

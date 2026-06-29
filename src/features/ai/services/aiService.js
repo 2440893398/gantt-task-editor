@@ -12,7 +12,7 @@ import { DIFF_JSON_SCHEMA, IMPORT_SYSTEM_PROMPT } from '../prompts/importPrompt.
 import { openAiConfigModal } from '../components/AiConfigModal.js';
 import AiDrawer from '../components/AiDrawer.js';
 import { handleAiError } from './errorHandler.js';
-import undoManager from './undoManager.js';
+import undoManager from '../../gantt/history/undoManager.js';
 
 /**
  * 格式化任务数据为可读的展示文本

@@ -9,7 +9,7 @@ import { renderLeftSection, bindLeftSectionEvents } from './left-section.js';
 import { renderRightSection, bindRightSectionEvents } from './right-section.js';
 import { destroyRichTextEditor, getEditorContent } from '../../components/rich-text-editor.js';
 import { showConfirmDialog } from '../../components/common/confirm-dialog.js';
-import undoManager from '../ai/services/undoManager.js';
+import undoManager from '../gantt/history/undoManager.js';
 import { isReadOnlyCloudViewActive } from '../share/readOnlyCloudView.js';
 
 let currentPanel = null;

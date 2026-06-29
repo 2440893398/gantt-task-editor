@@ -41,7 +41,7 @@ import { renderProjectPicker } from './features/projects/ProjectPicker.js';
 import { openTaskDetailsPanel, openNewTaskDetailsPanel } from './features/task-details/index.js';
 // 视图切换
 import { applyCurrentViewMode, initViewToggle } from './features/gantt/view-toggle.js';
-import undoManager from './features/ai/services/undoManager.js';
+import undoManager from './features/gantt/history/undoManager.js';
 import { initFeedbackModule } from './features/feedback/index.js';
 import { initAssigneeFocusControl } from './features/gantt/assignee-focus.js';
 import { scheduleCloudSync } from './features/share/cloudSync.js';

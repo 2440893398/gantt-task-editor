@@ -170,13 +170,13 @@ test.describe('AI Agent Undo Functionality (F-201)', () => {
     test('should check undoManager canUndo/canRedo status', async ({ page }) => {
         // 1. Initial state - nothing to undo
         let canUndo = await page.evaluate(async () => {
-            const undoManager = await import('/src/features/ai/services/undoManager.js');
+            const undoManager = await import('/src/features/gantt/history/undoManager.js');
             return undoManager.canUndo();
         });
         expect(canUndo).toBe(false);
 
         let canRedo = await page.evaluate(async () => {
-            const undoManager = await import('/src/features/ai/services/undoManager.js');
+            const undoManager = await import('/src/features/gantt/history/undoManager.js');
             return undoManager.canRedo();
         });
         expect(canRedo).toBe(false);
@@ -195,7 +195,7 @@ test.describe('AI Agent Undo Functionality (F-201)', () => {
 
         // 3. Now canUndo should be true
         canUndo = await page.evaluate(async () => {
-            const undoManager = await import('/src/features/ai/services/undoManager.js');
+            const undoManager = await import('/src/features/gantt/history/undoManager.js');
             return undoManager.canUndo();
         });
         expect(canUndo).toBe(true);
@@ -207,13 +207,13 @@ test.describe('AI Agent Undo Functionality (F-201)', () => {
 
         // 5. Now canRedo should be true, canUndo should be false
         canUndo = await page.evaluate(async () => {
-            const undoManager = await import('/src/features/ai/services/undoManager.js');
+            const undoManager = await import('/src/features/gantt/history/undoManager.js');
             return undoManager.canUndo();
         });
         expect(canUndo).toBe(false);
 
         canRedo = await page.evaluate(async () => {
-            const undoManager = await import('/src/features/ai/services/undoManager.js');
+            const undoManager = await import('/src/features/gantt/history/undoManager.js');
             return undoManager.canRedo();
         });
         expect(canRedo).toBe(true);

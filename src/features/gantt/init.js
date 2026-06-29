@@ -26,7 +26,7 @@ import {
     exclusiveToInclusive,
     isDayPrecision,
 } from '../../utils/time-formatter.js';
-import undoManager from '../ai/services/undoManager.js';
+import undoManager from './history/undoManager.js';
 import { loadColumnWidthPrefs, saveColumnWidthPref } from './column-widths.js';
 
 import { showSummaryPopover, hideSummaryPopover } from '../../utils/dom.js';

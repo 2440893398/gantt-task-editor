@@ -17,7 +17,7 @@ vi.mock('../../../src/core/store.js', () => ({
     getSystemFieldOptions: vi.fn(() => []),
 }));
 
-vi.mock('../../../src/features/ai/services/undoManager.js', () => ({
+vi.mock('../../../src/features/gantt/history/undoManager.js', () => ({
     default: {
         saveState: saveStateMock,
         isApplyingHistoryOperation: vi.fn(() => false),
