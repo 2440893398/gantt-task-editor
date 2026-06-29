@@ -10,6 +10,7 @@ export function createGanttAdapter(gantt = globalThis.gantt) {
     const ganttApi = requireGantt(gantt);
 
     return {
+        gantt: ganttApi,
         getTask(id) {
             return { ...ganttApi.getTask(id) };
         },

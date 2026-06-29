@@ -1,4 +1,5 @@
 import { registerLinkCommands } from './commands/link.js';
+import { registerSessionCommands } from './commands/session.js';
 import { registerStateCommands } from './commands/state.js';
 import { registerTaskCommands } from './commands/task.js';
 import { injectAgentDiscovery } from './discovery/index.js';
@@ -8,6 +9,7 @@ function registerBuiltInCommands() {
     registerStateCommands();
     registerTaskCommands();
     registerLinkCommands();
+    registerSessionCommands();
 }
 
 export function initAgentCli(options = {}) {

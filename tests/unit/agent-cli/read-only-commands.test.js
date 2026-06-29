@@ -151,10 +151,13 @@ describe('read-only agent commands', () => {
             ['link.list', false],
             ['state.rev', false],
             ['state.snapshot', false],
+            ['task.create', true],
+            ['task.delete', true],
             ['task.get', false],
             ['task.list', false],
             ['task.overdue', false],
             ['task.today', false],
+            ['task.update', true],
         ]);
     });
 

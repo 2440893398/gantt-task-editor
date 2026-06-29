@@ -1,5 +1,6 @@
 import { defineCommand, getCommand } from '../registry.js';
 import { fail } from '../runtime/result.js';
+import { taskOps } from '../../gantt/domain/task-ops.js';
 
 const listParams = {
     type: 'object',
@@ -15,6 +16,50 @@ const listParams = {
         fields: {},
         limit: { type: 'integer', minimum: 1 },
     },
+    additionalProperties: false,
+};
+
+const createParams = {
+    type: 'object',
+    properties: {
+        name: { type: 'string' },
+        parent: { type: 'integer' },
+        start: { type: 'string' },
+        duration: { type: 'integer', minimum: 1 },
+        priority: { type: 'string' },
+        assignee: { type: 'string' },
+        dryRun: { type: 'boolean' },
+    },
+    required: ['name'],
+    additionalProperties: false,
+};
+
+const updateParams = {
+    type: 'object',
+    properties: {
+        id: { type: 'integer' },
+        name: { type: 'string' },
+        start: { type: 'string' },
+        duration: { type: 'integer', minimum: 1 },
+        end: { type: 'string' },
+        progress: { type: 'number' },
+        status: { type: 'string' },
+        priority: { type: 'string' },
+        assignee: { type: 'string' },
+        dryRun: { type: 'boolean' },
+    },
+    required: ['id'],
+    additionalProperties: false,
+};
+
+const deleteParams = {
+    type: 'object',
+    properties: {
+        id: { type: 'integer' },
+        cascade: { type: 'boolean' },
+        dryRun: { type: 'boolean' },
+    },
+    required: ['id'],
     additionalProperties: false,
 };
 
@@ -262,6 +307,36 @@ export function registerTaskCommands() {
                 const today = context.today || new Date();
                 return context.adapter.getTasks().filter((task) => isTaskOverdue(task, today));
             },
+        });
+    }
+
+    if (!getCommand('task.create')) {
+        defineCommand({
+            name: 'task.create',
+            summary: 'Create a task',
+            params: createParams,
+            mutating: true,
+            op: taskOps.create,
+        });
+    }
+
+    if (!getCommand('task.update')) {
+        defineCommand({
+            name: 'task.update',
+            summary: 'Update a task',
+            params: updateParams,
+            mutating: true,
+            op: taskOps.update,
+        });
+    }
+
+    if (!getCommand('task.delete')) {
+        defineCommand({
+            name: 'task.delete',
+            summary: 'Delete a task',
+            params: deleteParams,
+            mutating: true,
+            op: taskOps.delete,
         });
     }
 }

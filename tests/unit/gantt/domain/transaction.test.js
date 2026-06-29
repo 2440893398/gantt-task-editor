@@ -44,4 +44,36 @@ describe('gantt transaction', () => {
         expect(gantt.parse).toHaveBeenCalledWith(serialized);
         expect(gantt.render).toHaveBeenCalledTimes(1);
     });
+
+    it('restores injected history snapshot when work throws after history side effects', async () => {
+        const serialized = { data: [{ id: 1, text: 'Before' }], links: [] };
+        const historySnapshot = {
+            undoStack: [{ op: 'update', taskId: 1 }],
+            redoStack: [],
+            applyingHistoryOperation: false,
+        };
+        const history = {
+            snapshot: vi.fn(() => historySnapshot),
+            restore: vi.fn(),
+        };
+        const gantt = {
+            serialize: vi.fn(() => serialized),
+            clearAll: vi.fn(),
+            parse: vi.fn(),
+            render: vi.fn(),
+        };
+
+        const result = await runGanttTransaction({
+            gantt,
+            history,
+            work: async () => {
+                throw new Error('persist failed');
+            },
+        });
+
+        expect(result.ok).toBe(false);
+        expect(history.snapshot).toHaveBeenCalledTimes(1);
+        expect(history.restore).toHaveBeenCalledWith(historySnapshot);
+        expect(gantt.parse).toHaveBeenCalledWith(serialized);
+    });
 });

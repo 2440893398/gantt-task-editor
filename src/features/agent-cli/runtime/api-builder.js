@@ -2,10 +2,9 @@ import { getCommand, getCommands } from '../registry.js';
 import { createGanttAdapter } from '../adapters/gantt-adapter.js';
 import { getProjectRev } from '../../gantt/domain/rev.js';
 import { state } from '../../../core/store.js';
+import { dispatch } from './dispatch.js';
 import { parseExec } from './exec.js';
-import { validateArgs } from './guards.js';
 import { buildHelp, buildManifest } from './manifest.js';
-import { fail, ok } from './result.js';
 
 function resolveProjectId(context = {}) {
     if (context.projectId) {
@@ -35,41 +34,8 @@ function getExecutionContext(context = {}) {
     };
 }
 
-function normalizeCommandResult(result, rev) {
-    if (result?.ok === true || result?.ok === false) {
-        return result.rev === undefined ? { ...result, rev } : result;
-    }
-
-    return ok(result, rev);
-}
-
-export async function executeReadCommand(name, args = {}, context = {}) {
-    const command = getCommand(name);
-    const commandContext = getExecutionContext(context);
-    const rev = getProjectRev(commandContext.projectId);
-
-    if (!command) {
-        return fail('UNKNOWN_COMMAND', `Unknown command: ${name}`, { rev });
-    }
-
-    if (command.mutating) {
-        return fail('READ_ONLY', `Mutating command is not available yet: ${name}`, { rev });
-    }
-
-    const validated = validateArgs(command.params, args);
-    if (!validated.ok) {
-        return {
-            ...validated,
-            rev,
-        };
-    }
-
-    try {
-        const result = await command.handler(validated.args, commandContext);
-        return normalizeCommandResult(result, rev);
-    } catch (error) {
-        return fail('EXEC_ERROR', error.message || `Command failed: ${name}`, { rev });
-    }
+export async function executeCommand(name, args = {}, context = {}) {
+    return dispatch(name, args, getExecutionContext(context));
 }
 
 function assignCommandApi(app, command, executeCommand, context) {
@@ -88,13 +54,13 @@ function assignCommandApi(app, command, executeCommand, context) {
 export function buildApi(options = {}) {
     const app = {};
     const context = buildContext(options.context);
-    const executeCommand = options.executeCommand || executeReadCommand;
+    const runCommand = options.executeCommand || executeCommand;
 
     for (const command of getCommands()) {
-        assignCommandApi(app, command, executeCommand, context);
+        assignCommandApi(app, command, runCommand, context);
     }
 
-    app.exec = async (input) => {
+    app.exec = async (input, execOptions = {}) => {
         const parsed = parseExec(input, { getCommand, getCommands });
 
         if (!parsed.ok) {
@@ -104,7 +70,7 @@ export function buildApi(options = {}) {
             };
         }
 
-        return executeCommand(parsed.name, parsed.args, context);
+        return runCommand(parsed.name, parsed.args, { ...context, ...execOptions });
     };
     app.help = (commandName) => buildHelp(getCommands(), commandName);
     app.manifest = () => buildManifest(getCommands());

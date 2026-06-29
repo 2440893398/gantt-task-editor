@@ -282,14 +282,14 @@ function setupAutoSave() {
 
     // 监听任务变化事件
     gantt.attachEvent('onAfterTaskAdd', (id) => {
-        if (!undoManager.isApplyingHistoryOperation()) {
+        if (!undoManager.isApplyingHistoryOperation() && !undoManager.isCommandUndoScopeActive()) {
             undoManager.saveAddState(id);
         }
         debouncedSave();
     });
 
     gantt.attachEvent('onBeforeTaskDelete', (id) => {
-        if (!undoManager.isApplyingHistoryOperation()) {
+        if (!undoManager.isApplyingHistoryOperation() && !undoManager.isCommandUndoScopeActive()) {
             undoManager.saveDeleteState(id);
         }
         return true;
