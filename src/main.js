@@ -10,6 +10,7 @@ import './styles/pages/gantt.css';
 
 // ========== 功能模块导入 ==========
 import { initGantt, setupGlobalEvents } from './features/gantt/init.js';
+import { initAgentCli } from './features/agent-cli/index.js';
 import { bindTaskSearchInput } from './features/gantt/task-search.js';
 import { initCustomFieldsUI } from './features/customFields/manager.js';
 import { initBatchEdit } from './features/selection/batchEdit.js';
@@ -149,6 +150,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // 初始化甘特图（传入缓存恢复函数）
     await initGanttWithCache();
+    initAgentCli();
 
     initAssigneeFocusControl(document.getElementById('assignee-focus-control'), gantt);
     bindTaskSearchInput(document.getElementById('task-search-input'), gantt);
