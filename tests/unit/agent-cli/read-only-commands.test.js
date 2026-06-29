@@ -148,7 +148,9 @@ describe('read-only agent commands', () => {
 
     it('registers read-only commands as non-mutating', () => {
         expect(getCommands().map((command) => [command.name, command.mutating])).toEqual([
+            ['link.add', true],
             ['link.list', false],
+            ['link.remove', true],
             ['state.rev', false],
             ['state.snapshot', false],
             ['task.create', true],
@@ -238,13 +240,16 @@ describe('read-only agent commands', () => {
 
         await expect(app.link.list({ taskId: 1 })).resolves.toEqual({
             ok: true,
-            data: [{ id: 10, source: 1, target: 2, type: '0' }],
+            data: [{ id: 10, source: 1, target: 2, type: 'fs' }],
             rev: before,
         });
 
         await expect(app.link.list()).resolves.toEqual({
             ok: true,
-            data: links,
+            data: [
+                { id: 10, source: 1, target: 2, type: 'fs' },
+                { id: 11, source: 3, target: 2, type: 'fs' },
+            ],
             rev: before,
         });
 

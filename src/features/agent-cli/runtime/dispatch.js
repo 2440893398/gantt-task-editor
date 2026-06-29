@@ -186,7 +186,9 @@ export async function dispatch(name, args = {}, context = {}) {
         }
 
         const plan =
-            typeof command.op?.plan === 'function' ? command.op.plan(resolvedArgs, ctx) : undefined;
+            typeof command.op?.plan === 'function'
+                ? await command.op.plan(resolvedArgs, ctx)
+                : undefined;
 
         if (plan?.ok === false) {
             result = withRev(plan, currentRev);
