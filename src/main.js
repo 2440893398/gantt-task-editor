@@ -48,6 +48,14 @@ import { scheduleCloudSync } from './features/share/cloudSync.js';
 import { PROJECT_SNAPSHOT_CHANGED_EVENT } from './features/share/cloudChangeEvent.js';
 import { isReadOnlyCloudViewActive } from './features/share/readOnlyCloudView.js';
 
+const localOnlyAutosaveByProject = new Set();
+
+export function markNextAutosaveLocalOnly(projectId) {
+    if (projectId) {
+        localOnlyAutosaveByProject.add(projectId);
+    }
+}
+
 // 挂载 exportConfig 到 window 以便 HTML 中调用
 window.exportConfig = exportConfig;
 
@@ -261,8 +269,12 @@ function setupAutoSave() {
         if (saveTimeout) clearTimeout(saveTimeout);
         saveTimeout = setTimeout(async () => {
             if (isReadOnlyCloudViewActive()) return;
-            await persistGanttData();
-            scheduleCloudSync(projectId);
+            await persistGanttData({ projectId });
+            const shouldSkipCloudSync = localOnlyAutosaveByProject.delete(projectId);
+
+            if (!shouldSkipCloudSync) {
+                scheduleCloudSync(projectId);
+            }
         }, 1000); // 1秒防抖
     };
 

@@ -611,6 +611,22 @@ export function cascadeUpdate(taskId) {
     updateParentDates(taskId);
 }
 
+export async function recalculateProjectSchedule(taskId = null) {
+    if (taskId) {
+        await scheduleAsyncReschedule(taskId);
+        return;
+    }
+
+    const taskIds = [];
+    gantt.eachTask((task) => {
+        taskIds.push(task.id);
+    });
+
+    for (const id of taskIds) {
+        await scheduleAsyncReschedule(id);
+    }
+}
+
 /**
  * 异步重新调度：遍历以 taskId 为前置的所有后继任务，更新开始日期
  * 注意：这是简化版实现，仅处理直接后继（FS 依赖）

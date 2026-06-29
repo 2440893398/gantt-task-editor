@@ -28,6 +28,7 @@ import {
     recalculateParentChain,
     recalculateAllParentRollups,
     recalculateDurationsFromDates,
+    recalculateProjectSchedule,
     initScheduler,
 } from '../../src/features/gantt/scheduler.js';
 
@@ -677,5 +678,108 @@ describe('scheduler parent rollup events', () => {
         handlers.onAfterTaskDelete(1, child);
 
         expect(global.gantt.updateTask).toHaveBeenCalledWith(100);
+    });
+});
+
+describe('scheduler project recalculation', () => {
+    test('recalculateProjectSchedule awaits a task-specific reschedule', async () => {
+        const predecessor = {
+            id: 1,
+            parent: 0,
+            end_date: new Date('2026-02-02'),
+        };
+        const successor = {
+            id: 2,
+            parent: 0,
+            start_date: new Date('2026-02-01'),
+            end_date: new Date('2026-02-03'),
+            duration: 1,
+        };
+        const tasks = { 1: predecessor, 2: successor };
+
+        global.gantt = {
+            getTask: vi.fn((id) => tasks[id]),
+            getLinks: vi.fn(() => [{ source: 1, target: 2, type: '0' }]),
+            updateTask: vi.fn(),
+        };
+
+        await recalculateProjectSchedule(1);
+
+        expect(successor.start_date).toEqual(new Date('2026-02-02'));
+        expect(global.gantt.updateTask).toHaveBeenCalledWith(2);
+    });
+
+    test('recalculateProjectSchedule recalculates dependencies from every task when no task id is provided', async () => {
+        const firstRoot = {
+            id: 1,
+            parent: 0,
+            end_date: new Date('2026-02-02'),
+        };
+        const secondRoot = {
+            id: 3,
+            parent: '0',
+            end_date: new Date('2026-02-04'),
+        };
+        const firstSuccessor = {
+            id: 2,
+            parent: 0,
+            start_date: new Date('2026-02-01'),
+            end_date: new Date('2026-02-03'),
+            duration: 1,
+        };
+        const secondSuccessor = {
+            id: 4,
+            parent: 0,
+            start_date: new Date('2026-02-01'),
+            end_date: new Date('2026-02-03'),
+            duration: 1,
+        };
+        const nestedOrigin = {
+            id: 5,
+            parent: 1,
+            end_date: new Date('2026-02-06'),
+        };
+        const nestedSuccessor = {
+            id: 6,
+            parent: 0,
+            start_date: new Date('2026-02-01'),
+            end_date: new Date('2026-02-03'),
+            duration: 1,
+        };
+        const tasks = {
+            1: firstRoot,
+            2: firstSuccessor,
+            3: secondRoot,
+            4: secondSuccessor,
+            5: nestedOrigin,
+            6: nestedSuccessor,
+        };
+
+        global.gantt = {
+            getTask: vi.fn((id) => tasks[id]),
+            getLinks: vi.fn(() => [
+                { source: 1, target: 2, type: '0' },
+                { source: 3, target: 4, type: '0' },
+                { source: 5, target: 6, type: '0' },
+            ]),
+            eachTask: vi.fn((callback) => {
+                callback(firstRoot);
+                callback(firstSuccessor);
+                callback(secondRoot);
+                callback(secondSuccessor);
+                callback(nestedOrigin);
+                callback(nestedSuccessor);
+            }),
+            updateTask: vi.fn(),
+        };
+
+        await recalculateProjectSchedule();
+
+        expect(firstSuccessor.start_date).toEqual(new Date('2026-02-02'));
+        expect(secondSuccessor.start_date).toEqual(new Date('2026-02-04'));
+        expect(nestedSuccessor.start_date).toEqual(new Date('2026-02-06'));
+        expect(global.gantt.updateTask).toHaveBeenCalledWith(2);
+        expect(global.gantt.updateTask).toHaveBeenCalledWith(4);
+        expect(global.gantt.updateTask).toHaveBeenCalledWith(6);
     });
 });

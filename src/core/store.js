@@ -227,13 +227,15 @@ export function persistCustomFields() {
 /**
  * 保存甘特图数据到缓存
  */
-export async function persistGanttData() {
+export async function persistGanttData(options = {}) {
     if (typeof gantt === 'undefined') return;
 
     try {
+        // Command persistence metadata is accepted here; cloud sync is controlled by callers.
+        const { projectId = state.currentProjectId } = options;
         const data = gantt.serialize();
-        const currentProjectId = state.currentProjectId ?? DEFAULT_PROJECT_ID;
-        await projectScope(currentProjectId).saveGanttData(data);
+        const scopedProjectId = projectId ?? DEFAULT_PROJECT_ID;
+        await projectScope(scopedProjectId).saveGanttData(data);
         console.log('[Store] Persisted gantt data');
     } catch (e) {
         console.error('[Store] Failed to persist gantt data:', e);
