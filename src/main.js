@@ -150,7 +150,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // 初始化甘特图（传入缓存恢复函数）
     await initGanttWithCache();
-    initAgentCli();
+    // Agent 命令层：注入 scheduleCloudSync，使带 sync:true 的写命令可触发云同步。
+    // 当该层被禁用时（?agentApi=off），initAgentCli 返回 undefined，此处需容忍。
+    initAgentCli({ scheduleCloudSync });
 
     initAssigneeFocusControl(document.getElementById('assignee-focus-control'), gantt);
     bindTaskSearchInput(document.getElementById('task-search-input'), gantt);

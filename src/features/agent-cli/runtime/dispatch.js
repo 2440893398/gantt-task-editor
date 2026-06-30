@@ -26,6 +26,36 @@ function nowMs() {
         : Date.now();
 }
 
+function readOnlyResult(rev) {
+    return fail('CONSTRAINT', 'Agent command layer is read-only.', {
+        hint: 'Use read commands only or enable write mode in app configuration.',
+        rev,
+    });
+}
+
+/**
+ * Whether a mutating command should also push to the cloud. Cloud sync is
+ * opt-in: a caller must explicitly pass `sync: true` (via the command args or
+ * the dispatch context). Default behavior stays local-only.
+ */
+function wantsCloudSync(context, resolvedArgs) {
+    return context.sync === true || resolvedArgs?.sync === true;
+}
+
+function maybeScheduleCloudSync(context, resolvedArgs, projectId) {
+    if (wantsCloudSync(context, resolvedArgs) && typeof context.scheduleCloudSync === 'function') {
+        // Cloud sync runs AFTER commit + rev bump inside the success path's try
+        // block. It is best-effort: a synchronous throw here must never bubble
+        // into the surrounding catch and turn an already-applied write into an
+        // EXEC_ERROR. Swallow scheduling failures.
+        try {
+            context.scheduleCloudSync(projectId);
+        } catch {
+            /* best-effort: never fail a committed write on a sync-scheduling error */
+        }
+    }
+}
+
 function getGantt(context) {
     return context.gantt || context.adapter?.gantt || globalThis.gantt;
 }
@@ -146,6 +176,10 @@ export async function dispatch(name, args = {}, context = {}) {
         });
     }
 
+    if (command.mutating && context.readOnly) {
+        return readOnlyResult(getProjectRev(projectId));
+    }
+
     try {
         const validated = validateArgs(command.params, args);
         if (!validated.ok) {
@@ -229,6 +263,7 @@ export async function dispatch(name, args = {}, context = {}) {
         result = command.op
             ? ok({ diff: plan.diff }, nextRev)
             : replaceRev(txResult.data.result, nextRev);
+        maybeScheduleCloudSync(context, resolvedArgs, projectId);
         return result;
     } catch (error) {
         const rev = getProjectRev(projectId);
@@ -450,6 +485,11 @@ export async function batch(steps = [], context = {}) {
     const currentRev = getProjectRev(projectId);
     let result;
 
+    if (context.readOnly) {
+        result = readOnlyResult(currentRev);
+        return result;
+    }
+
     try {
         const ctx = {
             ...context,
@@ -565,6 +605,7 @@ export async function batch(steps = [], context = {}) {
 
         const nextRev = bumpProjectRev(projectId);
         result = ok({ steps: txResult.data.steps, diff: txResult.data.diff }, nextRev);
+        maybeScheduleCloudSync(context, undefined, projectId);
         return result;
     } catch (error) {
         result =
