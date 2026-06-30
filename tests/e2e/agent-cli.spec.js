@@ -3,7 +3,17 @@ import { expect, test } from '@playwright/test';
 test.describe('agent command layer', () => {
     test.beforeEach(async ({ page }) => {
         await page.goto('/');
-        await page.waitForLoadState('networkidle');
+        // Wait for the actual end-of-bootstrap condition (window.app + discovery
+        // dataset set by initAgentCli) rather than `networkidle`. The app loads GA,
+        // Clarity, and external holiday CDNs on startup, so the network never goes
+        // idle for 500ms and `networkidle` times out non-deterministically.
+        await page.waitForFunction(
+            () =>
+                Boolean(window.app?.help) &&
+                document.documentElement.dataset.agentApi === 'window.app',
+            undefined,
+            { timeout: 15000 }
+        );
     });
 
     test('exposes read-only window.app API and discovery metadata', async ({ page }) => {
