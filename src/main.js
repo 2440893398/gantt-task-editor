@@ -95,115 +95,119 @@ window.getGanttCacheStatus = async () => {
 };
 
 // ========== 应用初始化 ==========
-document.addEventListener('DOMContentLoaded', async () => {
-    console.log('🚀 甘特图任务编辑器启动中...');
+document.addEventListener(
+    'DOMContentLoaded',
+    async () => {
+        console.log('🚀 甘特图任务编辑器启动中...');
 
-    // 检查存储可用性
-    const storageStatus = await checkStorageAvailability();
-    if (!storageStatus.localStorage) {
-        console.warn('⚠️ localStorage 不可用，配置将不会被保存');
-    }
-    if (!storageStatus.indexedDB) {
-        console.warn('⚠️ IndexedDB 不可用，任务数据将不会被保存');
-    }
-
-    // 从缓存恢复状态（自定义字段、字段顺序）
-    await restoreStateFromCache();
-    console.log('📦 状态从缓存恢复完成');
-
-    // 恢复语言设置
-    const savedLocale = getSavedLocale();
-    if (savedLocale) {
-        await i18n.setLanguage(savedLocale);
-        console.log('🌐 从缓存恢复语言设置:', savedLocale);
-    } else {
-        // 初始化国际化（自动检测）
-        await i18n.init();
-        console.log('🌐 国际化初始化完成，当前语言:', i18n.getLanguage());
-    }
-
-    // 初始化项目状态 + 渲染项目切换器
-    await initProjects();
-    const projectPickerMount = document.getElementById('project-picker-mount');
-    if (projectPickerMount) {
-        renderProjectPicker(projectPickerMount);
-    }
-
-    document.addEventListener('projectSwitched', async () => {
-        try {
-            await restoreStateFromCache();
-
-            const cachedData = await restoreGanttDataFromCache();
-            gantt.clearAll();
-            if (cachedData?.data?.length > 0) {
-                gantt.parse(cachedData);
-            } else {
-                gantt.parse({ data: [], links: [] });
-            }
-
-            applyCurrentViewMode();
-        } catch (error) {
-            console.error('[Main] Failed to reload project after switch:', error);
-            showToast(i18n.t('common.operationFailed') || '操作失败', 'error');
+        // 检查存储可用性
+        const storageStatus = await checkStorageAvailability();
+        if (!storageStatus.localStorage) {
+            console.warn('⚠️ localStorage 不可用，配置将不会被保存');
         }
-    });
+        if (!storageStatus.indexedDB) {
+            console.warn('⚠️ IndexedDB 不可用，任务数据将不会被保存');
+        }
 
-    // 初始化甘特图（传入缓存恢复函数）
-    await initGanttWithCache();
-    // Agent 命令层：注入 scheduleCloudSync，使带 sync:true 的写命令可触发云同步。
-    // 当该层被禁用时（?agentApi=off），initAgentCli 返回 undefined，此处需容忍。
-    initAgentCli({ scheduleCloudSync });
+        // 从缓存恢复状态（自定义字段、字段顺序）
+        await restoreStateFromCache();
+        console.log('📦 状态从缓存恢复完成');
 
-    initAssigneeFocusControl(document.getElementById('assignee-focus-control'), gantt);
-    bindTaskSearchInput(document.getElementById('task-search-input'), gantt);
-    bindWorkCalendarMenu();
+        // 恢复语言设置
+        const savedLocale = getSavedLocale();
+        if (savedLocale) {
+            await i18n.setLanguage(savedLocale);
+            console.log('🌐 从缓存恢复语言设置:', savedLocale);
+        } else {
+            // 初始化国际化（自动检测）
+            await i18n.init();
+            console.log('🌐 国际化初始化完成，当前语言:', i18n.getLanguage());
+        }
 
-    // 检测并处理分享链接参数
-    const { checkShareParam } = await import('./features/share/ImportDialog.js');
-    await checkShareParam();
+        // 初始化项目状态 + 渲染项目切换器
+        await initProjects();
+        const projectPickerMount = document.getElementById('project-picker-mount');
+        if (projectPickerMount) {
+            renderProjectPicker(projectPickerMount);
+        }
 
-    // 后台静默预拉取节假日（当年 + 次年），不阻塞 UI
-    prefetchHolidays();
+        document.addEventListener('projectSwitched', async () => {
+            try {
+                await restoreStateFromCache();
 
-    // 设置全局事件监听
-    setupGlobalEvents();
+                const cachedData = await restoreGanttDataFromCache();
+                gantt.clearAll();
+                if (cachedData?.data?.length > 0) {
+                    gantt.parse(cachedData);
+                } else {
+                    gantt.parse({ data: [], links: [] });
+                }
 
-    // 初始化视图切换
-    initViewToggle();
+                applyCurrentViewMode();
+            } catch (error) {
+                console.error('[Main] Failed to reload project after switch:', error);
+                showToast(i18n.t('common.operationFailed') || '操作失败', 'error');
+            }
+        });
 
-    // 初始化自定义字段 UI
-    initCustomFieldsUI();
+        // 初始化甘特图（传入缓存恢复函数）
+        await initGanttWithCache();
+        // Agent 命令层：注入 scheduleCloudSync，使带 sync:true 的写命令可触发云同步。
+        // 当该层被禁用时（?agentApi=off），initAgentCli 返回 undefined，此处需容忍。
+        initAgentCli({ scheduleCloudSync });
 
-    // 初始化批量编辑功能
-    initBatchEdit();
+        initAssigneeFocusControl(document.getElementById('assignee-focus-control'), gantt);
+        bindTaskSearchInput(document.getElementById('task-search-input'), gantt);
+        bindWorkCalendarMenu();
 
-    // 初始化配置导入导出
-    initConfigIO();
+        // 检测并处理分享链接参数
+        const { checkShareParam } = await import('./features/share/ImportDialog.js');
+        await checkShareParam();
 
-    // 初始化 AI 模块
-    initAiModule();
-    setupLightboxAiIntegration();
-    console.log('🤖 AI 模块初始化完成');
+        // 后台静默预拉取节假日（当年 + 次年），不阻塞 UI
+        prefetchHolidays();
 
-    // 初始化 SEO / GEO / Analytics
-    initAnalytics();
-    injectStructuredData();
-    initGeoSeo();
-    console.log('📊 Analytics & SEO 初始化完成');
+        // 设置全局事件监听
+        setupGlobalEvents();
 
-    // 初始化问题反馈模块
-    initFeedbackModule();
-    console.log('📝 问题反馈模块初始化完成');
+        // 初始化视图切换
+        initViewToggle();
 
-    // 设置数据变化时自动保存
-    setupAutoSave();
-    setupCloudSnapshotSyncEvents();
+        // 初始化自定义字段 UI
+        initCustomFieldsUI();
 
-    // 隐藏 loading 遮罩层，显示主内容
-    hideLoadingScreen();
+        // 初始化批量编辑功能
+        initBatchEdit();
 
-    console.log('✅ 甘特图任务编辑器初始化完成');
-});
+        // 初始化配置导入导出
+        initConfigIO();
+
+        // 初始化 AI 模块
+        initAiModule();
+        setupLightboxAiIntegration();
+        console.log('🤖 AI 模块初始化完成');
+
+        // 初始化 SEO / GEO / Analytics
+        initAnalytics();
+        injectStructuredData();
+        initGeoSeo();
+        console.log('📊 Analytics & SEO 初始化完成');
+
+        // 初始化问题反馈模块
+        initFeedbackModule();
+        console.log('📝 问题反馈模块初始化完成');
+
+        // 设置数据变化时自动保存
+        setupAutoSave();
+        setupCloudSnapshotSyncEvents();
+
+        // 隐藏 loading 遮罩层，显示主内容
+        hideLoadingScreen();
+
+        console.log('✅ 甘特图任务编辑器初始化完成');
+    },
+    { once: true }
+);
 
 /**
  * 隐藏 loading 遮罩层

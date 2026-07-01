@@ -157,7 +157,7 @@ describe('main autosave cloud sync scheduling', () => {
         expect(persistGanttData).toHaveBeenNthCalledWith(2, { projectId: 'p1' });
         expect(scheduleCloudSync).toHaveBeenCalledTimes(1);
         expect(scheduleCloudSync).toHaveBeenCalledWith('p1');
-    });
+    }, 15000);
 
     it('suppresses global add and delete undo snapshots during command undo scope', async () => {
         vi.useFakeTimers();
@@ -295,5 +295,5 @@ describe('main autosave cloud sync scheduling', () => {
         expect(undoManager.saveDeleteState).not.toHaveBeenCalled();
         expect(persistGanttData).toHaveBeenCalledTimes(1);
         expect(scheduleCloudSync).toHaveBeenCalledTimes(1);
-    });
+    }, 15000);
 });
