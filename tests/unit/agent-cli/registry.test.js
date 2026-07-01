@@ -63,7 +63,8 @@ describe('agent command manifest', () => {
             },
         ]);
 
-        expect(manifest.commands).toEqual([
+        // `batch` is auto-injected; assert the supplied command independently.
+        expect(manifest.commands.filter((command) => command.name !== 'batch')).toEqual([
             {
                 name: 'task.create',
                 summary: 'Create a task',
@@ -95,21 +96,20 @@ describe('agent command manifest', () => {
             },
         ]);
 
-        expect(help).toEqual({
-            version: 1,
-            howto: 'Use: <command> --flag value',
-            commands: [
-                {
-                    name: 'task.create',
-                    summary: 'Create a task',
-                    mutating: true,
-                },
-                {
-                    name: 'task.update',
-                    summary: 'Update a task',
-                    mutating: true,
-                },
-            ],
-        });
+        expect(help.version).toBe(1);
+        expect(help.howto).toBe('Use: <command> --flag value');
+        // `batch` is auto-injected; assert the supplied commands independently.
+        expect(help.commands.filter((command) => command.name !== 'batch')).toEqual([
+            {
+                name: 'task.create',
+                summary: 'Create a task',
+                mutating: true,
+            },
+            {
+                name: 'task.update',
+                summary: 'Update a task',
+                mutating: true,
+            },
+        ]);
     });
 });

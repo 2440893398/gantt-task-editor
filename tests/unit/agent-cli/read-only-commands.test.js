@@ -151,6 +151,7 @@ describe('read-only agent commands', () => {
             ['link.add', true],
             ['link.list', false],
             ['link.remove', true],
+            ['state.export', false],
             ['state.rev', false],
             ['state.snapshot', false],
             ['task.create', true],

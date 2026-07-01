@@ -2,7 +2,7 @@ import { getCommand, getCommands } from '../registry.js';
 import { createGanttAdapter } from '../adapters/gantt-adapter.js';
 import { getProjectRev } from '../../gantt/domain/rev.js';
 import { state } from '../../../core/store.js';
-import { dispatch } from './dispatch.js';
+import { batch, dispatch } from './dispatch.js';
 import { parseExec } from './exec.js';
 import { buildHelp, buildManifest } from './manifest.js';
 
@@ -91,10 +91,25 @@ export function buildApi(options = {}) {
     const app = {};
     const context = buildContext(options.context, options);
     const runCommand = options.executeCommand || executeCommand;
+    const runBatch = options.batch || batch;
 
     for (const command of getCommands()) {
         assignCommandApi(app, command, runCommand, context);
     }
+
+    // batch() is not a normally-registered command (it takes a `steps` array,
+    // not the standard args object), so it is wired here explicitly rather than
+    // via assignCommandApi. SECURITY: pass the trusted closed-over `context`
+    // (with `readOnly` baked in) and ONLY the allowlisted per-call options
+    // (ifRev/dryRun/sync). A caller can NOT override readOnly/scheduleCloudSync/
+    // adapter/getCommand(s)/projectId — batch() enforces readOnly internally, and
+    // the public wrapper must not reopen that hole via a `{ ...context, ...opts }`
+    // spread of caller input.
+    app.batch = (steps = [], execOptions = {}) =>
+        runBatch(steps, {
+            ...context,
+            ...pickCallerExecOptions(execOptions),
+        });
 
     app.exec = async (input, execOptions = {}) => {
         const parsed = parseExec(input, { getCommand, getCommands });

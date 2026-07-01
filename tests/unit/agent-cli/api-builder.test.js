@@ -84,15 +84,20 @@ describe('agent api builder', () => {
             data: { limit: 2 },
             rev: 0,
         });
-        expect(app.help().commands).toEqual([
-            {
-                name: 'task.list',
-                summary: 'List tasks',
-                mutating: false,
-            },
-        ]);
+        // `batch` is auto-injected as a synthetic command, so assert the
+        // registered command is present rather than the exact list.
+        expect(app.help().commands).toEqual(
+            expect.arrayContaining([
+                {
+                    name: 'task.list',
+                    summary: 'List tasks',
+                    mutating: false,
+                },
+            ])
+        );
         expect(app.help('task.list')?.name).toBe('task.list');
-        expect(app.manifest().commands[0].name).toBe('task.list');
+        expect(app.manifest().commands.map((command) => command.name)).toContain('task.list');
+        expect(app.manifest().commands.map((command) => command.name)).toContain('batch');
     });
 
     it('adds current rev to exec parse failures', async () => {
