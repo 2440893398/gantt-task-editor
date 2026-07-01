@@ -13,6 +13,8 @@ import { openAiConfigModal } from '../components/AiConfigModal.js';
 import AiDrawer from '../components/AiDrawer.js';
 import { handleAiError } from './errorHandler.js';
 import undoManager from '../../gantt/history/undoManager.js';
+import { settleAndPersist } from '../../gantt/domain/settle.js';
+import { bumpProjectRev } from '../../gantt/domain/rev.js';
 
 /**
  * 格式化任务数据为可读的展示文本
@@ -688,10 +690,21 @@ export function getSmartContext() {
 
 /**
  * 应用结果到任务
+ *
+ * Task 10 convergence: this AI write now shares the same pipeline semantics as the
+ * agent command layer. It still mutates the task + records an undo snapshot
+ * synchronously (the public contract: returns a boolean immediately, mutates the
+ * task, and calls gantt.updateTask), but ADDITIONALLY bumps the project rev so the
+ * edit is visible to agents polling state.rev/ifRev, and schedules a settle+persist
+ * (source: 'ai') so the write is recalculated and persisted like every other write.
+ * The persist is fire-and-forget to preserve the synchronous boolean contract.
+ *
  * @param {string} taskId - 任务 ID
  * @param {string} text - 新文本
+ * @param {Object} [options]
+ * @param {string} [options.projectId] - project scope for rev/persist
  */
-export function applyToTask(taskId, text) {
+export function applyToTask(taskId, text, options = {}) {
     if (typeof gantt === 'undefined' || !taskId) return false;
 
     try {
@@ -702,6 +715,16 @@ export function applyToTask(taskId, text) {
 
             task.text = text;
             gantt.updateTask(taskId);
+
+            // Converge with the shared write pipeline: make the edit rev-visible and
+            // persist it. Fire-and-forget so callers keep the synchronous contract.
+            bumpProjectRev(options.projectId);
+            Promise.resolve()
+                .then(() => settleAndPersist({ projectId: options.projectId, source: 'ai' }))
+                .catch((error) => {
+                    console.error('[AI Service] Failed to persist AI task edit:', error);
+                });
+
             return true;
         }
     } catch (e) {
