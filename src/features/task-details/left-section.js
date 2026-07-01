@@ -14,7 +14,7 @@ import {
     markdownToHtml,
 } from '../../components/rich-text-editor.js';
 import AiService from '../ai/services/aiService.js';
-import undoManager from '../ai/services/undoManager.js';
+import undoManager from '../gantt/history/undoManager.js';
 
 /**
  * 渲染左侧编辑区域

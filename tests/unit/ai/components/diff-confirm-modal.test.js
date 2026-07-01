@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 
+// Task 10 convergence: applySelectedChanges now settles + persists through the
+// shared pipeline. Stub the persist step so these helper tests stay pure unit
+// tests (they inject their own gantt mocks and don't touch the real store).
+vi.mock('../../../../src/features/gantt/domain/settle.js', () => ({
+    settleAndPersist: vi.fn().mockResolvedValue(undefined),
+}));
+
 import {
     renderTaskDiffSummaryCard,
     __test__,
@@ -65,7 +72,7 @@ describe('DiffConfirmModal helpers', () => {
         expect(countIncludedRows(normalized.flatRows)).toBe(1);
     });
 
-    it('applies add/update/delete with undo snapshots and nested ordering', () => {
+    it('applies add/update/delete with undo snapshots and nested ordering', async () => {
         const taskStore = {
             u1: { id: 'u1', text: '旧标题', progress: 0.1 },
             d1: { id: 'd1', text: '父删除项' },
@@ -84,6 +91,11 @@ describe('DiffConfirmModal helpers', () => {
             deleteTask: vi.fn((id) => {
                 delete taskStore[id];
             }),
+            // Required by the shared runGanttTransaction wrapper (snapshot/rollback).
+            serialize: vi.fn(() => ({ data: Object.values(taskStore) })),
+            clearAll: vi.fn(),
+            parse: vi.fn(),
+            render: vi.fn(),
         };
 
         const undoManagerMock = {
@@ -108,7 +120,7 @@ describe('DiffConfirmModal helpers', () => {
             ],
         });
 
-        const result = applySelectedChanges(normalized.flatRows, {
+        const result = await applySelectedChanges(normalized.flatRows, {
             ganttApi: ganttMock,
             undoApi: undoManagerMock,
         });
@@ -212,7 +224,7 @@ describe('DiffConfirmModal helpers', () => {
         expect(html).toMatch(/修改\s*1/);
     });
 
-    it('upserts when add row target already exists', () => {
+    it('upserts when add row target already exists', async () => {
         const taskStore = {
             existing: { id: 'existing', text: '旧值', priority: 'low' },
         };
@@ -224,6 +236,11 @@ describe('DiffConfirmModal helpers', () => {
             addTask: vi.fn(() => 'new-task-id'),
             updateTask: vi.fn((id) => id),
             deleteTask: vi.fn(),
+            // Required by the shared runGanttTransaction wrapper (snapshot/rollback).
+            serialize: vi.fn(() => ({ data: Object.values(taskStore) })),
+            clearAll: vi.fn(),
+            parse: vi.fn(),
+            render: vi.fn(),
         };
 
         const undoManagerMock = {
@@ -243,7 +260,7 @@ describe('DiffConfirmModal helpers', () => {
             ],
         });
 
-        const result = applySelectedChanges(normalized.flatRows, {
+        const result = await applySelectedChanges(normalized.flatRows, {
             ganttApi: ganttMock,
             undoApi: undoManagerMock,
         });

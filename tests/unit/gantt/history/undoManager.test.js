@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach as _afterEach } from 'vitest';
 import undoManager, {
+    beginCommandUndoScope,
     saveState,
+    saveAddState,
     saveReorderState,
     undo,
     redo,
@@ -9,7 +11,11 @@ import undoManager, {
     getUndoStackSize,
     getRedoStackSize,
     clearHistory,
-} from '../../../../src/features/ai/services/undoManager.js';
+    endCommandUndoScope,
+    isCommandUndoScopeActive,
+    snapshotHistoryForTransaction,
+    restoreHistoryForTransaction,
+} from '../../../../src/features/gantt/history/undoManager.js';
 
 vi.mock('../../../../src/features/gantt/scheduler.js', () => ({
     recalculateParentChain: vi.fn(),
@@ -171,6 +177,36 @@ describe('UndoManager (F-201)', () => {
             expect(currentTaskState.priority).toBe('medium');
             expect(currentTaskState.status).toBe('in_progress');
             expect(currentTaskState.assignee).toBe('John');
+        });
+
+        it('should not corrupt redoStack if deleteTask throws while undoing add', () => {
+            clearHistory();
+            currentTaskState = {
+                id: '1',
+                text: 'Throw',
+                start_date: new Date('2024-01-01'),
+                end_date: new Date('2024-01-02'),
+                duration: 1,
+            };
+            saveAddState('1');
+
+            global.gantt.deleteTask = vi.fn(() => {
+                throw new Error('gantt error');
+            });
+
+            expect(undo()).toBe(false);
+            expect(canRedo()).toBe(false);
+        });
+
+        it('should restore custom fields', () => {
+            currentTaskState.customField = 'original';
+            saveState('1');
+
+            currentTaskState.customField = 'changed';
+
+            undo();
+
+            expect(currentTaskState.customField).toBe('original');
         });
     });
 
@@ -371,6 +407,56 @@ describe('UndoManager (F-201)', () => {
         });
     });
 
+    describe('transaction snapshots', () => {
+        it('should restore undo and redo stacks from a transaction snapshot', () => {
+            saveState('1');
+            const snapshot = snapshotHistoryForTransaction();
+            currentTaskState.text = 'Changed';
+            saveState('1');
+
+            expect(getUndoStackSize()).toBe(2);
+
+            restoreHistoryForTransaction(snapshot);
+
+            expect(getUndoStackSize()).toBe(1);
+            expect(getRedoStackSize()).toBe(0);
+            currentTaskState.text = 'After restore';
+            expect(undo()).toBe(true);
+            expect(currentTaskState.text).toBe('Original Task');
+        });
+
+        it('should restore command undo scope depth from a transaction snapshot', () => {
+            beginCommandUndoScope();
+            const snapshot = snapshotHistoryForTransaction();
+            beginCommandUndoScope();
+
+            expect(isCommandUndoScopeActive()).toBe(true);
+
+            restoreHistoryForTransaction(snapshot);
+
+            expect(isCommandUndoScopeActive()).toBe(true);
+            endCommandUndoScope();
+            expect(isCommandUndoScopeActive()).toBe(false);
+        });
+    });
+
+    describe('command undo scope', () => {
+        it('should track nested command undo scopes', () => {
+            expect(isCommandUndoScopeActive()).toBe(false);
+
+            beginCommandUndoScope();
+            beginCommandUndoScope();
+
+            expect(isCommandUndoScopeActive()).toBe(true);
+
+            endCommandUndoScope();
+            expect(isCommandUndoScopeActive()).toBe(true);
+
+            endCommandUndoScope();
+            expect(isCommandUndoScopeActive()).toBe(false);
+        });
+    });
+
     describe('date handling', () => {
         it('should properly serialize and restore dates', () => {
             const originalDate = new Date('2024-01-01');
@@ -397,6 +483,11 @@ describe('UndoManager (F-201)', () => {
             expect(undoManager.getUndoStackSize).toBeDefined();
             expect(undoManager.getRedoStackSize).toBeDefined();
             expect(undoManager.clearHistory).toBeDefined();
+            expect(undoManager.snapshotHistoryForTransaction).toBeDefined();
+            expect(undoManager.restoreHistoryForTransaction).toBeDefined();
+            expect(undoManager.beginCommandUndoScope).toBeDefined();
+            expect(undoManager.endCommandUndoScope).toBeDefined();
+            expect(undoManager.isCommandUndoScopeActive).toBeDefined();
         });
     });
 });

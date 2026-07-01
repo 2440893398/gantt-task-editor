@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 
 vi.unmock('../../../src/features/gantt/scheduler.js');
 
-vi.mock('../../../src/features/ai/services/undoManager.js', () => ({
+vi.mock('../../../src/features/gantt/history/undoManager.js', () => ({
     default: {
         saveState: vi.fn(),
     },

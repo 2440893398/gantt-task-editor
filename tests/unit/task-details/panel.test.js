@@ -33,7 +33,7 @@ vi.mock('../../../src/features/task-details/right-section.js', () => ({
     bindRightSectionEvents: vi.fn(),
 }));
 
-vi.mock('../../../src/features/ai/services/undoManager.js', () => ({
+vi.mock('../../../src/features/gantt/history/undoManager.js', () => ({
     default: {
         saveState: saveStateMock,
         isApplyingHistoryOperation: vi.fn(() => false),

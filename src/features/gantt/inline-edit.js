@@ -10,7 +10,7 @@
 import { state, getFieldType, getSystemFieldOptions } from '../../core/store.js';
 
 import { i18n } from '../../utils/i18n.js';
-import undoManager from '../ai/services/undoManager.js';
+import undoManager from './history/undoManager.js';
 // F-112: 任务详情面板
 import { openTaskDetailsPanel } from '../task-details/index.js';
 import { isReadOnlyCloudViewActive } from '../share/readOnlyCloudView.js';

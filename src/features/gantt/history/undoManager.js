@@ -11,7 +11,7 @@
  * - 支持 add/delete 操作快照 (扩展)
  */
 
-import { recalculateParentChain } from '../../gantt/scheduler.js';
+import { recalculateParentChain } from '../scheduler.js';
 
 // 撤回栈最大保存条数
 const MAX_HISTORY_SIZE = 50;
@@ -24,6 +24,8 @@ let redoStack = [];
 
 // undo/redo 回放期间标记（用于避免事件钩子重复入栈）
 let applyingHistoryOperation = false;
+
+let commandUndoScopeDepth = 0;
 
 /**
  * 分发 undoStackChange 事件
@@ -77,6 +79,31 @@ function _pushSnapshot(snapshot) {
     undoStack.push(snapshot);
     if (undoStack.length > MAX_HISTORY_SIZE) undoStack.shift();
     redoStack = [];
+    _dispatchChange();
+}
+
+function _cloneHistoryStack(stack) {
+    return JSON.parse(JSON.stringify(stack));
+}
+
+export function snapshotHistoryForTransaction() {
+    return {
+        undoStack: _cloneHistoryStack(undoStack),
+        redoStack: _cloneHistoryStack(redoStack),
+        applyingHistoryOperation,
+        commandUndoScopeDepth,
+    };
+}
+
+export function restoreHistoryForTransaction(snapshot) {
+    if (!snapshot) {
+        return;
+    }
+
+    undoStack = _cloneHistoryStack(snapshot.undoStack || []);
+    redoStack = _cloneHistoryStack(snapshot.redoStack || []);
+    applyingHistoryOperation = Boolean(snapshot.applyingHistoryOperation);
+    commandUndoScopeDepth = Math.max(0, Number(snapshot.commandUndoScopeDepth) || 0);
     _dispatchChange();
 }
 
@@ -203,6 +230,48 @@ export function saveDeleteState(taskId) {
  * 执行撤回操作
  * @returns {boolean} 是否撤回成功
  */
+export function saveDeleteBatchState(taskIds) {
+    if (typeof gantt === 'undefined' || !Array.isArray(taskIds) || taskIds.length === 0) {
+        console.warn(
+            '[UndoManager] Cannot save delete batch state: gantt not available or taskIds missing'
+        );
+        return false;
+    }
+
+    try {
+        const tasks = taskIds.map((taskId) => {
+            const task = gantt.getTask(taskId);
+            if (!task) {
+                throw new Error(`Task not found: ${taskId}`);
+            }
+            return _cloneTask(task);
+        });
+        const taskIdSet = new Set(taskIds);
+        const rootIds = tasks.filter((task) => !taskIdSet.has(task.parent)).map((task) => task.id);
+        const snapshot = {
+            op: 'deleteBatch',
+            taskId: rootIds[0],
+            timestamp: Date.now(),
+            taskIds: [...taskIds],
+            rootIds,
+            tasks,
+        };
+
+        _pushSnapshot(snapshot);
+
+        console.log(
+            '[UndoManager] Delete batch state saved for tasks',
+            taskIds,
+            'Stack size:',
+            undoStack.length
+        );
+        return true;
+    } catch (e) {
+        console.error('[UndoManager] Failed to save delete batch state:', e);
+        return false;
+    }
+}
+
 export function undo() {
     if (undoStack.length === 0) {
         console.log('[UndoManager] Nothing to undo');
@@ -236,6 +305,18 @@ export function undo() {
                 gantt.addTask(restored, parent);
                 redoStack.push(snapshot);
                 console.log('[UndoManager] Undo delete: re-added task', taskId);
+                _dispatchChange();
+                return true;
+            }
+
+            if (op === 'deleteBatch') {
+                for (const deletedTask of snapshot.tasks || []) {
+                    const restored = _restoreDates(deletedTask);
+                    const parent = deletedTask.parent ?? 0;
+                    gantt.addTask(restored, parent);
+                }
+                redoStack.push(snapshot);
+                console.log('[UndoManager] Undo delete batch: re-added tasks', snapshot.taskIds);
                 _dispatchChange();
                 return true;
             }
@@ -332,6 +413,24 @@ export function redo() {
                 gantt.deleteTask(taskId);
                 undoStack.push(deleteSnapshot);
                 console.log('[UndoManager] Redo delete: deleted task', taskId);
+                _dispatchChange();
+                return true;
+            }
+
+            if (op === 'deleteBatch') {
+                const deleteSnapshot = {
+                    op: 'deleteBatch',
+                    taskId: taskId,
+                    timestamp: Date.now(),
+                    taskIds: [...(snapshot.taskIds || [])],
+                    rootIds: [...(snapshot.rootIds || [])],
+                    tasks: snapshot.tasks || [],
+                };
+                for (const rootId of snapshot.rootIds || []) {
+                    gantt.deleteTask(rootId);
+                }
+                undoStack.push(deleteSnapshot);
+                console.log('[UndoManager] Redo delete batch: deleted tasks', snapshot.taskIds);
                 _dispatchChange();
                 return true;
             }
@@ -434,6 +533,7 @@ export function getRedoStackSize() {
 export function clearHistory() {
     undoStack = [];
     redoStack = [];
+    commandUndoScopeDepth = 0;
     console.log('[UndoManager] History cleared');
 }
 
@@ -443,6 +543,18 @@ export function clearHistory() {
  */
 export function isApplyingHistoryOperation() {
     return applyingHistoryOperation;
+}
+
+export function beginCommandUndoScope() {
+    commandUndoScopeDepth += 1;
+}
+
+export function endCommandUndoScope() {
+    commandUndoScopeDepth = Math.max(0, commandUndoScopeDepth - 1);
+}
+
+export function isCommandUndoScopeActive() {
+    return commandUndoScopeDepth > 0;
 }
 
 /**
@@ -515,7 +627,10 @@ export default {
     saveState,
     saveAddState,
     saveDeleteState,
+    saveDeleteBatchState,
     saveReorderState,
+    snapshotHistoryForTransaction,
+    restoreHistoryForTransaction,
     undo,
     redo,
     canUndo,
@@ -524,4 +639,7 @@ export default {
     getRedoStackSize,
     clearHistory,
     isApplyingHistoryOperation,
+    beginCommandUndoScope,
+    endCommandUndoScope,
+    isCommandUndoScopeActive,
 };

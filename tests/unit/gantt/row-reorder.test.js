@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import Sortable from 'sortablejs';
-import undoManager from '../../../src/features/ai/services/undoManager.js';
+import undoManager from '../../../src/features/gantt/history/undoManager.js';
 import { state } from '../../../src/core/store.js';
 
 vi.mock('sortablejs', () => ({
@@ -15,7 +15,7 @@ vi.mock('../../../src/core/store.js', () => ({
     },
 }));
 
-vi.mock('../../../src/features/ai/services/undoManager.js', () => ({
+vi.mock('../../../src/features/gantt/history/undoManager.js', () => ({
     default: {
         isApplyingHistoryOperation: vi.fn(() => false),
         saveReorderState: vi.fn(),

@@ -12,7 +12,7 @@ import {
     formatDateValue,
 } from '../../utils/time-formatter.js';
 import { state, isFieldEnabled, getFieldType, getSystemFieldOptions } from '../../core/store.js';
-import undoManager from '../ai/services/undoManager.js';
+import undoManager from '../gantt/history/undoManager.js';
 import { normalizeScheduleMode } from './schedule-mode.js';
 
 import { showToast } from '../../utils/toast.js';

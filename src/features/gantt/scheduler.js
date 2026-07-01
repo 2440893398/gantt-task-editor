@@ -21,7 +21,7 @@ import {
     isPersonOnLeave,
 } from '../../core/storage.js';
 import { rollupStatus, rollupAssignee, sumNumberField, rollupProgress } from './parent-rollup.js';
-import undoManager from '../ai/services/undoManager.js';
+import undoManager from './history/undoManager.js';
 
 const dragSnapshotTaskIds = new Set();
 const dragDurationSnapshots = new Map();
@@ -609,6 +609,22 @@ function bindWBSEvents() {
 export function cascadeUpdate(taskId) {
     scheduleAsyncReschedule(taskId);
     updateParentDates(taskId);
+}
+
+export async function recalculateProjectSchedule(taskId = null) {
+    if (taskId) {
+        await scheduleAsyncReschedule(taskId);
+        return;
+    }
+
+    const taskIds = [];
+    gantt.eachTask((task) => {
+        taskIds.push(task.id);
+    });
+
+    for (const id of taskIds) {
+        await scheduleAsyncReschedule(id);
+    }
 }
 
 /**

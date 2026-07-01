@@ -1,4 +1,12 @@
-import undoManager from '../services/undoManager.js';
+import undoManager, {
+    beginCommandUndoScope,
+    endCommandUndoScope,
+    restoreHistoryForTransaction,
+    snapshotHistoryForTransaction,
+} from '../../gantt/history/undoManager.js';
+import { runGanttTransaction } from '../../gantt/domain/transaction.js';
+import { settleAndPersist } from '../../gantt/domain/settle.js';
+import { bumpProjectRev } from '../../gantt/domain/rev.js';
 import { showToast } from '../../../utils/toast.js';
 
 const OP_LABELS = {
@@ -328,32 +336,17 @@ function normalizeApplyOrder(rows) {
     return [...adds, ...updates, ...deletes];
 }
 
-export function applySelectedChanges(rows, options = {}) {
-    const ganttApi = options.ganttApi || globalThis.gantt;
-    const undoApi = options.undoApi || undoManager;
-
-    if (!Array.isArray(rows) || rows.length === 0) {
-        return {
-            ok: false,
-            error: 'empty_rows',
-            applied: { add: 0, update: 0, delete: 0, skipped: 0, failed: 0 },
-        };
-    }
-
-    if (
-        !ganttApi ||
-        typeof ganttApi.getTask !== 'function' ||
-        typeof ganttApi.addTask !== 'function' ||
-        typeof ganttApi.updateTask !== 'function' ||
-        typeof ganttApi.deleteTask !== 'function'
-    ) {
-        return {
-            ok: false,
-            error: 'gantt_unavailable',
-            applied: { add: 0, update: 0, delete: 0, skipped: 0, failed: 0 },
-        };
-    }
-
+/**
+ * Apply the ordered diff rows against the gantt instance. This is the per-row
+ * engine: it preserves existing-task reconciliation, parent/node-id resolution,
+ * arbitrary-field assignment, skip counting, and — importantly — PARTIAL-APPLY.
+ * A row that throws is caught here, counted as `failed`, and recorded in
+ * `errors`; the loop continues so one bad row never aborts the rest. Because the
+ * catch never rethrows, the surrounding transaction commits the good rows; it
+ * only rolls back on a genuinely unexpected throw OUTSIDE this loop (e.g. from
+ * settle/persist).
+ */
+function applyRows(rows, { ganttApi, undoApi }) {
     const order = normalizeApplyOrder(rows);
     const nodeIdToAddedId = new Map();
     const createdTaskMap = new Map();
@@ -438,10 +431,103 @@ export function applySelectedChanges(rows, options = {}) {
         }
     });
 
+    return { applied, errors };
+}
+
+function hasCommittedRows(applied) {
+    return applied.add > 0 || applied.update > 0 || applied.delete > 0;
+}
+
+/**
+ * Apply the selected diff rows as ONE atomic-per-apply unit routed through the
+ * SHARED write pipeline (Task 10 convergence): the row engine runs inside a
+ * single `runGanttTransaction` (with history snapshot/restore) under a command
+ * undo scope, then — if anything committed — we settle + persist and bump the
+ * project rev exactly once. This gives AI writes the same transaction +
+ * persistence + rev-visibility + undo-scope semantics as the agent command
+ * layer, while preserving the public `{ ok, applied, errors }` shape and the
+ * partial-apply behavior (see `applyRows`).
+ */
+export async function applySelectedChanges(rows, options = {}) {
+    const ganttApi = options.ganttApi || globalThis.gantt;
+    const undoApi = options.undoApi || undoManager;
+    const projectId = options.projectId;
+
+    if (!Array.isArray(rows) || rows.length === 0) {
+        return {
+            ok: false,
+            error: 'empty_rows',
+            applied: { add: 0, update: 0, delete: 0, skipped: 0, failed: 0 },
+        };
+    }
+
+    if (
+        !ganttApi ||
+        typeof ganttApi.getTask !== 'function' ||
+        typeof ganttApi.addTask !== 'function' ||
+        typeof ganttApi.updateTask !== 'function' ||
+        typeof ganttApi.deleteTask !== 'function'
+    ) {
+        return {
+            ok: false,
+            error: 'gantt_unavailable',
+            applied: { add: 0, update: 0, delete: 0, skipped: 0, failed: 0 },
+        };
+    }
+
+    let outcome = {
+        applied: { add: 0, update: 0, delete: 0, skipped: 0, failed: 0 },
+        errors: [],
+    };
+
+    const txResult = await runGanttTransaction({
+        gantt: ganttApi,
+        history: {
+            snapshot: snapshotHistoryForTransaction,
+            restore: restoreHistoryForTransaction,
+        },
+        work: async () => {
+            beginCommandUndoScope();
+            try {
+                outcome = applyRows(rows, { ganttApi, undoApi });
+            } finally {
+                endCommandUndoScope();
+            }
+
+            // Partial-apply is intentional: a per-row error is already captured in
+            // `outcome.errors` and must NOT roll back the good rows. Only settle +
+            // persist when at least one row committed. A genuinely unexpected throw
+            // (e.g. from settle/persist) propagates and rolls the transaction back.
+            if (hasCommittedRows(outcome.applied)) {
+                await settleAndPersist({ projectId, source: 'ai' });
+            }
+
+            return outcome;
+        },
+    });
+
+    if (!txResult.ok) {
+        // The transaction rolled back (unexpected throw). Surface a failure while
+        // keeping the documented shape; the counts describe the (rolled-back) attempt.
+        return {
+            ok: false,
+            error: 'apply_failed',
+            applied: outcome.applied,
+            errors: outcome.errors.length
+                ? outcome.errors
+                : [{ nodeId: null, error: txResult.error }],
+        };
+    }
+
+    if (hasCommittedRows(outcome.applied)) {
+        // Bump the shared project rev so agents observing state.rev/ifRev see the write.
+        bumpProjectRev(projectId);
+    }
+
     return {
-        ok: errors.length === 0,
-        applied,
-        errors,
+        ok: outcome.errors.length === 0,
+        applied: outcome.applied,
+        errors: outcome.errors,
     };
 }
 
@@ -681,23 +767,31 @@ export function openDiffConfirmModal(payload, options = {}) {
         }
 
         if (action === 'confirm-all') {
-            const result = applySelectedChanges(state.normalized.flatRows, {
+            applySelectedChanges(state.normalized.flatRows, {
                 ganttApi: state.options.ganttApi,
                 undoApi: state.options.undoApi,
-            });
+                projectId: state.options.projectId,
+            })
+                .then((result) => {
+                    if (!result.ok && result.error === 'gantt_unavailable') {
+                        showToast('当前无法执行变更：甘特图实例不可用', 'warning');
+                        return;
+                    }
 
-            if (!result.ok && result.error === 'gantt_unavailable') {
-                showToast('当前无法执行变更：甘特图实例不可用', 'warning');
-                return;
-            }
+                    if (typeof state.options.onApplied === 'function') {
+                        state.options.onApplied(result, state.normalized);
+                    }
 
-            if (typeof state.options.onApplied === 'function') {
-                state.options.onApplied(result, state.normalized);
-            }
-
-            const { add, update, delete: del } = result.applied;
-            showToast(`已执行：新增 ${add} / 修改 ${update} / 删除 ${del}`, 'success');
-            closeModal();
+                    const { add, update, delete: del } = result.applied;
+                    showToast(`已执行：新增 ${add} / 修改 ${update} / 删除 ${del}`, 'success');
+                    closeModal();
+                })
+                .catch(() => {
+                    // applySelectedChanges currently always resolves, but guard against a
+                    // future rejection so the modal never hangs silently.
+                    showToast('执行变更时发生未知错误', 'error');
+                    closeModal();
+                });
         }
     });
 

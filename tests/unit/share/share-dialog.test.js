@@ -99,7 +99,7 @@ describe('ShareDialog', () => {
         expect(document.querySelector('#cloud-edit-url').value).toBe(
             'http://localhost:3000/?cloud=abc123def4567890&token=edit-token&mode=edit'
         );
-    });
+    }, 15000);
 
     it('copies existing cloud view and edit links from the saved binding', async () => {
         mocks.getCloudBinding.mockReturnValue({

@@ -17,6 +17,8 @@ vi.mock('../../../src/utils/toast.js', () => ({
 }));
 vi.mock('../../../src/core/store.js', () => ({
     checkAiConfigured: vi.fn().mockReturnValue(true),
+    // applyToTask now schedules a settle+persist through the shared pipeline.
+    persistGanttData: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('../../../src/features/ai/api/client.js', () => ({
     runAgentStream: vi.fn(),

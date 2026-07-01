@@ -89,7 +89,7 @@ vi.mock('../../../src/features/gantt/inline-edit.js', () => ({
     addInlineEditStyles: vi.fn(),
 }));
 vi.mock('../../../src/features/gantt/critical-path.js', () => ({ initCriticalPath: vi.fn() }));
-vi.mock('../../../src/features/ai/services/undoManager.js', () => ({
+vi.mock('../../../src/features/gantt/history/undoManager.js', () => ({
     default: {
         canUndo: vi.fn(() => false),
         canRedo: vi.fn(() => false),
