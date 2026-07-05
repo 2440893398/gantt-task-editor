@@ -7,6 +7,14 @@ import {
 } from '../../../src/features/agent-cli/registry.js';
 import { buildHelp, buildManifest } from '../../../src/features/agent-cli/runtime/manifest.js';
 
+const SYNTHETIC_COMMANDS = new Set([
+    'batch',
+    'operation.start',
+    'operation.status',
+    'operation.cancel',
+    'operation.result',
+]);
+
 describe('agent command registry', () => {
     afterEach(() => {
         clearCommandsForTest();
@@ -64,7 +72,9 @@ describe('agent command manifest', () => {
         ]);
 
         // `batch` is auto-injected; assert the supplied command independently.
-        expect(manifest.commands.filter((command) => command.name !== 'batch')).toEqual([
+        expect(
+            manifest.commands.filter((command) => !SYNTHETIC_COMMANDS.has(command.name))
+        ).toEqual([
             {
                 name: 'task.create',
                 summary: 'Create a task',
@@ -99,7 +109,7 @@ describe('agent command manifest', () => {
         expect(help.version).toBe(1);
         expect(help.howto).toBe('Use: <command> --flag value');
         // `batch` is auto-injected; assert the supplied commands independently.
-        expect(help.commands.filter((command) => command.name !== 'batch')).toEqual([
+        expect(help.commands.filter((command) => !SYNTHETIC_COMMANDS.has(command.name))).toEqual([
             {
                 name: 'task.create',
                 summary: 'Create a task',

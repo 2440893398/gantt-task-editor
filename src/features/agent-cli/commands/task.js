@@ -29,6 +29,7 @@ const createParams = {
         priority: { type: 'string' },
         assignee: { type: 'string' },
         dryRun: { type: 'boolean' },
+        idempotencyKey: { type: 'string' },
     },
     required: ['name'],
     additionalProperties: false,
@@ -47,6 +48,7 @@ const updateParams = {
         priority: { type: 'string' },
         assignee: { type: 'string' },
         dryRun: { type: 'boolean' },
+        idempotencyKey: { type: 'string' },
     },
     required: ['id'],
     additionalProperties: false,
@@ -58,6 +60,7 @@ const deleteParams = {
         id: { type: 'integer' },
         cascade: { type: 'boolean' },
         dryRun: { type: 'boolean' },
+        idempotencyKey: { type: 'string' },
     },
     required: ['id'],
     additionalProperties: false,
@@ -159,6 +162,14 @@ function projectTask(task, fields) {
     return Object.fromEntries(normalizedFields.map((field) => [field, task[field]]));
 }
 
+function taskNotFound(id) {
+    return fail('NOT_FOUND', `Task not found: ${id}`);
+}
+
+function isMissingTask(task) {
+    return !task || task.id === undefined || task.id === null;
+}
+
 function matchesDateRange(task, args) {
     const start = toDate(args.dateRange?.start || args.start);
     const end = toDate(args.dateRange?.end || args.end);
@@ -248,9 +259,10 @@ export function registerTaskCommands() {
             mutating: false,
             handler(args, context) {
                 try {
-                    return context.adapter.getTask(args.id);
+                    const task = context.adapter.getTask(args.id);
+                    return isMissingTask(task) ? taskNotFound(args.id) : task;
                 } catch {
-                    return fail('NOT_FOUND', `Task not found: ${args.id}`);
+                    return taskNotFound(args.id);
                 }
             },
         });

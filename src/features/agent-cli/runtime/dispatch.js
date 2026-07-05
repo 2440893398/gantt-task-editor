@@ -3,6 +3,7 @@ import { bumpProjectRev, getProjectRev } from '../../gantt/domain/rev.js';
 import { runGanttTransaction } from '../../gantt/domain/transaction.js';
 import { settleAndPersist } from '../../gantt/domain/settle.js';
 import { createEmptyDiff, mergeDiffs } from '../../gantt/domain/diff.js';
+import { DEFAULT_PROJECT_ID } from '../../../core/storage.js';
 import {
     beginCommandUndoScope,
     endCommandUndoScope,
@@ -20,6 +21,26 @@ class CommandResultError extends Error {
     }
 }
 
+/**
+ * Command-level idempotency (design spec §4/§6, milestone M2).
+ *
+ * A successful mutating dispatch that carries an `idempotencyKey` caches its
+ * result under `(projectId, key)`. A later dispatch with the SAME key returns
+ * the stored result verbatim WITHOUT re-planning or re-committing, so an agent
+ * retry never double-writes. This mirrors the operation-manager idempotency on
+ * the long-running `app.operation()` path, but for the direct command path.
+ */
+const idempotencyResults = new Map();
+
+function scopedIdempotencyKey(projectId, key) {
+    const normalized = String(key ?? '').trim();
+    return normalized ? `${projectId}::${normalized}` : null;
+}
+
+export function clearIdempotencyCacheForTest() {
+    idempotencyResults.clear();
+}
+
 function nowMs() {
     return typeof performance !== 'undefined' && typeof performance.now === 'function'
         ? performance.now()
@@ -30,6 +51,41 @@ function readOnlyResult(rev) {
     return fail('CONSTRAINT', 'Agent command layer is read-only.', {
         hint: 'Use read commands only or enable write mode in app configuration.',
         rev,
+    });
+}
+
+function cancelledResult(rev) {
+    return fail('CANCELLED', 'Operation cancelled.', {
+        hint: 'The operation was cancelled before it reached a final commit.',
+        rev,
+    });
+}
+
+function throwIfCancelled(context, rev) {
+    if (context?.signal?.aborted) {
+        throw new CommandResultError(cancelledResult(rev));
+    }
+}
+
+function reportProgress(context, progress) {
+    if (typeof context?.reportProgress !== 'function') {
+        return;
+    }
+
+    try {
+        context.reportProgress(progress);
+    } catch {
+        /* progress reporting is diagnostic only */
+    }
+}
+
+async function yieldForCancellation(context) {
+    if (!context?.signal) {
+        return;
+    }
+
+    await new Promise((resolve) => {
+        setTimeout(resolve, 0);
     });
 }
 
@@ -56,6 +112,19 @@ function maybeScheduleCloudSync(context, resolvedArgs, projectId) {
     }
 }
 
+function maybeMarkLocalOnlyAutosave(context, resolvedArgs, projectId) {
+    if (
+        !wantsCloudSync(context, resolvedArgs) &&
+        typeof context.markNextAutosaveLocalOnly === 'function'
+    ) {
+        try {
+            context.markNextAutosaveLocalOnly(projectId);
+        } catch {
+            /* best-effort: never fail a committed write on an autosave marker error */
+        }
+    }
+}
+
 function getGantt(context) {
     return context.gantt || context.adapter?.gantt || globalThis.gantt;
 }
@@ -74,6 +143,21 @@ function withRev(result, rev) {
 
 function replaceRev(result, rev) {
     return { ...result, rev };
+}
+
+function buildOpSuccessData(commitData, diff) {
+    if (commitData && typeof commitData === 'object' && !Array.isArray(commitData)) {
+        return {
+            ...commitData,
+            diff,
+        };
+    }
+
+    return { diff };
+}
+
+function getNoOpAliasValue(plan, args) {
+    return plan?.id ?? plan?.task?.id ?? args?.id;
 }
 
 function getCommitFailureResult(error, fallbackRev) {
@@ -111,6 +195,11 @@ async function runSettledTransaction({ command, resolvedArgs, ctx, projectId, cu
             let data;
 
             try {
+                throwIfCancelled(ctx, currentRev);
+                reportProgress(ctx, {
+                    stage: 'commit',
+                    message: `Committing ${command.name}.`,
+                });
                 data = command.op
                     ? await command.op.commit(plan, ctx)
                     : await command.handler(resolvedArgs, ctx);
@@ -118,6 +207,7 @@ async function runSettledTransaction({ command, resolvedArgs, ctx, projectId, cu
                 endCommandUndoScope();
             }
 
+            throwIfCancelled(ctx, currentRev);
             const commandResult = normalizeCommandResult(data, currentRev);
 
             if (!commandResult.ok) {
@@ -128,15 +218,28 @@ async function runSettledTransaction({ command, resolvedArgs, ctx, projectId, cu
                 typeof command.shouldCommit === 'function' &&
                 !command.shouldCommit(commandResult.data)
             ) {
+                reportProgress(ctx, {
+                    stage: 'no_change',
+                    message: `${command.name} completed without changes.`,
+                });
                 return {
                     changed: false,
                     result: commandResult,
                 };
             }
 
+            throwIfCancelled(ctx, currentRev);
+            reportProgress(ctx, {
+                stage: 'settle',
+                message: `Settling ${command.name}.`,
+            });
             await settleAndPersist({
                 projectId,
                 source: 'agent',
+            });
+            reportProgress(ctx, {
+                stage: 'settled',
+                message: `${command.name} settled and persisted.`,
             });
 
             return {
@@ -165,10 +268,12 @@ async function runSettledTransaction({ command, resolvedArgs, ctx, projectId, cu
 
 export async function dispatch(name, args = {}, context = {}) {
     const started = nowMs();
-    const projectId = context.projectId || 'default';
+    const projectId = context.projectId || DEFAULT_PROJECT_ID;
     const command = getCommand(name);
     let result;
     let resolvedArgs = args;
+    let idemKey = null;
+    let cacheIdempotentResult = false;
 
     if (!command) {
         return fail('UNKNOWN_COMMAND', `Unknown command: ${name}`, {
@@ -193,13 +298,34 @@ export async function dispatch(name, args = {}, context = {}) {
             projectId,
             gantt: getGantt(context),
         };
+        reportProgress(ctx, {
+            stage: 'validated',
+            message: `Validated ${name}.`,
+        });
+        throwIfCancelled(ctx, getProjectRev(projectId));
 
         if (!command.mutating) {
             const rev = getProjectRev(projectId);
+            throwIfCancelled(ctx, rev);
+            reportProgress(ctx, {
+                stage: 'read',
+                message: `Reading ${name}.`,
+            });
             const data = await command.handler(resolvedArgs, ctx);
             result = normalizeCommandResult(data, rev);
             return result;
         }
+
+        idemKey = scopedIdempotencyKey(
+            projectId,
+            resolvedArgs.idempotencyKey ?? context.idempotencyKey
+        );
+        if (idemKey && idempotencyResults.has(idemKey)) {
+            // Idempotent replay: return the stored result without re-executing.
+            result = idempotencyResults.get(idemKey);
+            return result;
+        }
+        cacheIdempotentResult = Boolean(idemKey);
 
         const currentRev = getProjectRev(projectId);
 
@@ -222,8 +348,20 @@ export async function dispatch(name, args = {}, context = {}) {
 
         const plan =
             typeof command.op?.plan === 'function'
-                ? await command.op.plan(resolvedArgs, ctx)
+                ? await (async () => {
+                      reportProgress(ctx, {
+                          stage: 'plan',
+                          message: `Planning ${command.name}.`,
+                      });
+                      const planned = await command.op.plan(resolvedArgs, ctx);
+                      reportProgress(ctx, {
+                          stage: 'planned',
+                          message: `Planned ${command.name}.`,
+                      });
+                      return planned;
+                  })()
                 : undefined;
+        throwIfCancelled(ctx, currentRev);
 
         if (plan?.ok === false) {
             result = withRev(plan, currentRev);
@@ -231,11 +369,19 @@ export async function dispatch(name, args = {}, context = {}) {
         }
 
         if (wantsDryRun) {
+            reportProgress(ctx, {
+                stage: 'previewed',
+                message: `Previewed ${command.name}.`,
+            });
             result = ok({ diff: plan.diff }, currentRev);
             return result;
         }
 
         if (command.op?.skipEmptyDiff === true && isEmptyDiff(plan.diff)) {
+            reportProgress(ctx, {
+                stage: 'no_change',
+                message: `${command.name} produced no changes.`,
+            });
             result = ok({ diff: plan.diff }, currentRev);
             return result;
         }
@@ -261,8 +407,9 @@ export async function dispatch(name, args = {}, context = {}) {
 
         const nextRev = bumpProjectRev(projectId);
         result = command.op
-            ? ok({ diff: plan.diff }, nextRev)
+            ? ok(buildOpSuccessData(txResult.data.result.data, plan.diff), nextRev)
             : replaceRev(txResult.data.result, nextRev);
+        maybeMarkLocalOnlyAutosave(context, resolvedArgs, projectId);
         maybeScheduleCloudSync(context, resolvedArgs, projectId);
         return result;
     } catch (error) {
@@ -275,6 +422,12 @@ export async function dispatch(name, args = {}, context = {}) {
         return result;
     } finally {
         if (command.mutating && result) {
+            // Cache only real (non-dry-run) successful writes for idempotent replay.
+            const wasDryRun = Boolean(context.dryRun || resolvedArgs.dryRun);
+            if (idemKey && cacheIdempotentResult && result.ok && !wasDryRun) {
+                idempotencyResults.set(idemKey, result);
+            }
+
             recordCommandLog({
                 name,
                 args: resolvedArgs,
@@ -416,7 +569,7 @@ function assertRefsDeclared(value, declaredAliases) {
  * Returns `{ ok, diff, warnings }` for dry-run reporting, or `{ ok: false,
  * result }` carrying the failing step result.
  */
-function preflightBatch(steps, ctx) {
+async function preflightBatch(steps, ctx) {
     const declaredAliases = new Set();
     const diffs = [];
     const warnings = [];
@@ -430,6 +583,12 @@ function preflightBatch(steps, ctx) {
 
         const { command } = resolved;
         const stepArgs = step.args || {};
+        reportProgress(ctx, {
+            stage: 'batch_preflight',
+            message: `Preflighting ${command.name}.`,
+            currentStep: index + 1,
+            totalSteps: steps.length,
+        });
 
         // Every forward ref must name an already-declared alias.
         try {
@@ -451,7 +610,7 @@ function preflightBatch(steps, ctx) {
 
             let plan;
             try {
-                plan = command.op.plan(validated.args, ctx);
+                plan = await command.op.plan(validated.args, ctx);
             } catch (error) {
                 return {
                     ok: false,
@@ -481,7 +640,7 @@ function preflightBatch(steps, ctx) {
  */
 export async function batch(steps = [], context = {}) {
     const started = nowMs();
-    const projectId = context.projectId || 'default';
+    const projectId = context.projectId || DEFAULT_PROJECT_ID;
     const currentRev = getProjectRev(projectId);
     let result;
 
@@ -496,6 +655,7 @@ export async function batch(steps = [], context = {}) {
             projectId,
             gantt: getGantt(context),
         };
+        throwIfCancelled(ctx, currentRev);
 
         if (context.ifRev !== undefined && context.ifRev !== currentRev) {
             result = fail('CONFLICT', 'Project revision changed.', {
@@ -511,7 +671,8 @@ export async function batch(steps = [], context = {}) {
             return result;
         }
 
-        const preflight = preflightBatch(steps, ctx);
+        const preflight = await preflightBatch(steps, ctx);
+        throwIfCancelled(ctx, currentRev);
         if (!preflight.ok) {
             result = withRev(preflight.result, currentRev);
             return result;
@@ -537,8 +698,19 @@ export async function batch(steps = [], context = {}) {
                     const diffs = [];
                     let changed = false;
 
-                    for (const step of steps) {
+                    for (let index = 0; index < steps.length; index += 1) {
+                        const step = steps[index];
+                        throwIfCancelled(ctx, currentRev);
+                        await yieldForCancellation(ctx);
+                        throwIfCancelled(ctx, currentRev);
+
                         const command = getCommand(step.op);
+                        reportProgress(ctx, {
+                            stage: 'batch_step',
+                            message: `Committing ${command.name}.`,
+                            currentStep: index + 1,
+                            totalSteps: steps.length,
+                        });
                         const resolvedArgs = resolveRefs(step.args || {}, aliases);
                         const validated = validateArgs(command.params, resolvedArgs);
 
@@ -546,7 +718,14 @@ export async function batch(steps = [], context = {}) {
                             throw new CommandResultError(validated);
                         }
 
-                        const plan = command.op.plan(validated.args, ctx);
+                        reportProgress(ctx, {
+                            stage: 'batch_plan',
+                            message: `Planning ${command.name}.`,
+                            currentStep: index + 1,
+                            totalSteps: steps.length,
+                        });
+                        const plan = await command.op.plan(validated.args, ctx);
+                        throwIfCancelled(ctx, currentRev);
                         if (plan?.ok === false) {
                             throw new CommandResultError(plan);
                         }
@@ -555,11 +734,22 @@ export async function batch(steps = [], context = {}) {
 
                         // Mirror single-op: skip commit for a no-op step that opts in.
                         if (command.op.skipEmptyDiff === true && isEmptyDiff(stepDiff)) {
+                            const aliasValue = getNoOpAliasValue(plan, validated.args);
+                            if (step.as && aliasValue !== undefined) {
+                                aliases[step.as] = aliasValue;
+                            }
                             diffs.push(stepDiff);
                             continue;
                         }
 
                         const data = await command.op.commit(plan, ctx);
+                        throwIfCancelled(ctx, currentRev);
+                        reportProgress(ctx, {
+                            stage: 'batch_step_committed',
+                            message: `Committed ${command.name}.`,
+                            currentStep: index + 1,
+                            totalSteps: steps.length,
+                        });
                         const commandResult = normalizeCommandResult(data, currentRev);
                         if (!commandResult.ok) {
                             throw new CommandResultError(commandResult);
@@ -575,9 +765,18 @@ export async function batch(steps = [], context = {}) {
                     }
 
                     if (changed) {
+                        throwIfCancelled(ctx, currentRev);
+                        reportProgress(ctx, {
+                            stage: 'batch_settle',
+                            message: 'Settling batch.',
+                        });
                         await settleAndPersist({
                             projectId,
                             source: 'agent',
+                        });
+                        reportProgress(ctx, {
+                            stage: 'batch_settled',
+                            message: 'Batch settled and persisted.',
                         });
                     }
 
@@ -605,6 +804,7 @@ export async function batch(steps = [], context = {}) {
 
         const nextRev = bumpProjectRev(projectId);
         result = ok({ steps: txResult.data.steps, diff: txResult.data.diff }, nextRev);
+        maybeMarkLocalOnlyAutosave(context, undefined, projectId);
         maybeScheduleCloudSync(context, undefined, projectId);
         return result;
     } catch (error) {

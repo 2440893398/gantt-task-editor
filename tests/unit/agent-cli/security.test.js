@@ -80,7 +80,11 @@ describe('agent command security controls', () => {
         delete globalThis.app;
         state.currentProjectId = null;
         document.documentElement.removeAttribute('data-agent-api');
+        document.documentElement.removeAttribute('data-agent-api-fallback');
         document.querySelector('meta[name="agent-api"]')?.remove();
+        document.querySelector('meta[name="agent-api-runner"]')?.remove();
+        document.getElementById('agent-api-discovery')?.remove();
+        document.getElementById('agent-api-manifest')?.remove();
     });
 
     afterEach(() => {
@@ -90,7 +94,11 @@ describe('agent command security controls', () => {
         delete globalThis.gantt;
         state.currentProjectId = null;
         document.documentElement.removeAttribute('data-agent-api');
+        document.documentElement.removeAttribute('data-agent-api-fallback');
         document.querySelector('meta[name="agent-api"]')?.remove();
+        document.querySelector('meta[name="agent-api-runner"]')?.remove();
+        document.getElementById('agent-api-discovery')?.remove();
+        document.getElementById('agent-api-manifest')?.remove();
     });
 
     describe('enabled:false', () => {
@@ -100,7 +108,11 @@ describe('agent command security controls', () => {
             expect(globalThis.app).toBeUndefined();
             expect(result == null).toBe(true);
             expect(document.documentElement.dataset.agentApi).toBeUndefined();
+            expect(document.documentElement.dataset.agentApiFallback).toBeUndefined();
             expect(document.querySelector('meta[name="agent-api"]')).toBeNull();
+            expect(document.querySelector('meta[name="agent-api-runner"]')).toBeNull();
+            expect(document.getElementById('agent-api-discovery')).toBeNull();
+            expect(document.getElementById('agent-api-manifest')).toBeNull();
         });
 
         it('exposes window.app and discovery metadata when enabled (default)', () => {
@@ -116,9 +128,15 @@ describe('agent command security controls', () => {
 
             expect(globalThis.app).toBe(app);
             expect(document.documentElement.dataset.agentApi).toBe('window.app');
-            expect(document.querySelector('meta[name="agent-api"]')?.content).toBe(
+            expect(document.documentElement.dataset.agentApiFallback).toBe('dom-runner');
+            expect(document.querySelector('meta[name="agent-api"]')?.content).toContain(
                 'window.app.help()'
             );
+            expect(document.querySelector('meta[name="agent-api-runner"]')?.content).toContain(
+                '#agent-guide-command-input'
+            );
+            expect(document.getElementById('agent-api-discovery')).toBeTruthy();
+            expect(document.getElementById('agent-api-manifest')).toBeTruthy();
         });
     });
 
@@ -287,19 +305,38 @@ describe('agent command security controls', () => {
             expect(scheduleCloudSync).not.toHaveBeenCalled();
         });
 
+        it('marks the next autosave as local-only for default local writes', async () => {
+            registerWriteCommand();
+            const scheduleCloudSync = vi.fn();
+            const markNextAutosaveLocalOnly = vi.fn();
+
+            const result = await dispatch(
+                'task.create',
+                { name: 'Created' },
+                { projectId, gantt: {}, scheduleCloudSync, markNextAutosaveLocalOnly }
+            );
+
+            expect(result.ok).toBe(true);
+            expect(markNextAutosaveLocalOnly).toHaveBeenCalledTimes(1);
+            expect(markNextAutosaveLocalOnly).toHaveBeenCalledWith(projectId);
+            expect(scheduleCloudSync).not.toHaveBeenCalled();
+        });
+
         it('triggers cloud sync only when a successful mutating command passes sync:true', async () => {
             registerWriteCommand();
             const scheduleCloudSync = vi.fn();
+            const markNextAutosaveLocalOnly = vi.fn();
 
             const result = await dispatch(
                 'task.create',
                 { name: 'Created', sync: true },
-                { projectId, gantt: {}, scheduleCloudSync }
+                { projectId, gantt: {}, scheduleCloudSync, markNextAutosaveLocalOnly }
             );
 
             expect(result.ok).toBe(true);
             expect(scheduleCloudSync).toHaveBeenCalledTimes(1);
             expect(scheduleCloudSync).toHaveBeenCalledWith(projectId);
+            expect(markNextAutosaveLocalOnly).not.toHaveBeenCalled();
         });
 
         it('honors sync passed through the dispatch context', async () => {
@@ -343,6 +380,29 @@ describe('agent command security controls', () => {
             expect(scheduleCloudSync).not.toHaveBeenCalled();
         });
 
+        it('does not mark local-only autosave when settle rolls back a dispatch write', async () => {
+            registerWriteCommand();
+            settleAndPersist.mockRejectedValueOnce(new Error('persist failed'));
+            runGanttTransaction.mockImplementationOnce(async ({ work }) => {
+                try {
+                    await work();
+                    return { ok: true, data: null };
+                } catch (error) {
+                    return { ok: false, error };
+                }
+            });
+            const markNextAutosaveLocalOnly = vi.fn();
+
+            const result = await dispatch(
+                'task.create',
+                { name: 'Created' },
+                { projectId, gantt: {}, markNextAutosaveLocalOnly }
+            );
+
+            expect(result.ok).toBe(false);
+            expect(markNextAutosaveLocalOnly).not.toHaveBeenCalled();
+        });
+
         it('triggers cloud sync after a successful batch when sync:true', async () => {
             registerWriteCommand();
             const scheduleCloudSync = vi.fn();
@@ -362,15 +422,42 @@ describe('agent command security controls', () => {
         it('does not trigger cloud sync after a batch by default', async () => {
             registerWriteCommand();
             const scheduleCloudSync = vi.fn();
+            const markNextAutosaveLocalOnly = vi.fn();
 
             const result = await batch([{ op: 'task.create', args: { name: 'Created' } }], {
                 projectId,
                 gantt: {},
                 scheduleCloudSync,
+                markNextAutosaveLocalOnly,
             });
 
             expect(result.ok).toBe(true);
             expect(scheduleCloudSync).not.toHaveBeenCalled();
+            expect(markNextAutosaveLocalOnly).toHaveBeenCalledTimes(1);
+            expect(markNextAutosaveLocalOnly).toHaveBeenCalledWith(projectId);
+        });
+
+        it('does not mark local-only autosave when settle rolls back a batch write', async () => {
+            registerWriteCommand();
+            settleAndPersist.mockRejectedValueOnce(new Error('persist failed'));
+            runGanttTransaction.mockImplementationOnce(async ({ work }) => {
+                try {
+                    await work();
+                    return { ok: true, data: null };
+                } catch (error) {
+                    return { ok: false, error };
+                }
+            });
+            const markNextAutosaveLocalOnly = vi.fn();
+
+            const result = await batch([{ op: 'task.create', args: { name: 'Created' } }], {
+                projectId,
+                gantt: {},
+                markNextAutosaveLocalOnly,
+            });
+
+            expect(result.ok).toBe(false);
+            expect(markNextAutosaveLocalOnly).not.toHaveBeenCalled();
         });
 
         it('reports a committed write as ok even when cloud sync throws (dispatch)', async () => {

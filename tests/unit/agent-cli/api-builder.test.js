@@ -62,6 +62,53 @@ describe('agent api builder', () => {
         );
     });
 
+    it('passes allowlisted per-call options through nested command methods', async () => {
+        defineCommand({
+            name: 'task.create',
+            summary: 'Create task',
+            params: {
+                type: 'object',
+                properties: {
+                    name: { type: 'string' },
+                },
+                additionalProperties: false,
+            },
+            mutating: true,
+            handler: () => ({ id: 1 }),
+        });
+
+        const executeCommand = vi.fn(async () => ({ ok: true, data: { id: 1 }, rev: 2 }));
+        const app = buildApi({
+            executeCommand,
+            context: { adapter: 'trusted-adapter', readOnly: true },
+        });
+
+        await app.task.create(
+            { name: 'Created by agent' },
+            {
+                ifRev: 7,
+                dryRun: true,
+                sync: true,
+                readOnly: false,
+                adapter: 'evil-adapter',
+                scheduleCloudSync: () => 'evil',
+            }
+        );
+
+        expect(executeCommand).toHaveBeenCalledWith(
+            'task.create',
+            { name: 'Created by agent' },
+            expect.objectContaining({
+                adapter: 'trusted-adapter',
+                readOnly: true,
+                ifRev: 7,
+                dryRun: true,
+                sync: true,
+            })
+        );
+        expect(executeCommand.mock.calls[0][2].scheduleCloudSync).toBeUndefined();
+    });
+
     it('exposes exec, help, and manifest helpers', async () => {
         defineCommand({
             name: 'task.list',
@@ -156,10 +203,55 @@ describe('agent api builder', () => {
     });
 
     it('injects discovery metadata', () => {
-        injectAgentDiscovery();
+        injectAgentDiscovery({
+            manifest: {
+                version: 1,
+                commands: [
+                    {
+                        name: 'state.snapshot',
+                        summary: 'Read state',
+                        mutating: false,
+                    },
+                    {
+                        name: 'task.create',
+                        summary: 'Create task',
+                        mutating: true,
+                    },
+                ],
+            },
+            readOnly: true,
+        });
 
         expect(document.documentElement.dataset.agentApi).toBe('window.app');
-        expect(document.querySelector('meta[name="agent-api"]')?.content).toBe('window.app.help()');
+        expect(document.documentElement.dataset.agentApiFallback).toBe('dom-runner');
+        expect(document.querySelector('meta[name="agent-api"]')?.content).toContain(
+            'window.app.help()'
+        );
+        expect(document.querySelector('meta[name="agent-api-runner"]')?.content).toContain(
+            '#agent-guide-command-input'
+        );
+
+        const discovery = JSON.parse(
+            document.getElementById('agent-api-discovery')?.textContent || '{}'
+        );
+        expect(discovery).toMatchObject({
+            version: 1,
+            readOnly: true,
+            primary: {
+                object: 'window.app',
+            },
+            fallback: {
+                type: 'visible-dom-runner',
+                open: '#agent-guide-btn',
+                input: '#agent-guide-command-input',
+                run: '#agent-guide-run-command',
+                output: '#agent-guide-run-output',
+            },
+        });
+        expect(discovery.commands.map((command) => command.name)).toContain('task.create');
+
+        const manifest = JSON.parse(document.getElementById('agent-api-manifest')?.textContent);
+        expect(manifest.commands.map((command) => command.name)).toContain('state.snapshot');
     });
 
     it('bootstraps window.app idempotently', () => {

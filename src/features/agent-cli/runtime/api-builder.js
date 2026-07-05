@@ -2,9 +2,11 @@ import { getCommand, getCommands } from '../registry.js';
 import { createGanttAdapter } from '../adapters/gantt-adapter.js';
 import { getProjectRev } from '../../gantt/domain/rev.js';
 import { state } from '../../../core/store.js';
+import { DEFAULT_PROJECT_ID } from '../../../core/storage.js';
 import { batch, dispatch } from './dispatch.js';
 import { parseExec } from './exec.js';
 import { buildHelp, buildManifest } from './manifest.js';
+import { createOperationManager } from './operations.js';
 
 function resolveProjectId(context = {}) {
     if (context.projectId) {
@@ -12,10 +14,10 @@ function resolveProjectId(context = {}) {
     }
 
     if (typeof context.getProjectId === 'function') {
-        return context.getProjectId() || 'default';
+        return context.getProjectId() || DEFAULT_PROJECT_ID;
     }
 
-    return state.currentProjectId || 'default';
+    return state.currentProjectId || DEFAULT_PROJECT_ID;
 }
 
 function buildContext(context = {}, options = {}) {
@@ -38,6 +40,12 @@ function buildContext(context = {}, options = {}) {
         typeof options.scheduleCloudSync === 'function'
     ) {
         resolved.scheduleCloudSync = options.scheduleCloudSync;
+    }
+    if (
+        typeof resolved.markNextAutosaveLocalOnly !== 'function' &&
+        typeof options.markNextAutosaveLocalOnly === 'function'
+    ) {
+        resolved.markNextAutosaveLocalOnly = options.markNextAutosaveLocalOnly;
     }
 
     return resolved;
@@ -84,7 +92,11 @@ function assignCommandApi(app, command, executeCommand, context) {
         target = target[segment];
     }
 
-    target[method] = (args = {}) => executeCommand(command.name, args, context);
+    target[method] = (args = {}, execOptions = {}) =>
+        executeCommand(command.name, args, {
+            ...context,
+            ...pickCallerExecOptions(execOptions),
+        });
 }
 
 export function buildApi(options = {}) {
@@ -92,6 +104,27 @@ export function buildApi(options = {}) {
     const context = buildContext(options.context, options);
     const runCommand = options.executeCommand || executeCommand;
     const runBatch = options.batch || batch;
+    const operationManager = createOperationManager({
+        getCommand,
+        getContext: () => getExecutionContext(context),
+        executeRequest: (request, operationContext) => {
+            const execOptions = pickCallerExecOptions(request.options);
+
+            if (request.command === 'batch') {
+                return runBatch(request.steps, {
+                    ...getExecutionContext(context),
+                    ...execOptions,
+                    ...operationContext,
+                });
+            }
+
+            return runCommand(request.command, request.args, {
+                ...context,
+                ...execOptions,
+                ...operationContext,
+            });
+        },
+    });
 
     for (const command of getCommands()) {
         assignCommandApi(app, command, runCommand, context);
@@ -107,7 +140,7 @@ export function buildApi(options = {}) {
     // spread of caller input.
     app.batch = (steps = [], execOptions = {}) =>
         runBatch(steps, {
-            ...context,
+            ...getExecutionContext(context),
             ...pickCallerExecOptions(execOptions),
         });
 
@@ -126,6 +159,7 @@ export function buildApi(options = {}) {
             ...pickCallerExecOptions(execOptions),
         });
     };
+    app.operation = operationManager;
     app.help = (commandName) => buildHelp(getCommands(), commandName);
     app.manifest = () => buildManifest(getCommands());
     app.version = 1;

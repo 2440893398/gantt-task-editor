@@ -34,13 +34,97 @@ test.describe('agent command layer', () => {
 
         const discovery = await page.evaluate(() => ({
             dataset: document.documentElement.dataset.agentApi,
+            fallback: document.documentElement.dataset.agentApiFallback,
             meta: document.querySelector('meta[name="agent-api"]')?.content,
+            runnerMeta: document.querySelector('meta[name="agent-api-runner"]')?.content,
+            domDiscovery: JSON.parse(
+                document.querySelector('#agent-api-discovery')?.textContent || '{}'
+            ),
+            domManifest: JSON.parse(
+                document.querySelector('#agent-api-manifest')?.textContent || '{}'
+            ),
         }));
 
-        expect(discovery).toEqual({
-            dataset: 'window.app',
-            meta: 'window.app.help()',
+        expect(discovery.dataset).toBe('window.app');
+        expect(discovery.fallback).toBe('dom-runner');
+        expect(discovery.meta).toContain('window.app.help()');
+        expect(discovery.runnerMeta).toContain('#agent-guide-command-input');
+        expect(discovery.domDiscovery.fallback).toMatchObject({
+            type: 'visible-dom-runner',
+            open: '#agent-guide-btn',
+            input: '#agent-guide-command-input',
+            run: '#agent-guide-run-command',
+            output: '#agent-guide-run-output',
         });
+        expect(discovery.domManifest.commands.map((command) => command.name)).toContain(
+            'state.snapshot'
+        );
+    });
+
+    test('shows an agent guide entry that copies instructions for external AI tools', async ({
+        page,
+    }) => {
+        await page.evaluate(() => {
+            Object.defineProperty(navigator, 'clipboard', {
+                configurable: true,
+                value: {
+                    writeText: async (text) => {
+                        window.__agentGuideCopiedText = text;
+                    },
+                },
+            });
+        });
+
+        const entry = page.locator('#agent-guide-btn');
+        await expect(entry).toBeVisible();
+        await expect(entry).toContainText('AI Agent');
+
+        const guideNudgeOverlap = await page.evaluate(() => {
+            const entryRect = document.querySelector('#agent-guide-btn')?.getBoundingClientRect();
+            const nudgeRect = document.querySelector('#agent-guide-nudge')?.getBoundingClientRect();
+            if (!entryRect || !nudgeRect) return false;
+
+            return !(
+                entryRect.right <= nudgeRect.left ||
+                entryRect.left >= nudgeRect.right ||
+                entryRect.bottom <= nudgeRect.top ||
+                entryRect.top >= nudgeRect.bottom
+            );
+        });
+        expect(guideNudgeOverlap).toBe(false);
+
+        await entry.click();
+
+        const panel = page.locator('#agent-guide-panel');
+        const pageUrl = page.url();
+        await expect(panel).toHaveClass(/open/);
+        await expect(panel).toContainText('复制给 AI 的说明');
+        await expect(panel.locator('#agent-guide-page-url')).toContainText(pageUrl);
+        await expect(panel).toContainText('task.create');
+
+        await page.locator('#agent-guide-copy-prompt').click();
+
+        const copied = await page.evaluate(() => window.__agentGuideCopiedText);
+        expect(copied).toContain(pageUrl);
+        expect(copied).toContain('先打开这个页面地址');
+        expect(copied).toContain('#agent-guide-command-input');
+        expect(copied).toContain('window.app');
+        expect(copied).toContain('dryRun');
+        expect(copied).toContain('ifRev');
+
+        await panel.locator('#agent-guide-command-input').fill(
+            JSON.stringify(
+                {
+                    command: 'state.rev',
+                    args: {},
+                },
+                null,
+                2
+            )
+        );
+        await panel.locator('#agent-guide-run-command').click();
+        await expect(panel.locator('#agent-guide-run-output')).toContainText('"ok": true');
+        await expect(panel.locator('#agent-guide-run-output')).toContainText('"rev"');
     });
 });
 
@@ -77,6 +161,20 @@ test.describe('agent command layer external interaction', () => {
         }, text);
     }
 
+    async function runVisibleGuideCommand(page, payload) {
+        const panel = page.locator('#agent-guide-panel');
+        const isOpen = await panel.evaluate((element) => element.classList.contains('open'));
+        if (!isOpen) {
+            await page.locator('#agent-guide-btn').click();
+        }
+        await panel.locator('#agent-guide-command-input').fill(JSON.stringify(payload, null, 2));
+        await panel.locator('#agent-guide-run-command').click();
+
+        const output = panel.locator('#agent-guide-run-output');
+        await expect(output).toContainText(/"ok": (true|false)/, { timeout: 45000 });
+        return JSON.parse((await output.textContent()) || '{}');
+    }
+
     test('task.create creates a task visible in the gantt', async ({ page }) => {
         const created = await page.evaluate(() =>
             window.app.task.create({ name: 'Agent task', duration: 1 })
@@ -90,6 +188,86 @@ test.describe('agent command layer external interaction', () => {
 
         // ...and it is rendered as a visible grid row.
         await expect(page.locator(`.gantt_row[data-task-id="${id}"]`)).toBeVisible();
+    });
+
+    test('visible guide runner returns completion for write commands', async ({ page }) => {
+        const createdName = `Runner write ${Date.now()}`;
+        const created = await runVisibleGuideCommand(page, {
+            command: 'task.create',
+            args: { name: createdName, duration: 1 },
+        });
+
+        expect(created.ok).toBe(true);
+        const id = await findTaskIdByText(page, createdName);
+        expect(id).not.toBeNull();
+        await expect(page.locator(`.gantt_row[data-task-id="${id}"]`)).toBeVisible();
+
+        const deleted = await runVisibleGuideCommand(page, {
+            command: 'task.delete',
+            args: { id },
+        });
+
+        expect(deleted.ok).toBe(true);
+        expect(await page.evaluate((taskId) => window.gantt.isTaskExists(taskId), id)).toBe(false);
+    });
+
+    test('operation API runs a pollable write and reuses idempotency keys', async ({ page }) => {
+        const createdName = `Operation write ${Date.now()}`;
+        const idempotencyKey = `operation-e2e-${Date.now()}`;
+
+        const started = await page.evaluate(
+            ({ name, key }) =>
+                window.app.operation.start({
+                    command: 'task.create',
+                    args: { name, duration: 1 },
+                    idempotencyKey: key,
+                }),
+            { name: createdName, key: idempotencyKey }
+        );
+
+        expect(started.ok).toBe(true);
+        expect(started.data.status).toBe('running');
+        expect(started.data.operationId).toEqual(expect.any(String));
+
+        const retried = await page.evaluate(
+            ({ name, key }) =>
+                window.app.operation.start({
+                    command: 'task.create',
+                    args: { name, duration: 1 },
+                    idempotencyKey: key,
+                }),
+            { name: createdName, key: idempotencyKey }
+        );
+        expect(retried.data.operationId).toBe(started.data.operationId);
+
+        await expect
+            .poll(
+                () =>
+                    page.evaluate(
+                        async (operationId) =>
+                            (await window.app.operation.status({ id: operationId })).data.status,
+                        started.data.operationId
+                    ),
+                { timeout: 45000 }
+            )
+            .toBe('succeeded');
+
+        const result = await page.evaluate(
+            (operationId) => window.app.operation.result({ id: operationId }),
+            started.data.operationId
+        );
+        expect(result).toMatchObject({
+            ok: true,
+            data: {
+                status: 'succeeded',
+                result: {
+                    ok: true,
+                },
+            },
+        });
+
+        const id = await findTaskIdByText(page, createdName);
+        expect(id).not.toBeNull();
     });
 
     test('task.update updates an existing task', async ({ page }) => {
@@ -230,9 +408,22 @@ test.describe('agent command security switches', () => {
         const surface = await page.evaluate(() => ({
             hasApp: typeof window.app !== 'undefined',
             dataset: document.documentElement.dataset.agentApi ?? null,
+            fallback: document.documentElement.dataset.agentApiFallback ?? null,
             meta: document.querySelector('meta[name="agent-api"]') ? true : false,
+            runnerMeta: document.querySelector('meta[name="agent-api-runner"]') ? true : false,
+            discoveryJson: document.querySelector('#agent-api-discovery') ? true : false,
+            manifestJson: document.querySelector('#agent-api-manifest') ? true : false,
         }));
 
-        expect(surface).toEqual({ hasApp: false, dataset: null, meta: false });
+        expect(surface).toEqual({
+            hasApp: false,
+            dataset: null,
+            fallback: null,
+            meta: false,
+            runnerMeta: false,
+            discoveryJson: false,
+            manifestJson: false,
+        });
+        await expect(page.locator('#agent-guide-btn')).toHaveCount(0);
     });
 });

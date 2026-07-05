@@ -121,6 +121,10 @@ describe('main autosave cloud sync scheduling', () => {
         vi.doMock('../../src/features/share/ImportDialog.js', () => ({
             checkShareParam: vi.fn(),
         }));
+        const initAgentCli = vi.fn();
+        vi.doMock('../../src/features/agent-cli/index.js', () => ({
+            initAgentCli,
+        }));
 
         vi.stubGlobal('gantt', {
             attachEvent: vi.fn((eventName, handler) => {
@@ -142,6 +146,13 @@ describe('main autosave cloud sync scheduling', () => {
         document.dispatchEvent(new Event('DOMContentLoaded'));
         await vi.runAllTimersAsync();
 
+        expect(initAgentCli).toHaveBeenCalledWith(
+            expect.objectContaining({
+                scheduleCloudSync,
+                markNextAutosaveLocalOnly: expect.any(Function),
+            })
+        );
+
         markNextAutosaveLocalOnly('p1');
         handlers.onAfterTaskUpdate();
         await vi.advanceTimersByTimeAsync(1000);
@@ -157,6 +168,16 @@ describe('main autosave cloud sync scheduling', () => {
         expect(persistGanttData).toHaveBeenNthCalledWith(2, { projectId: 'p1' });
         expect(scheduleCloudSync).toHaveBeenCalledTimes(1);
         expect(scheduleCloudSync).toHaveBeenCalledWith('p1');
+
+        state.currentProjectId = 'project-a';
+        handlers.onAfterTaskUpdate();
+        state.currentProjectId = 'project-b';
+        await vi.advanceTimersByTimeAsync(1000);
+
+        expect(persistGanttData).toHaveBeenCalledTimes(3);
+        expect(persistGanttData).toHaveBeenNthCalledWith(3, { projectId: 'project-b' });
+        expect(scheduleCloudSync).toHaveBeenCalledTimes(2);
+        expect(scheduleCloudSync).toHaveBeenLastCalledWith('project-b');
     }, 15000);
 
     it('suppresses global add and delete undo snapshots during command undo scope', async () => {

@@ -36,6 +36,10 @@ const V1_COMMANDS = [
     'session.history',
     'session.log',
     'batch',
+    'operation.start',
+    'operation.status',
+    'operation.cancel',
+    'operation.result',
 ];
 
 const projectId = 'manifest-golden';
@@ -69,7 +73,7 @@ describe('agent command manifest golden contract', () => {
         resetProjectRev(projectId);
     });
 
-    it('exposes exactly the 24 v1 commands', () => {
+    it('exposes exactly the v1 commands', () => {
         const manifest = app.manifest();
         const names = manifest.commands.map((command) => command.name);
 

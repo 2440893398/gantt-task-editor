@@ -32,11 +32,75 @@ const BATCH_COMMAND = {
     ],
 };
 
+const OPERATION_COMMANDS = [
+    {
+        name: 'operation.start',
+        summary: 'Start a command as a pollable long-running operation',
+        params: {
+            type: 'object',
+            properties: {
+                command: { type: 'string' },
+                args: { type: 'object' },
+                options: { type: 'object' },
+                steps: { type: 'array' },
+                idempotencyKey: { type: 'string' },
+            },
+            required: ['command'],
+        },
+        mutating: true,
+        examples: [
+            "app.operation.start({ command: 'batch', steps: [{ op: 'task.create', args: { name: 'Long batch' } }] })",
+        ],
+    },
+    {
+        name: 'operation.status',
+        summary: 'Read the status of a long-running operation',
+        params: {
+            type: 'object',
+            properties: {
+                id: { type: 'string' },
+            },
+            required: ['id'],
+        },
+        mutating: false,
+        examples: ["app.operation.status({ id: 'op_...' })"],
+    },
+    {
+        name: 'operation.cancel',
+        summary: 'Request cancellation of a running operation',
+        params: {
+            type: 'object',
+            properties: {
+                id: { type: 'string' },
+            },
+            required: ['id'],
+        },
+        mutating: true,
+        examples: ["app.operation.cancel({ id: 'op_...' })"],
+    },
+    {
+        name: 'operation.result',
+        summary: 'Read the final result of a completed operation',
+        params: {
+            type: 'object',
+            properties: {
+                id: { type: 'string' },
+            },
+            required: ['id'],
+        },
+        mutating: false,
+        examples: ["app.operation.result({ id: 'op_...' })"],
+    },
+];
+
 function withSyntheticCommands(commands) {
-    // Guard against double-inclusion if `batch` is ever registered normally.
-    return commands.some((command) => command.name === BATCH_COMMAND.name)
-        ? [...commands]
-        : [...commands, BATCH_COMMAND];
+    const names = new Set(commands.map((command) => command.name));
+    const synthetic = [
+        ...(names.has(BATCH_COMMAND.name) ? [] : [BATCH_COMMAND]),
+        ...OPERATION_COMMANDS.filter((command) => !names.has(command.name)),
+    ];
+
+    return [...commands, ...synthetic];
 }
 
 function sortCommands(commands) {

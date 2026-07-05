@@ -2,10 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearCommandsForTest, defineCommand } from '../../../src/features/agent-cli/registry.js';
 import { registerTaskCommands } from '../../../src/features/agent-cli/commands/task.js';
 import { registerSessionCommands } from '../../../src/features/agent-cli/commands/session.js';
-import { dispatch } from '../../../src/features/agent-cli/runtime/dispatch.js';
+import {
+    dispatch,
+    clearIdempotencyCacheForTest,
+} from '../../../src/features/agent-cli/runtime/dispatch.js';
 import { clearCommandLog, getCommandLog } from '../../../src/features/agent-cli/runtime/log.js';
 import { getProjectRev, resetProjectRev } from '../../../src/features/gantt/domain/rev.js';
 import { fail } from '../../../src/features/agent-cli/runtime/result.js';
+import { DEFAULT_PROJECT_ID } from '../../../src/core/storage.js';
 
 vi.mock('../../../src/features/gantt/domain/transaction.js', () => ({
     runGanttTransaction: vi.fn(async ({ work }) => ({ ok: true, data: await work() })),
@@ -39,6 +43,7 @@ function registerWriteCommand({ commit = vi.fn(() => ({ id: 1 })) } = {}) {
             properties: {
                 name: { type: 'string' },
                 dryRun: { type: 'boolean' },
+                idempotencyKey: { type: 'string' },
             },
             required: ['name'],
             additionalProperties: false,
@@ -89,14 +94,20 @@ describe('agent dispatch write commands', () => {
     beforeEach(() => {
         clearCommandsForTest();
         clearCommandLog();
+        clearIdempotencyCacheForTest();
         resetProjectRev(projectId);
+        resetProjectRev(DEFAULT_PROJECT_ID);
+        resetProjectRev('default');
         vi.clearAllMocks();
     });
 
     afterEach(() => {
         clearCommandsForTest();
         clearCommandLog();
+        clearIdempotencyCacheForTest();
         resetProjectRev(projectId);
+        resetProjectRev(DEFAULT_PROJECT_ID);
+        resetProjectRev('default');
         delete globalThis.gantt;
     });
 
@@ -143,6 +154,36 @@ describe('agent dispatch write commands', () => {
         expect(runGanttTransaction).toHaveBeenCalledTimes(1);
         expect(settleAndPersist).toHaveBeenCalledTimes(1);
         expect(getProjectRev(projectId)).toBe(1);
+    });
+
+    it('returns commit data from single command writes so callers can use new ids', async () => {
+        registerWriteCommand({
+            commit: vi.fn(() => ({ id: 99, task: { id: 99, text: 'Created' } })),
+        });
+
+        const result = await dispatch('task.create', { name: 'Created' }, { projectId, gantt: {} });
+
+        expect(result).toMatchObject({
+            ok: true,
+            data: {
+                id: 99,
+                task: { id: 99, text: 'Created' },
+                diff: {
+                    created: [{ id: 1, text: 'Created' }],
+                },
+            },
+            rev: 1,
+        });
+    });
+
+    it('uses DEFAULT_PROJECT_ID instead of a literal default bucket when context omits projectId', async () => {
+        registerWriteCommand();
+
+        const result = await dispatch('task.create', { name: 'Created' }, { gantt: {} });
+
+        expect(result.rev).toBe(1);
+        expect(getProjectRev(DEFAULT_PROJECT_ID)).toBe(1);
+        expect(getProjectRev('default')).toBe(0);
     });
 
     it('rolls back failed writes and does not bump rev', async () => {
@@ -448,9 +489,13 @@ describe('agent dispatch write commands', () => {
         ]);
         globalThis.gantt = gantt;
 
-        await expect(dispatch('task.delete', { id: 1 }, { projectId, gantt })).resolves.toEqual({
+        const deleteResult = await dispatch('task.delete', { id: 1 }, { projectId, gantt });
+
+        expect(deleteResult).toMatchObject({
             ok: true,
             data: {
+                id: 1,
+                deletedIds: [1, 2, 4, 3],
                 diff: {
                     created: [],
                     updated: [],
@@ -547,8 +592,8 @@ describe('agent dispatch write commands', () => {
         ]);
     });
 
-    it('rejects task.create idempotencyKey as an unknown argument', async () => {
-        registerTaskCommands();
+    it('accepts an idempotencyKey on task.create and commits the write', async () => {
+        registerWriteCommand();
 
         const result = await dispatch(
             'task.create',
@@ -556,18 +601,92 @@ describe('agent dispatch write commands', () => {
             { projectId, gantt: {} }
         );
 
-        expect(result).toEqual({
-            ok: false,
-            error: {
-                code: 'BAD_ARGS',
-                message: 'Unknown argument: idempotencyKey',
-                hint: 'Remove --idempotencyKey.',
-            },
-            rev: 0,
-        });
-        expect(runGanttTransaction).not.toHaveBeenCalled();
-        expect(settleAndPersist).not.toHaveBeenCalled();
-        expect(getProjectRev(projectId)).toBe(0);
+        expect(result).toMatchObject({ ok: true, rev: 1 });
+        expect(runGanttTransaction).toHaveBeenCalledTimes(1);
+        expect(settleAndPersist).toHaveBeenCalledTimes(1);
+        expect(getProjectRev(projectId)).toBe(1);
+    });
+
+    it('replays the cached result for a repeated idempotencyKey without re-committing', async () => {
+        const command = registerWriteCommand();
+
+        const first = await dispatch(
+            'task.create',
+            { name: 'Created', idempotencyKey: 'create-1' },
+            { projectId, gantt: {} }
+        );
+        const second = await dispatch(
+            'task.create',
+            { name: 'Created', idempotencyKey: 'create-1' },
+            { projectId, gantt: {} }
+        );
+
+        // Same result object, but the write engine ran exactly once.
+        expect(second).toEqual(first);
+        expect(command.commit).toHaveBeenCalledTimes(1);
+        expect(runGanttTransaction).toHaveBeenCalledTimes(1);
+        expect(settleAndPersist).toHaveBeenCalledTimes(1);
+        // The retry does NOT bump the project rev a second time.
+        expect(getProjectRev(projectId)).toBe(1);
+    });
+
+    it('scopes idempotency keys per project so different keys still execute', async () => {
+        const command = registerWriteCommand();
+
+        await dispatch(
+            'task.create',
+            { name: 'Created', idempotencyKey: 'key-a' },
+            { projectId, gantt: {} }
+        );
+        await dispatch(
+            'task.create',
+            { name: 'Created', idempotencyKey: 'key-b' },
+            { projectId, gantt: {} }
+        );
+
+        expect(command.commit).toHaveBeenCalledTimes(2);
+        expect(getProjectRev(projectId)).toBe(2);
+    });
+
+    it('accepts idempotencyKey supplied via dispatch context', async () => {
+        const command = registerWriteCommand();
+
+        const first = await dispatch(
+            'task.create',
+            { name: 'Created' },
+            { projectId, gantt: {}, idempotencyKey: 'ctx-1' }
+        );
+        const second = await dispatch(
+            'task.create',
+            { name: 'Created' },
+            { projectId, gantt: {}, idempotencyKey: 'ctx-1' }
+        );
+
+        expect(second).toEqual(first);
+        expect(command.commit).toHaveBeenCalledTimes(1);
+        expect(getProjectRev(projectId)).toBe(1);
+    });
+
+    it('does not cache dry-run previews under an idempotencyKey', async () => {
+        const command = registerWriteCommand();
+
+        const preview = await dispatch(
+            'task.create',
+            { name: 'Created', idempotencyKey: 'dry-1', dryRun: true },
+            { projectId, gantt: {} }
+        );
+        expect(preview.ok).toBe(true);
+        expect(command.commit).not.toHaveBeenCalled();
+
+        // A later real write with the same key must still execute (dry-run did not claim it).
+        const real = await dispatch(
+            'task.create',
+            { name: 'Created', idempotencyKey: 'dry-1' },
+            { projectId, gantt: {} }
+        );
+        expect(real.ok).toBe(true);
+        expect(command.commit).toHaveBeenCalledTimes(1);
+        expect(getProjectRev(projectId)).toBe(1);
     });
 
     it('returns conflict before planning task updates when ifRev mismatches', async () => {

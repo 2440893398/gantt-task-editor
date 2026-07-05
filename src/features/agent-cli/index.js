@@ -6,6 +6,7 @@ import { registerStateCommands } from './commands/state.js';
 import { registerTaskCommands } from './commands/task.js';
 import { injectAgentDiscovery } from './discovery/index.js';
 import { buildApi } from './runtime/api-builder.js';
+import { initAgentGuideUi } from './ui/AgentGuidePanel.js';
 
 function registerBuiltInCommands() {
     registerStateCommands();
@@ -77,7 +78,8 @@ export function initAgentCli(options = {}) {
 
     const app = buildApi(resolved);
     globalThis.app = app;
-    injectAgentDiscovery();
+    injectAgentDiscovery({ manifest: app.manifest(), readOnly: resolved.readOnly });
+    initAgentGuideUi({ app, readOnly: resolved.readOnly });
 
     return app;
 }

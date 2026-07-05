@@ -5,7 +5,7 @@
 
 import { i18n } from '../../../utils/i18n.js';
 import { showToast } from '../../../utils/toast.js';
-import { checkAiConfigured } from '../../../core/store.js';
+import * as store from '../../../core/store.js';
 import { runAgentStream, runSmartChat } from '../api/client.js';
 import { getAgent, getAgentName } from '../prompts/agentRegistry.js';
 import { DIFF_JSON_SCHEMA, IMPORT_SYSTEM_PROMPT } from '../prompts/importPrompt.js';
@@ -15,6 +15,21 @@ import { handleAiError } from './errorHandler.js';
 import undoManager from '../../gantt/history/undoManager.js';
 import { settleAndPersist } from '../../gantt/domain/settle.js';
 import { bumpProjectRev } from '../../gantt/domain/rev.js';
+import { DEFAULT_PROJECT_ID } from '../../../core/storage.js';
+
+const { checkAiConfigured } = store;
+
+function getCurrentProjectId() {
+    try {
+        return store.state?.currentProjectId;
+    } catch {
+        return undefined;
+    }
+}
+
+function resolveProjectId(projectId) {
+    return projectId ?? getCurrentProjectId() ?? DEFAULT_PROJECT_ID;
+}
 
 /**
  * 格式化任务数据为可读的展示文本
@@ -718,9 +733,10 @@ export function applyToTask(taskId, text, options = {}) {
 
             // Converge with the shared write pipeline: make the edit rev-visible and
             // persist it. Fire-and-forget so callers keep the synchronous contract.
-            bumpProjectRev(options.projectId);
+            const projectId = resolveProjectId(options.projectId);
+            bumpProjectRev(projectId);
             Promise.resolve()
-                .then(() => settleAndPersist({ projectId: options.projectId, source: 'ai' }))
+                .then(() => settleAndPersist({ projectId, source: 'ai', fromTaskId: taskId }))
                 .catch((error) => {
                     console.error('[AI Service] Failed to persist AI task edit:', error);
                 });

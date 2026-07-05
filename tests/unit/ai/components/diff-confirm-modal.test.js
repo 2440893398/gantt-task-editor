@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 // Task 10 convergence: applySelectedChanges now settles + persists through the
 // shared pipeline. Stub the persist step so these helper tests stay pure unit
@@ -6,11 +6,17 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('../../../../src/features/gantt/domain/settle.js', () => ({
     settleAndPersist: vi.fn().mockResolvedValue(undefined),
 }));
+vi.mock('../../../../src/utils/toast.js', () => ({
+    showToast: vi.fn(),
+}));
 
 import {
+    openDiffConfirmModal,
     renderTaskDiffSummaryCard,
     __test__,
 } from '../../../../src/features/ai/components/DiffConfirmModal.js';
+import { settleAndPersist } from '../../../../src/features/gantt/domain/settle.js';
+import { showToast } from '../../../../src/utils/toast.js';
 
 const {
     normalizeDiffPayload,
@@ -19,6 +25,48 @@ const {
     countIncludedRows,
     applySelectedChanges,
 } = __test__;
+
+function createTaskStoreGantt(taskStore = {}) {
+    return {
+        getTask: vi.fn((id) => taskStore[id] || null),
+        isTaskExists: vi.fn((id) => Boolean(taskStore[id])),
+        addTask: vi.fn((data, parent) => {
+            const id = data.id || `new-${Object.keys(taskStore).length}`;
+            taskStore[id] = { ...data, id, parent };
+            return id;
+        }),
+        updateTask: vi.fn((id) => id),
+        deleteTask: vi.fn((id) => {
+            delete taskStore[id];
+        }),
+        serialize: vi.fn(() => ({ data: Object.values(taskStore), links: [] })),
+        clearAll: vi.fn(),
+        parse: vi.fn(),
+        render: vi.fn(),
+    };
+}
+
+function deferred() {
+    let resolve;
+    let reject;
+    const promise = new Promise((res, rej) => {
+        resolve = res;
+        reject = rej;
+    });
+    return { promise, resolve, reject };
+}
+
+async function flushPromises() {
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+}
+
+afterEach(() => {
+    document.body.innerHTML = '';
+    vi.clearAllMocks();
+    settleAndPersist.mockResolvedValue(undefined);
+});
 
 describe('DiffConfirmModal helpers', () => {
     it('normalizes payload and builds nested rows with op counts', () => {
@@ -271,5 +319,118 @@ describe('DiffConfirmModal helpers', () => {
         expect(undoManagerMock.saveState).toHaveBeenCalledWith('existing');
         expect(ganttMock.updateTask).toHaveBeenCalledWith('existing');
         expect(taskStore.existing.text).toBe('新值');
+    });
+
+    it('returns a structured unavailable result when transaction methods are missing', async () => {
+        const normalized = normalizeDiffPayload({
+            type: 'task_diff',
+            changes: [{ op: 'update', taskId: 'u1', data: { text: 'New' } }],
+        });
+
+        const result = await applySelectedChanges(normalized.flatRows, {
+            ganttApi: {
+                getTask: vi.fn(() => ({ id: 'u1', text: 'Old' })),
+                addTask: vi.fn(),
+                updateTask: vi.fn(),
+                deleteTask: vi.fn(),
+            },
+        });
+
+        expect(result).toMatchObject({
+            ok: false,
+            error: 'gantt_unavailable',
+        });
+    });
+
+    it('shows an error and keeps the modal open when apply rolls back', async () => {
+        settleAndPersist.mockRejectedValueOnce(new Error('persist failed'));
+        const onApplied = vi.fn();
+        const modal = openDiffConfirmModal(
+            {
+                type: 'task_diff',
+                changes: [{ op: 'add', taskId: 'tmp', data: { id: 'new-1', text: 'New task' } }],
+            },
+            {
+                ganttApi: createTaskStoreGantt(),
+                onApplied,
+                projectId: 'p1',
+            }
+        );
+
+        document.querySelector('[data-action="confirm-all"]').click();
+        await flushPromises();
+
+        expect(onApplied).not.toHaveBeenCalled();
+        expect(showToast).toHaveBeenCalledWith(expect.any(String), 'error');
+        expect(showToast.mock.calls.some((call) => call[1] === 'success')).toBe(false);
+        expect(document.querySelector('.diff-confirm-modal-root')).not.toBeNull();
+        modal.close();
+    });
+
+    it('shows a partial failure warning without closing or marking applied', async () => {
+        const taskStore = {
+            ok: { id: 'ok', text: 'Old ok' },
+            bad: { id: 'bad', text: 'Old bad' },
+        };
+        const ganttApi = createTaskStoreGantt(taskStore);
+        ganttApi.updateTask.mockImplementation((id) => {
+            if (id === 'bad') {
+                throw new Error('row failed');
+            }
+            return id;
+        });
+        const onApplied = vi.fn();
+        const modal = openDiffConfirmModal(
+            {
+                type: 'task_diff',
+                changes: [
+                    { op: 'update', taskId: 'ok', data: { text: 'New ok' } },
+                    { op: 'update', taskId: 'bad', data: { text: 'New bad' } },
+                ],
+            },
+            {
+                ganttApi,
+                onApplied,
+                projectId: 'p1',
+            }
+        );
+
+        document.querySelector('[data-action="confirm-all"]').click();
+        await flushPromises();
+
+        expect(onApplied).not.toHaveBeenCalled();
+        expect(showToast).toHaveBeenCalledWith(expect.stringContaining('1'), 'warning');
+        expect(showToast.mock.calls.some((call) => call[1] === 'success')).toBe(false);
+        expect(document.querySelector('.diff-confirm-modal-root')).not.toBeNull();
+        modal.close();
+    });
+
+    it('ignores repeated confirm clicks while an apply is in flight', async () => {
+        const pending = deferred();
+        settleAndPersist.mockReturnValueOnce(pending.promise);
+        const onApplied = vi.fn();
+        const modal = openDiffConfirmModal(
+            {
+                type: 'task_diff',
+                changes: [{ op: 'add', taskId: 'tmp', data: { id: 'new-1', text: 'New task' } }],
+            },
+            {
+                ganttApi: createTaskStoreGantt(),
+                onApplied,
+                projectId: 'p1',
+            }
+        );
+
+        const confirm = document.querySelector('[data-action="confirm-all"]');
+        confirm.click();
+        confirm.click();
+
+        expect(settleAndPersist).toHaveBeenCalledTimes(1);
+
+        pending.resolve();
+        await flushPromises();
+
+        expect(onApplied).toHaveBeenCalledTimes(1);
+        modal.close();
     });
 });

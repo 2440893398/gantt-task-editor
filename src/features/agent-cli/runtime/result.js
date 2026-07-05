@@ -6,10 +6,10 @@ export function ok(data, rev, warnings) {
     return warnings?.length ? { ok: true, data, rev, warnings } : { ok: true, data, rev };
 }
 
-export function fail(code, message, { hint, allowed, didYouMean, rev } = {}) {
+export function fail(code, message, { hint, allowed, didYouMean, rev, ...extra } = {}) {
     return cleanObject({
         ok: false,
-        error: cleanObject({ code, message, hint, allowed, didYouMean }),
+        error: cleanObject({ code, message, hint, allowed, didYouMean, ...extra }),
         rev,
     });
 }

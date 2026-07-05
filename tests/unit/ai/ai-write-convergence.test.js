@@ -10,6 +10,8 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+const storeState = vi.hoisted(() => ({ currentProjectId: null }));
+
 // --- Shared-pipeline primitives are mocked so we can assert AI routes through them. ---
 vi.mock('../../../src/features/gantt/domain/transaction.js', () => ({
     runGanttTransaction: vi.fn(async ({ work }) => ({ ok: true, data: await work() })),
@@ -20,7 +22,10 @@ vi.mock('../../../src/features/gantt/domain/settle.js', () => ({
 }));
 
 // aiService pulls in a heavy UI/client graph; stub it so we can import the module.
-vi.mock('../../../src/core/store.js', () => ({ checkAiConfigured: vi.fn(() => true) }));
+vi.mock('../../../src/core/store.js', () => ({
+    checkAiConfigured: vi.fn(() => true),
+    state: storeState,
+}));
 vi.mock('../../../src/features/ai/api/client.js', () => ({
     runAgentStream: vi.fn(),
     runSmartChat: vi.fn(),
@@ -41,6 +46,7 @@ const { runGanttTransaction } = await import('../../../src/features/gantt/domain
 const { settleAndPersist } = await import('../../../src/features/gantt/domain/settle.js');
 const { getProjectRev, resetProjectRev } =
     await import('../../../src/features/gantt/domain/rev.js');
+const { DEFAULT_PROJECT_ID } = await import('../../../src/core/storage.js');
 const undoHistory = await import('../../../src/features/gantt/history/undoManager.js');
 
 const { applySelectedChanges, __test__ } =
@@ -75,10 +81,19 @@ const undoManagerMock = () => ({
 
 const projectId = 'ai-convergence-test';
 
+async function flushPromises() {
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 describe('AI write convergence — applySelectedChanges', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        storeState.currentProjectId = null;
         resetProjectRev(projectId);
+        resetProjectRev('current-ai-project');
         // re-arm default mock impls cleared by clearAllMocks
         runGanttTransaction.mockImplementation(async ({ work }) => ({
             ok: true,
@@ -89,6 +104,7 @@ describe('AI write convergence — applySelectedChanges', () => {
 
     afterEach(() => {
         resetProjectRev(projectId);
+        resetProjectRev('current-ai-project');
     });
 
     it('wraps the whole apply in ONE transaction, settles once, and bumps rev once', async () => {
@@ -193,6 +209,28 @@ describe('AI write convergence — applySelectedChanges', () => {
         expect(getProjectRev(projectId)).toBe(0);
     });
 
+    it('defaults to the current project when no projectId option is supplied', async () => {
+        storeState.currentProjectId = 'current-ai-project';
+        const taskStore = { u1: { id: 'u1', text: 'Old' } };
+        const ganttMock = createGanttMock(taskStore);
+        const normalized = normalizeDiffPayload({
+            type: 'task_diff',
+            changes: [{ op: 'update', taskId: 'u1', data: { text: 'New' } }],
+        });
+
+        const result = await applySelectedChanges(normalized.flatRows, {
+            ganttApi: ganttMock,
+            undoApi: undoManagerMock(),
+        });
+
+        expect(result.ok).toBe(true);
+        expect(getProjectRev('current-ai-project')).toBe(1);
+        expect(getProjectRev('default')).toBe(0);
+        expect(settleAndPersist).toHaveBeenCalledWith(
+            expect.objectContaining({ projectId: 'current-ai-project', source: 'ai' })
+        );
+    });
+
     it('opens a command undo scope while committing rows (same scoping as command layer)', async () => {
         const taskStore = { u1: { id: 'u1', text: 'x' } };
         const ganttMock = createGanttMock(taskStore);
@@ -288,13 +326,16 @@ describe('AI write convergence — applyToTask', () => {
 
     beforeEach(async () => {
         vi.clearAllMocks();
-        resetProjectRev('default');
+        storeState.currentProjectId = null;
+        resetProjectRev(DEFAULT_PROJECT_ID);
+        resetProjectRev('current-ai-project');
         settleAndPersist.mockResolvedValue(undefined);
         ({ applyToTask } = await import('../../../src/features/ai/services/aiService.js'));
     });
 
     afterEach(() => {
-        resetProjectRev('default');
+        resetProjectRev(DEFAULT_PROJECT_ID);
+        resetProjectRev('current-ai-project');
         delete global.gantt;
     });
 
@@ -314,12 +355,13 @@ describe('AI write convergence — applyToTask', () => {
         expect(updateTask).toHaveBeenCalledWith('1');
     });
 
-    it('bumps the project rev so AI text edits become visible to state.rev/ifRev', () => {
+    it('bumps the project rev synchronously when AI text edits mutate memory', () => {
         global.gantt = { getTask: vi.fn(() => ({ id: '1', text: 'Old' })), updateTask: vi.fn() };
 
-        const before = getProjectRev('default');
+        const before = getProjectRev(DEFAULT_PROJECT_ID);
         applyToTask('1', 'New');
-        expect(getProjectRev('default')).toBe(before + 1);
+
+        expect(getProjectRev(DEFAULT_PROJECT_ID)).toBe(before + 1);
     });
 
     it('schedules settle+persist with source:"ai" (fire-and-forget) after the edit', async () => {
@@ -327,19 +369,57 @@ describe('AI write convergence — applyToTask', () => {
 
         applyToTask('1', 'New');
         // settle is fire-and-forget; allow the microtask to flush.
-        await Promise.resolve();
+        await flushPromises();
         expect(settleAndPersist).toHaveBeenCalledTimes(1);
-        expect(settleAndPersist).toHaveBeenCalledWith(expect.objectContaining({ source: 'ai' }));
+        expect(settleAndPersist).toHaveBeenCalledWith(
+            expect.objectContaining({ source: 'ai', fromTaskId: '1' })
+        );
+    });
+
+    it('keeps the rev bump when settle and persist fails because memory already changed', async () => {
+        const error = new Error('persist failed');
+        const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        settleAndPersist.mockRejectedValueOnce(error);
+        global.gantt = { getTask: vi.fn(() => ({ id: '1', text: 'Old' })), updateTask: vi.fn() };
+
+        const before = getProjectRev(DEFAULT_PROJECT_ID);
+        applyToTask('1', 'New');
+        await flushPromises();
+
+        expect(getProjectRev(DEFAULT_PROJECT_ID)).toBe(before + 1);
+        expect(consoleSpy).toHaveBeenCalledWith(
+            '[AI Service] Failed to persist AI task edit:',
+            error
+        );
+    });
+
+    it('defaults to the current project when applying text edits without options', async () => {
+        storeState.currentProjectId = 'current-ai-project';
+        global.gantt = { getTask: vi.fn(() => ({ id: '1', text: 'Old' })), updateTask: vi.fn() };
+
+        const result = applyToTask('1', 'New');
+        await flushPromises();
+
+        expect(result).toBe(true);
+        expect(getProjectRev('current-ai-project')).toBe(1);
+        expect(getProjectRev(DEFAULT_PROJECT_ID)).toBe(0);
+        expect(settleAndPersist).toHaveBeenCalledWith(
+            expect.objectContaining({
+                projectId: 'current-ai-project',
+                source: 'ai',
+                fromTaskId: '1',
+            })
+        );
     });
 
     it('does not bump rev or settle when the task is missing', () => {
         global.gantt = { getTask: vi.fn(() => null), updateTask: vi.fn() };
 
-        const before = getProjectRev('default');
+        const before = getProjectRev(DEFAULT_PROJECT_ID);
         const result = applyToTask('missing', 'New');
 
         expect(result).toBe(false);
-        expect(getProjectRev('default')).toBe(before);
+        expect(getProjectRev(DEFAULT_PROJECT_ID)).toBe(before);
         expect(settleAndPersist).not.toHaveBeenCalled();
     });
 });

@@ -37,6 +37,35 @@ function getSiblingIndex(gantt, id, parent) {
     return index >= 0 ? index : siblings.length;
 }
 
+function wouldCreateHierarchyCycle(gantt, taskId, parentId) {
+    const taskKey = String(taskId);
+    let current = normalizeParent(parentId);
+    const visited = new Set();
+
+    while (current !== 0) {
+        const currentKey = String(current);
+        if (currentKey === taskKey || visited.has(currentKey)) {
+            return true;
+        }
+
+        visited.add(currentKey);
+        current = normalizeParent(getTask(gantt, current).parent);
+    }
+
+    return false;
+}
+
+function cycleFailure() {
+    return {
+        ok: false,
+        error: {
+            code: 'CYCLE',
+            message: 'Hierarchy move would create a cycle.',
+            hint: 'Choose a parent outside the moved task subtree.',
+        },
+    };
+}
+
 function getPreviousSiblingId(gantt, id, parent) {
     if (typeof gantt.getPrevSibling === 'function') {
         return gantt.getPrevSibling(id);
@@ -94,6 +123,11 @@ function buildPlan({ id, parent, index }, ctx) {
     const task = getTask(gantt, id);
     const oldParent = normalizeParent(task.parent);
     const newParent = normalizeParent(parent);
+
+    if (wouldCreateHierarchyCycle(gantt, id, newParent)) {
+        return cycleFailure();
+    }
+
     const oldIndex = getSiblingIndex(gantt, id, oldParent);
     const newIndex = index ?? appendIndexForParent(gantt, id, oldParent, newParent);
 

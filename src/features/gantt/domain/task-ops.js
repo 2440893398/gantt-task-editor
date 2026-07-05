@@ -193,6 +193,24 @@ function collectCascadeIds(gantt, id) {
     return ids;
 }
 
+function getDirectChildIds(gantt, id) {
+    return typeof gantt.getChildren === 'function' ? gantt.getChildren(id) || [] : [];
+}
+
+function reparentChild(gantt, childId, newParent) {
+    if (typeof gantt.moveTask === 'function') {
+        // Append after any existing children of the new parent.
+        const index = getDirectChildIds(gantt, newParent).length;
+        gantt.moveTask(childId, index, newParent);
+    } else {
+        gantt.getTask(childId).parent = newParent;
+    }
+
+    if (typeof gantt.updateTask === 'function') {
+        gantt.updateTask(childId);
+    }
+}
+
 function createPlan(args, ctx) {
     resolveGantt(ctx);
     const validStart = validateDateValue('start', args.start);
@@ -298,15 +316,44 @@ function updateCommit(plan, ctx) {
 
 function deletePlan(args, ctx) {
     const gantt = resolveGantt(ctx);
-    const ids = collectCascadeIds(gantt, args.id);
+    // Default (cascade omitted) preserves the historical whole-subtree delete;
+    // `cascade: false` deletes ONLY this node and promotes its direct children.
+    const cascade = args.cascade !== false;
     const diff = createEmptyDiff();
 
-    diff.deleted.push(...ids.map((id) => cloneTask(gantt.getTask(id))));
+    if (cascade) {
+        const ids = collectCascadeIds(gantt, args.id);
+        diff.deleted.push(...ids.map((id) => cloneTask(gantt.getTask(id))));
+
+        return {
+            args,
+            id: args.id,
+            cascade: true,
+            ids,
+            childIds: [],
+            diff,
+        };
+    }
+
+    const node = gantt.getTask(args.id);
+    const newParent = node.parent ?? 0;
+    const childIds = getDirectChildIds(gantt, args.id);
+
+    diff.deleted.push(cloneTask(node));
+    for (const childId of childIds) {
+        diff.updated.push({
+            id: childId,
+            fields: { parent: { old: args.id, new: newParent } },
+        });
+    }
 
     return {
         args,
         id: args.id,
-        ids,
+        cascade: false,
+        ids: [args.id],
+        childIds,
+        newParent,
         diff,
     };
 }
@@ -314,6 +361,27 @@ function deletePlan(args, ctx) {
 function deleteCommit(plan, ctx) {
     const gantt = resolveGantt(ctx);
     const history = resolveUndoManager(ctx);
+
+    // Non-cascade delete of a non-leaf: promote children to the node's parent
+    // BEFORE deleting, so gantt.deleteTask() (which cascades) only removes the
+    // now-childless node. Snapshots (child updates + node delete) live in the
+    // caller's command undo scope so the pre-delete hierarchy restores as one.
+    if (plan.cascade === false && plan.childIds.length) {
+        for (const childId of plan.childIds) {
+            history.saveState(childId);
+        }
+        for (const childId of plan.childIds) {
+            reparentChild(gantt, childId, plan.newParent);
+        }
+        history.saveDeleteState(plan.id);
+        gantt.deleteTask(plan.id);
+
+        return {
+            id: plan.id,
+            deletedIds: [plan.id],
+            reparentedIds: [...plan.childIds],
+        };
+    }
 
     history.saveDeleteBatchState(plan.ids);
     gantt.deleteTask(plan.id);

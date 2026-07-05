@@ -114,4 +114,30 @@ describe('hierarchy ops', () => {
 
         expect(gantt.moveTask).toHaveBeenCalledWith(2, 1, 0);
     });
+
+    it('rejects moving a task under itself or a descendant', () => {
+        const gantt = createGantt([
+            { id: 1, text: 'Parent', parent: 0 },
+            { id: 2, text: 'Child', parent: 1 },
+            { id: 3, text: 'Grandchild', parent: 2 },
+        ]);
+
+        expect(hierarchyOps.move.plan({ id: 1, parent: 1 }, { gantt })).toEqual({
+            ok: false,
+            error: {
+                code: 'CYCLE',
+                message: 'Hierarchy move would create a cycle.',
+                hint: 'Choose a parent outside the moved task subtree.',
+            },
+        });
+        expect(hierarchyOps.move.plan({ id: 1, parent: 3 }, { gantt })).toEqual({
+            ok: false,
+            error: {
+                code: 'CYCLE',
+                message: 'Hierarchy move would create a cycle.',
+                hint: 'Choose a parent outside the moved task subtree.',
+            },
+        });
+        expect(gantt.moveTask).not.toHaveBeenCalled();
+    });
 });

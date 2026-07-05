@@ -50,6 +50,18 @@ describe('app.batch wiring', () => {
         });
     });
 
+    it('resolves app.batch projectId through the same trusted context resolver as commands', async () => {
+        const spy = vi.spyOn(dispatchModule, 'batch').mockResolvedValue({ ok: true, rev: 1 });
+        const app = buildApi({
+            context: { adapter: 'trusted-adapter', getProjectId: () => projectId },
+        });
+
+        await app.batch([]);
+
+        expect(spy).toHaveBeenCalledTimes(1);
+        expect(spy.mock.calls[0][1]).toMatchObject({ projectId });
+    });
+
     it('only forwards allowlisted per-call options and cannot reopen readOnly', async () => {
         const spy = vi.spyOn(dispatchModule, 'batch').mockResolvedValue({ ok: true, rev: 1 });
         const app = buildApi({

@@ -169,6 +169,69 @@ describe('task ops', () => {
         expect(gantt.deleteTask).not.toHaveBeenCalled();
     });
 
+    it('plans cascade:false deletion of a leaf as a single-node delete', () => {
+        const gantt = createGantt([{ id: 5, text: 'Leaf', parent: 0 }]);
+
+        const plan = taskOps.delete.plan({ id: 5, cascade: false }, { gantt });
+
+        expect(plan.cascade).toBe(false);
+        expect(plan.ids).toEqual([5]);
+        expect(plan.childIds).toEqual([]);
+        expect(plan.diff.deleted.map((task) => task.id)).toEqual([5]);
+        expect(plan.diff.updated).toEqual([]);
+        expect(gantt.deleteTask).not.toHaveBeenCalled();
+    });
+
+    it('plans cascade:false deletion of a parent by promoting its direct children', () => {
+        const gantt = createGantt([
+            { id: 1, text: 'Grandparent', parent: 0 },
+            { id: 2, text: 'Parent', parent: 1 },
+            { id: 3, text: 'Child A', parent: 2 },
+            { id: 4, text: 'Child B', parent: 2 },
+        ]);
+
+        const plan = taskOps.delete.plan({ id: 2, cascade: false }, { gantt });
+
+        // Only the node itself is deleted; its children are re-parented, not removed.
+        expect(plan.ids).toEqual([2]);
+        expect(plan.childIds).toEqual([3, 4]);
+        expect(plan.newParent).toBe(1);
+        expect(plan.diff.deleted.map((task) => task.id)).toEqual([2]);
+        expect(plan.diff.updated).toEqual([
+            { id: 3, fields: { parent: { old: 2, new: 1 } } },
+            { id: 4, fields: { parent: { old: 2, new: 1 } } },
+        ]);
+    });
+
+    it('commits cascade:false parent deletion by re-parenting children then deleting only the node', () => {
+        const gantt = createGantt([
+            { id: 1, text: 'Grandparent', parent: 0 },
+            { id: 2, text: 'Parent', parent: 1 },
+            { id: 3, text: 'Child A', parent: 2 },
+            { id: 4, text: 'Child B', parent: 2 },
+        ]);
+        gantt.moveTask = vi.fn((id, index, parent) => {
+            gantt.getTask(id).parent = parent;
+        });
+        const undoManager = createUndoManager();
+        const plan = taskOps.delete.plan({ id: 2, cascade: false }, { gantt });
+
+        const result = taskOps.delete.commit(plan, { gantt, undoManager });
+
+        // Children promoted to the grandparent BEFORE the node is deleted.
+        expect(gantt.moveTask).toHaveBeenCalledWith(3, expect.any(Number), 1);
+        expect(gantt.moveTask).toHaveBeenCalledWith(4, expect.any(Number), 1);
+        expect(gantt.getTask(3).parent).toBe(1);
+        expect(gantt.getTask(4).parent).toBe(1);
+        expect(gantt.deleteTask).toHaveBeenCalledWith(2);
+        // Each promoted child gets an update snapshot; the node gets a delete snapshot.
+        expect(undoManager.saveState).toHaveBeenCalledWith(3);
+        expect(undoManager.saveState).toHaveBeenCalledWith(4);
+        expect(undoManager.saveDeleteState).toHaveBeenCalledWith(2);
+        expect(undoManager.saveDeleteBatchState).not.toHaveBeenCalled();
+        expect(result).toEqual({ id: 2, deletedIds: [2], reparentedIds: [3, 4] });
+    });
+
     it('saves cascade deletion as a single command-level undo snapshot', () => {
         const gantt = createGantt([
             { id: 1, text: 'Parent', parent: 0 },

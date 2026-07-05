@@ -154,7 +154,7 @@ document.addEventListener(
         await initGanttWithCache();
         // Agent 命令层：注入 scheduleCloudSync，使带 sync:true 的写命令可触发云同步。
         // 当该层被禁用时（?agentApi=off），initAgentCli 返回 undefined，此处需容忍。
-        initAgentCli({ scheduleCloudSync });
+        initAgentCli({ scheduleCloudSync, markNextAutosaveLocalOnly });
 
         initAssigneeFocusControl(document.getElementById('assignee-focus-control'), gantt);
         bindTaskSearchInput(document.getElementById('task-search-input'), gantt);
@@ -273,10 +273,10 @@ function setupAutoSave() {
     const debouncedSave = () => {
         if (isReadOnlyCloudViewActive()) return;
 
-        const projectId = state.currentProjectId;
         if (saveTimeout) clearTimeout(saveTimeout);
         saveTimeout = setTimeout(async () => {
             if (isReadOnlyCloudViewActive()) return;
+            const projectId = state.currentProjectId;
             await persistGanttData({ projectId });
             const shouldSkipCloudSync = localOnlyAutosaveByProject.delete(projectId);
 

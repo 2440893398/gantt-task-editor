@@ -3,6 +3,7 @@ import { clearCommandsForTest, defineCommand } from '../../../src/features/agent
 import { batch } from '../../../src/features/agent-cli/runtime/dispatch.js';
 import { clearCommandLog, getCommandLog } from '../../../src/features/agent-cli/runtime/log.js';
 import { getProjectRev, resetProjectRev } from '../../../src/features/gantt/domain/rev.js';
+import { DEFAULT_PROJECT_ID } from '../../../src/core/storage.js';
 
 vi.mock('../../../src/features/gantt/domain/transaction.js', () => ({
     runGanttTransaction: vi.fn(async ({ work }) => ({ ok: true, data: await work() })),
@@ -68,6 +69,8 @@ describe('agent batch dispatch', () => {
         clearCommandsForTest();
         clearCommandLog();
         resetProjectRev(projectId);
+        resetProjectRev(DEFAULT_PROJECT_ID);
+        resetProjectRev('default');
         vi.clearAllMocks();
         runGanttTransaction.mockImplementation(async ({ work }) => ({
             ok: true,
@@ -79,6 +82,8 @@ describe('agent batch dispatch', () => {
         clearCommandsForTest();
         clearCommandLog();
         resetProjectRev(projectId);
+        resetProjectRev(DEFAULT_PROJECT_ID);
+        resetProjectRev('default');
     });
 
     it('bumps project rev exactly once after a successful batch', async () => {
@@ -98,6 +103,18 @@ describe('agent batch dispatch', () => {
         expect(command.commit).toHaveBeenCalledTimes(2);
         expect(runGanttTransaction).toHaveBeenCalledTimes(1);
         expect(settleAndPersist).toHaveBeenCalledTimes(1);
+    });
+
+    it('uses DEFAULT_PROJECT_ID instead of a literal default bucket when context omits projectId', async () => {
+        registerCreateCommand();
+
+        const result = await batch([{ op: 'task.create', args: { name: 'First' } }], {
+            gantt: {},
+        });
+
+        expect(result.rev).toBe(1);
+        expect(getProjectRev(DEFAULT_PROJECT_ID)).toBe(1);
+        expect(getProjectRev('default')).toBe(0);
     });
 
     it('returns per-step data and a merged diff on success', async () => {
@@ -155,6 +172,46 @@ describe('agent batch dispatch', () => {
         expect(result.rev).toBe(0);
         expect(getProjectRev(projectId)).toBe(0);
         expect(settleAndPersist).not.toHaveBeenCalled();
+    });
+
+    it('cancels between batch steps without running later commits, settling, or bumping rev', async () => {
+        const controller = new AbortController();
+        const commit = vi.fn((plan) => {
+            if (plan.args.name === 'First') {
+                controller.abort();
+                return { id: 300, task: { id: 300, text: 'First' } };
+            }
+            return { id: 301, task: { id: 301, text: plan.args.name } };
+        });
+        registerCreateCommand({ commit });
+        runGanttTransaction.mockImplementationOnce(async ({ work }) => {
+            try {
+                return { ok: true, data: await work() };
+            } catch (error) {
+                return { ok: false, error };
+            }
+        });
+
+        const result = await batch(
+            [
+                { op: 'task.create', args: { name: 'First' } },
+                { op: 'task.create', args: { name: 'Second' } },
+            ],
+            { projectId, gantt: {}, signal: controller.signal }
+        );
+
+        expect(result).toEqual({
+            ok: false,
+            error: {
+                code: 'CANCELLED',
+                message: 'Operation cancelled.',
+                hint: 'The operation was cancelled before it reached a final commit.',
+            },
+            rev: 0,
+        });
+        expect(commit).toHaveBeenCalledTimes(1);
+        expect(settleAndPersist).not.toHaveBeenCalled();
+        expect(getProjectRev(projectId)).toBe(0);
     });
 
     it('resolves $ref to the committed id of an earlier step', async () => {
@@ -322,6 +379,138 @@ describe('agent batch dispatch', () => {
         expect(commit).not.toHaveBeenCalled();
         expect(settleAndPersist).not.toHaveBeenCalled();
         expect(getProjectRev(projectId)).toBe(0);
+    });
+
+    it('registers aliases for skipped no-op steps so later refs resolve', async () => {
+        const noopPlan = vi.fn((args) => ({
+            id: args.id,
+            diff: emptyDiff(),
+        }));
+        const noopCommit = vi.fn();
+        const linkDiff = emptyDiff();
+        linkDiff.links.added.push({ source: 1, target: 2, type: 'fs' });
+        const linkPlan = vi.fn((args) => ({ args, diff: linkDiff }));
+        const linkCommit = vi.fn(() => ({ id: 42 }));
+
+        defineCommand({
+            name: 'task.noopUpdate',
+            summary: 'No-op update',
+            params: {
+                type: 'object',
+                properties: { id: { type: 'integer' } },
+                required: ['id'],
+                additionalProperties: false,
+            },
+            mutating: true,
+            op: { plan: noopPlan, commit: noopCommit, skipEmptyDiff: true },
+        });
+        defineCommand({
+            name: 'link.add',
+            summary: 'Add link',
+            params: {
+                type: 'object',
+                properties: {
+                    source: { type: 'integer' },
+                    target: { type: 'integer' },
+                },
+                required: ['source', 'target'],
+                additionalProperties: false,
+            },
+            mutating: true,
+            op: { plan: linkPlan, commit: linkCommit },
+        });
+
+        const result = await batch(
+            [
+                { op: 'task.noopUpdate', args: { id: 1 }, as: 't' },
+                { op: 'link.add', args: { source: '$t', target: 2 } },
+            ],
+            { projectId, gantt: {} }
+        );
+
+        expect(result.ok).toBe(true);
+        expect(noopCommit).not.toHaveBeenCalled();
+        expect(linkPlan).toHaveBeenLastCalledWith(
+            { source: 1, target: 2 },
+            { projectId, gantt: {} }
+        );
+        expect(linkCommit).toHaveBeenCalledTimes(1);
+        expect(result.rev).toBe(1);
+    });
+
+    it('awaits async step plans before deciding whether to commit', async () => {
+        const diff = emptyDiff();
+        diff.updated.push({
+            id: 1,
+            fields: {
+                text: { old: 'Old', new: 'New' },
+            },
+        });
+        const plan = vi.fn(async () => ({ id: 1, diff }));
+        const commit = vi.fn((resolvedPlan) => ({ id: resolvedPlan.id }));
+        defineCommand({
+            name: 'task.asyncUpdate',
+            summary: 'Async update',
+            params: { type: 'object', properties: {}, additionalProperties: false },
+            mutating: true,
+            op: { plan, commit, skipEmptyDiff: true },
+        });
+
+        const result = await batch([{ op: 'task.asyncUpdate', args: {} }], {
+            projectId,
+            gantt: {},
+        });
+
+        expect(result).toMatchObject({
+            ok: true,
+            data: {
+                diff,
+                steps: [{ id: 1 }],
+            },
+            rev: 1,
+        });
+        expect(commit).toHaveBeenCalledWith(expect.objectContaining({ id: 1, diff }), {
+            projectId,
+            gantt: {},
+        });
+        expect(settleAndPersist).toHaveBeenCalledTimes(1);
+        expect(getProjectRev(projectId)).toBe(1);
+    });
+
+    it('awaits async step plans when building dry-run diffs', async () => {
+        const diff = emptyDiff();
+        diff.updated.push({
+            id: 1,
+            fields: {
+                text: { old: 'Old', new: 'New' },
+            },
+        });
+        const plan = vi.fn(async () => ({ id: 1, diff }));
+        const commit = vi.fn();
+        defineCommand({
+            name: 'task.asyncPreview',
+            summary: 'Async preview',
+            params: { type: 'object', properties: {}, additionalProperties: false },
+            mutating: true,
+            op: { plan, commit },
+        });
+
+        const result = await batch([{ op: 'task.asyncPreview', args: {} }], {
+            projectId,
+            gantt: {},
+            dryRun: true,
+        });
+
+        expect(result).toEqual({
+            ok: true,
+            data: {
+                steps: [],
+                diff,
+            },
+            rev: 0,
+        });
+        expect(commit).not.toHaveBeenCalled();
+        expect(runGanttTransaction).not.toHaveBeenCalled();
     });
 
     it('records a single command log entry for the batch', async () => {

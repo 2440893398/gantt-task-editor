@@ -8,6 +8,8 @@ import { runGanttTransaction } from '../../gantt/domain/transaction.js';
 import { settleAndPersist } from '../../gantt/domain/settle.js';
 import { bumpProjectRev } from '../../gantt/domain/rev.js';
 import { showToast } from '../../../utils/toast.js';
+import * as store from '../../../core/store.js';
+import { DEFAULT_PROJECT_ID } from '../../../core/storage.js';
 
 const OP_LABELS = {
     add: '新增',
@@ -18,6 +20,18 @@ const OP_LABELS = {
 const SECTION_ORDER = ['add', 'update', 'delete'];
 
 let modalRootEl = null;
+
+function getCurrentProjectId() {
+    try {
+        return store.state?.currentProjectId;
+    } catch {
+        return undefined;
+    }
+}
+
+function resolveProjectId(projectId) {
+    return projectId ?? getCurrentProjectId() ?? DEFAULT_PROJECT_ID;
+}
 
 function ensureString(value) {
     if (value === null || value === undefined) return '';
@@ -451,7 +465,7 @@ function hasCommittedRows(applied) {
 export async function applySelectedChanges(rows, options = {}) {
     const ganttApi = options.ganttApi || globalThis.gantt;
     const undoApi = options.undoApi || undoManager;
-    const projectId = options.projectId;
+    const projectId = resolveProjectId(options.projectId);
 
     if (!Array.isArray(rows) || rows.length === 0) {
         return {
@@ -466,7 +480,10 @@ export async function applySelectedChanges(rows, options = {}) {
         typeof ganttApi.getTask !== 'function' ||
         typeof ganttApi.addTask !== 'function' ||
         typeof ganttApi.updateTask !== 'function' ||
-        typeof ganttApi.deleteTask !== 'function'
+        typeof ganttApi.deleteTask !== 'function' ||
+        typeof ganttApi.serialize !== 'function' ||
+        typeof ganttApi.clearAll !== 'function' ||
+        typeof ganttApi.parse !== 'function'
     ) {
         return {
             ok: false,
@@ -682,7 +699,12 @@ function renderModal(state) {
                 <span>已选择 ${countIncludedRows(state.normalized.flatRows)} 条</span>
                 <div class="diff-footer-actions">
                     <button type="button" class="btn btn-ghost" data-action="cancel">取消</button>
-                    <button type="button" class="btn btn-primary" data-action="confirm-all">确认并执行</button>
+                    <button
+                        type="button"
+                        class="btn btn-primary"
+                        data-action="confirm-all"
+                        ${state.isApplying ? 'disabled aria-busy="true"' : ''}
+                    >确认并执行</button>
                 </div>
             </footer>
         </div>
@@ -718,6 +740,7 @@ export function openDiffConfirmModal(payload, options = {}) {
         normalized,
         selectedNodeId,
         options,
+        isApplying: false,
     };
 
     modalRootEl = document.createElement('div');
@@ -767,14 +790,35 @@ export function openDiffConfirmModal(payload, options = {}) {
         }
 
         if (action === 'confirm-all') {
+            if (state.isApplying) {
+                return;
+            }
+
+            state.isApplying = true;
+            rerender(state);
+
             applySelectedChanges(state.normalized.flatRows, {
                 ganttApi: state.options.ganttApi,
                 undoApi: state.options.undoApi,
                 projectId: state.options.projectId,
             })
                 .then((result) => {
-                    if (!result.ok && result.error === 'gantt_unavailable') {
-                        showToast('当前无法执行变更：甘特图实例不可用', 'warning');
+                    if (result.error) {
+                        state.isApplying = false;
+                        rerender(state);
+                        if (result.error === 'gantt_unavailable') {
+                            showToast('当前无法执行变更：甘特图实例不可用', 'warning');
+                            return;
+                        }
+
+                        showToast('执行变更失败，已回滚本次操作', 'error');
+                        return;
+                    }
+
+                    if (result.ok === false && result.errors?.length > 0) {
+                        state.isApplying = false;
+                        rerender(state);
+                        showToast(`部分变更已执行，${result.errors.length} 条失败`, 'warning');
                         return;
                     }
 
@@ -789,8 +833,9 @@ export function openDiffConfirmModal(payload, options = {}) {
                 .catch(() => {
                     // applySelectedChanges currently always resolves, but guard against a
                     // future rejection so the modal never hangs silently.
+                    state.isApplying = false;
+                    rerender(state);
                     showToast('执行变更时发生未知错误', 'error');
-                    closeModal();
                 });
         }
     });

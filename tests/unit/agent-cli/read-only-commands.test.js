@@ -236,6 +236,32 @@ describe('read-only agent commands', () => {
         expect(getProjectRev(projectId)).toBe(before);
     });
 
+    it('returns NOT_FOUND when the adapter returns no task data', async () => {
+        const emptyAdapterApp = buildApi({
+            context: {
+                adapter: {
+                    getTask: () => undefined,
+                    getTasks: () => [],
+                    getLinks: () => [],
+                    serialize: () => ({ data: [], links: [] }),
+                },
+                projectId,
+            },
+        });
+        const before = getProjectRev(projectId);
+
+        await expect(emptyAdapterApp.task.get({ id: 999 })).resolves.toEqual({
+            ok: false,
+            error: {
+                code: 'NOT_FOUND',
+                message: 'Task not found: 999',
+            },
+            rev: before,
+        });
+
+        expect(getProjectRev(projectId)).toBe(before);
+    });
+
     it('lists links and filters by task id without bumping project rev', async () => {
         const before = getProjectRev(projectId);
 
