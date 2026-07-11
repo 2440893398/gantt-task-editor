@@ -1,0 +1,1357 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>反馈处理工作台原型</title>
+    <style>
+        :root {
+            color-scheme: light;
+            --bg: #f6f7f9;
+            --surface: #ffffff;
+            --surface-soft: #fbfcfe;
+            --surface-muted: #f1f5f9;
+            --line: #d9e1ea;
+            --line-soft: #e8edf3;
+            --text: #172033;
+            --muted: #667085;
+            --subtle: #8a95a6;
+            --blue: #2563eb;
+            --blue-soft: #eaf1ff;
+            --cyan: #0891b2;
+            --cyan-soft: #e6f7fb;
+            --green: #138a4d;
+            --green-soft: #e7f6ee;
+            --amber: #b45309;
+            --amber-soft: #fff4df;
+            --red: #c2413b;
+            --red-soft: #fff0ed;
+            --violet: #6d5bd0;
+            --violet-soft: #f1efff;
+            --radius: 8px;
+            --shadow: 0 12px 32px rgba(16, 24, 40, 0.08);
+            font-family:
+                "Segoe UI",
+                "Microsoft YaHei",
+                "PingFang SC",
+                system-ui,
+                sans-serif;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            background: var(--bg);
+            color: var(--text);
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        button,
+        input,
+        select,
+        textarea {
+            font: inherit;
+        }
+
+        button {
+            min-height: 36px;
+            border: 1px solid var(--line);
+            border-radius: 7px;
+            background: var(--surface);
+            color: var(--text);
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            padding: 0 12px;
+            font-weight: 600;
+            transition:
+                background 180ms ease,
+                border-color 180ms ease,
+                color 180ms ease,
+                box-shadow 180ms ease;
+        }
+
+        button:hover {
+            background: var(--surface-soft);
+            border-color: #b8c4d3;
+        }
+
+        button:focus-visible,
+        input:focus-visible,
+        select:focus-visible,
+        textarea:focus-visible {
+            outline: 2px solid rgba(37, 99, 235, 0.4);
+            outline-offset: 2px;
+        }
+
+        .primary {
+            border-color: var(--blue);
+            background: var(--blue);
+            color: #ffffff;
+        }
+
+        .primary:hover {
+            background: #1d4ed8;
+            border-color: #1d4ed8;
+        }
+
+        .danger {
+            border-color: #f2b7ad;
+            background: var(--red-soft);
+            color: var(--red);
+        }
+
+        .ghost {
+            background: transparent;
+        }
+
+        .icon {
+            width: 16px;
+            height: 16px;
+            flex: 0 0 auto;
+        }
+
+        .app-shell {
+            min-height: 100vh;
+            display: grid;
+            grid-template-rows: auto auto 1fr;
+        }
+
+        .topbar {
+            height: 56px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 0 24px;
+            border-bottom: 1px solid var(--line);
+            background: rgba(255, 255, 255, 0.94);
+            position: sticky;
+            top: 0;
+            z-index: 20;
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            min-width: 0;
+        }
+
+        .brand-mark {
+            width: 30px;
+            height: 30px;
+            border-radius: 7px;
+            background: linear-gradient(135deg, #2563eb, #0891b2);
+            color: #ffffff;
+            display: grid;
+            place-items: center;
+        }
+
+        .brand-title {
+            margin: 0;
+            font-size: 16px;
+            font-weight: 750;
+            letter-spacing: 0;
+        }
+
+        .brand-subtitle {
+            color: var(--muted);
+            font-size: 12px;
+            white-space: nowrap;
+        }
+
+        .top-actions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .summary-strip {
+            display: grid;
+            grid-template-columns: 1.25fr repeat(4, minmax(128px, 1fr));
+            gap: 12px;
+            padding: 16px 24px;
+            border-bottom: 1px solid var(--line-soft);
+            background: var(--surface-soft);
+        }
+
+        .summary-card {
+            min-height: 72px;
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            background: var(--surface);
+            padding: 12px 14px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            gap: 4px;
+        }
+
+        .summary-card.strong {
+            border-color: #b9cffd;
+            background: linear-gradient(135deg, #ffffff, #edf4ff);
+        }
+
+        .summary-label {
+            color: var(--muted);
+            font-size: 12px;
+            font-weight: 650;
+        }
+
+        .summary-value {
+            font-size: 22px;
+            line-height: 1.1;
+            font-weight: 760;
+        }
+
+        .summary-note {
+            color: var(--subtle);
+            font-size: 12px;
+        }
+
+        .workspace {
+            min-height: 0;
+            display: grid;
+            grid-template-columns: 320px minmax(520px, 1fr) 360px;
+            gap: 16px;
+            padding: 16px 24px 24px;
+        }
+
+        .panel {
+            min-height: 0;
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            background: var(--surface);
+            box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+            overflow: hidden;
+        }
+
+        .panel-scroll {
+            overflow: auto;
+        }
+
+        .list-panel {
+            display: grid;
+            grid-template-rows: auto auto 1fr;
+        }
+
+        .panel-head {
+            min-height: 54px;
+            padding: 12px 14px;
+            border-bottom: 1px solid var(--line-soft);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+        }
+
+        .panel-title {
+            font-size: 13px;
+            font-weight: 750;
+        }
+
+        .panel-caption {
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .search-row {
+            padding: 12px 14px;
+            border-bottom: 1px solid var(--line-soft);
+            display: grid;
+            gap: 10px;
+        }
+
+        .search-input {
+            width: 100%;
+            min-height: 36px;
+            border: 1px solid var(--line);
+            border-radius: 7px;
+            background: var(--surface-soft);
+            padding: 0 10px;
+            color: var(--text);
+        }
+
+        .segmented {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+
+        .segmented button {
+            min-height: 28px;
+            padding: 0 9px;
+            font-size: 12px;
+            font-weight: 650;
+        }
+
+        .segmented button.active {
+            border-color: #b9cffd;
+            background: var(--blue-soft);
+            color: var(--blue);
+        }
+
+        .issue-list {
+            overflow: auto;
+        }
+
+        .issue-item {
+            width: 100%;
+            min-height: 118px;
+            border: 0;
+            border-bottom: 1px solid var(--line-soft);
+            border-radius: 0;
+            background: var(--surface);
+            padding: 12px 14px;
+            text-align: left;
+            display: grid;
+            gap: 9px;
+            align-content: start;
+            transition:
+                background 180ms ease,
+                box-shadow 180ms ease;
+        }
+
+        .issue-item:hover {
+            background: var(--surface-soft);
+        }
+
+        .issue-item.selected {
+            background: #f4f8ff;
+            box-shadow: inset 3px 0 0 var(--blue);
+        }
+
+        .issue-title-row {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 10px;
+        }
+
+        .issue-title {
+            color: var(--text);
+            font-size: 13px;
+            font-weight: 720;
+            line-height: 1.35;
+        }
+
+        .issue-desc {
+            color: var(--muted);
+            font-size: 12px;
+            line-height: 1.45;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        .meta-row {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+
+        .badge {
+            min-height: 22px;
+            border: 1px solid var(--line);
+            border-radius: 999px;
+            padding: 2px 8px;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 11px;
+            line-height: 1.2;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+
+        .badge.blue {
+            color: var(--blue);
+            border-color: #b9cffd;
+            background: var(--blue-soft);
+        }
+
+        .badge.cyan {
+            color: var(--cyan);
+            border-color: #a9dce7;
+            background: var(--cyan-soft);
+        }
+
+        .badge.green {
+            color: var(--green);
+            border-color: #adddc4;
+            background: var(--green-soft);
+        }
+
+        .badge.amber {
+            color: var(--amber);
+            border-color: #f1cd8d;
+            background: var(--amber-soft);
+        }
+
+        .badge.red {
+            color: var(--red);
+            border-color: #f2b7ad;
+            background: var(--red-soft);
+        }
+
+        .badge.violet {
+            color: var(--violet);
+            border-color: #cbc4ff;
+            background: var(--violet-soft);
+        }
+
+        .main-panel {
+            display: grid;
+            grid-template-rows: auto 1fr;
+        }
+
+        .detail-header {
+            padding: 18px 20px;
+            border-bottom: 1px solid var(--line);
+            background: linear-gradient(180deg, #ffffff, #fbfcff);
+        }
+
+        .detail-kicker {
+            color: var(--muted);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 10px;
+            font-size: 12px;
+        }
+
+        .detail-title {
+            margin: 0;
+            font-size: 21px;
+            line-height: 1.25;
+            letter-spacing: 0;
+        }
+
+        .detail-subtitle {
+            margin-top: 8px;
+            color: var(--muted);
+            max-width: 760px;
+        }
+
+        .detail-actions {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 8px;
+            margin-top: 16px;
+        }
+
+        .content-scroll {
+            min-height: 0;
+            overflow: auto;
+            padding: 18px 20px 24px;
+        }
+
+        .decision-card {
+            border: 1px solid #f1cd8d;
+            border-radius: var(--radius);
+            background: #fffbf2;
+            padding: 16px;
+            display: grid;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .decision-top {
+            display: flex;
+            justify-content: space-between;
+            gap: 14px;
+            align-items: flex-start;
+        }
+
+        .decision-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 15px;
+            font-weight: 780;
+            color: #7c3f03;
+        }
+
+        .decision-copy {
+            color: #70410a;
+            margin-top: 4px;
+        }
+
+        .next-step-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 10px;
+        }
+
+        .mini-field {
+            min-width: 0;
+            border: 1px solid rgba(180, 83, 9, 0.2);
+            background: rgba(255, 255, 255, 0.72);
+            border-radius: 7px;
+            padding: 9px 10px;
+        }
+
+        .mini-label {
+            color: var(--muted);
+            font-size: 11px;
+            font-weight: 700;
+            margin-bottom: 2px;
+        }
+
+        .mini-value {
+            color: var(--text);
+            font-size: 12px;
+            font-weight: 650;
+            word-break: break-word;
+        }
+
+        .section {
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            background: var(--surface);
+            margin-top: 16px;
+            overflow: hidden;
+        }
+
+        .section:first-child {
+            margin-top: 0;
+        }
+
+        .section-head {
+            min-height: 48px;
+            padding: 12px 14px;
+            border-bottom: 1px solid var(--line-soft);
+            background: var(--surface-soft);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+
+        .section-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 750;
+        }
+
+        .section-body {
+            padding: 14px;
+        }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 10px;
+        }
+
+        .info-card {
+            min-width: 0;
+            border: 1px solid var(--line-soft);
+            border-radius: 7px;
+            background: var(--surface-soft);
+            padding: 10px;
+        }
+
+        .info-label {
+            color: var(--muted);
+            font-size: 11px;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+
+        .info-value {
+            color: var(--text);
+            font-size: 13px;
+            font-weight: 650;
+            overflow-wrap: anywhere;
+        }
+
+        .copy-block {
+            color: var(--text);
+            white-space: pre-wrap;
+        }
+
+        .design-review {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+
+        .review-block {
+            border: 1px solid var(--line-soft);
+            border-radius: 7px;
+            background: var(--surface-soft);
+            padding: 12px;
+        }
+
+        .review-block.wide {
+            grid-column: 1 / -1;
+        }
+
+        .review-title {
+            color: var(--muted);
+            font-size: 12px;
+            font-weight: 760;
+            margin-bottom: 5px;
+        }
+
+        .check-list {
+            margin: 0;
+            padding-left: 18px;
+            color: var(--text);
+        }
+
+        .check-list li + li {
+            margin-top: 4px;
+        }
+
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 12px;
+        }
+
+        .field {
+            display: grid;
+            gap: 5px;
+        }
+
+        .field.wide {
+            grid-column: 1 / -1;
+        }
+
+        label {
+            color: var(--muted);
+            font-size: 12px;
+            font-weight: 720;
+        }
+
+        select,
+        textarea,
+        input {
+            width: 100%;
+            border: 1px solid var(--line);
+            border-radius: 7px;
+            background: #ffffff;
+            color: var(--text);
+            padding: 8px 10px;
+        }
+
+        textarea {
+            min-height: 82px;
+            resize: vertical;
+        }
+
+        .right-panel {
+            display: grid;
+            grid-template-rows: auto 1fr;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 6px;
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--line-soft);
+            background: var(--surface-soft);
+        }
+
+        .tabs button {
+            min-height: 30px;
+            flex: 1;
+            padding: 0 8px;
+            font-size: 12px;
+        }
+
+        .tabs button.active {
+            border-color: #b9cffd;
+            background: var(--blue-soft);
+            color: var(--blue);
+        }
+
+        .evidence-stack {
+            padding: 14px;
+            overflow: auto;
+            display: grid;
+            align-content: start;
+            gap: 12px;
+        }
+
+        .evidence-card {
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            background: var(--surface);
+            overflow: hidden;
+        }
+
+        .evidence-thumb {
+            height: 132px;
+            background:
+                linear-gradient(135deg, rgba(37, 99, 235, 0.13), transparent 42%),
+                linear-gradient(90deg, #e5ebf4 0 14%, #f8fafc 14% 100%);
+            border-bottom: 1px solid var(--line-soft);
+            position: relative;
+        }
+
+        .evidence-thumb::before,
+        .evidence-thumb::after {
+            content: "";
+            position: absolute;
+            border-radius: 4px;
+            background: #ffffff;
+            border: 1px solid #dce5f0;
+        }
+
+        .evidence-thumb::before {
+            left: 18px;
+            top: 18px;
+            width: 250px;
+            max-width: calc(100% - 36px);
+            height: 34px;
+        }
+
+        .evidence-thumb::after {
+            left: 18px;
+            top: 66px;
+            width: 190px;
+            max-width: calc(100% - 36px);
+            height: 46px;
+        }
+
+        .evidence-body {
+            padding: 11px 12px;
+        }
+
+        .evidence-name {
+            font-weight: 740;
+            margin-bottom: 3px;
+        }
+
+        .evidence-meta {
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .timeline {
+            display: grid;
+            gap: 0;
+        }
+
+        .timeline-item {
+            display: grid;
+            grid-template-columns: 18px 1fr;
+            gap: 10px;
+            padding: 0 0 14px;
+            position: relative;
+        }
+
+        .timeline-item:not(:last-child)::before {
+            content: "";
+            position: absolute;
+            left: 8px;
+            top: 18px;
+            bottom: -2px;
+            width: 1px;
+            background: var(--line);
+        }
+
+        .dot {
+            width: 9px;
+            height: 9px;
+            margin: 5px auto 0;
+            border-radius: 50%;
+            background: var(--blue);
+        }
+
+        .timeline-title {
+            font-size: 12px;
+            font-weight: 740;
+        }
+
+        .timeline-note {
+            color: var(--muted);
+            font-size: 12px;
+            margin-top: 2px;
+        }
+
+        details {
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            background: var(--surface);
+        }
+
+        summary {
+            cursor: pointer;
+            padding: 11px 12px;
+            color: var(--text);
+            font-weight: 740;
+        }
+
+        pre {
+            margin: 0;
+            max-height: 220px;
+            overflow: auto;
+            border-top: 1px solid var(--line-soft);
+            background: #f8fafc;
+            padding: 12px;
+            color: #344054;
+            font-size: 11px;
+            line-height: 1.55;
+            white-space: pre-wrap;
+        }
+
+        .implementation-note {
+            border-left: 3px solid var(--blue);
+            background: var(--blue-soft);
+            padding: 11px 12px;
+            border-radius: 0 7px 7px 0;
+            color: #173a80;
+            font-size: 12px;
+        }
+
+        @media (max-width: 1180px) {
+            .summary-strip {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+
+            .workspace {
+                grid-template-columns: 300px minmax(0, 1fr);
+            }
+
+            .right-panel {
+                grid-column: 1 / -1;
+                min-height: 420px;
+            }
+
+            .evidence-stack {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+
+            .tabs {
+                grid-column: 1 / -1;
+            }
+        }
+
+        @media (max-width: 760px) {
+            body {
+                font-size: 13px;
+            }
+
+            .topbar {
+                height: auto;
+                align-items: flex-start;
+                flex-direction: column;
+                padding: 14px 16px;
+            }
+
+            .top-actions {
+                width: 100%;
+                overflow-x: auto;
+                padding-bottom: 2px;
+            }
+
+            .summary-strip,
+            .workspace {
+                padding-left: 12px;
+                padding-right: 12px;
+            }
+
+            .summary-strip {
+                display: flex;
+                overflow-x: auto;
+                scroll-snap-type: x proximity;
+                padding-top: 12px;
+                padding-bottom: 12px;
+            }
+
+            .summary-card {
+                min-width: 210px;
+                min-height: 64px;
+                scroll-snap-align: start;
+            }
+
+            .summary-value {
+                font-size: 18px;
+            }
+
+            .workspace {
+                grid-template-columns: 1fr;
+            }
+
+            .main-panel {
+                order: 1;
+            }
+
+            .list-panel {
+                order: 2;
+            }
+
+            .right-panel {
+                order: 3;
+            }
+
+            .list-panel,
+            .main-panel,
+            .right-panel {
+                min-height: auto;
+            }
+
+            .issue-list {
+                max-height: 380px;
+            }
+
+            .detail-header,
+            .content-scroll {
+                padding-left: 14px;
+                padding-right: 14px;
+            }
+
+            .next-step-grid,
+            .info-grid,
+            .form-grid,
+            .design-review,
+            .evidence-stack {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            *,
+            *::before,
+            *::after {
+                scroll-behavior: auto !important;
+                transition-duration: 0.01ms !important;
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="app-shell">
+        <header class="topbar">
+            <div class="brand">
+                <div class="brand-mark" aria-hidden="true">
+                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M4 5h16M4 12h10M4 19h7"></path>
+                    </svg>
+                </div>
+                <div>
+                    <h1 class="brand-title">反馈处理工作台</h1>
+                    <div class="brand-subtitle">问题反馈记录页原型 · 面向管理员的处理流</div>
+                </div>
+            </div>
+            <div class="top-actions" aria-label="页面操作">
+                <button class="ghost" type="button" title="刷新">
+                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 12a9 9 0 0 1-15.5 6.3L3 16"></path>
+                        <path d="M3 21v-5h5"></path>
+                        <path d="M3 12A9 9 0 0 1 18.5 5.7L21 8"></path>
+                        <path d="M21 3v5h-5"></path>
+                    </svg>
+                    刷新
+                </button>
+                <button class="ghost" type="button" title="复制当前反馈链接">
+                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M10 13a5 5 0 0 0 7.07 0l2.83-2.83a5 5 0 0 0-7.07-7.07L11 4.93"></path>
+                        <path d="M14 11a5 5 0 0 0-7.07 0L4.1 13.83a5 5 0 0 0 7.07 7.07L13 19.07"></path>
+                    </svg>
+                    分享
+                </button>
+                <button class="primary" type="button" title="管理员已登录">管理员模式</button>
+            </div>
+        </header>
+
+        <section class="summary-strip" aria-label="处理概览">
+            <div class="summary-card strong">
+                <div class="summary-label">当前筛选</div>
+                <div class="summary-value">需人工处理</div>
+                <div class="summary-note">优先显示卡住自动化的反馈</div>
+            </div>
+            <div class="summary-card">
+                <div class="summary-label">待处理</div>
+                <div class="summary-value">14</div>
+                <div class="summary-note">Open / Queued</div>
+            </div>
+            <div class="summary-card">
+                <div class="summary-label">需人工</div>
+                <div class="summary-value">3</div>
+                <div class="summary-note">设计确认或候选审核</div>
+            </div>
+            <div class="summary-card">
+                <div class="summary-label">待部署</div>
+                <div class="summary-value">1</div>
+                <div class="summary-note">Approved candidates</div>
+            </div>
+            <div class="summary-card">
+                <div class="summary-label">本周解决</div>
+                <div class="summary-value">8</div>
+                <div class="summary-note">Resolved / Closed</div>
+            </div>
+        </section>
+
+        <main class="workspace">
+            <aside class="panel list-panel" aria-label="反馈列表">
+                <div class="panel-head">
+                    <div>
+                        <div class="panel-title">反馈队列</div>
+                        <div class="panel-caption">按状态、类型和证据快速定位</div>
+                    </div>
+                    <span class="badge blue">24 条</span>
+                </div>
+                <div class="search-row">
+                    <input class="search-input" type="search" value="页面截图" aria-label="搜索反馈">
+                    <div class="segmented" aria-label="状态筛选">
+                        <button class="active" type="button">需人工</button>
+                        <button type="button">待处理</button>
+                        <button type="button">待部署</button>
+                        <button type="button">全部</button>
+                    </div>
+                </div>
+                <div class="issue-list">
+                    <button class="issue-item selected" type="button">
+                        <div class="issue-title-row">
+                            <div class="issue-title">反馈页面现录截图乱码</div>
+                            <span class="badge red">需人工</span>
+                        </div>
+                        <div class="issue-desc">feedback 页面现录截图出现乱码，附件和 JSON 区域太长，处理动作不明显。</div>
+                        <div class="meta-row">
+                            <span class="badge blue">Bug</span>
+                            <span class="badge amber">中优先级</span>
+                            <span class="badge cyan">1 附件</span>
+                            <span class="badge violet">候选审核</span>
+                        </div>
+                    </button>
+                    <button class="issue-item" type="button">
+                        <div class="issue-title-row">
+                            <div class="issue-title">导入后父子层级没有展开</div>
+                            <span class="badge amber">排队中</span>
+                        </div>
+                        <div class="issue-desc">Excel 导入后父任务折叠，用户找不到新任务，可能需要默认展开策略。</div>
+                        <div class="meta-row">
+                            <span class="badge blue">优化</span>
+                            <span class="badge amber">中优先级</span>
+                            <span class="badge cyan">录屏 42</span>
+                        </div>
+                    </button>
+                    <button class="issue-item" type="button">
+                        <div class="issue-title-row">
+                            <div class="issue-title">希望支持批量设置任务负责人</div>
+                            <span class="badge red">需人工</span>
+                        </div>
+                        <div class="issue-desc">需求涉及批量编辑、字段配置和撤销恢复，需要先确认产品方案。</div>
+                        <div class="meta-row">
+                            <span class="badge violet">需求</span>
+                            <span class="badge green">大范围</span>
+                            <span class="badge amber">设计确认</span>
+                        </div>
+                    </button>
+                    <button class="issue-item" type="button">
+                        <div class="issue-title-row">
+                            <div class="issue-title">AI 生成任务后日期偏移一天</div>
+                            <span class="badge amber">测试中</span>
+                        </div>
+                        <div class="issue-desc">复现于自定义工作日历项目，正在跑 calendar-worktime 回归。</div>
+                        <div class="meta-row">
+                            <span class="badge blue">Bug</span>
+                            <span class="badge cyan">小范围</span>
+                            <span class="badge green">自动修复</span>
+                        </div>
+                    </button>
+                </div>
+            </aside>
+
+            <section class="panel main-panel" aria-label="反馈详情">
+                <div class="detail-header">
+                    <div class="detail-kicker">
+                        <span>反馈 Key · feedback:1782227901298:7487zef9wr</span>
+                        <span>创建于 2026-06-23 15:31</span>
+                    </div>
+                    <h2 class="detail-title">反馈页面现录截图乱码</h2>
+                    <div class="detail-subtitle">用户反馈当前记录页信息堆叠、字段重复、截图和 JSON 互相打断，管理员难以判断下一步该审核、补证还是部署。</div>
+                    <div class="detail-actions">
+                        <span class="badge red">needs_human</span>
+                        <span class="badge blue">AI 分类：Bug</span>
+                        <span class="badge cyan">范围：Small</span>
+                        <span class="badge violet">决策：Review required</span>
+                        <button class="primary" type="button">批准并设为待部署</button>
+                        <button type="button">退回排队</button>
+                        <button class="danger" type="button">关闭</button>
+                    </div>
+                </div>
+
+                <div class="content-scroll">
+                    <section class="decision-card" aria-label="下一步处理动作">
+                        <div class="decision-top">
+                            <div>
+                                <div class="decision-title">
+                                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M12 9v4"></path>
+                                        <path d="M12 17h.01"></path>
+                                        <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"></path>
+                                    </svg>
+                                    需要人工审核候选实现
+                                </div>
+                                <div class="decision-copy">已生成候选提交，自动化等待管理员审核效果；确认无误后将状态改为「待部署」。</div>
+                            </div>
+                            <span class="badge amber">阻塞自动化</span>
+                        </div>
+                        <div class="next-step-grid">
+                            <div class="mini-field">
+                                <div class="mini-label">处理要求</div>
+                                <div class="mini-value">审核候选提交 67cc8659，确认后设为 ready_for_deploy</div>
+                            </div>
+                            <div class="mini-field">
+                                <div class="mini-label">已检查证据</div>
+                                <div class="mini-value">单元测试通过；E2E 受环境限制跳过 5 项</div>
+                            </div>
+                            <div class="mini-field">
+                                <div class="mini-label">返回路径</div>
+                                <div class="mini-value">批准：ready_for_deploy；不通过：queued 或 closed</div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="section">
+                        <div class="section-head">
+                            <div class="section-title">
+                                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M21 15a4 4 0 0 1-4 4H7l-4 4V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z"></path>
+                                </svg>
+                                公开信息
+                            </div>
+                            <span class="badge green">用户可见</span>
+                        </div>
+                        <div class="section-body">
+                            <div class="info-grid">
+                                <div class="info-card">
+                                    <div class="info-label">提交来源</div>
+                                    <div class="info-value">manual</div>
+                                </div>
+                                <div class="info-card">
+                                    <div class="info-label">用户提交类型</div>
+                                    <div class="info-value">unclear</div>
+                                </div>
+                                <div class="info-card">
+                                    <div class="info-label">负责人</div>
+                                    <div class="info-value">未分配</div>
+                                </div>
+                            </div>
+                            <div class="review-block wide" style="margin-top: 12px;">
+                                <div class="review-title">问题描述</div>
+                                <div class="copy-block">feedback 页面现录截图乱码，见图片。管理员需要先看下一步处理动作，再查看证据和原始 JSON。</div>
+                            </div>
+                            <div class="review-block wide" style="margin-top: 12px;">
+                                <div class="review-title">公开回复</div>
+                                <div class="copy-block">Approved candidate is waiting for primary worktree overlap cleanup before merge.</div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="section">
+                        <div class="section-head">
+                            <div class="section-title">
+                                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M9 11 12 14 22 4"></path>
+                                    <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
+                                </svg>
+                                设计评审摘要
+                            </div>
+                            <span class="badge violet">从 internalNote 结构化块渲染</span>
+                        </div>
+                        <div class="section-body design-review">
+                            <div class="review-block">
+                                <div class="review-title">用户问题</div>
+                                <div>详情页把公开回复、AI 分类、候选实现、表单和 JSON 串成一个长页面，用户必须滚动寻找下一步。</div>
+                            </div>
+                            <div class="review-block">
+                                <div class="review-title">建议改动</div>
+                                <div>把「下一步动作」置顶；候选、设计、证据和原始数据分层展示。</div>
+                            </div>
+                            <div class="review-block wide">
+                                <div class="review-title">验收标准</div>
+                                <ol class="check-list">
+                                    <li>管理员进入详情后 1 屏内看到状态、AI 决策和推荐动作。</li>
+                                    <li>附件、录屏和 JSON 不打断核心处理表单。</li>
+                                    <li>候选实现有明确的批准、退回、关闭路径。</li>
+                                    <li>移动端按列表、详情、证据顺序纵向排列，无横向滚动。</li>
+                                </ol>
+                            </div>
+                            <div class="review-block">
+                                <div class="review-title">影响区域</div>
+                                <div>workers/share-worker.js 的反馈页模板、详情渲染函数、结构化块渲染函数。</div>
+                            </div>
+                            <div class="review-block">
+                                <div class="review-title">验证计划</div>
+                                <div>Worker 单测断言区块存在；浏览器检查桌面与移动端关键路径。</div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="section">
+                        <div class="section-head">
+                            <div class="section-title">
+                                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M12 20h9"></path>
+                                    <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"></path>
+                                </svg>
+                                管理员更新
+                            </div>
+                            <span class="panel-caption">核心表单保留，放在决策和摘要之后</span>
+                        </div>
+                        <div class="section-body">
+                            <form class="form-grid">
+                                <div class="field">
+                                    <label for="status">状态</label>
+                                    <select id="status">
+                                        <option>needs_human</option>
+                                        <option>ready_for_deploy</option>
+                                        <option>queued</option>
+                                        <option>closed</option>
+                                    </select>
+                                </div>
+                                <div class="field">
+                                    <label for="priority">优先级</label>
+                                    <select id="priority">
+                                        <option>medium</option>
+                                        <option>high</option>
+                                        <option>urgent</option>
+                                        <option>low</option>
+                                    </select>
+                                </div>
+                                <div class="field">
+                                    <label for="assignee">负责人</label>
+                                    <input id="assignee" value="" placeholder="输入处理人">
+                                </div>
+                                <div class="field wide">
+                                    <label for="public-note">公开回复</label>
+                                    <textarea id="public-note">Approved candidate is waiting for primary worktree overlap cleanup before merge.</textarea>
+                                </div>
+                                <div class="field wide">
+                                    <label for="internal-note">内部备注</label>
+                                    <textarea id="internal-note">tests/unit/feedback/share-worker-feedback-board.test.js and workers/share-worker.js. Previous verification passed eslint touched files, focused vitest 25 tests.</textarea>
+                                </div>
+                                <div class="field wide">
+                                    <button class="primary" type="button">保存处理结果</button>
+                                </div>
+                            </form>
+                        </div>
+                    </section>
+                </div>
+            </section>
+
+            <aside class="panel right-panel" aria-label="证据和调试信息">
+                <div class="tabs" role="tablist" aria-label="右侧信息切换">
+                    <button class="active" type="button">证据</button>
+                    <button type="button">历史</button>
+                    <button type="button">原始数据</button>
+                </div>
+                <div class="evidence-stack">
+                    <div class="implementation-note">
+                        后续开发建议：默认显示证据，JSON 放在折叠项内；只有管理员主动展开时再阅读原始数据。
+                    </div>
+                    <article class="evidence-card">
+                        <div class="evidence-thumb" aria-label="截图缩略图"></div>
+                        <div class="evidence-body">
+                            <div class="evidence-name">image.png</div>
+                            <div class="evidence-meta">127.2 KB · 点击预览原图</div>
+                        </div>
+                    </article>
+                    <section class="evidence-card">
+                        <div class="section-head">
+                            <div class="section-title">候选实现</div>
+                            <span class="badge green">可审核</span>
+                        </div>
+                        <div class="section-body">
+                            <div class="info-card" style="margin-bottom: 10px;">
+                                <div class="info-label">候选分支</div>
+                                <div class="info-value">codex/feedback-feedback-ui-20260623-233050</div>
+                            </div>
+                            <div class="info-card" style="margin-bottom: 10px;">
+                                <div class="info-label">变更提交</div>
+                                <div class="info-value">67cc8659cde974723b0bc3858823bc10b3e9ed9b</div>
+                            </div>
+                            <div class="info-card">
+                                <div class="info-label">变更文件</div>
+                                <div class="info-value">src/features/feedback/FeedbackDialog.js, tests/unit/feedback/*, workers/share-worker.js</div>
+                            </div>
+                        </div>
+                    </section>
+                    <section class="evidence-card">
+                        <div class="section-head">
+                            <div class="section-title">处理历史</div>
+                        </div>
+                        <div class="section-body timeline">
+                            <div class="timeline-item">
+                                <span class="dot"></span>
+                                <div>
+                                    <div class="timeline-title">admin 设置为 in_progress</div>
+                                    <div class="timeline-note">2026-06-23 21:51</div>
+                                </div>
+                            </div>
+                            <div class="timeline-item">
+                                <span class="dot"></span>
+                                <div>
+                                    <div class="timeline-title">AI 生成候选实现</div>
+                                    <div class="timeline-note">验证通过，等待人工审核</div>
+                                </div>
+                            </div>
+                            <div class="timeline-item">
+                                <span class="dot"></span>
+                                <div>
+                                    <div class="timeline-title">状态更新为 needs_human</div>
+                                    <div class="timeline-note">返回路径：ready_for_deploy</div>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+                    <details>
+                        <summary>附件 JSON</summary>
+                        <pre>[
+  {
+    "name": "image.png",
+    "type": "image/png",
+    "size": 130216,
+    "dataUrl": "data:image/png;base64,..."
+  }
+]</pre>
+                    </details>
+                    <details>
+                        <summary>上下文 JSON</summary>
+                        <pre>{
+  "app": "gantt-task-editor",
+  "locale": "zh-CN",
+  "url": "https://gantt-task-editor.pages.dev/",
+  "viewport": { "width": 2560, "height": 1271 }
+}</pre>
+                    </details>
+                    <details>
+                        <summary>变更历史 JSON</summary>
+                        <pre>[
+  {
+    "at": "2026-06-23T15:21:51.803Z",
+    "actor": "admin",
+    "changes": {
+      "status": ["open", "in_progress"]
+    }
+  }
+]</pre>
+                    </details>
+                </div>
+            </aside>
+        </main>
+    </div>
+</body>
+</html>

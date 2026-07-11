@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+  html,body{margin:0;padding:0}
+  *{box-sizing:border-box}
+  body{font-family:"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+  ::-webkit-scrollbar{width:9px;height:9px}
+  ::-webkit-scrollbar-thumb{background:#cfd6e0;border-radius:999px;border:2px solid transparent;background-clip:content-box}
+  ::-webkit-scrollbar-thumb:hover{background:#b6bfcc;background-clip:content-box}
+  ::-webkit-scrollbar-track{background:transparent}
+</style>
+</helmet>
+<div style="--accent:{{ accent }};--accent-soft:{{ accentSoft }};--pad:{{ pad }};--gap:{{ gap }};min-height:100vh;background:#f4f5f8;color:#19202e;font-size:13px;line-height:1.5;display:grid;grid-template-rows:auto auto 1fr">
+
+  <header style="height:52px;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:0 22px;background:rgba(255,255,255,.92);backdrop-filter:saturate(1.2) blur(6px);border-bottom:1px solid #e7eaf0;position:sticky;top:0;z-index:20">
+    <div style="display:flex;align-items:center;gap:11px;min-width:0">
+      <div style="width:28px;height:28px;border-radius:8px;background:linear-gradient(140deg,var(--accent,#2f6bff),#0e8aa8);color:#fff;display:grid;place-items:center;box-shadow:0 2px 6px rgba(47,107,255,.28)">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 5h16M4 12h10M4 19h7"></path></svg>
+      </div>
+      <div style="min-width:0">
+        <div style="font-size:14.5px;font-weight:750;letter-spacing:-.2px">反馈处理工作台</div>
+        <div style="color:#7a8395;font-size:11.5px;white-space:nowrap">问题反馈记录页 · 面向管理员的处理流</div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <button onClick="{{ noop }}" style="height:32px;padding:0 12px;border:1px solid #e0e4ec;border-radius:8px;background:#fff;color:#3c4658;font-weight:600;font-size:12.5px;display:inline-flex;align-items:center;gap:6px;cursor:pointer" style-hover="background:#f6f8fb;border-color:#cdd4df">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 0 1-15.5 6.3L3 16"></path><path d="M3 21v-5h5"></path><path d="M3 12A9 9 0 0 1 18.5 5.7L21 8"></path><path d="M21 3v5h-5"></path></svg>刷新
+      </button>
+      <button onClick="{{ noop }}" style="height:32px;padding:0 12px;border:1px solid #e0e4ec;border-radius:8px;background:#fff;color:#3c4658;font-weight:600;font-size:12.5px;display:inline-flex;align-items:center;gap:6px;cursor:pointer" style-hover="background:#f6f8fb;border-color:#cdd4df">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7.07 0l2.83-2.83a5 5 0 0 0-7.07-7.07L11 4.93"></path><path d="M14 11a5 5 0 0 0-7.07 0L4.1 13.83a5 5 0 0 0 7.07 7.07L13 19.07"></path></svg>分享
+      </button>
+      <button onClick="{{ noop }}" style="height:32px;padding:0 14px;border:1px solid var(--accent,#2f6bff);border-radius:8px;background:var(--accent,#2f6bff);color:#fff;font-weight:650;font-size:12.5px;display:inline-flex;align-items:center;gap:6px;cursor:pointer;box-shadow:0 1px 2px rgba(47,107,255,.25)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a5 5 0 0 1 5 5v3a5 5 0 0 1-10 0V7a5 5 0 0 1 5-5Z"></path><path d="M5 11a7 7 0 0 0 14 0M12 18v3"></path></svg>管理员模式
+      </button>
+    </div>
+  </header>
+
+  <section style="display:grid;grid-template-columns:1.35fr repeat(4,minmax(120px,1fr));gap:10px;padding:12px 22px;background:linear-gradient(180deg,#fbfcfe,#f4f5f8);border-bottom:1px solid #ebeef3">
+    <div style="border:1px solid #cbdcff;border-radius:11px;background:linear-gradient(135deg,#fff,#eef4ff);padding:11px 14px;display:flex;flex-direction:column;justify-content:center;gap:2px;position:relative;overflow:hidden">
+      <div style="position:absolute;right:-8px;top:-8px;width:54px;height:54px;border-radius:50%;background:radial-gradient(circle,var(--accent-soft,#eef3ff),transparent 70%)"></div>
+      <div style="color:#6b7689;font-size:11px;font-weight:650;letter-spacing:.2px">当前筛选</div>
+      <div style="font-size:18px;font-weight:760;letter-spacing:-.3px">{{ filterTitle }}</div>
+      <div style="color:#97a0b0;font-size:11px">优先显示卡住自动化的反馈</div>
+    </div>
+    <sc-for list="{{ stats }}" as="s" hint-placeholder-count="4">
+      <div style="border:1px solid #e7eaf0;border-radius:11px;background:#fff;padding:11px 13px;display:flex;flex-direction:column;justify-content:center;gap:2px;box-shadow:0 1px 2px rgba(20,28,45,.03)">
+        <div style="color:#7a8395;font-size:11px;font-weight:600">{{ s.label }}</div>
+        <div style="font-size:21px;line-height:1.05;font-weight:760;letter-spacing:-.5px;color:{{ s.color }}">{{ s.value }}</div>
+        <div style="color:#9aa3b2;font-size:11px">{{ s.note }}</div>
+      </div>
+    </sc-for>
+  </section>
+
+  <main style="min-height:0;display:grid;grid-template-columns:300px minmax(480px,1fr) 344px;gap:var(--gap,14px);padding:var(--gap,14px) 22px 22px">
+
+    <aside style="min-height:0;display:grid;grid-template-rows:auto auto 1fr;border:1px solid #e7eaf0;border-radius:13px;background:#fff;box-shadow:0 1px 2px rgba(20,28,45,.04);overflow:hidden">
+      <div style="padding:12px 14px;border-bottom:1px solid #eef1f5;display:flex;align-items:center;justify-content:space-between;gap:10px">
+        <div>
+          <div style="font-size:12.5px;font-weight:750">反馈队列</div>
+          <div style="color:#8a93a3;font-size:11px;margin-top:1px">按状态、类型与证据快速定位</div>
+        </div>
+        <span style="height:21px;padding:0 8px;display:inline-flex;align-items:center;border-radius:999px;background:var(--accent-soft,#eef3ff);color:var(--accent,#2f6bff);font-size:11px;font-weight:700">24 条</span>
+      </div>
+      <div style="padding:11px 14px;border-bottom:1px solid #eef1f5;display:grid;gap:9px">
+        <div style="position:relative">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9aa3b2" stroke-width="2" style="position:absolute;left:10px;top:50%;transform:translateY(-50%)"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg>
+          <input value="页面截图" placeholder="搜索反馈" style="width:100%;height:34px;border:1px solid #e3e7ee;border-radius:9px;background:#f7f9fc;padding:0 10px 0 30px;color:#19202e;font-size:12.5px;outline:none" />
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px">
+          <sc-for list="{{ filters }}" as="f" hint-placeholder-count="4">
+            <button onClick="{{ f.onClick }}" style="height:27px;padding:0 10px;border-radius:8px;font-size:11.5px;font-weight:650;cursor:pointer;white-space:nowrap;border:1px solid;{{ f.style }}">{{ f.label }}</button>
+          </sc-for>
+        </div>
+      </div>
+      <div style="overflow:auto">
+        <sc-for list="{{ issues }}" as="it" hint-placeholder-count="4">
+          <button onClick="{{ it.onSelect }}" style="width:100%;border:0;border-bottom:1px solid #f0f2f6;text-align:left;padding:12px 14px;display:grid;gap:8px;align-content:start;cursor:pointer;{{ it.itemStyle }}">
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px">
+              <div style="font-size:12.5px;font-weight:720;line-height:1.35;color:#19202e">{{ it.title }}</div>
+              <span style="flex:0 0 auto;height:21px;padding:0 8px;display:inline-flex;align-items:center;border:1px solid;border-radius:999px;font-size:10.5px;font-weight:700;white-space:nowrap;{{ it.statusBadge.style }}">{{ it.statusBadge.text }}</span>
+            </div>
+            <div style="color:#7a8395;font-size:11.5px;line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">{{ it.desc }}</div>
+            <div style="display:flex;flex-wrap:wrap;gap:5px">
+              <sc-for list="{{ it.badges }}" as="b" hint-placeholder-count="3">
+                <span style="height:20px;padding:0 7px;display:inline-flex;align-items:center;gap:4px;border:1px solid;border-radius:6px;font-size:10.5px;font-weight:700;white-space:nowrap;{{ b.style }}">{{ b.text }}</span>
+              </sc-for>
+            </div>
+          </button>
+        </sc-for>
+      </div>
+    </aside>
+
+    <section style="min-height:0;display:grid;grid-template-rows:auto 1fr;border:1px solid #e7eaf0;border-radius:13px;background:#fff;box-shadow:0 1px 3px rgba(20,28,45,.05);overflow:hidden">
+      <div style="padding:15px 18px 14px;border-bottom:1px solid #eef1f5;background:linear-gradient(180deg,#fff,#fbfcfe)">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;color:#8a93a3;font-size:11.5px;margin-bottom:9px">
+          <span style="font-family:ui-monospace,Menlo,monospace;background:#f3f5f8;border:1px solid #eaedf2;border-radius:6px;padding:2px 8px;color:#6b7689">{{ d.key }}</span>
+          <span>创建于 {{ d.created }}</span>
+        </div>
+        <h2 style="margin:0;font-size:20px;line-height:1.25;font-weight:760;letter-spacing:-.4px">{{ d.title }}</h2>
+        <div style="margin-top:7px;color:#6b7689;max-width:740px;font-size:12.5px">{{ d.subtitle }}</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:12px">
+          <sc-for list="{{ d.chips }}" as="c" hint-placeholder-count="4">
+            <span style="height:23px;padding:0 9px;display:inline-flex;align-items:center;gap:5px;border:1px solid;border-radius:999px;font-size:11px;font-weight:700;white-space:nowrap;{{ c.style }}">{{ c.text }}</span>
+          </sc-for>
+        </div>
+      </div>
+
+      <div style="min-height:0;overflow:auto;padding:var(--pad,16px) 18px 22px">
+
+        <section style="border:1px solid #e7d9bd;border-radius:13px;background:linear-gradient(180deg,#fffdf6,#fff9ec);padding:15px;margin-bottom:14px;box-shadow:0 2px 10px rgba(180,130,20,.07)">
+          <div style="display:flex;justify-content:space-between;gap:14px;align-items:flex-start">
+            <div style="min-width:0">
+              <div style="display:flex;align-items:center;gap:8px;font-size:14.5px;font-weight:780;color:#7c4d05">
+                <span style="width:24px;height:24px;border-radius:7px;background:#fbe7c0;display:grid;place-items:center;flex:0 0 auto">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9a6206" stroke-width="2.2" stroke-linecap="round"><path d="M12 9v4"></path><path d="M12 17h.01"></path><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"></path></svg>
+                </span>{{ d.decision.title }}
+              </div>
+              <div style="color:#7a5310;margin-top:6px;font-size:12.5px;line-height:1.55">{{ d.decision.copy }}</div>
+            </div>
+            <span style="flex:0 0 auto;height:23px;padding:0 9px;display:inline-flex;align-items:center;border:1px solid #f0d9a8;border-radius:999px;background:#fdf2e0;color:#9a6206;font-size:11px;font-weight:700">{{ d.decision.tag }}</span>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin:13px 0">
+            <sc-for list="{{ d.decision.fields }}" as="fld" hint-placeholder-count="3">
+              <div style="min-width:0;border:1px solid rgba(180,120,20,.18);background:rgba(255,255,255,.72);border-radius:9px;padding:9px 11px">
+                <div style="color:#9a6206;font-size:10.5px;font-weight:700;margin-bottom:3px;letter-spacing:.2px">{{ fld.label }}</div>
+                <div style="color:#3f3320;font-size:12px;font-weight:600;line-height:1.4;word-break:break-word">{{ fld.value }}</div>
+              </div>
+            </sc-for>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:8px;padding-top:3px">
+            <button onClick="{{ noop }}" style="height:36px;padding:0 16px;border:1px solid var(--accent,#2f6bff);border-radius:9px;background:var(--accent,#2f6bff);color:#fff;font-weight:650;font-size:13px;cursor:pointer;display:inline-flex;align-items:center;gap:7px;box-shadow:0 2px 6px rgba(47,107,255,.22)">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M20 6 9 17l-5-5"></path></svg>{{ d.decision.primary }}
+            </button>
+            <button onClick="{{ noop }}" style="height:36px;padding:0 14px;border:1px solid #e0c89a;border-radius:9px;background:#fff;color:#8a5a10;font-weight:600;font-size:13px;cursor:pointer" style-hover="background:#fffaf0">{{ d.decision.secondary }}</button>
+            <button onClick="{{ noop }}" style="height:36px;padding:0 14px;border:1px solid #f0c4bd;border-radius:9px;background:#fdecea;color:#c0392b;font-weight:600;font-size:13px;cursor:pointer" style-hover="background:#fbe2de">{{ d.decision.danger }}</button>
+          </div>
+        </section>
+
+        <section style="border:1px solid #e7eaf0;border-radius:13px;background:#fff;overflow:hidden;margin-bottom:14px">
+          <div style="height:44px;padding:0 14px;border-bottom:1px solid #f0f2f6;background:#fafbfd;display:flex;align-items:center;justify-content:space-between;gap:12px">
+            <div style="display:flex;align-items:center;gap:8px;font-weight:720;font-size:12.5px">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--accent,#2f6bff)" stroke-width="2"><path d="M21 15a4 4 0 0 1-4 4H7l-4 4V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z"></path></svg>公开信息
+            </div>
+            <span style="height:21px;padding:0 8px;display:inline-flex;align-items:center;border:1px solid #bfe3cd;border-radius:999px;background:#e9f6ef;color:#1f8a52;font-size:10.5px;font-weight:700">用户可见</span>
+          </div>
+          <div style="padding:13px 14px">
+            <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px">
+              <sc-for list="{{ d.publicInfo }}" as="p" hint-placeholder-count="3">
+                <div style="min-width:0;border:1px solid #eef1f5;border-radius:9px;background:#fafbfd;padding:9px 11px">
+                  <div style="color:#8a93a3;font-size:10.5px;font-weight:700;margin-bottom:4px">{{ p.label }}</div>
+                  <div style="font-size:13px;font-weight:600;overflow-wrap:anywhere">{{ p.value }}</div>
+                </div>
+              </sc-for>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:11px">
+              <div style="border:1px solid #eef1f5;border-radius:9px;background:#fafbfd;padding:11px 12px">
+                <div style="color:#8a93a3;font-size:11px;font-weight:760;margin-bottom:5px">问题描述</div>
+                <div style="color:#2e3850;font-size:12.5px;line-height:1.55;white-space:pre-wrap">{{ d.problem }}</div>
+              </div>
+              <div style="border:1px solid #eef1f5;border-radius:9px;background:#fafbfd;padding:11px 12px">
+                <div style="color:#8a93a3;font-size:11px;font-weight:760;margin-bottom:5px">公开回复</div>
+                <div style="color:#2e3850;font-size:12.5px;line-height:1.55;white-space:pre-wrap">{{ d.reply }}</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section style="border:1px solid #e7eaf0;border-radius:13px;background:#fff;overflow:hidden;margin-bottom:14px">
+          <div style="height:44px;padding:0 14px;border-bottom:1px solid #f0f2f6;background:#fafbfd;display:flex;align-items:center;justify-content:space-between;gap:12px">
+            <div style="display:flex;align-items:center;gap:8px;font-weight:720;font-size:12.5px">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#6a5acd" stroke-width="2" stroke-linecap="round"><path d="M9 11 12 14 22 4"></path><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>设计评审摘要
+            </div>
+            <span style="height:21px;padding:0 8px;display:inline-flex;align-items:center;border:1px solid #d6cff2;border-radius:999px;background:#f0eefb;color:#6a5acd;font-size:10.5px;font-weight:700">从 internalNote 渲染</span>
+          </div>
+          <div style="padding:13px 14px;display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <div style="border:1px solid #eef1f5;border-radius:9px;background:#fafbfd;padding:11px 12px">
+              <div style="color:#8a93a3;font-size:11px;font-weight:760;margin-bottom:5px">用户问题</div>
+              <div style="font-size:12.5px;line-height:1.55;color:#2e3850">{{ d.review.problem }}</div>
+            </div>
+            <div style="border:1px solid #eef1f5;border-radius:9px;background:#fafbfd;padding:11px 12px">
+              <div style="color:#8a93a3;font-size:11px;font-weight:760;margin-bottom:5px">建议改动</div>
+              <div style="font-size:12.5px;line-height:1.55;color:#2e3850">{{ d.review.suggestion }}</div>
+            </div>
+            <div style="grid-column:1/-1;border:1px solid #eef1f5;border-radius:9px;background:#fafbfd;padding:11px 12px">
+              <div style="color:#8a93a3;font-size:11px;font-weight:760;margin-bottom:6px">验收标准</div>
+              <div style="display:grid;gap:6px">
+                <sc-for list="{{ d.review.criteria }}" as="cr" hint-placeholder-count="4">
+                  <div style="display:flex;gap:8px;align-items:flex-start;font-size:12.5px;line-height:1.5;color:#2e3850">
+                    <span style="flex:0 0 auto;width:18px;height:18px;border-radius:6px;background:var(--accent-soft,#eef3ff);color:var(--accent,#2f6bff);font-size:10.5px;font-weight:760;display:grid;place-items:center;margin-top:1px">{{ cr.n }}</span>
+                    <span>{{ cr.text }}</span>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+            <div style="border:1px solid #eef1f5;border-radius:9px;background:#fafbfd;padding:11px 12px">
+              <div style="color:#8a93a3;font-size:11px;font-weight:760;margin-bottom:5px">影响区域</div>
+              <div style="font-size:12px;line-height:1.55;color:#2e3850;overflow-wrap:anywhere">{{ d.review.impact }}</div>
+            </div>
+            <div style="border:1px solid #eef1f5;border-radius:9px;background:#fafbfd;padding:11px 12px">
+              <div style="color:#8a93a3;font-size:11px;font-weight:760;margin-bottom:5px">验证计划</div>
+              <div style="font-size:12px;line-height:1.55;color:#2e3850">{{ d.review.plan }}</div>
+            </div>
+          </div>
+        </section>
+
+        <section style="border:1px solid #e7eaf0;border-radius:13px;background:#fff;overflow:hidden">
+          <div style="height:44px;padding:0 14px;border-bottom:1px solid #f0f2f6;background:#fafbfd;display:flex;align-items:center;justify-content:space-between;gap:12px">
+            <div style="display:flex;align-items:center;gap:8px;font-weight:720;font-size:12.5px">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--accent,#2f6bff)" stroke-width="2" stroke-linecap="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>管理员更新
+            </div>
+            <span style="color:#9aa3b2;font-size:11px">保存后写回反馈记录</span>
+          </div>
+          <div style="padding:13px 14px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:11px">
+            <div style="display:grid;gap:5px">
+              <label style="color:#8a93a3;font-size:11.5px;font-weight:700">状态</label>
+              <div style="position:relative">
+                <select style="width:100%;height:34px;border:1px solid #e3e7ee;border-radius:8px;background:#fff;padding:0 28px 0 10px;color:#19202e;font-size:12.5px;appearance:none;cursor:pointer">
+                  <option>{{ d.form.status }}</option><option>ready_for_deploy</option><option>queued</option><option>closed</option>
+                </select>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9aa3b2" stroke-width="2.4" style="position:absolute;right:9px;top:50%;transform:translateY(-50%);pointer-events:none"><path d="m6 9 6 6 6-6"></path></svg>
+              </div>
+            </div>
+            <div style="display:grid;gap:5px">
+              <label style="color:#8a93a3;font-size:11.5px;font-weight:700">优先级</label>
+              <div style="position:relative">
+                <select style="width:100%;height:34px;border:1px solid #e3e7ee;border-radius:8px;background:#fff;padding:0 28px 0 10px;color:#19202e;font-size:12.5px;appearance:none;cursor:pointer">
+                  <option>{{ d.form.priority }}</option><option>high</option><option>urgent</option><option>low</option>
+                </select>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9aa3b2" stroke-width="2.4" style="position:absolute;right:9px;top:50%;transform:translateY(-50%);pointer-events:none"><path d="m6 9 6 6 6-6"></path></svg>
+              </div>
+            </div>
+            <div style="display:grid;gap:5px">
+              <label style="color:#8a93a3;font-size:11.5px;font-weight:700">负责人</label>
+              <input value="{{ d.form.assignee }}" placeholder="输入处理人" style="width:100%;height:34px;border:1px solid #e3e7ee;border-radius:8px;background:#fff;padding:0 10px;color:#19202e;font-size:12.5px;outline:none" />
+            </div>
+            <div style="grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;gap:11px">
+              <div style="display:grid;gap:5px">
+                <label style="color:#8a93a3;font-size:11.5px;font-weight:700">公开回复</label>
+                <textarea style="width:100%;min-height:74px;border:1px solid #e3e7ee;border-radius:8px;background:#fff;padding:8px 10px;color:#19202e;font-size:12.5px;resize:vertical;outline:none;line-height:1.5">{{ d.form.publicNote }}</textarea>
+              </div>
+              <div style="display:grid;gap:5px">
+                <label style="color:#8a93a3;font-size:11.5px;font-weight:700">内部备注</label>
+                <textarea style="width:100%;min-height:74px;border:1px solid #e3e7ee;border-radius:8px;background:#fff;padding:8px 10px;color:#19202e;font-size:12.5px;resize:vertical;outline:none;line-height:1.5">{{ d.form.internalNote }}</textarea>
+              </div>
+            </div>
+            <div style="grid-column:1/-1;display:flex;justify-content:flex-end;gap:8px;padding-top:2px">
+              <button onClick="{{ noop }}" style="height:36px;padding:0 16px;border:1px solid #e0e4ec;border-radius:9px;background:#fff;color:#3c4658;font-weight:600;font-size:13px;cursor:pointer" style-hover="background:#f6f8fb">取消</button>
+              <button onClick="{{ noop }}" style="height:36px;padding:0 20px;border:1px solid var(--accent,#2f6bff);border-radius:9px;background:var(--accent,#2f6bff);color:#fff;font-weight:650;font-size:13px;cursor:pointer;box-shadow:0 2px 6px rgba(47,107,255,.22)">保存处理结果</button>
+            </div>
+          </div>
+        </section>
+
+      </div>
+    </section>
+
+    <aside style="min-height:0;display:grid;grid-template-rows:auto 1fr;border:1px solid #e7eaf0;border-radius:13px;background:#fff;box-shadow:0 1px 2px rgba(20,28,45,.04);overflow:hidden">
+      <div style="display:flex;gap:4px;padding:8px;border-bottom:1px solid #eef1f5;background:#fafbfd">
+        <sc-for list="{{ tabs }}" as="t" hint-placeholder-count="3">
+          <button onClick="{{ t.onClick }}" style="flex:1;height:30px;border-radius:8px;font-size:12px;font-weight:650;cursor:pointer;border:1px solid;{{ t.style }}">{{ t.label }}</button>
+        </sc-for>
+      </div>
+      <div style="overflow:auto;padding:13px;display:grid;align-content:start;gap:12px">
+
+        <sc-if value="{{ isEvidence }}" hint-placeholder-val="{{ true }}">
+          <div style="border-left:3px solid var(--accent,#2f6bff);background:var(--accent-soft,#eef3ff);padding:10px 12px;border-radius:0 8px 8px 0;color:#274a9e;font-size:11.5px;line-height:1.55">默认显示证据，原始 JSON 收入「原始数据」标签，管理员需要时再展开。</div>
+          <article style="border:1px solid #e7eaf0;border-radius:11px;overflow:hidden">
+            <div style="height:128px;background:linear-gradient(135deg,rgba(47,107,255,.1),transparent 45%),linear-gradient(90deg,#e7ecf4 0 14%,#f7f9fc 14% 100%);border-bottom:1px solid #eef1f5;position:relative">
+              <div style="position:absolute;left:18px;top:18px;width:60%;height:30px;background:#fff;border:1px solid #dde4ee;border-radius:5px"></div>
+              <div style="position:absolute;left:18px;top:58px;width:46%;height:42px;background:#fff;border:1px solid #dde4ee;border-radius:5px"></div>
+              <div style="position:absolute;right:12px;bottom:12px;height:22px;padding:0 9px;display:inline-flex;align-items:center;border-radius:999px;background:rgba(25,32,46,.78);color:#fff;font-size:10.5px;font-weight:600">点击预览</div>
+            </div>
+            <div style="padding:11px 12px">
+              <div style="font-weight:720;font-size:12.5px">{{ d.evidence.fileName }}</div>
+              <div style="color:#8a93a3;font-size:11.5px;margin-top:2px">{{ d.evidence.fileMeta }}</div>
+            </div>
+          </article>
+          <section style="border:1px solid #e7eaf0;border-radius:11px;overflow:hidden">
+            <div style="height:40px;padding:0 12px;border-bottom:1px solid #f0f2f6;background:#fafbfd;display:flex;align-items:center;justify-content:space-between">
+              <div style="font-weight:720;font-size:12px">候选实现</div>
+              <span style="height:20px;padding:0 8px;display:inline-flex;align-items:center;border:1px solid #bfe3cd;border-radius:999px;background:#e9f6ef;color:#1f8a52;font-size:10.5px;font-weight:700">可审核</span>
+            </div>
+            <div style="padding:12px;display:grid;gap:9px">
+              <sc-for list="{{ d.evidence.candidate }}" as="cd" hint-placeholder-count="3">
+                <div style="border:1px solid #eef1f5;border-radius:8px;background:#fafbfd;padding:9px 11px">
+                  <div style="color:#8a93a3;font-size:10.5px;font-weight:700;margin-bottom:3px">{{ cd.label }}</div>
+                  <div style="font-size:12px;font-weight:600;font-family:ui-monospace,Menlo,monospace;color:#2e3850;overflow-wrap:anywhere;line-height:1.45">{{ cd.value }}</div>
+                </div>
+              </sc-for>
+            </div>
+          </section>
+        </sc-if>
+
+        <sc-if value="{{ isHistory }}" hint-placeholder-val="{{ false }}">
+          <div style="display:grid;gap:0">
+            <sc-for list="{{ d.timeline }}" as="tl" hint-placeholder-count="3">
+              <div style="display:grid;grid-template-columns:18px 1fr;gap:11px;padding-bottom:16px;position:relative">
+                <div style="position:relative">
+                  <span style="position:absolute;left:50%;top:4px;transform:translateX(-50%);width:9px;height:9px;border-radius:50%;background:var(--accent,#2f6bff);box-shadow:0 0 0 3px var(--accent-soft,#eef3ff)"></span>
+                  <span style="position:absolute;left:50%;top:16px;bottom:-12px;transform:translateX(-50%);width:1.5px;background:#eaeef3"></span>
+                </div>
+                <div style="border:1px solid #eef1f5;border-radius:9px;background:#fafbfd;padding:9px 11px">
+                  <div style="font-size:12px;font-weight:720;color:#2e3850">{{ tl.title }}</div>
+                  <div style="color:#8a93a3;font-size:11px;margin-top:2px">{{ tl.note }}</div>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isRaw }}" hint-placeholder-val="{{ false }}">
+          <sc-for list="{{ d.raw }}" as="r" hint-placeholder-count="3">
+            <details style="border:1px solid #e7eaf0;border-radius:10px;overflow:hidden">
+              <summary style="cursor:pointer;padding:10px 12px;font-weight:700;font-size:12px;color:#2e3850;list-style:none;display:flex;align-items:center;justify-content:space-between">{{ r.name }}<span style="color:#9aa3b2;font-size:11px;font-weight:600">展开</span></summary>
+              <pre style="margin:0;max-height:220px;overflow:auto;border-top:1px solid #f0f2f6;background:#f8fafc;padding:11px;color:#3c4658;font-size:11px;line-height:1.55;white-space:pre-wrap;font-family:ui-monospace,Menlo,monospace">{{ r.body }}</pre>
+            </details>
+          </sc-for>
+        </sc-if>
+
+      </div>
+    </aside>
+
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:940},&quot;accent&quot;:{&quot;editor&quot;:&quot;color&quot;,&quot;default&quot;:&quot;#2f6bff&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;options&quot;:[&quot;#2f6bff&quot;,&quot;#5b5bd6&quot;,&quot;#0e8aa8&quot;,&quot;#e8590c&quot;]},&quot;density&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;default&quot;:&quot;compact&quot;,&quot;options&quot;:[&quot;compact&quot;,&quot;comfortable&quot;],&quot;tsType&quot;:&quot;string&quot;}}">
+class Component extends DCLogic {
+  state = { selectedId: 'i1', tab: 'evidence', filter: 'human' };
+
+  tone(t) {
+    const M = {
+      red:'background:#fdecea;color:#c0392b;border-color:#f3cbc4',
+      amber:'background:#fdf2e0;color:#9a6206;border-color:#f0d9a8',
+      green:'background:#e9f6ef;color:#1f8a52;border-color:#bfe3cd',
+      blue:'background:var(--accent-soft,#eef3ff);color:var(--accent,#2f6bff);border-color:#cbd9fb',
+      cyan:'background:#e6f5f9;color:#0e7c98;border-color:#b6dfe9',
+      violet:'background:#f0eefb;color:#6a5acd;border-color:#d6cff2',
+      slate:'background:#f1f3f6;color:#5a6577;border-color:#e2e6ec',
+    };
+    return M[t] || M.slate;
+  }
+  b(text, t) { return { text, style: this.tone(t) }; }
+
+  data() {
+    return {
+      i1: {
+        listTitle: '反馈页面现录截图乱码', status: this.b('需人工','red'),
+        listDesc: 'feedback 页面现录截图出现乱码，附件和 JSON 区域太长，处理动作不明显。',
+        listBadges: [this.b('Bug','blue'), this.b('中优先级','amber'), this.b('1 附件','cyan'), this.b('候选审核','violet')],
+        key: 'feedback:1782227901298:7487zef9wr', created: '2026-06-23 15:31',
+        title: '反馈页面现录截图乱码',
+        subtitle: '用户反馈记录页信息堆叠、字段重复、截图与 JSON 互相打断，管理员难以判断下一步该审核、补证还是部署。',
+        chips: [this.b('needs_human','red'), this.b('AI 分类：Bug','blue'), this.b('范围：Small','cyan'), this.b('决策：Review required','violet')],
+        decision: {
+          title: '需要人工审核候选实现', tag: '阻塞自动化',
+          copy: '已生成候选提交，自动化等待管理员审核效果；确认无误后将状态改为「待部署」。',
+          fields: [
+            { label: '处理要求', value: '审核候选提交 67cc8659，确认后设为 ready_for_deploy' },
+            { label: '已检查证据', value: '单元测试通过；E2E 受环境限制跳过 5 项' },
+            { label: '返回路径', value: '批准 → ready_for_deploy；不通过 → queued 或 closed' },
+          ],
+          primary: '批准并设为待部署', secondary: '退回排队', danger: '关闭',
+        },
+        publicInfo: [{label:'提交来源',value:'manual'},{label:'用户提交类型',value:'unclear'},{label:'负责人',value:'未分配'}],
+        problem: 'feedback 页面现录截图乱码，见附件图片。管理员需要先看下一步处理动作，再查看证据和原始 JSON。',
+        reply: 'Approved candidate is waiting for primary worktree overlap cleanup before merge.',
+        review: {
+          problem: '详情页把公开回复、AI 分类、候选实现、表单和 JSON 串成一个长页面，用户必须滚动寻找下一步。',
+          suggestion: '把「下一步动作」置顶；候选、设计、证据和原始数据分层展示。',
+          criteria: [
+            {n:'1', text:'管理员进入详情后 1 屏内看到状态、AI 决策和推荐动作。'},
+            {n:'2', text:'附件、录屏和 JSON 不打断核心处理表单。'},
+            {n:'3', text:'候选实现有明确的批准、退回、关闭路径。'},
+            {n:'4', text:'移动端按列表、详情、证据顺序纵向排列，无横向滚动。'},
+          ],
+          impact: 'workers/share-worker.js 的反馈页模板、详情渲染函数、结构化块渲染函数。',
+          plan: 'Worker 单测断言区块存在；浏览器检查桌面与移动端关键路径。',
+        },
+        form: { status:'needs_human', priority:'medium', assignee:'', publicNote:'Approved candidate is waiting for primary worktree overlap cleanup before merge.', internalNote:'tests/unit/feedback/share-worker-feedback-board.test.js and workers/share-worker.js. Previous verification passed eslint, focused vitest 25 tests.' },
+        evidence: {
+          fileName: 'image.png', fileMeta: '127.2 KB · PNG',
+          candidate: [
+            {label:'候选分支', value:'codex/feedback-feedback-ui-20260623-233050'},
+            {label:'变更提交', value:'67cc8659cde974723b0bc3858823bc10b3e9ed9b'},
+            {label:'变更文件', value:'src/features/feedback/FeedbackDialog.js, tests/unit/feedback/*, workers/share-worker.js'},
+          ],
+        },
+        timeline: [
+          {title:'admin 设置为 in_progress', note:'2026-06-23 21:51'},
+          {title:'AI 生成候选实现', note:'验证通过，等待人工审核'},
+          {title:'状态更新为 needs_human', note:'返回路径：ready_for_deploy'},
+        ],
+        raw: [
+          {name:'附件 JSON', body:'[\n  {\n    "name": "image.png",\n    "type": "image/png",\n    "size": 130216,\n    "dataUrl": "data:image/png;base64,..."\n  }\n]'},
+          {name:'上下文 JSON', body:'{\n  "app": "gantt-task-editor",\n  "locale": "zh-CN",\n  "url": "https://gantt-task-editor.pages.dev/",\n  "viewport": { "width": 2560, "height": 1271 }\n}'},
+          {name:'变更历史 JSON', body:'[\n  {\n    "at": "2026-06-23T15:21:51.803Z",\n    "actor": "admin",\n    "changes": { "status": ["open", "in_progress"] }\n  }\n]'},
+        ],
+      },
+      i2: {
+        listTitle: '导入后父子层级没有展开', status: this.b('排队中','amber'),
+        listDesc: 'Excel 导入后父任务折叠，用户找不到新任务，可能需要默认展开策略。',
+        listBadges: [this.b('优化','blue'), this.b('中优先级','amber'), this.b('录屏 42','cyan')],
+        key: 'feedback:1782220041991:33akzb2pm', created: '2026-06-22 10:08',
+        title: '导入后父子层级没有展开',
+        subtitle: '用户从 Excel 导入后父任务默认折叠，新建子任务被隐藏，怀疑是导入未触发展开。已自动排队等待复现。',
+        chips: [this.b('queued','amber'), this.b('AI 分类：优化','blue'), this.b('范围：Small','cyan'), this.b('决策：Auto retry','green')],
+        decision: {
+          title: '等待自动复现录屏', tag: '排队中',
+          copy: 'AI 已根据录屏定位到导入流程，正在排队跑复现脚本；无需人工介入即可继续。',
+          fields: [
+            { label: '处理要求', value: '等待复现脚本结果，确认是否补默认展开逻辑' },
+            { label: '已检查证据', value: '录屏 42 已解析，定位到 import → tree 折叠' },
+            { label: '返回路径', value: '复现成功 → in_progress；失败 → needs_human' },
+          ],
+          primary: '提升为进行中', secondary: '保持排队', danger: '关闭',
+        },
+        publicInfo: [{label:'提交来源',value:'recording'},{label:'用户提交类型',value:'bug'},{label:'负责人',value:'未分配'}],
+        problem: 'Excel 导入后看不到新任务，展开父任务才出现。希望导入后自动展开到新增层级。',
+        reply: '已收到，正在复现导入展开问题，复现后会跟进默认展开策略。',
+        review: {
+          problem: '导入流程未在完成后同步展开新建的父子层级，用户误以为导入失败。',
+          suggestion: '导入完成后对受影响父任务执行一次展开，并在提示中说明新增数量。',
+          criteria: [
+            {n:'1', text:'导入完成后新建父任务默认展开。'},
+            {n:'2', text:'提示文案显示新增任务数量。'},
+            {n:'3', text:'大批量导入时展开不阻塞主线程。'},
+          ],
+          impact: 'src/features/share/ImportDialog.js、gantt parent-rollup 渲染。',
+          plan: '导入单测断言展开状态；浏览器跑 200 行导入压测。',
+        },
+        form: { status:'queued', priority:'medium', assignee:'', publicNote:'已收到，正在复现导入展开问题。', internalNote:'录屏 42 定位到 import 折叠，待跑复现脚本。' },
+        evidence: {
+          fileName: 'screen-42.mp4', fileMeta: '3.4 MB · 录屏 00:48',
+          candidate: [
+            {label:'候选分支', value:'—（等待复现后生成）'},
+            {label:'相关模块', value:'src/features/share/ImportDialog.js'},
+            {label:'复现脚本', value:'tests/e2e/import-expand.spec.js'},
+          ],
+        },
+        timeline: [
+          {title:'用户提交录屏', note:'2026-06-22 10:08'},
+          {title:'AI 解析录屏并排队', note:'定位 import → tree 折叠'},
+        ],
+        raw: [
+          {name:'附件 JSON', body:'[\n  {\n    "name": "screen-42.mp4",\n    "type": "video/mp4",\n    "size": 3567104\n  }\n]'},
+          {name:'上下文 JSON', body:'{\n  "app": "gantt-task-editor",\n  "locale": "zh-CN",\n  "route": "/import"\n}'},
+        ],
+      },
+      i3: {
+        listTitle: '希望支持批量设置任务负责人', status: this.b('需人工','red'),
+        listDesc: '需求涉及批量编辑、字段配置和撤销恢复，需要先确认产品方案。',
+        listBadges: [this.b('需求','violet'), this.b('大范围','green'), this.b('设计确认','amber')],
+        key: 'feedback:1782211002554:91qttx4l0', created: '2026-06-21 16:42',
+        title: '希望支持批量设置任务负责人',
+        subtitle: '多名用户希望选中多行后一次性设置负责人。改动涉及批量编辑、字段联动和撤销栈，需产品先确认方案再排期。',
+        chips: [this.b('needs_human','red'), this.b('AI 分类：需求','violet'), this.b('范围：Large','green'), this.b('决策：Design required','amber')],
+        decision: {
+          title: '需要产品确认方案', tag: '待设计',
+          copy: '需求范围较大、影响撤销恢复逻辑，AI 不自动生成实现，等待产品与设计确认交互后再排期。',
+          fields: [
+            { label: '处理要求', value: '确认批量编辑入口与撤销策略，输出交互稿' },
+            { label: '已检查证据', value: '3 条相似反馈聚合，覆盖 2 个版本' },
+            { label: '返回路径', value: '方案确认 → queued 排期；暂缓 → closed' },
+          ],
+          primary: '标记为已确认方案', secondary: '转待排期', danger: '暂不支持',
+        },
+        publicInfo: [{label:'提交来源',value:'manual'},{label:'用户提交类型',value:'feature'},{label:'负责人',value:'产品组'}],
+        problem: '每次只能逐行改负责人，调整排班时很费时。希望多选后批量指定，并能撤销。',
+        reply: '需求已记录并聚合，正在评估批量编辑方案，确认后会反馈排期。',
+        review: {
+          problem: '现有 inline-edit 仅支持单行，缺批量入口；批量改动需要可撤销。',
+          suggestion: '在选区工具条增加「设置负责人」，复用 batchEdit + 撤销栈。',
+          criteria: [
+            {n:'1', text:'多选后工具条出现批量设置负责人入口。'},
+            {n:'2', text:'批量改动一次进入撤销栈，可整体回退。'},
+            {n:'3', text:'负责人输入支持已有成员联想。'},
+          ],
+          impact: 'src/features/selection/batchEdit.js、gantt inline-edit、撤销栈。',
+          plan: '批量编辑单测覆盖撤销；交互稿走查桌面与移动端。',
+        },
+        form: { status:'needs_human', priority:'high', assignee:'产品组', publicNote:'需求已记录并聚合，正在评估批量编辑方案。', internalNote:'聚合 3 条相似反馈，等待交互稿。' },
+        evidence: {
+          fileName: '—', fileMeta: '无附件 · 文字需求',
+          candidate: [
+            {label:'相似反馈', value:'已聚合 3 条（feedback:...91q / ...77c / ...4b2）'},
+            {label:'相关模块', value:'src/features/selection/batchEdit.js'},
+            {label:'交互稿', value:'待产品输出'},
+          ],
+        },
+        timeline: [
+          {title:'用户提交需求', note:'2026-06-21 16:42'},
+          {title:'AI 聚合相似反馈', note:'判定 Large，转 needs_human'},
+        ],
+        raw: [
+          {name:'上下文 JSON', body:'{\n  "app": "gantt-task-editor",\n  "locale": "zh-CN",\n  "aggregated": 3\n}'},
+        ],
+      },
+      i4: {
+        listTitle: 'AI 生成任务后日期偏移一天', status: this.b('测试中','amber'),
+        listDesc: '复现于自定义工作日历项目，正在跑 calendar-worktime 回归。',
+        listBadges: [this.b('Bug','blue'), this.b('小范围','cyan'), this.b('自动修复','green')],
+        key: 'feedback:1782199881337:5ggz0wp7c', created: '2026-06-20 09:15',
+        title: 'AI 生成任务后日期偏移一天',
+        subtitle: '在自定义工作日历项目里，AI 生成任务的开始日期比预期晚一天。候选修复已提交，正在跑回归测试。',
+        chips: [this.b('testing','amber'), this.b('AI 分类：Bug','blue'), this.b('范围：Small','cyan'), this.b('决策：Auto fix','green')],
+        decision: {
+          title: '候选修复回归测试中', tag: '测试中',
+          copy: 'AI 已提交时区/工作日历修复，正在跑 calendar-worktime 回归；通过后自动进入待部署，无需人工。',
+          fields: [
+            { label: '处理要求', value: '等待回归结果，全绿则自动设为 ready_for_deploy' },
+            { label: '已检查证据', value: '已新增 3 条工作日历边界用例' },
+            { label: '返回路径', value: '通过 → ready_for_deploy；失败 → needs_human' },
+          ],
+          primary: '查看回归结果', secondary: '退回排队', danger: '关闭',
+        },
+        publicInfo: [{label:'提交来源',value:'manual'},{label:'用户提交类型',value:'bug'},{label:'负责人',value:'未分配'}],
+        problem: 'AI 生成任务后开始日期晚一天，只在自定义工作日历项目出现，普通项目正常。',
+        reply: '已定位为工作日历边界换算问题，修复正在回归测试中。',
+        review: {
+          problem: 'AI 生成时按本地时区取日期，遇自定义非工作日时多顺延一天。',
+          suggestion: '生成日期统一走 calendar-worktime 的工作日换算，补边界用例。',
+          criteria: [
+            {n:'1', text:'自定义工作日历项目生成日期与预期一致。'},
+            {n:'2', text:'普通项目行为不回退。'},
+            {n:'3', text:'新增工作日历边界回归用例。'},
+          ],
+          impact: 'src/features/gantt/calendar-worktime.js、AI new-task-payload。',
+          plan: 'vitest 跑 calendar-worktime 全量；浏览器抽查两类项目。',
+        },
+        form: { status:'testing', priority:'medium', assignee:'', publicNote:'已定位为工作日历边界换算问题，修复回归中。', internalNote:'候选修复 a91f2c0，新增 3 条边界用例。' },
+        evidence: {
+          fileName: 'repro.json', fileMeta: '4.1 KB · 复现数据',
+          candidate: [
+            {label:'候选分支', value:'codex/calendar-worktime-offset-20260620'},
+            {label:'变更提交', value:'a91f2c0d7e1148b2c0fe9931ab44c7'},
+            {label:'变更文件', value:'src/features/gantt/calendar-worktime.js, tests/unit/calendar/*'},
+          ],
+        },
+        timeline: [
+          {title:'用户提交复现数据', note:'2026-06-20 09:15'},
+          {title:'AI 定位并提交修复', note:'工作日历边界换算'},
+          {title:'状态更新为 testing', note:'回归测试运行中'},
+        ],
+        raw: [
+          {name:'附件 JSON', body:'[\n  { "name": "repro.json", "type": "application/json", "size": 4198 }\n]'},
+          {name:'变更历史 JSON', body:'[\n  {\n    "at": "2026-06-20T01:31:02.114Z",\n    "actor": "ai",\n    "changes": { "status": ["open", "testing"] }\n  }\n]'},
+        ],
+      },
+    };
+  }
+
+  renderVals() {
+    const accent = this.props.accent || '#2f6bff';
+    const density = this.props.density || 'compact';
+    const D = this.data();
+    const order = ['i1','i2','i3','i4'];
+    const sel = this.state.selectedId;
+    const d = D[sel] || D.i1;
+
+    const filterDefs = [
+      { key:'human', label:'需人工' }, { key:'open', label:'待处理' },
+      { key:'deploy', label:'待部署' }, { key:'all', label:'全部' },
+    ];
+    const filters = filterDefs.map(f => {
+      const active = this.state.filter === f.key;
+      return { label: f.label, onClick: () => this.setState({ filter: f.key }),
+        style: active
+          ? 'background:var(--accent-soft,#eef3ff);color:var(--accent,#2f6bff);border-color:#cbd9fb'
+          : 'background:#fff;color:#5a6577;border-color:#e3e7ee' };
+    });
+
+    const tabDefs = [
+      { key:'evidence', label:'证据' }, { key:'history', label:'历史' }, { key:'raw', label:'原始数据' },
+    ];
+    const tabs = tabDefs.map(t => {
+      const active = this.state.tab === t.key;
+      return { label: t.label, onClick: () => this.setState({ tab: t.key }),
+        style: active
+          ? 'background:var(--accent-soft,#eef3ff);color:var(--accent,#2f6bff);border-color:#cbd9fb'
+          : 'background:transparent;color:#6b7689;border-color:transparent' };
+    });
+
+    const issues = order.map(id => {
+      const x = D[id];
+      const isSel = id === sel;
+      return {
+        title: x.listTitle, desc: x.listDesc, statusBadge: x.status, badges: x.listBadges,
+        onSelect: () => this.setState({ selectedId: id }),
+        itemStyle: isSel
+          ? 'background:linear-gradient(90deg,var(--accent-soft,#eef3ff),#fff 70%);box-shadow:inset 3px 0 0 var(--accent,#2f6bff)'
+          : 'background:#fff',
+      };
+    });
+
+    return {
+      accent, accentSoft: this.hexSoft(accent),
+      pad: density === 'comfortable' ? '18px' : '13px',
+      gap: density === 'comfortable' ? '16px' : '12px',
+      filterTitle: (filterDefs.find(f => f.key === this.state.filter) || {}).label || '需人工处理',
+      stats: [
+        { label:'待处理', value:'14', note:'Open / Queued', color:'#19202e' },
+        { label:'需人工', value:'3', note:'设计确认或候选审核', color:'#c0392b' },
+        { label:'待部署', value:'1', note:'Approved', color:'#1f8a52' },
+        { label:'本周解决', value:'8', note:'Resolved / Closed', color:'#19202e' },
+      ],
+      filters, tabs, issues, d,
+      isEvidence: this.state.tab === 'evidence',
+      isHistory: this.state.tab === 'history',
+      isRaw: this.state.tab === 'raw',
+      noop: () => {},
+    };
+  }
+
+  hexSoft(hex) {
+    const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
+    if (!m) return '#eef3ff';
+    const n = parseInt(m[1], 16);
+    const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+    const mix = (c) => Math.round(c + (255 - c) * 0.9);
+    return `rgb(${mix(r)},${mix(g)},${mix(b)})`;
+  }
+}
+</script>
+</body>
+</html>
