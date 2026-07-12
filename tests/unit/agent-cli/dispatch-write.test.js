@@ -227,6 +227,11 @@ describe('agent dispatch write commands', () => {
             error: {
                 code: 'BAD_ARGS',
                 message: 'Commit rejected',
+                nextAction: {
+                    command: 'help',
+                    args: { command: 'task.create' },
+                    reason: 'Read the command parameter contract.',
+                },
             },
             rev: 0,
         });
@@ -578,6 +583,11 @@ describe('agent dispatch write commands', () => {
                 code: 'BAD_ARGS',
                 message: 'Unknown argument: unexpected',
                 hint: 'Remove --unexpected.',
+                nextAction: {
+                    command: 'help',
+                    args: { command: 'task.create' },
+                    reason: 'Read the command parameter contract.',
+                },
             },
             rev: 0,
         });

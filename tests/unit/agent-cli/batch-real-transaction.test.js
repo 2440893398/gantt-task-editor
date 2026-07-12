@@ -133,6 +133,8 @@ describe('agent batch with real transaction rollback', () => {
             error: {
                 code: 'EXEC_ERROR',
                 message: 'step two failed',
+                stepIndex: 1,
+                op: 'task.boom',
             },
             rev: 0,
         });

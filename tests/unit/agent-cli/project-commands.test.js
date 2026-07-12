@@ -196,6 +196,11 @@ describe('agent project hierarchy, link, and schedule commands', () => {
                 code: 'CYCLE',
                 message: 'Dependency would create a cycle.',
                 hint: 'Remove or reverse an existing dependency, then retry link.add.',
+                nextAction: {
+                    command: 'link.list',
+                    args: { taskId: 3 },
+                    reason: 'Inspect existing dependency links.',
+                },
             },
             rev: 0,
         });
@@ -263,6 +268,11 @@ describe('agent project hierarchy, link, and schedule commands', () => {
                 code: 'BAD_ARGS',
                 message: 'days must be at least 1',
                 hint: 'Use --days 1 or greater.',
+                nextAction: {
+                    command: 'help',
+                    args: { command: 'schedule.move' },
+                    reason: 'Read the command parameter contract.',
+                },
             },
             rev: 0,
         });
@@ -272,6 +282,11 @@ describe('agent project hierarchy, link, and schedule commands', () => {
                 code: 'BAD_ARGS',
                 message: 'days must be at least 1',
                 hint: 'Use --days 1 or greater.',
+                nextAction: {
+                    command: 'help',
+                    args: { command: 'schedule.move' },
+                    reason: 'Read the command parameter contract.',
+                },
             },
             rev: 0,
         });
@@ -294,6 +309,11 @@ describe('agent project hierarchy, link, and schedule commands', () => {
                 code: 'BAD_ARGS',
                 message: 'Task has no schedule dates to move.',
                 hint: 'Set start_date or end_date before using schedule.move.',
+                nextAction: {
+                    command: 'help',
+                    args: { command: 'schedule.move' },
+                    reason: 'Read the command parameter contract.',
+                },
             },
             rev: 0,
         });

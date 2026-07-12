@@ -204,12 +204,14 @@ describe('agent batch dispatch', () => {
             { projectId, gantt: {}, signal: controller.signal }
         );
 
-        expect(result).toEqual({
+        expect(result).toMatchObject({
             ok: false,
             error: {
                 code: 'CANCELLED',
                 message: 'Operation cancelled.',
                 hint: 'The operation was cancelled before it reached a final commit.',
+                stepIndex: 0,
+                op: 'task.create',
             },
             rev: 0,
         });

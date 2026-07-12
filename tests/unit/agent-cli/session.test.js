@@ -136,6 +136,11 @@ describe('session commands', () => {
                 code: 'BAD_ARGS',
                 message: 'Dry-run is not supported for session.undo.',
                 hint: 'Run session.undo without dryRun.',
+                nextAction: {
+                    command: 'help',
+                    args: { command: 'session.undo' },
+                    reason: 'Read the command parameter contract.',
+                },
             },
             rev: 0,
         });

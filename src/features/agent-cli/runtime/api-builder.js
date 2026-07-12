@@ -7,6 +7,7 @@ import { batch, dispatch } from './dispatch.js';
 import { parseExec } from './exec.js';
 import { buildHelp, buildManifest } from './manifest.js';
 import { createOperationManager } from './operations.js';
+import { withErrorNavigation } from './result.js';
 
 function resolveProjectId(context = {}) {
     if (context.projectId) {
@@ -149,10 +150,16 @@ export function buildApi(options = {}) {
         const parsed = parseExec(input, { getCommand, getCommands });
 
         if (!parsed.ok) {
-            return {
-                ...parsed,
-                rev: getProjectRev(resolveProjectId(context)),
-            };
+            const command = String(input || '')
+                .trim()
+                .split(/\s+/, 1)[0];
+            return withErrorNavigation(
+                {
+                    ...parsed,
+                    rev: getProjectRev(resolveProjectId(context)),
+                },
+                { command, getCommand }
+            );
         }
 
         return runCommand(parsed.name, parsed.args, {

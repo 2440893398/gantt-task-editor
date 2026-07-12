@@ -169,6 +169,11 @@ describe('agent api builder', () => {
             error: {
                 code: 'UNKNOWN_COMMAND',
                 message: 'Unknown command: task.missing',
+                nextAction: {
+                    command: 'help',
+                    args: {},
+                    reason: 'List available commands.',
+                },
             },
             rev: 1,
         });

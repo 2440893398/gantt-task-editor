@@ -74,7 +74,14 @@ describe('agent form discovery commands', () => {
         });
         expect(unsupported).toMatchObject({
             ok: false,
-            error: { code: 'CONSTRAINT' },
+            error: {
+                code: 'CONSTRAINT',
+                field: 'assignee',
+                nextAction: {
+                    command: 'form.field',
+                    args: { form: 'task', mode: 'create', field: 'assignee' },
+                },
+            },
         });
     });
 

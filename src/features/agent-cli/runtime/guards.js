@@ -64,7 +64,7 @@ function coerceValue(name, schema, value) {
 
 function validateValue(name, schema, value) {
     if (schema?.enum && !schema.enum.includes(value)) {
-        return fail('ENUM', `Invalid value for ${name}: ${value}`, {
+        return fail('BAD_ARGS', `Invalid value for ${name}: ${value}`, {
             hint: `Use one of: ${schema.enum.join(', ')}.`,
             allowed: schema.enum,
         });

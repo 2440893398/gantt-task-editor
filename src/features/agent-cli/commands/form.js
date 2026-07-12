@@ -49,7 +49,7 @@ function getField(schema, key) {
 }
 
 function fieldNotFound(key) {
-    return fail('INVALID_FIELD', `Unknown task field: ${key}`);
+    return fail('INVALID_FIELD', `Unknown task field: ${key}`, { field: key });
 }
 
 export function registerFormCommands() {
@@ -106,7 +106,9 @@ export function registerFormCommands() {
                 const field = getField(getSchema(args, context), args.field);
                 if (!field) return fieldNotFound(args.field);
                 if (!field.optionsAvailable) {
-                    return fail('CONSTRAINT', `Field has no options: ${args.field}`);
+                    return fail('CONSTRAINT', `Field has no options: ${args.field}`, {
+                        field: args.field,
+                    });
                 }
 
                 const query = String(args.query || '').toLowerCase();

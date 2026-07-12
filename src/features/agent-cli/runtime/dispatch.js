@@ -16,7 +16,7 @@ import {
 } from '../../gantt/history/undoManager.js';
 import { validateArgs } from './guards.js';
 import { recordCommandLog } from './log.js';
-import { fail, ok } from './result.js';
+import { fail, ok, withErrorNavigation } from './result.js';
 
 class CommandResultError extends Error {
     constructor(result) {
@@ -501,10 +501,11 @@ async function dispatchUnlocked(name, args = {}, context = {}) {
     }
 }
 
-export function dispatch(name, args = {}, context = {}) {
+export async function dispatch(name, args = {}, context = {}) {
     const command = getCommand(name);
+    let result;
     if (command?.mutating && command.execution !== 'direct') {
-        return runProjectMutationExclusive(() => {
+        result = await runProjectMutationExclusive(() => {
             const activeProjectId = state.currentProjectId || DEFAULT_PROJECT_ID;
             if (context._dynamicProjectId && context.projectId !== activeProjectId) {
                 return fail('CONFLICT', 'Active project changed while the command was queued.', {
@@ -514,9 +515,15 @@ export function dispatch(name, args = {}, context = {}) {
             }
             return dispatchUnlocked(name, args, context);
         });
+    } else {
+        result = await dispatchUnlocked(name, args, context);
     }
 
-    return dispatchUnlocked(name, args, context);
+    return withErrorNavigation(result, {
+        command: name,
+        args,
+        getCommand: context.getCommand || getCommand,
+    });
 }
 
 const REF_PREFIX = '$';
@@ -593,6 +600,18 @@ function getStepCommand(step) {
     return { ok: true, command };
 }
 
+function withBatchStep(result, stepIndex, op) {
+    if (result?.ok !== false || !result.error) return result;
+    return {
+        ...result,
+        error: {
+            ...result.error,
+            stepIndex,
+            op,
+        },
+    };
+}
+
 /**
  * Recursively determine whether a value contains at least one `$ref` token.
  */
@@ -665,7 +684,10 @@ async function preflightBatch(steps, ctx) {
         const step = steps[index];
         const resolved = getStepCommand(step);
         if (!resolved.ok) {
-            return resolved;
+            return {
+                ...resolved,
+                result: withBatchStep(resolved.result, index, step?.op),
+            };
         }
 
         const { command } = resolved;
@@ -681,7 +703,14 @@ async function preflightBatch(steps, ctx) {
         try {
             assertRefsDeclared(stepArgs, command.params, declaredAliases);
         } catch (error) {
-            return { ok: false, result: getCommitFailureResult(error, undefined) };
+            return {
+                ok: false,
+                result: withBatchStep(
+                    getCommitFailureResult(error, undefined),
+                    index,
+                    command.name
+                ),
+            };
         }
 
         if (containsRef(stepArgs, command.params)) {
@@ -692,7 +721,10 @@ async function preflightBatch(steps, ctx) {
         } else {
             const validated = validateArgs(command.params, stepArgs);
             if (!validated.ok) {
-                return { ok: false, result: validated };
+                return {
+                    ok: false,
+                    result: withBatchStep(validated, index, command.name),
+                };
             }
 
             let plan;
@@ -701,12 +733,19 @@ async function preflightBatch(steps, ctx) {
             } catch (error) {
                 return {
                     ok: false,
-                    result: fail('EXEC_ERROR', error.message || `Plan failed: ${command.name}`),
+                    result: withBatchStep(
+                        fail('EXEC_ERROR', error.message || `Plan failed: ${command.name}`),
+                        index,
+                        command.name
+                    ),
                 };
             }
 
             if (plan?.ok === false) {
-                return { ok: false, result: plan };
+                return {
+                    ok: false,
+                    result: withBatchStep(plan, index, command.name),
+                };
             }
 
             diffs.push(plan?.diff || createEmptyDiff());
@@ -793,6 +832,7 @@ async function batchUnlocked(steps = [], context = {}) {
             return result;
         }
 
+        let activeStep = null;
         const txResult = await runGanttTransaction({
             gantt: ctx.gantt,
             history: {
@@ -810,6 +850,7 @@ async function batchUnlocked(steps = [], context = {}) {
 
                     for (let index = 0; index < steps.length; index += 1) {
                         const step = steps[index];
+                        activeStep = { index, op: step.op };
                         throwIfCancelled(ctx, currentRev);
                         await yieldForCancellation(ctx);
                         throwIfCancelled(ctx, currentRev);
@@ -874,6 +915,8 @@ async function batchUnlocked(steps = [], context = {}) {
                         }
                     }
 
+                    activeStep = null;
+
                     if (changed) {
                         throwIfCancelled(ctx, currentRev);
                         reportProgress(ctx, {
@@ -898,11 +941,12 @@ async function batchUnlocked(steps = [], context = {}) {
         });
 
         if (!txResult.ok) {
-            result =
+            const failure =
                 getCommitFailureResult(txResult.error, currentRev) ||
                 fail('EXEC_ERROR', txResult.error?.message || 'Batch failed.', {
                     rev: currentRev,
                 });
+            result = activeStep ? withBatchStep(failure, activeStep.index, activeStep.op) : failure;
             return result;
         }
 
@@ -935,8 +979,8 @@ async function batchUnlocked(steps = [], context = {}) {
     }
 }
 
-export function batch(steps = [], context = {}) {
-    return runProjectMutationExclusive(() => {
+export async function batch(steps = [], context = {}) {
+    const result = await runProjectMutationExclusive(() => {
         const activeProjectId = state.currentProjectId || DEFAULT_PROJECT_ID;
         if (context._dynamicProjectId && context.projectId !== activeProjectId) {
             return fail('CONFLICT', 'Active project changed while the batch was queued.', {
@@ -945,5 +989,14 @@ export function batch(steps = [], context = {}) {
             });
         }
         return batchUnlocked(steps, context);
+    });
+
+    const stepIndex = result?.error?.stepIndex;
+    const command = result?.error?.op || 'batch';
+    const args = Number.isInteger(stepIndex) ? steps[stepIndex]?.args || {} : {};
+    return withErrorNavigation(result, {
+        command,
+        args,
+        getCommand: context.getCommand || getCommand,
     });
 }

@@ -233,6 +233,11 @@ describe('read-only agent commands', () => {
             error: {
                 code: 'NOT_FOUND',
                 message: 'Task not found: 999',
+                nextAction: {
+                    command: 'task.list',
+                    args: {},
+                    reason: 'List current tasks.',
+                },
             },
             rev: before,
         });
@@ -259,6 +264,11 @@ describe('read-only agent commands', () => {
             error: {
                 code: 'NOT_FOUND',
                 message: 'Task not found: 999',
+                nextAction: {
+                    command: 'task.list',
+                    args: {},
+                    reason: 'List current tasks.',
+                },
             },
             rev: before,
         });

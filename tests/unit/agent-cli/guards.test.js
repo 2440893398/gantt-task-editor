@@ -37,11 +37,11 @@ describe('agent argument guards', () => {
         });
     });
 
-    it('returns ENUM with allowed values for enum mismatches', () => {
+    it('returns BAD_ARGS with allowed values for enum mismatches', () => {
         expect(validateArgs(schema, { name: 'Design', priority: 'urgent' })).toEqual({
             ok: false,
             error: {
-                code: 'ENUM',
+                code: 'BAD_ARGS',
                 message: 'Invalid value for priority: urgent',
                 hint: 'Use one of: low, medium, high.',
                 allowed: ['low', 'medium', 'high'],

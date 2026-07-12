@@ -63,14 +63,22 @@ function registerWriteCommand({ commit = vi.fn(() => ({ id: 1 })) } = {}) {
     return { plan, commit };
 }
 
-const READ_ONLY_RESULT = {
-    ok: false,
-    error: {
-        code: 'CONSTRAINT',
-        message: 'Agent command layer is read-only.',
-        hint: 'Use read commands only or enable write mode in app configuration.',
-    },
-};
+function readOnlyResult(command) {
+    return {
+        ok: false,
+        error: {
+            code: 'CONSTRAINT',
+            message: 'Agent command layer is read-only.',
+            hint: 'Use read commands only or enable write mode in app configuration.',
+            nextAction: {
+                command: 'help',
+                args: { command },
+                reason: 'Read the command constraints and discovery paths.',
+            },
+        },
+        rev: 0,
+    };
+}
 
 describe('agent command security controls', () => {
     beforeEach(() => {
@@ -150,7 +158,7 @@ describe('agent command security controls', () => {
                 { projectId, gantt: {}, readOnly: true }
             );
 
-            expect(result).toEqual({ ...READ_ONLY_RESULT, rev: 0 });
+            expect(result).toEqual(readOnlyResult('task.create'));
             expect(command.plan).not.toHaveBeenCalled();
             expect(command.commit).not.toHaveBeenCalled();
             expect(runGanttTransaction).not.toHaveBeenCalled();
@@ -176,7 +184,7 @@ describe('agent command security controls', () => {
                 readOnly: true,
             });
 
-            expect(result).toEqual({ ...READ_ONLY_RESULT, rev: 0 });
+            expect(result).toEqual(readOnlyResult('batch'));
             expect(command.plan).not.toHaveBeenCalled();
             expect(command.commit).not.toHaveBeenCalled();
             expect(runGanttTransaction).not.toHaveBeenCalled();
@@ -202,7 +210,7 @@ describe('agent command security controls', () => {
             expect(typeof globalThis.app.task.create).toBe('function');
             const result = await globalThis.app.task.create({ name: 'Created' });
 
-            expect(result).toEqual({ ...READ_ONLY_RESULT, rev: 0 });
+            expect(result).toEqual(readOnlyResult('task.create'));
         });
 
         it('rejects mutating commands issued through app.exec in read-only mode', async () => {
@@ -222,7 +230,7 @@ describe('agent command security controls', () => {
 
             const result = await globalThis.app.exec('task.create --name Created');
 
-            expect(result).toEqual({ ...READ_ONLY_RESULT, rev: 0 });
+            expect(result).toEqual(readOnlyResult('task.create'));
             expect(command.plan).not.toHaveBeenCalled();
             expect(command.commit).not.toHaveBeenCalled();
             expect(runGanttTransaction).not.toHaveBeenCalled();
@@ -252,7 +260,7 @@ describe('agent command security controls', () => {
                 readOnly: false,
             });
 
-            expect(result).toEqual({ ...READ_ONLY_RESULT, rev: 0 });
+            expect(result).toEqual(readOnlyResult('task.create'));
             expect(command.plan).not.toHaveBeenCalled();
             expect(command.commit).not.toHaveBeenCalled();
             expect(runGanttTransaction).not.toHaveBeenCalled();

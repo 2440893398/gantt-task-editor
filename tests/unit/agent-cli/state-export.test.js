@@ -159,7 +159,7 @@ describe('state.export command', () => {
         const result = await app.state.export({ format: 'xml' });
 
         expect(result.ok).toBe(false);
-        expect(result.error.code).toBe('ENUM');
+        expect(result.error.code).toBe('BAD_ARGS');
         expect(result.error.allowed).toEqual(['json', 'csv', 'md']);
     });
 });
