@@ -29,6 +29,7 @@ import {
     DEFAULT_PROJECT_ID,
 } from './storage.js';
 import { getAllProjects, createProject } from '../features/projects/manager.js';
+import { runProjectMutationExclusive } from './project-mutation-gate.js';
 
 const DEFAULT_PROJECT_ID_KEY = 'gantt_current_project_id';
 
@@ -68,6 +69,7 @@ export const state = {
     // 项目管理
     currentProjectId: null,
     projects: [],
+    isProjectSwitching: false,
     // System field settings
     systemFieldSettings: {
         enabled: {
@@ -189,17 +191,17 @@ export async function restoreStateFromCache() {
  * 从缓存恢复甘特图数据
  * @returns {Promise<Object|null>} 甘特图数据 { data: [], links: [] } 或 null
  */
-export async function restoreGanttDataFromCache() {
+export async function restoreGanttDataFromCache(options = {}) {
     try {
-        const currentProjectId = state.currentProjectId ?? DEFAULT_PROJECT_ID;
-        const scope = projectScope(currentProjectId);
-        const hasData = await scope.hasCachedData();
+        const projectId = options.projectId ?? state.currentProjectId ?? DEFAULT_PROJECT_ID;
+        const scope = projectScope(projectId);
+        const hasData = await scope.hasCachedData({ strict: options.strict });
         if (!hasData) {
             console.log('[Store] No cached gantt data found');
             return null;
         }
 
-        const ganttData = await scope.getGanttData();
+        const ganttData = await scope.getGanttData({ strict: options.strict });
         if (ganttData?.data?.length > 0) {
             console.log('[Store] Restored gantt data from cache:', ganttData.data.length, 'tasks');
             return ganttData;
@@ -207,6 +209,9 @@ export async function restoreGanttDataFromCache() {
         return null;
     } catch (e) {
         console.error('[Store] Failed to restore gantt data from cache:', e);
+        if (options.strict) {
+            throw e;
+        }
         return null;
     }
 }
@@ -281,34 +286,71 @@ export async function refreshProjects() {
     }
 }
 
-/**
- * 切换当前项目
- * @param {string} projectId
- * @returns {Promise<void>}
- */
-export async function switchProject(projectId) {
-    if (!projectId || projectId === state.currentProjectId) {
-        return;
+let failedProjectReloadId = null;
+
+async function performProjectSwitch(projectId) {
+    if (!projectId) {
+        return { projectId: state.currentProjectId, loaded: false };
     }
 
     if (!state.projects.some((project) => project.id === projectId)) {
         console.warn('[Store] Ignored switch to unknown project:', projectId);
-        return;
+        return { projectId: state.currentProjectId, loaded: false };
     }
 
+    const isRetry = projectId === state.currentProjectId && failedProjectReloadId === projectId;
+    if (projectId === state.currentProjectId && !isRetry) {
+        return { projectId, loaded: true, changed: false };
+    }
+
+    state.isProjectSwitching = true;
     try {
-        if (typeof gantt !== 'undefined' && state.currentProjectId) {
+        if (!isRetry && typeof gantt !== 'undefined' && state.currentProjectId) {
             const currentData = gantt.serialize();
             await projectScope(state.currentProjectId).saveGanttData(currentData);
         }
 
-        state.currentProjectId = projectId;
-        persistProjectId(projectId);
-        document.dispatchEvent(new CustomEvent('projectSwitched', { detail: { projectId } }));
+        if (!isRetry) {
+            state.currentProjectId = projectId;
+            persistProjectId(projectId);
+        }
+
+        // Clear the previous project's in-memory tasks before any async reload
+        // work can autosave them under the newly active project id.
+        if (typeof gantt !== 'undefined' && typeof gantt.clearAll === 'function') {
+            gantt.clearAll();
+        }
+
+        const pendingReloads = [];
+        document.dispatchEvent(
+            new CustomEvent('projectSwitched', {
+                detail: {
+                    projectId,
+                    waitUntil(promise) {
+                        pendingReloads.push(Promise.resolve(promise));
+                    },
+                },
+            })
+        );
+        await Promise.all(pendingReloads);
+        failedProjectReloadId = null;
+        return { projectId, loaded: true, changed: !isRetry };
     } catch (e) {
+        failedProjectReloadId = projectId;
         console.error('[Store] Failed to switch project:', e);
         throw e;
+    } finally {
+        state.isProjectSwitching = false;
     }
+}
+
+/**
+ * 切换当前项目
+ * @param {string} projectId
+ * @returns {Promise<{projectId: string|null, loaded: boolean, changed?: boolean}>}
+ */
+export function switchProject(projectId) {
+    return runProjectMutationExclusive(() => performProjectSwitch(projectId));
 }
 
 /**

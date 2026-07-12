@@ -17,7 +17,7 @@ describe('main autosave cloud sync scheduling', () => {
     it('skips cloud sync for exactly one marked autosave', async () => {
         vi.useFakeTimers();
 
-        const state = { currentProjectId: 'p1' };
+        const state = { currentProjectId: 'p1', isProjectSwitching: false };
         const persistGanttData = vi.fn();
         const scheduleCloudSync = vi.fn();
         const handlers = {};
@@ -171,19 +171,18 @@ describe('main autosave cloud sync scheduling', () => {
 
         state.currentProjectId = 'project-a';
         handlers.onAfterTaskUpdate();
+        state.isProjectSwitching = true;
         state.currentProjectId = 'project-b';
         await vi.advanceTimersByTimeAsync(1000);
 
-        expect(persistGanttData).toHaveBeenCalledTimes(3);
-        expect(persistGanttData).toHaveBeenNthCalledWith(3, { projectId: 'project-b' });
-        expect(scheduleCloudSync).toHaveBeenCalledTimes(2);
-        expect(scheduleCloudSync).toHaveBeenLastCalledWith('project-b');
+        expect(persistGanttData).toHaveBeenCalledTimes(2);
+        expect(scheduleCloudSync).toHaveBeenCalledTimes(1);
     }, 15000);
 
     it('suppresses global add and delete undo snapshots during command undo scope', async () => {
         vi.useFakeTimers();
 
-        const state = { currentProjectId: 'p1' };
+        const state = { currentProjectId: 'p1', isProjectSwitching: false };
         const persistGanttData = vi.fn();
         const scheduleCloudSync = vi.fn();
         const handlers = {};

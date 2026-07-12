@@ -525,7 +525,7 @@ export function projectScope(projectId = DEFAULT_PROJECT_ID) {
             }
         },
 
-        async getGanttData() {
+        async getGanttData(options = {}) {
             try {
                 const [tasks, links] = await Promise.all([
                     db.tasks.where('project_id').equals(scopedProjectId).toArray(),
@@ -543,16 +543,22 @@ export function projectScope(projectId = DEFAULT_PROJECT_ID) {
                 return { data: decodedTasks, links: decodedLinks };
             } catch (e) {
                 console.error('[Storage] Failed to load gantt data:', e);
+                if (options.strict) {
+                    throw e;
+                }
                 return { data: [], links: [] };
             }
         },
 
-        async hasCachedData() {
+        async hasCachedData(options = {}) {
             try {
                 const count = await db.tasks.where('project_id').equals(scopedProjectId).count();
                 return count > 0;
             } catch (e) {
                 console.error('[Storage] Failed to check cached data:', e);
+                if (options.strict) {
+                    throw e;
+                }
                 return false;
             }
         },

@@ -59,6 +59,9 @@ temp/
 .*.swo
 .worktrees/
 
+# Vite / Vitest transient config artifacts
+*.timestamp-*.mjs
+
 # Documentation
 docs/tmp/
 

@@ -69,11 +69,158 @@ describe('store project management', () => {
         expect(dispatchSpy).toHaveBeenCalledWith(
             expect.objectContaining({
                 type: 'projectSwitched',
-                detail: { projectId: target.id },
+                detail: expect.objectContaining({ projectId: target.id }),
             })
         );
 
         dispatchSpy.mockRestore();
+    });
+
+    it('switchProject waits for projectSwitched listeners to finish reloading', async () => {
+        const current = await createProject({ name: 'Current' });
+        const target = await createProject({ name: 'Target' });
+        state.currentProjectId = current.id;
+        state.projects = [current, target];
+
+        let finishReload;
+        const reload = new Promise((resolve) => {
+            finishReload = resolve;
+        });
+        const listener = (event) => event.detail.waitUntil(reload);
+        document.addEventListener('projectSwitched', listener);
+
+        let resolved = false;
+        const switching = switchProject(target.id).then(() => {
+            resolved = true;
+        });
+        await Promise.resolve();
+
+        expect(resolved).toBe(false);
+        finishReload();
+        await switching;
+        expect(resolved).toBe(true);
+
+        document.removeEventListener('projectSwitched', listener);
+    });
+
+    it('clears the previous gantt synchronously before target-project reload work starts', async () => {
+        const current = await createProject({ name: 'Current' });
+        const target = await createProject({ name: 'Target' });
+        state.currentProjectId = current.id;
+        state.projects = [current, target];
+
+        let visibleData = {
+            data: [{ id: 9, text: 'Current project task' }],
+            links: [],
+        };
+        gantt.serialize = vi.fn(() => visibleData);
+        gantt.clearAll = vi.fn(() => {
+            visibleData = { data: [], links: [] };
+        });
+        const listener = (event) => {
+            const autosaveDuringReload = projectScope(event.detail.projectId).saveGanttData(
+                gantt.serialize()
+            );
+            event.detail.waitUntil(autosaveDuringReload);
+        };
+        document.addEventListener('projectSwitched', listener);
+
+        await switchProject(target.id);
+
+        const targetData = await projectScope(target.id).getGanttData();
+        expect(gantt.clearAll).toHaveBeenCalledTimes(1);
+        expect(targetData.data).toEqual([]);
+
+        document.removeEventListener('projectSwitched', listener);
+    });
+
+    it('serializes concurrent switches and keeps each project data in its own scope', async () => {
+        const first = await createProject({ name: 'First' });
+        const second = await createProject({ name: 'Second' });
+        const third = await createProject({ name: 'Third' });
+        state.currentProjectId = first.id;
+        state.projects = [first, second, third];
+        await projectScope(second.id).saveGanttData({
+            data: [{ id: 2, text: 'Second task' }],
+            links: [],
+        });
+        await projectScope(third.id).saveGanttData({
+            data: [{ id: 3, text: 'Third task' }],
+            links: [],
+        });
+
+        let visibleData = { data: [{ id: 1, text: 'First task' }], links: [] };
+        gantt.serialize = vi.fn(() => visibleData);
+        gantt.clearAll = vi.fn(() => {
+            visibleData = { data: [], links: [] };
+        });
+        let releaseSecond;
+        const secondReloadGate = new Promise((resolve) => {
+            releaseSecond = resolve;
+        });
+        let markSecondStarted;
+        const secondStarted = new Promise((resolve) => {
+            markSecondStarted = resolve;
+        });
+        const started = [];
+        const listener = (event) => {
+            const reload = (async () => {
+                started.push(event.detail.projectId);
+                if (event.detail.projectId === second.id) {
+                    markSecondStarted();
+                    await secondReloadGate;
+                }
+                visibleData = await projectScope(event.detail.projectId).getGanttData();
+            })();
+            event.detail.waitUntil(reload);
+        };
+        document.addEventListener('projectSwitched', listener);
+
+        const switchToSecond = switchProject(second.id);
+        await secondStarted;
+        const switchToThird = switchProject(third.id);
+        await Promise.resolve();
+
+        const startedBeforeRelease = [...started];
+        releaseSecond();
+        await Promise.all([switchToSecond, switchToThird]);
+
+        expect(startedBeforeRelease).toEqual([second.id]);
+        expect(started).toEqual([second.id, third.id]);
+        expect((await projectScope(second.id).getGanttData()).data).toEqual([
+            expect.objectContaining({ text: 'Second task' }),
+        ]);
+        expect(visibleData.data).toEqual([expect.objectContaining({ text: 'Third task' })]);
+
+        document.removeEventListener('projectSwitched', listener);
+    });
+
+    it('retries reloading when the previous switch to the same project failed', async () => {
+        const current = await createProject({ name: 'Current' });
+        const target = await createProject({ name: 'Target' });
+        state.currentProjectId = current.id;
+        state.projects = [current, target];
+        gantt.clearAll = vi.fn();
+
+        let reloadAttempts = 0;
+        const listener = (event) => {
+            reloadAttempts += 1;
+            const reload =
+                reloadAttempts === 1
+                    ? Promise.reject(new Error('reload failed'))
+                    : Promise.resolve(event.detail.projectId);
+            event.detail.waitUntil(reload);
+        };
+        document.addEventListener('projectSwitched', listener);
+
+        await expect(switchProject(target.id)).rejects.toThrow('reload failed');
+        await expect(switchProject(target.id)).resolves.toMatchObject({
+            projectId: target.id,
+            loaded: true,
+        });
+        expect(reloadAttempts).toBe(2);
+
+        document.removeEventListener('projectSwitched', listener);
     });
 
     it('switchProject ignores unknown project ids', async () => {
@@ -124,6 +271,16 @@ describe('store project management', () => {
 
         expect(data.data).toHaveLength(1);
         expect(data.data[0].text).toBe('Current Task');
+    });
+
+    it('restoreGanttDataFromCache propagates storage failures in strict mode', async () => {
+        const current = await createProject({ name: 'Current' });
+        state.currentProjectId = current.id;
+        await db.close();
+
+        await expect(
+            restoreGanttDataFromCache({ projectId: current.id, strict: true })
+        ).rejects.toThrow();
     });
 
     it('persistGanttData writes data to current project scope', async () => {

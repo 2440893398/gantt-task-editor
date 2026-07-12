@@ -47,7 +47,6 @@ export function buildAgentInstruction({
     manifest = { version: 1, commands: [] },
     pageUrl = getCurrentPageUrl(),
 } = {}) {
-    const commandNames = (manifest.commands || []).map((command) => command.name).join(', ');
     const targetPageUrl = getTargetPageUrl(pageUrl);
     const pageAddressInstruction = targetPageUrl
         ? `页面地址：
@@ -55,60 +54,30 @@ ${targetPageUrl}
 
 请先打开这个页面地址，等待页面加载完成，并确认 window.app 存在后再继续。`
         : '请先确认浏览器已经打开目标 Gantt 页面，并确认 window.app 存在后再继续。';
-    const fallbackInstruction = `兼容性 fallback：
-如果页面已经打开且可见，但你的浏览器自动化工具读取到 typeof window.app === "undefined"，不要直接判定 API 不存在；它可能运行在隔离/只读浏览器上下文中，读不到主页面 JS 全局变量。
-请先读取 DOM 中的 #agent-api-discovery 或 #agent-api-manifest，里面声明了 fallback runner selectors 和命令清单。
-这时请改用页面上的可见命令执行区：
-1. 点击工具栏按钮 #agent-guide-btn。
-2. 将 JSON 填入 #agent-guide-command-input，例如：
-{
-  "command": "state.snapshot",
-  "args": { "level": "summary" }
-}
-3. 点击 #agent-guide-run-command。
-4. 从 #agent-guide-run-output 读取 JSON 结果。
-不要使用 javascript: URL、直接改 DOM、IndexedDB 或 localStorage 作为绕过方式。`;
+    const hasProjectCommands = ['project.create', 'project.switch'].every((name) =>
+        (manifest.commands || []).some((command) => command.name === name)
+    );
+    const projectWorkflow = hasProjectCommands
+        ? `需要新项目时：
+const created = await window.app.project.create({ name: '项目名', idempotencyKey: '稳定唯一值' });
+await window.app.project.switch({ id: created.data.project.id });
+// switch 返回时目标项目已加载，可立即调用 batch。`
+        : '当前 manifest 没有项目创建/切换命令时，不要尝试绕过；说明能力缺口。';
 
-    return `你正在操作一个支持 AI Agent 命令层的 Gantt 页面。
+    return `你正在操作支持 window.app 命令层的 Gantt 页面。目标是完成用户任务，不要只评估能力。
 
 ${pageAddressInstruction}
 
-请优先使用页面暴露的稳定 API，不要直接操作 DOM、IndexedDB、localStorage 或模拟拖拽。
+快速路径：
+1. window.app 可用时直接执行目标命令；已知命令不要先调用 help/manifest。仅当命令或参数不明确时读取一次 await window.app.manifest()。
+2. 先读取完成任务所需的最小状态。解析附件在页面外完成，不要把原始文件交给命令层。
+3. 多任务新增把 task.create steps 合并为一次 batch；只在 batch 层做一次 dryRun，再用最新 ifRev 提交，不要逐条预览或逐条创建。
 
-入口：
-- window.app
-- await window.app.help()
-- await window.app.manifest()
-- await window.app.state.snapshot({ level: 'summary' })
-- await window.app.state.rev()
+${projectWorkflow}
 
-${fallbackInstruction}
+安全规则：不要直接操作 DOM、IndexedDB、localStorage 或模拟拖拽。CONFLICT 时刷新 rev 后重试一次；CONSTRAINT 时停止；需要回滚时用 session.undo()。
 
-可用命令以 manifest 为准。当前 manifest 中包含：
-${commandNames}
-
-写操作规则：
-1. 写入前先 dryRun 预览。
-2. 提交时使用 ifRev 防止并发冲突。
-3. 只使用 window.app.manifest() 声明的命令和参数。
-4. 如果返回 CONFLICT，重新读取 state.rev 或 state.snapshot 后再重试。
-5. 如果返回 CONSTRAINT，说明当前页面是只读模式，不要绕过限制。
-6. 写操作完成后，如需回滚，优先使用 window.app.session.undo()。
-
-推荐流程：
-const snapshot = await window.app.state.snapshot({ level: 'summary' });
-const rev = snapshot.rev;
-
-await window.app.task.create({
-    name: '新任务',
-    duration: 1,
-    dryRun: true,
-});
-
-await window.app.task.create(
-    { name: '新任务', duration: 1 },
-    { ifRev: rev }
-);`;
+兼容 fallback：若 typeof window.app === "undefined"，读取 #agent-api-discovery，打开 #agent-guide-btn，将 JSON 填入 #agent-guide-command-input，点击 #agent-guide-run-command，并从 #agent-guide-run-output 读取结果。fallback 只尝试一次；控件不可用或超时就报告阻塞，不要反复重开页面、切换浏览器或重复探测。`;
 }
 
 export function buildAgentSkillMarkdown({
@@ -157,15 +126,21 @@ not assume the API is missing. Use the visible command runner instead:
 3. Click \`#agent-guide-run-command\`.
 4. Read JSON from \`#agent-guide-run-output\`.
 
+Try the visible runner once. If its controls are unavailable or time out, report the
+blocker instead of reopening pages, switching browsers, or repeating discovery.
+
 Do not use \`javascript:\` URLs or mutate DOM, IndexedDB, or localStorage as a workaround.
 
-## Rules
+## Fast Path
 
-- Discover commands with \`await window.app.manifest()\`.
-- Read project state with \`await window.app.state.snapshot({ level: 'summary' })\`.
+- Complete the user's requested task; do not stop after evaluating capabilities.
+- Do not call help or manifest before known commands. Read \`window.app.manifest()\`
+  once only when a command or parameter is unknown.
+- Read only the minimum project state required for the task.
 - Never mutate DOM, IndexedDB, or localStorage directly.
-- Preview write commands with \`dryRun: true\`.
-- Commit write commands with \`ifRev\`.
+- For multiple task creates, use one batch dry-run and one batch commit with \`ifRev\`;
+  do not preview or create every task separately.
+- Parse attachments outside the page, then pass structured task steps to \`batch\`.
 - For long or large writes, prefer \`window.app.operation.start({ command, args, steps, idempotencyKey })\`, poll \`operation.status()\`, and read the final value with \`operation.result()\`.
 - Use \`operation.cancel()\` only as a best-effort cancellation request; if an operation already succeeded, use \`session.undo()\` instead.
 - Respect \`CONFLICT\` and \`CONSTRAINT\` errors.
@@ -898,16 +873,16 @@ function renderPanel({ app, readOnly = false }) {
                     <div class="agent-guide-step">
                         <div class="text-sm font-semibold">2. ${text(
                             'agentGuide.stepDiscover',
-                            '让 AI 读取 manifest'
+                            '直接执行目标命令'
                         )}</div>
-                        <div class="text-xs text-base-content/60">await window.app.manifest()</div>
+                        <div class="text-xs text-base-content/60">仅在参数不明确时读取 manifest</div>
                     </div>
                     <div class="agent-guide-step">
                         <div class="text-sm font-semibold">3. ${text(
                             'agentGuide.stepExecute',
-                            '预览后再执行'
+                            '批量预览并提交'
                         )}</div>
-                        <div class="text-xs text-base-content/60">dryRun → ifRev → session.undo()</div>
+                        <div class="text-xs text-base-content/60">一次 dryRun → 一次 batch</div>
                     </div>
                 </div>
             </section>

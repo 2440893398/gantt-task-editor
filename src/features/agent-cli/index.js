@@ -1,5 +1,6 @@
 import { registerHierarchyCommands } from './commands/hierarchy.js';
 import { registerLinkCommands } from './commands/link.js';
+import { registerProjectCommands } from './commands/project.js';
 import { registerScheduleCommands } from './commands/schedule.js';
 import { registerSessionCommands } from './commands/session.js';
 import { registerStateCommands } from './commands/state.js';
@@ -13,6 +14,7 @@ function registerBuiltInCommands() {
     registerTaskCommands();
     registerHierarchyCommands();
     registerLinkCommands();
+    registerProjectCommands();
     registerScheduleCommands();
     registerSessionCommands();
 }

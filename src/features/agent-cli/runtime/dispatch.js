@@ -4,6 +4,8 @@ import { runGanttTransaction } from '../../gantt/domain/transaction.js';
 import { settleAndPersist } from '../../gantt/domain/settle.js';
 import { createEmptyDiff, mergeDiffs } from '../../gantt/domain/diff.js';
 import { DEFAULT_PROJECT_ID } from '../../../core/storage.js';
+import { runProjectMutationExclusive } from '../../../core/project-mutation-gate.js';
+import { state } from '../../../core/store.js';
 import {
     beginCommandUndoScope,
     endCommandUndoScope,
@@ -32,9 +34,14 @@ class CommandResultError extends Error {
  */
 const idempotencyResults = new Map();
 
-function scopedIdempotencyKey(projectId, key) {
+function scopedIdempotencyKey(projectId, command, key) {
     const normalized = String(key ?? '').trim();
-    return normalized ? `${projectId}::${normalized}` : null;
+    if (!normalized) {
+        return null;
+    }
+
+    const scope = command.execution === 'direct' ? 'workspace' : projectId;
+    return `${scope}::${command.name}::${normalized}`;
 }
 
 export function clearIdempotencyCacheForTest() {
@@ -266,7 +273,7 @@ async function runSettledTransaction({ command, resolvedArgs, ctx, projectId, cu
     };
 }
 
-export async function dispatch(name, args = {}, context = {}) {
+async function dispatchUnlocked(name, args = {}, context = {}) {
     const started = nowMs();
     const projectId = context.projectId || DEFAULT_PROJECT_ID;
     const command = getCommand(name);
@@ -318,6 +325,7 @@ export async function dispatch(name, args = {}, context = {}) {
 
         idemKey = scopedIdempotencyKey(
             projectId,
+            command,
             resolvedArgs.idempotencyKey ?? context.idempotencyKey
         );
         if (idemKey && idempotencyResults.has(idemKey)) {
@@ -334,6 +342,19 @@ export async function dispatch(name, args = {}, context = {}) {
                 hint: 'Call state.rev or state.snapshot, then retry with the latest rev.',
                 rev: currentRev,
             });
+            return result;
+        }
+
+        // Workspace-level mutations such as switching projects do not mutate
+        // the current Gantt data and therefore must not open a Gantt
+        // transaction, settle task state, or bump a project revision.
+        if (command.execution === 'direct') {
+            reportProgress(ctx, {
+                stage: 'commit',
+                message: `Committing ${command.name}.`,
+            });
+            const data = await command.handler(resolvedArgs, ctx);
+            result = normalizeCommandResult(data, currentRev);
             return result;
         }
 
@@ -437,6 +458,24 @@ export async function dispatch(name, args = {}, context = {}) {
             });
         }
     }
+}
+
+export function dispatch(name, args = {}, context = {}) {
+    const command = getCommand(name);
+    if (command?.mutating && command.execution !== 'direct') {
+        return runProjectMutationExclusive(() => {
+            const activeProjectId = state.currentProjectId || DEFAULT_PROJECT_ID;
+            if (context._dynamicProjectId && context.projectId !== activeProjectId) {
+                return fail('CONFLICT', 'Active project changed while the command was queued.', {
+                    hint: 'Read the active project state, then retry the command.',
+                    rev: getProjectRev(activeProjectId),
+                });
+            }
+            return dispatchUnlocked(name, args, context);
+        });
+    }
+
+    return dispatchUnlocked(name, args, context);
 }
 
 const REF_PREFIX = '$';
@@ -638,7 +677,7 @@ async function preflightBatch(steps, ctx) {
  * one settle, one rev bump, full rollback on any failure. `$ref` tokens
  * resolve left-to-right to ids returned by earlier steps' commits.
  */
-export async function batch(steps = [], context = {}) {
+async function batchUnlocked(steps = [], context = {}) {
     const started = nowMs();
     const projectId = context.projectId || DEFAULT_PROJECT_ID;
     const currentRev = getProjectRev(projectId);
@@ -823,4 +862,17 @@ export async function batch(steps = [], context = {}) {
             ms: Math.max(0, Math.round(nowMs() - started)),
         });
     }
+}
+
+export function batch(steps = [], context = {}) {
+    return runProjectMutationExclusive(() => {
+        const activeProjectId = state.currentProjectId || DEFAULT_PROJECT_ID;
+        if (context._dynamicProjectId && context.projectId !== activeProjectId) {
+            return fail('CONFLICT', 'Active project changed while the batch was queued.', {
+                hint: 'Read the active project state, then retry the batch.',
+                rev: getProjectRev(activeProjectId),
+            });
+        }
+        return batchUnlocked(steps, context);
+    });
 }

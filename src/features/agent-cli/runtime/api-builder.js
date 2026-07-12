@@ -55,6 +55,7 @@ function getExecutionContext(context = {}) {
     return {
         ...context,
         projectId: resolveProjectId(context),
+        _dynamicProjectId: context._dynamicProjectId ?? !context.projectId,
     };
 }
 

@@ -155,10 +155,15 @@ describe('agent guide ui', () => {
         vi.restoreAllMocks();
     });
 
-    it('builds a copyable instruction that teaches safe window.app usage', () => {
+    it('builds a concise instruction with a bounded fast path', () => {
         const pageUrl = 'https://example.com/gantt/project-alpha?agentReadOnly=1#today';
+        const manifest = createAppStub().manifest();
+        manifest.commands.push(
+            { name: 'project.create', summary: 'Create project', mutating: true },
+            { name: 'project.switch', summary: 'Switch project', mutating: true }
+        );
         const instruction = buildAgentInstruction({
-            manifest: createAppStub().manifest(),
+            manifest,
             pageUrl,
         });
 
@@ -173,6 +178,12 @@ describe('agent guide ui', () => {
         expect(instruction).toContain('#agent-guide-command-input');
         expect(instruction).toContain('#agent-guide-run-command');
         expect(instruction).toContain('task.create');
+        expect(instruction).toContain('project.create');
+        expect(instruction).toContain('project.switch');
+        expect(instruction).toContain('一次 batch');
+        expect(instruction).toContain('只尝试一次');
+        expect(instruction).toContain('不要先调用 help/manifest');
+        expect(instruction.length).toBeLessThan(1400);
     });
 
     it('includes the target page URL in generated Skill.md content', () => {
@@ -188,6 +199,9 @@ describe('agent guide ui', () => {
         expect(skillMarkdown).toContain('#agent-guide-command-input');
         expect(skillMarkdown).toContain('operation.start');
         expect(skillMarkdown).toContain('idempotencyKey');
+        expect(skillMarkdown).toContain('Do not call help or manifest before known commands');
+        expect(skillMarkdown).toContain('Try the visible runner once');
+        expect(skillMarkdown).toContain('one batch dry-run');
     });
 
     it('injects a toolbar entry, first-run hint, and opens the guide panel', () => {

@@ -131,23 +131,29 @@ document.addEventListener(
             renderProjectPicker(projectPickerMount);
         }
 
-        document.addEventListener('projectSwitched', async () => {
-            try {
-                await restoreStateFromCache();
+        document.addEventListener('projectSwitched', (event) => {
+            const reload = (async () => {
+                try {
+                    await restoreStateFromCache();
 
-                const cachedData = await restoreGanttDataFromCache();
-                gantt.clearAll();
-                if (cachedData?.data?.length > 0) {
-                    gantt.parse(cachedData);
-                } else {
-                    gantt.parse({ data: [], links: [] });
+                    const cachedData = await restoreGanttDataFromCache({
+                        projectId: event.detail?.projectId,
+                        strict: true,
+                    });
+                    if (cachedData?.data?.length > 0) {
+                        gantt.parse(cachedData);
+                    } else {
+                        gantt.parse({ data: [], links: [] });
+                    }
+
+                    applyCurrentViewMode();
+                } catch (error) {
+                    console.error('[Main] Failed to reload project after switch:', error);
+                    showToast(i18n.t('common.operationFailed') || '操作失败', 'error');
+                    throw error;
                 }
-
-                applyCurrentViewMode();
-            } catch (error) {
-                console.error('[Main] Failed to reload project after switch:', error);
-                showToast(i18n.t('common.operationFailed') || '操作失败', 'error');
-            }
+            })();
+            event.detail?.waitUntil?.(reload);
         });
 
         // 初始化甘特图（传入缓存恢复函数）
@@ -271,17 +277,23 @@ function setupAutoSave() {
     let saveTimeout = null;
 
     const debouncedSave = () => {
-        if (isReadOnlyCloudViewActive()) return;
+        if (isReadOnlyCloudViewActive() || state.isProjectSwitching) return;
 
         if (saveTimeout) clearTimeout(saveTimeout);
+        const scheduledProjectId = state.currentProjectId;
         saveTimeout = setTimeout(async () => {
-            if (isReadOnlyCloudViewActive()) return;
-            const projectId = state.currentProjectId;
-            await persistGanttData({ projectId });
-            const shouldSkipCloudSync = localOnlyAutosaveByProject.delete(projectId);
+            if (
+                isReadOnlyCloudViewActive() ||
+                state.isProjectSwitching ||
+                state.currentProjectId !== scheduledProjectId
+            ) {
+                return;
+            }
+            await persistGanttData({ projectId: scheduledProjectId });
+            const shouldSkipCloudSync = localOnlyAutosaveByProject.delete(scheduledProjectId);
 
             if (!shouldSkipCloudSync) {
-                scheduleCloudSync(projectId);
+                scheduleCloudSync(scheduledProjectId);
             }
         }, 1000); // 1秒防抖
     };
