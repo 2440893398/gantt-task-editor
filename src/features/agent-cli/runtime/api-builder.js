@@ -163,7 +163,7 @@ export function buildApi(options = {}) {
     app.operation = operationManager;
     app.help = (commandName) => buildHelp(getCommands(), commandName);
     app.manifest = () => buildManifest(getCommands());
-    app.version = 1;
+    app.version = 2;
 
     return app;
 }

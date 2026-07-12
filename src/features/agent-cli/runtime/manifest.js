@@ -107,20 +107,33 @@ function sortCommands(commands) {
     return [...withSyntheticCommands(commands)].sort((a, b) => a.name.localeCompare(b.name));
 }
 
-function toPublicCommand(command) {
+function toManifestCommand(command) {
     return {
         name: command.name,
         summary: command.summary,
-        params: command.params,
         mutating: Boolean(command.mutating),
-        examples: command.examples || [],
+        dynamic: Boolean(command.dynamic),
+        supports: command.supports || [],
     };
+}
+
+function toHelpCommand(command) {
+    return Object.fromEntries(
+        Object.entries({
+            ...toManifestCommand(command),
+            params: command.params,
+            result: command.result,
+            examples: command.examples || [],
+            discovery: command.discovery || [],
+            errors: command.errors || [],
+        }).filter(([, value]) => value !== undefined)
+    );
 }
 
 export function buildManifest(commands) {
     return {
-        version: 1,
-        commands: sortCommands(commands).map(toPublicCommand),
+        version: 2,
+        commands: sortCommands(commands).map(toManifestCommand),
     };
 }
 
@@ -129,16 +142,12 @@ export function buildHelp(commands, commandName) {
 
     if (commandName) {
         const command = sortedCommands.find((item) => item.name === commandName);
-        return command ? toPublicCommand(command) : null;
+        return command ? toHelpCommand(command) : null;
     }
 
     return {
-        version: 1,
-        howto: 'Use: <command> --flag value',
-        commands: sortedCommands.map((command) => ({
-            name: command.name,
-            summary: command.summary,
-            mutating: Boolean(command.mutating),
-        })),
+        version: 2,
+        howto: "Use help('command.name') for parameters, discovery, and examples.",
+        commands: sortedCommands.map(toManifestCommand),
     };
 }

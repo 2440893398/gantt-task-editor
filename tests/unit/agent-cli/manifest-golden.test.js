@@ -9,9 +9,9 @@ import { registerSessionCommands } from '../../../src/features/agent-cli/command
 import { registerStateCommands } from '../../../src/features/agent-cli/commands/state.js';
 import { registerTaskCommands } from '../../../src/features/agent-cli/commands/task.js';
 
-// The frozen v1 command surface. Any command added or removed from the manifest
+// The frozen v2 command surface. Any command added or removed from the manifest
 // without updating this list is a contract change and MUST fail this test.
-const V1_COMMANDS = [
+const V2_COMMANDS = [
     'task.get',
     'task.list',
     'task.today',
@@ -73,24 +73,25 @@ describe('agent command manifest golden contract', () => {
         resetProjectRev(projectId);
     });
 
-    it('exposes exactly the v1 commands', () => {
+    it('exposes exactly the v2 commands', () => {
         const manifest = app.manifest();
         const names = manifest.commands.map((command) => command.name);
 
-        expect(manifest.version).toBe(1);
+        expect(manifest.version).toBe(2);
         // Exact-set comparison (order-independent): flags any missing OR extra.
-        expect(new Set(names)).toEqual(new Set(V1_COMMANDS));
-        expect(names).toHaveLength(V1_COMMANDS.length);
+        expect(new Set(names)).toEqual(new Set(V2_COMMANDS));
+        expect(names).toHaveLength(V2_COMMANDS.length);
     });
 
-    it('includes a batch entry marked as mutating with params', () => {
+    it('keeps batch compact in manifest and detailed in help', () => {
         const manifest = app.manifest();
         const batchEntry = manifest.commands.find((command) => command.name === 'batch');
 
         expect(batchEntry).toBeDefined();
         expect(batchEntry.mutating).toBe(true);
         expect(batchEntry.summary).toEqual(expect.any(String));
-        expect(batchEntry.params).toEqual(expect.any(Object));
+        expect(batchEntry).not.toHaveProperty('params');
+        expect(app.help('batch').params).toEqual(expect.any(Object));
     });
 
     it('keeps help() consistent with manifest()', () => {

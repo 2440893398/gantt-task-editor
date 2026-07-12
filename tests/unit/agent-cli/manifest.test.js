@@ -32,23 +32,23 @@ describe('agent manifest runtime', () => {
 
         // `batch` is auto-injected as a synthetic entry; assert the supplied
         // commands are sorted and stripped of handlers independently of it.
-        expect(manifest.version).toBe(1);
+        expect(manifest.version).toBe(2);
         expect(
             manifest.commands.filter((command) => !SYNTHETIC_COMMANDS.has(command.name))
         ).toEqual([
             {
                 name: 'task.create',
                 summary: 'Create a task',
-                params: { type: 'object', properties: { name: { type: 'string' } } },
                 mutating: true,
-                examples: ['task.create --name Design'],
+                dynamic: false,
+                supports: [],
             },
             {
                 name: 'task.update',
                 summary: 'Update a task',
-                params: { type: 'object', properties: {} },
                 mutating: true,
-                examples: ['task.update --id 1'],
+                dynamic: false,
+                supports: [],
             },
         ]);
     });
@@ -61,7 +61,8 @@ describe('agent manifest runtime', () => {
             name: 'batch',
             mutating: true,
         });
-        expect(batchEntry.params).toEqual(expect.any(Object));
+        expect(batchEntry).not.toHaveProperty('params');
+        expect(buildHelp([], 'batch').params).toEqual(expect.any(Object));
     });
 
     it('injects synthetic operation entries into the manifest', () => {
@@ -80,7 +81,7 @@ describe('agent manifest runtime', () => {
             manifest.commands.find((command) => command.name === 'operation.start')
         ).toMatchObject({
             mutating: true,
-            params: expect.any(Object),
+            dynamic: false,
         });
         expect(
             manifest.commands.find((command) => command.name === 'operation.status')
@@ -109,6 +110,10 @@ describe('agent manifest runtime', () => {
             params: { type: 'object', properties: { name: { type: 'string' } } },
             mutating: true,
             examples: ['task.create --name Design'],
+            dynamic: false,
+            supports: [],
+            discovery: [],
+            errors: [],
         });
     });
 });

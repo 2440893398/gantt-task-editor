@@ -139,6 +139,8 @@ describe('agent api builder', () => {
                     name: 'task.list',
                     summary: 'List tasks',
                     mutating: false,
+                    dynamic: false,
+                    supports: [],
                 },
             ])
         );
