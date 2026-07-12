@@ -905,6 +905,10 @@ export async function bulkSaveHolidays(holidays) {
     await db.calendar_holidays.bulkPut(holidays);
 }
 
+export async function getAllHolidays() {
+    return db.calendar_holidays.orderBy('date').toArray();
+}
+
 export async function clearHolidaysByYear(year, countryCode) {
     if (countryCode) {
         await db.calendar_holidays
