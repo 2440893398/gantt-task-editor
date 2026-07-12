@@ -176,6 +176,8 @@ function toTaskData(args) {
         }
     }
 
+    Object.assign(task, args.fields || {});
+
     return task;
 }
 
@@ -280,6 +282,22 @@ function updatePlan(args, ctx) {
                         old: oldValue,
                         new: newValue,
                     },
+                },
+            });
+        }
+    }
+
+    for (const [taskField, newValue] of Object.entries(args.fields || {})) {
+        const oldValue = cloneValue(task[taskField]);
+        const oldComparable = toComparableValue(taskField, task[taskField]);
+        const newComparable = toComparableValue(taskField, newValue);
+
+        if (oldComparable !== newComparable) {
+            changes[taskField] = newValue;
+            diff.updated.push({
+                id: args.id,
+                fields: {
+                    [taskField]: { old: oldValue, new: newValue },
                 },
             });
         }

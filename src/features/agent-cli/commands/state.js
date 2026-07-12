@@ -19,6 +19,7 @@ const exportParams = {
             type: 'string',
             enum: ['json', 'csv', 'md'],
         },
+        fields: { type: 'array' },
     },
     additionalProperties: false,
 };
@@ -62,10 +63,10 @@ function escapeCsvCell(value) {
     return cell;
 }
 
-function toCsv(tasks) {
-    const header = EXPORT_COLUMNS.map((column) => column.label).join(',');
+function toCsv(tasks, columns = EXPORT_COLUMNS) {
+    const header = columns.map((column) => column.label).join(',');
     const rows = tasks.map((task) =>
-        EXPORT_COLUMNS.map((column) => escapeCsvCell(task[column.key])).join(',')
+        columns.map((column) => escapeCsvCell(task[column.key])).join(',')
     );
     return [header, ...rows].join('\n');
 }
@@ -75,12 +76,11 @@ function escapeMarkdownCell(value) {
     return toCellValue(value).replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
 }
 
-function toMarkdown(tasks) {
-    const header = `| ${EXPORT_COLUMNS.map((column) => column.label).join(' | ')} |`;
-    const divider = `| ${EXPORT_COLUMNS.map(() => '---').join(' | ')} |`;
+function toMarkdown(tasks, columns = EXPORT_COLUMNS) {
+    const header = `| ${columns.map((column) => column.label).join(' | ')} |`;
+    const divider = `| ${columns.map(() => '---').join(' | ')} |`;
     const rows = tasks.map(
-        (task) =>
-            `| ${EXPORT_COLUMNS.map((column) => escapeMarkdownCell(task[column.key])).join(' | ')} |`
+        (task) => `| ${columns.map((column) => escapeMarkdownCell(task[column.key])).join(' | ')} |`
     );
     return [header, divider, ...rows].join('\n');
 }
@@ -151,13 +151,16 @@ export function registerStateCommands() {
                 }
 
                 const tasks = context.adapter.getTasks();
+                const columns = args.fields?.length
+                    ? args.fields.map((field) => ({ key: field, label: field }))
+                    : EXPORT_COLUMNS;
 
                 if (format === 'csv') {
-                    return { format, content: toCsv(tasks) };
+                    return { format, content: toCsv(tasks, columns) };
                 }
 
                 // md: markdown table of tasks for cheap agent self-inspection.
-                return { format, content: toMarkdown(tasks) };
+                return { format, content: toMarkdown(tasks, columns) };
             },
         });
     }

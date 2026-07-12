@@ -18,6 +18,7 @@ const tasks = [
         priority: 'high',
         assignee: 'Ada',
         parent: 0,
+        risk_level: 'high',
     },
     {
         id: 2,
@@ -30,6 +31,7 @@ const tasks = [
         priority: 'medium',
         assignee: 'Grace',
         parent: 1,
+        risk_level: 'low',
     },
 ];
 
@@ -137,6 +139,20 @@ describe('state.export command', () => {
         expect(lines[2]).toContain('| 1 | Design phase | 2026-06-30 | 2026-07-02 |');
         // Pipe characters inside cells are escaped so the table stays valid.
         expect(lines[3]).toContain('Build, ship &');
+    });
+
+    it('exports caller-selected dynamic fields', async () => {
+        const result = await app.state.export({
+            format: 'csv',
+            fields: ['text', 'risk_level'],
+        });
+
+        expect(result).toMatchObject({ ok: true, data: { format: 'csv' } });
+        expect(result.data.content.split('\n')).toEqual([
+            'text,risk_level',
+            'Design phase,high',
+            '"Build, ship & ""quote""",low',
+        ]);
     });
 
     it('rejects an unknown format via the params enum', async () => {

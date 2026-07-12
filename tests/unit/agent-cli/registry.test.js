@@ -52,22 +52,14 @@ describe('agent command registry', () => {
 });
 
 describe('agent command manifest', () => {
-    it('includes command name, summary, params, mutating, and examples', () => {
+    it('keeps manifest entries compact', () => {
         const manifest = buildManifest([
             {
                 name: 'task.create',
                 summary: 'Create a task',
-                params: {
-                    type: 'object',
-                    properties: {
-                        name: { type: 'string' },
-                    },
-                    required: ['name'],
-                    additionalProperties: false,
-                },
                 mutating: true,
-                examples: ['task.create --name "Design review"'],
-                handler: () => null,
+                dynamic: false,
+                supports: [],
             },
         ]);
 
@@ -78,16 +70,9 @@ describe('agent command manifest', () => {
             {
                 name: 'task.create',
                 summary: 'Create a task',
-                params: {
-                    type: 'object',
-                    properties: {
-                        name: { type: 'string' },
-                    },
-                    required: ['name'],
-                    additionalProperties: false,
-                },
                 mutating: true,
-                examples: ['task.create --name "Design review"'],
+                dynamic: false,
+                supports: [],
             },
         ]);
     });
@@ -106,19 +91,23 @@ describe('agent command manifest', () => {
             },
         ]);
 
-        expect(help.version).toBe(1);
-        expect(help.howto).toBe('Use: <command> --flag value');
+        expect(help.version).toBe(2);
+        expect(help.howto).toContain("help('command.name')");
         // `batch` is auto-injected; assert the supplied commands independently.
         expect(help.commands.filter((command) => !SYNTHETIC_COMMANDS.has(command.name))).toEqual([
             {
                 name: 'task.create',
                 summary: 'Create a task',
                 mutating: true,
+                dynamic: false,
+                supports: [],
             },
             {
                 name: 'task.update',
                 summary: 'Update a task',
                 mutating: true,
+                dynamic: false,
+                supports: [],
             },
         ]);
     });

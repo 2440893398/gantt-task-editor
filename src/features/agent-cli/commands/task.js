@@ -1,19 +1,15 @@
 import { defineCommand, getCommand } from '../registry.js';
 import { fail } from '../runtime/result.js';
 import { taskOps } from '../../gantt/domain/task-ops.js';
+import { state } from '../../../core/store.js';
+import { buildTaskFormSchema } from '../../customFields/task-form-schema.js';
+import { validateTaskValues } from '../../customFields/task-value-validator.js';
 
 const listParams = {
     type: 'object',
     properties: {
-        status: { type: 'string' },
-        priority: { type: 'string' },
-        assignee: { type: 'string' },
-        overdue: { type: 'boolean' },
-        parent: { type: 'integer' },
-        dateRange: {},
-        start: { type: 'string' },
-        end: { type: 'string' },
-        fields: {},
+        filters: { type: 'array' },
+        fields: { type: 'array' },
         limit: { type: 'integer', minimum: 1 },
     },
     additionalProperties: false,
@@ -22,16 +18,12 @@ const listParams = {
 const createParams = {
     type: 'object',
     properties: {
-        name: { type: 'string' },
-        parent: { type: 'integer' },
-        start: { type: 'string' },
-        duration: { type: 'integer', minimum: 1 },
-        priority: { type: 'string' },
-        assignee: { type: 'string' },
+        parent: { type: 'integer', 'x-batch-ref': true },
+        values: { type: 'object' },
         dryRun: { type: 'boolean' },
         idempotencyKey: { type: 'string' },
     },
-    required: ['name'],
+    required: ['values'],
     additionalProperties: false,
 };
 
@@ -39,18 +31,11 @@ const updateParams = {
     type: 'object',
     properties: {
         id: { type: 'integer' },
-        name: { type: 'string' },
-        start: { type: 'string' },
-        duration: { type: 'integer', minimum: 1 },
-        end: { type: 'string' },
-        progress: { type: 'number' },
-        status: { type: 'string' },
-        priority: { type: 'string' },
-        assignee: { type: 'string' },
+        values: { type: 'object' },
         dryRun: { type: 'boolean' },
         idempotencyKey: { type: 'string' },
     },
-    required: ['id'],
+    required: ['id', 'values'],
     additionalProperties: false,
 };
 
@@ -162,6 +147,119 @@ function projectTask(task, fields) {
     return Object.fromEntries(normalizedFields.map((field) => [field, task[field]]));
 }
 
+function formatLocalDate(date) {
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(
+        date.getDate()
+    ).padStart(2, '0')}`;
+}
+
+function toAgentTask(task) {
+    const normalized = { ...task };
+    if (task.start_date instanceof Date) {
+        normalized.start_date = formatLocalDate(task.start_date);
+    }
+    if (task.end_date instanceof Date) {
+        normalized.end_date = formatLocalDate(addDays(task.end_date, -1));
+    }
+    return normalized;
+}
+
+function getFormSchema(mode, context) {
+    return buildTaskFormSchema({ mode, state: context.formState || state });
+}
+
+function addDays(date, days) {
+    const result = new Date(date);
+    result.setDate(result.getDate() + days);
+    return result;
+}
+
+function calculateDuration(gantt, start, end) {
+    if (typeof gantt.calculateDuration === 'function') {
+        return gantt.calculateDuration(start, end);
+    }
+    return Math.max(1, Math.round((end - start) / 86400000));
+}
+
+function mapV2WriteArgs(args, context, mode) {
+    const validation = validateTaskValues({
+        mode,
+        schema: getFormSchema(mode, context),
+        values: args.values,
+        currentTask: mode === 'update' ? context.gantt.getTask(args.id) : null,
+    });
+    if (!validation.ok) return validation;
+
+    const values = { ...validation.values };
+    const start =
+        values.start_date === undefined ? undefined : parseLocalDateOnly(values.start_date);
+    const inclusiveEnd =
+        values.end_date === undefined ? undefined : parseLocalDateOnly(values.end_date);
+    const exclusiveEnd = inclusiveEnd ? addDays(inclusiveEnd, 1) : undefined;
+    const currentTask = mode === 'update' ? context.gantt.getTask(args.id) : null;
+    let duration = values.duration;
+    if ((start || currentTask?.start_date) && exclusiveEnd) {
+        duration = calculateDuration(context.gantt, start || currentTask.start_date, exclusiveEnd);
+    }
+
+    const fields = { ...values };
+    const text = fields.text;
+    delete fields.text;
+    delete fields.start_date;
+    delete fields.end_date;
+    delete fields.duration;
+    if (exclusiveEnd) fields.end_date = exclusiveEnd;
+
+    return {
+        ...(mode === 'update' ? { id: args.id } : { parent: args.parent ?? 0 }),
+        ...(text !== undefined ? { name: text } : {}),
+        ...(start ? { start } : {}),
+        ...(duration !== undefined ? { duration } : {}),
+        fields,
+    };
+}
+
+const taskV2Ops = {
+    create: {
+        plan(args, context) {
+            const mapped = mapV2WriteArgs(args, context, 'create');
+            return mapped.ok === false ? mapped : taskOps.create.plan(mapped, context);
+        },
+        commit: taskOps.create.commit,
+    },
+    update: {
+        plan(args, context) {
+            const mapped = mapV2WriteArgs(args, context, 'update');
+            return mapped.ok === false ? mapped : taskOps.update.plan(mapped, context);
+        },
+        commit: taskOps.update.commit,
+        skipEmptyDiff: true,
+    },
+};
+
+function matchesFilter(task, filter) {
+    const normalize = (value) => {
+        if (!filter.field.endsWith('_date')) return value;
+        const date = toDate(value);
+        return date ? date.getTime() : Number.NaN;
+    };
+    const value = normalize(task[filter.field]);
+    const expected = Array.isArray(filter.value)
+        ? filter.value.map(normalize)
+        : normalize(filter.value);
+    if (filter.operator === 'eq') return value === expected;
+    if (filter.operator === 'in') return expected.includes(value);
+    if (filter.operator === 'contains') return String(value || '').includes(String(expected));
+    if (filter.operator === 'gt') return value > expected;
+    if (filter.operator === 'gte') return value >= expected;
+    if (filter.operator === 'lt') return value < expected;
+    if (filter.operator === 'lte') return value <= expected;
+    if (filter.operator === 'between') {
+        return value >= expected[0] && value <= expected[1];
+    }
+    return false;
+}
+
 function taskNotFound(id) {
     return fail('NOT_FOUND', `Task not found: ${id}`);
 }
@@ -260,7 +358,7 @@ export function registerTaskCommands() {
             handler(args, context) {
                 try {
                     const task = context.adapter.getTask(args.id);
-                    return isMissingTask(task) ? taskNotFound(args.id) : task;
+                    return isMissingTask(task) ? taskNotFound(args.id) : toAgentTask(task);
                 } catch {
                     return taskNotFound(args.id);
                 }
@@ -275,15 +373,14 @@ export function registerTaskCommands() {
             params: listParams,
             mutating: false,
             handler(args, context) {
-                const validDates = validateDateFilters(args);
-                if (!validDates.ok) {
-                    return validDates;
-                }
-
                 const limit = args.limit || 100;
-                return filterTasks(context.adapter.getTasks(), args, context.today || new Date())
+                return context.adapter
+                    .getTasks()
+                    .filter((task) =>
+                        (args.filters || []).every((filter) => matchesFilter(task, filter))
+                    )
                     .slice(0, limit)
-                    .map((task) => projectTask(task, args.fields));
+                    .map((task) => projectTask(toAgentTask(task), args.fields));
             },
         });
     }
@@ -300,7 +397,10 @@ export function registerTaskCommands() {
             mutating: false,
             handler(args, context) {
                 const today = context.today || new Date();
-                return context.adapter.getTasks().filter((task) => isTaskToday(task, today));
+                return context.adapter
+                    .getTasks()
+                    .filter((task) => isTaskToday(task, today))
+                    .map(toAgentTask);
             },
         });
     }
@@ -317,7 +417,10 @@ export function registerTaskCommands() {
             mutating: false,
             handler(args, context) {
                 const today = context.today || new Date();
-                return context.adapter.getTasks().filter((task) => isTaskOverdue(task, today));
+                return context.adapter
+                    .getTasks()
+                    .filter((task) => isTaskOverdue(task, today))
+                    .map(toAgentTask);
             },
         });
     }
@@ -325,20 +428,24 @@ export function registerTaskCommands() {
     if (!getCommand('task.create')) {
         defineCommand({
             name: 'task.create',
-            summary: 'Create a task',
+            summary: 'Create a task from the active form schema',
             params: createParams,
             mutating: true,
-            op: taskOps.create,
+            dynamic: true,
+            supports: ['dryRun', 'batch', 'operation'],
+            op: taskV2Ops.create,
         });
     }
 
     if (!getCommand('task.update')) {
         defineCommand({
             name: 'task.update',
-            summary: 'Update a task',
+            summary: 'Update task values from the active form schema',
             params: updateParams,
             mutating: true,
-            op: taskOps.update,
+            dynamic: true,
+            supports: ['dryRun', 'batch', 'operation'],
+            op: taskV2Ops.update,
         });
     }
 

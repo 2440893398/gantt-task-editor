@@ -277,7 +277,7 @@ describe('agent dispatch write commands', () => {
 
         const result = await dispatch(
             'task.update',
-            { id: 4, name: 'Same name' },
+            { id: 4, values: { text: 'Same name' } },
             { projectId, gantt }
         );
 
@@ -307,12 +307,13 @@ describe('agent dispatch write commands', () => {
                 text: 'Same date',
                 start_date: new Date(2026, 6, 1),
                 end_date: new Date(2026, 6, 3),
+                duration: 2,
             },
         ]);
 
         const result = await dispatch(
             'task.update',
-            { id: 4, start: '2026-07-01', end: '2026-07-03' },
+            { id: 4, values: { start_date: '2026-07-01', end_date: '2026-07-02' } },
             { projectId, gantt }
         );
 
@@ -341,7 +342,7 @@ describe('agent dispatch write commands', () => {
 
         const result = await dispatch(
             'task.update',
-            { id: 4, name: 'New name' },
+            { id: 4, values: { text: 'New name' } },
             { projectId, gantt }
         );
 
@@ -374,7 +375,7 @@ describe('agent dispatch write commands', () => {
 
         const result = await dispatch(
             'task.update',
-            { id: 4, start: '2026-07-02' },
+            { id: 4, values: { start_date: '2026-07-02' } },
             { projectId, gantt }
         );
 
@@ -388,7 +389,7 @@ describe('agent dispatch write commands', () => {
                             fields: {
                                 start_date: {
                                     old: new Date(2026, 6, 1).toISOString(),
-                                    new: '2026-07-02',
+                                    new: new Date(2026, 6, 2),
                                 },
                             },
                         },
@@ -409,16 +410,19 @@ describe('agent dispatch write commands', () => {
 
         const result = await dispatch(
             'task.create',
-            { name: 'Invalid date', start: '2026-02-31', dryRun: true },
+            {
+                values: { text: 'Invalid date', assignee: 'Ada', start_date: '2026-02-31' },
+                dryRun: true,
+            },
             { projectId, gantt }
         );
 
         expect(result).toEqual({
             ok: false,
             error: {
-                code: 'BAD_ARGS',
-                message: 'Invalid date for start: 2026-02-31',
-                hint: 'Use YYYY-MM-DD or a valid date value.',
+                code: 'INVALID_FIELD_VALUE',
+                field: 'start_date',
+                message: 'start_date must use YYYY-MM-DD',
             },
             rev: 0,
         });
@@ -434,16 +438,16 @@ describe('agent dispatch write commands', () => {
 
         const result = await dispatch(
             'task.create',
-            { name: 'Invalid date', start: '2026-02-31' },
+            { values: { text: 'Invalid date', assignee: 'Ada', start_date: '2026-02-31' } },
             { projectId, gantt }
         );
 
         expect(result).toEqual({
             ok: false,
             error: {
-                code: 'BAD_ARGS',
-                message: 'Invalid date for start: 2026-02-31',
-                hint: 'Use YYYY-MM-DD or a valid date value.',
+                code: 'INVALID_FIELD_VALUE',
+                field: 'start_date',
+                message: 'start_date must use YYYY-MM-DD',
             },
             rev: 0,
         });
@@ -459,16 +463,16 @@ describe('agent dispatch write commands', () => {
 
         const result = await dispatch(
             'task.update',
-            { id: 4, start: '2026-02-31' },
+            { id: 4, values: { start_date: '2026-02-31' } },
             { projectId, gantt }
         );
 
         expect(result).toEqual({
             ok: false,
             error: {
-                code: 'BAD_ARGS',
-                message: 'Invalid date for start: 2026-02-31',
-                hint: 'Use YYYY-MM-DD or a valid date value.',
+                code: 'INVALID_FIELD_VALUE',
+                field: 'start_date',
+                message: 'start_date must use YYYY-MM-DD',
             },
             rev: 0,
         });
@@ -695,7 +699,7 @@ describe('agent dispatch write commands', () => {
 
         const result = await dispatch(
             'task.update',
-            { id: 404, name: 'Stale update' },
+            { id: 404, values: { text: 'Stale update' } },
             {
                 projectId,
                 gantt,

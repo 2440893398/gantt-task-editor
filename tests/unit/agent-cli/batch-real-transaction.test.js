@@ -106,7 +106,11 @@ describe('agent batch with real transaction rollback', () => {
 
         const result = await batch(
             [
-                { op: 'task.create', as: 'root', args: { name: 'Parent' } },
+                {
+                    op: 'task.create',
+                    as: 'root',
+                    args: { values: { text: 'Parent', assignee: 'Ada' } },
+                },
                 { op: 'task.boom', args: {} },
             ],
             { projectId, gantt }
@@ -147,8 +151,16 @@ describe('agent batch with real transaction rollback', () => {
 
         const result = await batch(
             [
-                { op: 'task.create', as: 'root', args: { name: 'Parent' } },
-                { op: 'task.create', as: 'child', args: { name: 'Child' } },
+                {
+                    op: 'task.create',
+                    as: 'root',
+                    args: { values: { text: 'Parent', assignee: 'Ada' } },
+                },
+                {
+                    op: 'task.create',
+                    as: 'child',
+                    args: { values: { text: 'Child', assignee: 'Ada' } },
+                },
                 { op: 'hierarchy.move', args: { id: '$child', parent: '$root' } },
             ],
             { projectId, gantt }
@@ -180,8 +192,16 @@ describe('agent batch with real transaction rollback', () => {
 
         const result = await batch(
             [
-                { op: 'task.create', as: 'root', args: { name: 'Parent' } },
-                { op: 'task.create', as: 'child', args: { name: 'Child' } },
+                {
+                    op: 'task.create',
+                    as: 'root',
+                    args: { values: { text: 'Parent', assignee: 'Ada' } },
+                },
+                {
+                    op: 'task.create',
+                    as: 'child',
+                    args: { values: { text: 'Child', assignee: 'Ada' } },
+                },
                 { op: 'hierarchy.move', args: { id: '$child', parent: '$root' } },
             ],
             { projectId, gantt, dryRun: true }

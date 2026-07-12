@@ -196,7 +196,11 @@ describe('read-only agent commands', () => {
         });
 
         await expect(
-            app.task.list({ assignee: 'Ada', fields: ['id', 'text'], limit: 10 })
+            app.task.list({
+                filters: [{ field: 'assignee', operator: 'eq', value: 'Ada' }],
+                fields: ['id', 'text'],
+                limit: 10,
+            })
         ).resolves.toEqual({
             ok: true,
             data: [
@@ -294,7 +298,13 @@ describe('read-only agent commands', () => {
 
         await expect(
             dateOnlyApp.task.list({
-                dateRange: { start: '2026-06-30', end: '2026-06-30' },
+                filters: [
+                    {
+                        field: 'start_date',
+                        operator: 'between',
+                        value: ['2026-06-30', '2026-06-30'],
+                    },
+                ],
                 fields: ['id', 'text'],
             })
         ).resolves.toMatchObject({
@@ -303,7 +313,7 @@ describe('read-only agent commands', () => {
         });
     });
 
-    it('rejects invalid date-only strings in dateRange filters', async () => {
+    it('returns no matches for invalid v2 date filter values', async () => {
         const dateOnlyApp = buildApi({
             context: {
                 adapter: createDateOnlyAdapter(),
@@ -314,16 +324,17 @@ describe('read-only agent commands', () => {
 
         await expect(
             dateOnlyApp.task.list({
-                dateRange: { start: '2026-02-31', end: '2026-03-01' },
+                filters: [
+                    {
+                        field: 'start_date',
+                        operator: 'between',
+                        value: ['2026-02-31', '2026-03-01'],
+                    },
+                ],
             })
-        ).resolves.toEqual({
-            ok: false,
-            error: {
-                code: 'BAD_ARGS',
-                message: 'Invalid date for dateRange.start: 2026-02-31',
-                hint: 'Use YYYY-MM-DD or a valid date value.',
-            },
-            rev: 0,
+        ).resolves.toMatchObject({
+            ok: true,
+            data: [],
         });
     });
 
