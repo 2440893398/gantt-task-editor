@@ -262,7 +262,8 @@ const taskV2Ops = {
 
 function matchesFilter(task, filter) {
     const normalize = (value) => {
-        if (!filter.field.endsWith('_date')) return value;
+        const usesDateOrdering = filter.operator === 'before' || filter.operator === 'after';
+        if (!filter.field.endsWith('_date') && !usesDateOrdering) return value;
         const date = toDate(value);
         return date ? date.getTime() : Number.NaN;
     };
@@ -287,6 +288,8 @@ function matchesFilter(task, filter) {
     if (filter.operator === 'gte') return value >= expected;
     if (filter.operator === 'lt') return value < expected;
     if (filter.operator === 'lte') return value <= expected;
+    if (filter.operator === 'before') return value < expected;
+    if (filter.operator === 'after') return value > expected;
     if (filter.operator === 'between') {
         return value >= expected[0] && value <= expected[1];
     }

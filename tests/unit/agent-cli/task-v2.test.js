@@ -3,10 +3,20 @@ import { clearCommandsForTest, getCommand } from '../../../src/features/agent-cl
 import { registerTaskCommands } from '../../../src/features/agent-cli/commands/task.js';
 
 const formState = {
-    fieldOrder: ['text', 'assignee', 'risk_level', 'start_date', 'end_date', 'duration', 'status'],
+    fieldOrder: [
+        'text',
+        'assignee',
+        'risk_level',
+        'review_at',
+        'start_date',
+        'end_date',
+        'duration',
+        'status',
+    ],
     customFields: [
         { name: 'assignee', label: '负责人', type: 'text', required: true },
         { name: 'risk_level', label: '风险', type: 'select', options: ['high', 'low'] },
+        { name: 'review_at', label: 'Review at', type: 'datetime' },
     ],
     systemFieldSettings: { enabled: {}, typeOverrides: {} },
 };
@@ -144,6 +154,55 @@ describe('agent task v2 contract', () => {
         );
 
         expect(result).toEqual([{ id: 1, text: 'A', risk_level: 'high' }]);
+    });
+
+    it('filters date fields with the advertised before operator', () => {
+        const command = getCommand('task.list');
+        const context = {
+            formState,
+            adapter: {
+                getTasks: () => [
+                    { id: 1, text: 'Earlier', start_date: new Date(2026, 6, 10) },
+                    { id: 2, text: 'Boundary', start_date: new Date(2026, 6, 15) },
+                    { id: 3, text: 'Later', start_date: new Date(2026, 6, 20) },
+                ],
+            },
+        };
+
+        const before = command.handler(
+            { filters: [{ field: 'start_date', operator: 'before', value: '2026-07-15' }] },
+            context
+        );
+        expect(before.map((task) => task.text)).toEqual(['Earlier']);
+    });
+
+    it('filters datetime fields with the advertised after operator', () => {
+        const command = getCommand('task.list');
+        const context = {
+            formState,
+            adapter: {
+                getTasks: () => [
+                    { id: 1, text: 'Earlier', review_at: '2026-07-15T08:00:00Z' },
+                    { id: 2, text: 'Boundary', review_at: '2026-07-15T12:00:00Z' },
+                    { id: 3, text: 'Later', review_at: '2026-07-15T16:00:00Z' },
+                ],
+            },
+        };
+
+        const after = command.handler(
+            {
+                filters: [
+                    {
+                        field: 'review_at',
+                        operator: 'after',
+                        value: '2026-07-15T12:00:00Z',
+                    },
+                ],
+            },
+            context
+        );
+
+        expect(after.map((task) => task.text)).toEqual(['Later']);
     });
 
     it('rejects unknown query fields and unsupported operators', () => {
