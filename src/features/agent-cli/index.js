@@ -1,6 +1,8 @@
 import { registerHierarchyCommands } from './commands/hierarchy.js';
 import { registerLinkCommands } from './commands/link.js';
 import { registerProjectCommands } from './commands/project.js';
+import { registerFormCommands } from './commands/form.js';
+import { registerCalendarCommands } from './commands/calendar.js';
 import { registerScheduleCommands } from './commands/schedule.js';
 import { registerSessionCommands } from './commands/session.js';
 import { registerStateCommands } from './commands/state.js';
@@ -11,6 +13,8 @@ import { initAgentGuideUi } from './ui/AgentGuidePanel.js';
 
 function registerBuiltInCommands() {
     registerStateCommands();
+    registerFormCommands();
+    registerCalendarCommands();
     registerTaskCommands();
     registerHierarchyCommands();
     registerLinkCommands();

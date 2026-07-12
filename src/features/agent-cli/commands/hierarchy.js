@@ -1,4 +1,5 @@
 import { hierarchyOps } from '../../gantt/domain/hierarchy-ops.js';
+import { inspectHierarchy } from '../../gantt/domain/hierarchy-context.js';
 import { defineCommand, getCommand } from '../registry.js';
 
 const moveParams = {
@@ -24,6 +25,30 @@ const idParams = {
 };
 
 export function registerHierarchyCommands() {
+    if (!getCommand('hierarchy.inspect')) {
+        defineCommand({
+            name: 'hierarchy.inspect',
+            summary: 'Read minimal hierarchy context for a task',
+            params: {
+                type: 'object',
+                properties: {
+                    taskId: { type: 'integer' },
+                    depth: { type: 'integer', minimum: 0 },
+                },
+                required: ['taskId'],
+                additionalProperties: false,
+            },
+            mutating: false,
+            dynamic: true,
+            handler(args, context) {
+                return inspectHierarchy({
+                    ...args,
+                    gantt: context.gantt || context.adapter?.gantt,
+                });
+            },
+        });
+    }
+
     if (!getCommand('hierarchy.move')) {
         defineCommand({
             name: 'hierarchy.move',

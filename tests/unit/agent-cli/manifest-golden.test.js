@@ -4,6 +4,9 @@ import { buildApi } from '../../../src/features/agent-cli/runtime/api-builder.js
 import { resetProjectRev } from '../../../src/features/gantt/domain/rev.js';
 import { registerHierarchyCommands } from '../../../src/features/agent-cli/commands/hierarchy.js';
 import { registerLinkCommands } from '../../../src/features/agent-cli/commands/link.js';
+import { registerFormCommands } from '../../../src/features/agent-cli/commands/form.js';
+import { registerCalendarCommands } from '../../../src/features/agent-cli/commands/calendar.js';
+import { registerProjectCommands } from '../../../src/features/agent-cli/commands/project.js';
 import { registerScheduleCommands } from '../../../src/features/agent-cli/commands/schedule.js';
 import { registerSessionCommands } from '../../../src/features/agent-cli/commands/session.js';
 import { registerStateCommands } from '../../../src/features/agent-cli/commands/state.js';
@@ -22,12 +25,21 @@ const V2_COMMANDS = [
     'hierarchy.move',
     'hierarchy.indent',
     'hierarchy.outdent',
+    'hierarchy.inspect',
     'link.add',
     'link.remove',
     'link.list',
     'schedule.setDates',
     'schedule.move',
     'schedule.recalc',
+    'schedule.describe',
+    'form.describe',
+    'form.field',
+    'form.options',
+    'calendar.describe',
+    'project.list',
+    'project.create',
+    'project.switch',
     'state.snapshot',
     'state.export',
     'state.rev',
@@ -51,11 +63,14 @@ describe('agent command manifest golden contract', () => {
         clearCommandsForTest();
         resetProjectRev(projectId);
         registerStateCommands();
+        registerFormCommands();
+        registerCalendarCommands();
         registerTaskCommands();
         registerHierarchyCommands();
         registerLinkCommands();
         registerScheduleCommands();
         registerSessionCommands();
+        registerProjectCommands();
         app = buildApi({
             context: {
                 adapter: {

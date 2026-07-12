@@ -1,4 +1,5 @@
 import { scheduleOps } from '../../gantt/domain/schedule-ops.js';
+import { describeSchedulePolicy } from '../../gantt/domain/schedule-policy.js';
 import { defineCommand, getCommand } from '../registry.js';
 
 const setDatesParams = {
@@ -35,6 +36,29 @@ const recalcParams = {
 };
 
 export function registerScheduleCommands() {
+    if (!getCommand('schedule.describe')) {
+        defineCommand({
+            name: 'schedule.describe',
+            summary: 'Describe current scheduling and date semantics',
+            params: {
+                type: 'object',
+                properties: {
+                    taskId: { type: 'integer' },
+                    assignee: { type: 'string' },
+                },
+                additionalProperties: false,
+            },
+            mutating: false,
+            dynamic: true,
+            handler(args, context) {
+                return describeSchedulePolicy({
+                    ...args,
+                    ...(context.schedulePolicyDeps || {}),
+                });
+            },
+        });
+    }
+
     if (!getCommand('schedule.setDates')) {
         defineCommand({
             name: 'schedule.setDates',
