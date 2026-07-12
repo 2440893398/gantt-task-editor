@@ -63,20 +63,26 @@ function readOnlyResult(rev) {
     });
 }
 
-async function getRuntimeRevision(kind, context) {
+async function getRuntimeRevision(kind, context, policyScope = {}) {
     if (kind === 'schema') {
         if (typeof context.getSchemaRev === 'function') return context.getSchemaRev();
         return buildTaskFormSchema({ mode: 'create', state: context.formState || state }).schemaRev;
     }
-    if (typeof context.getPolicyRev === 'function') return context.getPolicyRev();
+    if (typeof context.getPolicyRev === 'function') return context.getPolicyRev(policyScope);
     return (
         await describeSchedulePolicy({
             ...(context.schedulePolicyDeps || {}),
+            ...policyScope,
+            gantt: context.gantt || context.adapter?.gantt,
         })
     ).policyRev;
 }
 
-async function validateCommandRevisions(requirements, context, { required = false } = {}) {
+async function validateCommandRevisions(
+    requirements,
+    context,
+    { required = false, policyScope = {} } = {}
+) {
     for (const kind of requirements) {
         const option = kind === 'schema' ? 'schemaRev' : 'policyRev';
         const code = kind === 'schema' ? 'SCHEMA_CONFLICT' : 'POLICY_CONFLICT';
@@ -84,7 +90,7 @@ async function validateCommandRevisions(requirements, context, { required = fals
             return fail(code, `${option} is required for this batch.`);
         }
         if (context[option] !== undefined) {
-            const current = await getRuntimeRevision(kind, context);
+            const current = await getRuntimeRevision(kind, context, policyScope);
             if (context[option] !== current) {
                 return fail(code, `${option} changed.`, { current });
             }
@@ -379,7 +385,8 @@ async function dispatchUnlocked(name, args = {}, context = {}) {
 
         const revisionFailure = await validateCommandRevisions(
             command.revisionRequirements?.(resolvedArgs) || [],
-            context
+            ctx,
+            { policyScope: command.policyRevisionScope?.(resolvedArgs) || {} }
         );
         if (revisionFailure) {
             result = { ...revisionFailure, rev: currentRev };

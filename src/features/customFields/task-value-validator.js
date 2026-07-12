@@ -56,11 +56,37 @@ function validateType(field, value) {
     return null;
 }
 
+function validateConstraints(field, value) {
+    if (field.type !== 'number' || isEmpty(value)) return null;
+    if (!Number.isFinite(value)) return 'must be a finite number';
+
+    const constraints = field.constraints || {};
+    if (constraints.integer && !Number.isInteger(value)) return 'must be an integer';
+    if (constraints.minimum !== undefined && value < constraints.minimum) {
+        return `must be at least ${constraints.minimum}`;
+    }
+    if (constraints.maximum !== undefined && value > constraints.maximum) {
+        return `must be at most ${constraints.maximum}`;
+    }
+    return null;
+}
+
 function validateOptions(field, value) {
     if (!field.optionsAvailable || isEmpty(value)) return null;
     const allowed = field.options.map((option) => option.value);
     const values = Array.isArray(value) ? value : [value];
     return values.every((item) => allowed.includes(String(item))) ? null : allowed;
+}
+
+// Options are validated by their canonical string value, so persist that same
+// canonical form — otherwise a numeric input passes validation but later fails
+// exact-match filters against the configured option strings.
+function normalizeOptionValue(field, value) {
+    if (!field.optionsAvailable || isEmpty(value)) return value;
+    if (field.type === 'multiselect') {
+        return Array.isArray(value) ? value.map(String) : value;
+    }
+    return String(value);
 }
 
 export function validateTaskValues({ mode = 'create', schema, values = {} } = {}) {
@@ -79,6 +105,10 @@ export function validateTaskValues({ mode = 'create', schema, values = {} } = {}
         if (typeError) {
             return validationFailure('INVALID_FIELD_VALUE', key, `${key} ${typeError}`);
         }
+        const constraintError = validateConstraints(field, value);
+        if (constraintError) {
+            return validationFailure('INVALID_FIELD_VALUE', key, `${key} ${constraintError}`);
+        }
         const invalidOptions = validateOptions(field, value);
         if (invalidOptions) {
             return validationFailure(
@@ -88,6 +118,7 @@ export function validateTaskValues({ mode = 'create', schema, values = {} } = {}
                 invalidOptions
             );
         }
+        normalized[key] = normalizeOptionValue(field, value);
     }
 
     if (mode === 'create') {

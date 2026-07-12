@@ -51,9 +51,13 @@ function getExportColumns(args, context) {
     });
     const schemaFields = schema.fields.map((field) => field.key);
     const allowed = new Set([...EXPORT_META_FIELDS, ...schemaFields]);
-    const fields = args.fields?.length
-        ? args.fields
-        : ['id', ...schemaFields.filter((field) => field !== 'id')];
+    // Default exports must keep the hierarchy reconstructable, so parent is
+    // always included even when the form does not manage it as a field.
+    const defaultFields = ['id', ...schemaFields.filter((field) => field !== 'id')];
+    if (!defaultFields.includes('parent')) {
+        defaultFields.push('parent');
+    }
+    const fields = args.fields?.length ? args.fields : defaultFields;
 
     for (const field of fields) {
         if (!allowed.has(field)) {

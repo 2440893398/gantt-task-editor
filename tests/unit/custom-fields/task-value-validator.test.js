@@ -111,4 +111,64 @@ describe('task value validator', () => {
             error: { code: 'INVALID_FIELD_VALUE', field: 'review_at' },
         });
     });
+
+    it('enforces numeric constraints from the schema', () => {
+        const scheduleState = {
+            fieldOrder: ['text', 'assignee', 'duration', 'progress'],
+            customFields: [{ name: 'assignee', label: '负责人', type: 'text', required: true }],
+            systemFieldSettings: { enabled: {}, typeOverrides: {} },
+        };
+        const scheduleSchema = buildTaskFormSchema({ mode: 'update', state: scheduleState });
+
+        expect(
+            validateTaskValues({ mode: 'update', schema: scheduleSchema, values: { duration: 0 } })
+        ).toMatchObject({
+            ok: false,
+            error: { code: 'INVALID_FIELD_VALUE', field: 'duration' },
+        });
+        expect(
+            validateTaskValues({
+                mode: 'update',
+                schema: scheduleSchema,
+                values: { progress: 1.5 },
+            })
+        ).toMatchObject({
+            ok: false,
+            error: { code: 'INVALID_FIELD_VALUE', field: 'progress' },
+        });
+        expect(
+            validateTaskValues({
+                mode: 'update',
+                schema: scheduleSchema,
+                values: { progress: Number.NaN },
+            })
+        ).toMatchObject({
+            ok: false,
+            error: { code: 'INVALID_FIELD_VALUE', field: 'progress' },
+        });
+        expect(
+            validateTaskValues({
+                mode: 'update',
+                schema: scheduleSchema,
+                values: { duration: 3, progress: 0.5 },
+            }).ok
+        ).toBe(true);
+    });
+
+    it('normalizes select values to the canonical option value', () => {
+        const numericState = {
+            fieldOrder: ['text', 'level'],
+            customFields: [{ name: 'level', label: 'Level', type: 'select', options: [1, 2] }],
+            systemFieldSettings: { enabled: {}, typeOverrides: {} },
+        };
+        const numericSchema = buildTaskFormSchema({ mode: 'update', state: numericState });
+
+        const result = validateTaskValues({
+            mode: 'update',
+            schema: numericSchema,
+            values: { level: 1 },
+        });
+
+        expect(result).toEqual({ ok: true, values: { level: '1' } });
+    });
 });

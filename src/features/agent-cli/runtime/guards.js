@@ -1,5 +1,22 @@
 import { fail } from './result.js';
 
+// Existence probe shared by discovery commands: DHTMLX gantt.getTask throws on
+// an unknown id, which must surface as NOT_FOUND, not EXEC_ERROR.
+export function taskExists(gantt, id) {
+    if (!gantt) {
+        return false;
+    }
+    if (typeof gantt.isTaskExists === 'function') {
+        return Boolean(gantt.isTaskExists(id));
+    }
+    try {
+        const task = gantt.getTask(id);
+        return Boolean(task) && task.id !== undefined && task.id !== null;
+    } catch {
+        return false;
+    }
+}
+
 function getProperties(schema) {
     return schema?.properties || {};
 }

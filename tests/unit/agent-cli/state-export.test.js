@@ -123,6 +123,21 @@ describe('state.export command', () => {
         expect(result.data.content.data).toHaveLength(2);
     });
 
+    it('includes parent in default exports even when the form omits it', async () => {
+        const noParentForm = {
+            ...formState,
+            fieldOrder: formState.fieldOrder.filter((field) => field !== 'parent'),
+        };
+        const scopedApp = buildApi({
+            context: { adapter: createAdapter(), projectId, formState: noParentForm },
+        });
+
+        const result = await scopedApp.state.export({ format: 'json' });
+
+        expect(result.ok).toBe(true);
+        expect(result.data.content.data[1]).toMatchObject({ id: 2, parent: 1 });
+    });
+
     it('exports a csv table of tasks', async () => {
         const result = await app.state.export({ format: 'csv' });
 

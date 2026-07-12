@@ -1,6 +1,8 @@
 import { scheduleOps } from '../../gantt/domain/schedule-ops.js';
 import { describeSchedulePolicy } from '../../gantt/domain/schedule-policy.js';
 import { defineCommand, getCommand } from '../registry.js';
+import { taskExists } from '../runtime/guards.js';
+import { fail } from '../runtime/result.js';
 
 const setDatesParams = {
     type: 'object',
@@ -51,9 +53,13 @@ export function registerScheduleCommands() {
             mutating: false,
             dynamic: true,
             handler(args, context) {
+                const gantt = context.gantt || context.adapter?.gantt;
+                if (args.taskId !== undefined && !taskExists(gantt, args.taskId)) {
+                    return fail('NOT_FOUND', `Task not found: ${args.taskId}`);
+                }
                 return describeSchedulePolicy({
                     ...args,
-                    gantt: context.gantt || context.adapter?.gantt,
+                    gantt,
                     ...(context.schedulePolicyDeps || {}),
                 });
             },
@@ -67,6 +73,7 @@ export function registerScheduleCommands() {
             params: setDatesParams,
             mutating: true,
             revisionRequirements: () => ['policy'],
+            policyRevisionScope: (args) => ({ taskId: args.id }),
             op: scheduleOps.setDates,
         });
     }
@@ -78,6 +85,7 @@ export function registerScheduleCommands() {
             params: moveParams,
             mutating: true,
             revisionRequirements: () => ['policy'],
+            policyRevisionScope: (args) => ({ taskId: args.id }),
             op: scheduleOps.move,
         });
     }

@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearCommandsForTest, defineCommand } from '../../../src/features/agent-cli/registry.js';
 import { registerTaskCommands } from '../../../src/features/agent-cli/commands/task.js';
+import { registerScheduleCommands } from '../../../src/features/agent-cli/commands/schedule.js';
 import { registerSessionCommands } from '../../../src/features/agent-cli/commands/session.js';
 import {
+    batch,
     dispatch,
     clearIdempotencyCacheForTest,
 } from '../../../src/features/agent-cli/runtime/dispatch.js';
@@ -24,6 +26,50 @@ const { settleAndPersist } = await import('../../../src/features/gantt/domain/se
 const undoHistory = await import('../../../src/features/gantt/history/undoManager.js');
 
 const projectId = 'dispatch-write-test';
+
+const scheduledFormState = {
+    fieldOrder: ['text', 'assignee', 'start_date', 'end_date', 'duration'],
+    customFields: [{ name: 'assignee', label: 'Assignee', type: 'text' }],
+    systemFieldSettings: { enabled: {}, typeOverrides: {} },
+};
+
+function schedulePolicyDeps() {
+    return {
+        loadSettings: async () => ({
+            countryCode: 'CN',
+            workdaysOfWeek: [1, 2, 3, 4, 5],
+            hoursPerDay: 8,
+        }),
+        loadHolidays: async () => [
+            { date: '2026-07-02', year: 2026, countryCode: 'CN', name: 'Relevant' },
+            { date: '2026-07-02', year: 2026, countryCode: 'US', name: 'Other country' },
+            { date: '2027-07-02', year: 2027, countryCode: 'CN', name: 'Other year' },
+        ],
+        loadCustomDays: async () => [],
+        loadLeaves: async () => [
+            { assignee: 'Ada', startDate: '2026-07-03', endDate: '2026-07-03' },
+            { assignee: 'Lin', startDate: '2026-07-03', endDate: '2026-07-03' },
+        ],
+    };
+}
+
+function scheduledGantt() {
+    const gantt = createGantt([
+        {
+            id: 1,
+            text: 'Scheduled',
+            assignee: 'Ada',
+            start_date: new Date(2026, 6, 1),
+            end_date: new Date(2026, 6, 5),
+            duration: 4,
+            parent: 0,
+        },
+    ]);
+    gantt.calculateDuration = (start, end) => Math.round((end - start) / 86400000);
+    gantt.serialize = () => ({ data: [gantt.getTaskSnapshot(1)], links: [] });
+    gantt.parse = vi.fn();
+    return gantt;
+}
 
 function registerWriteCommand({ commit = vi.fn(() => ({ id: 1 })) } = {}) {
     const plan = vi.fn(() => ({
@@ -760,6 +806,101 @@ describe('agent dispatch write commands', () => {
         });
         expect(gantt.getTask).not.toHaveBeenCalled();
         expect(runGanttTransaction).not.toHaveBeenCalled();
+    });
+
+    it('reuses a task-scoped discovered policyRev for task.update', async () => {
+        registerTaskCommands();
+        registerScheduleCommands();
+        const gantt = scheduledGantt();
+        const context = {
+            projectId,
+            gantt,
+            formState: scheduledFormState,
+            schedulePolicyDeps: schedulePolicyDeps(),
+        };
+        const scoped = await dispatch('schedule.describe', { taskId: 1 }, context);
+        const global = await dispatch('schedule.describe', {}, context);
+
+        expect(scoped.data.policyRev).not.toBe(global.data.policyRev);
+        const result = await dispatch(
+            'task.update',
+            { id: 1, values: { duration: 3 } },
+            { ...context, policyRev: scoped.data.policyRev }
+        );
+
+        expect(result.ok).toBe(true);
+    });
+
+    it('reuses a task-scoped discovered policyRev for schedule.setDates', async () => {
+        registerScheduleCommands();
+        const gantt = scheduledGantt();
+        const context = {
+            projectId,
+            gantt,
+            schedulePolicyDeps: schedulePolicyDeps(),
+        };
+        const scoped = await dispatch('schedule.describe', { taskId: 1 }, context);
+
+        const result = await dispatch(
+            'schedule.setDates',
+            { id: 1, duration: 3 },
+            { ...context, policyRev: scoped.data.policyRev }
+        );
+
+        expect(result.ok).toBe(true);
+    });
+
+    it('requires an unscoped global policyRev for schedule batches and recovers globally', async () => {
+        registerScheduleCommands();
+        const gantt = scheduledGantt();
+        const context = {
+            projectId,
+            gantt,
+            schedulePolicyDeps: schedulePolicyDeps(),
+        };
+        const scoped = await dispatch('schedule.describe', { taskId: 1 }, context);
+        const global = await dispatch('schedule.describe', {}, context);
+        const steps = [{ op: 'schedule.setDates', args: { id: 1, duration: 3 } }];
+
+        const rejected = await batch(steps, { ...context, policyRev: scoped.data.policyRev });
+        expect(rejected).toMatchObject({
+            ok: false,
+            error: {
+                code: 'POLICY_CONFLICT',
+                nextAction: { command: 'schedule.describe', args: {} },
+            },
+        });
+
+        const accepted = await batch(steps, { ...context, policyRev: global.data.policyRev });
+        expect(accepted.ok).toBe(true);
+    });
+
+    it('rejects a task-scoped revision when a relevant scheduling input changes', async () => {
+        registerScheduleCommands();
+        const gantt = scheduledGantt();
+        let relevantLeaveEnd = '2026-07-03';
+        const deps = schedulePolicyDeps();
+        deps.loadLeaves = async () => [
+            { assignee: 'Ada', startDate: '2026-07-03', endDate: relevantLeaveEnd },
+            { assignee: 'Lin', startDate: '2026-07-03', endDate: '2026-07-03' },
+        ];
+        const context = { projectId, gantt, schedulePolicyDeps: deps };
+        const scoped = await dispatch('schedule.describe', { taskId: 1 }, context);
+        relevantLeaveEnd = '2026-07-04';
+
+        const result = await dispatch(
+            'schedule.setDates',
+            { id: 1, duration: 3 },
+            { ...context, policyRev: scoped.data.policyRev }
+        );
+
+        expect(result).toMatchObject({
+            ok: false,
+            error: {
+                code: 'POLICY_CONFLICT',
+                nextAction: { command: 'schedule.describe', args: { taskId: 1 } },
+            },
+        });
     });
 
     it('activates command undo scope only while committing transaction work', async () => {

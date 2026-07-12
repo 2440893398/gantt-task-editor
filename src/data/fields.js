@@ -102,6 +102,7 @@ export const SYSTEM_FIELD_CONFIG = {
         canDisable: true,
         allowedTypes: ['number'],
         linkedGroup: null,
+        constraints: { minimum: 0, maximum: 1 },
     },
     duration: {
         i18nKey: 'columns.duration',
@@ -109,6 +110,7 @@ export const SYSTEM_FIELD_CONFIG = {
         canDisable: true,
         allowedTypes: ['number'],
         linkedGroup: null,
+        constraints: { minimum: 1, integer: true },
     },
     actual_start: {
         i18nKey: 'taskDetails.actualStart',
@@ -130,6 +132,7 @@ export const SYSTEM_FIELD_CONFIG = {
         canDisable: true,
         allowedTypes: ['number'],
         linkedGroup: 'actual',
+        constraints: { minimum: 0 },
     },
 };
 

@@ -167,6 +167,15 @@ function calculateDuration(gantt, start, end) {
     return Math.max(1, Math.round((end - start) / 86400000));
 }
 
+const SCHEDULE_VALUE_KEYS = ['start_date', 'end_date', 'duration'];
+
+function hasChildren(gantt, id) {
+    if (typeof gantt?.hasChild === 'function') {
+        return Boolean(gantt.hasChild(id));
+    }
+    return (gantt?.getChildren?.(id) || []).length > 0;
+}
+
 function mapV2WriteArgs(args, context, mode) {
     const validation = validateTaskValues({
         mode,
@@ -175,6 +184,24 @@ function mapV2WriteArgs(args, context, mode) {
         currentTask: mode === 'update' ? context.gantt.getTask(args.id) : null,
     });
     if (!validation.ok) return validation;
+
+    if (mode === 'update') {
+        const scheduledField = SCHEDULE_VALUE_KEYS.find((key) => args.values?.[key] !== undefined);
+        if (scheduledField && hasChildren(context.gantt, args.id)) {
+            return fail(
+                'CONSTRAINT',
+                'Parent task dates are derived from children and cannot be written directly.',
+                {
+                    field: scheduledField,
+                    nextAction: {
+                        command: 'schedule.describe',
+                        args: { taskId: args.id },
+                        reason: 'Read the parent rollup rules and derived fields.',
+                    },
+                }
+            );
+        }
+    }
 
     const values = { ...validation.values };
     let start = values.start_date === undefined ? undefined : parseLocalDateOnly(values.start_date);
@@ -259,10 +286,16 @@ const taskV2Ops = {
     },
 };
 
-function matchesFilter(task, filter) {
+function matchesFilter(task, filter, fieldsByKey) {
+    const fieldSpec = fieldsByKey?.get(filter.field);
+    const usesDateOrdering = filter.operator === 'before' || filter.operator === 'after';
+    // Prefer the schema type; the name-suffix check only covers meta fields
+    // (id/parent) and callers without a schema in context.
+    const isDateValued = fieldSpec
+        ? fieldSpec.type === 'date' || fieldSpec.type === 'datetime'
+        : filter.field.endsWith('_date') || usesDateOrdering;
     const normalize = (value) => {
-        const usesDateOrdering = filter.operator === 'before' || filter.operator === 'after';
-        if (!filter.field.endsWith('_date') && !usesDateOrdering) return value;
+        if (!isDateValued) return value;
         const date = toDate(value);
         return date ? date.getTime() : Number.NaN;
     };
@@ -333,7 +366,7 @@ function validateQueryArgs(args, context) {
         }
     }
 
-    return { ok: true };
+    return { ok: true, fields };
 }
 
 function taskNotFound(id) {
@@ -388,7 +421,9 @@ export function registerTaskCommands() {
                     .getTasks()
                     .map(serializePublicTask)
                     .filter((task) =>
-                        (args.filters || []).every((filter) => matchesFilter(task, filter))
+                        (args.filters || []).every((filter) =>
+                            matchesFilter(task, filter, queryValidation.fields)
+                        )
                     )
                     .slice(0, limit)
                     .map((task) => projectTask(task, args.fields));
@@ -467,6 +502,9 @@ export function registerTaskCommands() {
                     (field) => args.values?.[field] !== undefined
                 );
                 return scheduled ? ['schema', 'policy'] : ['schema'];
+            },
+            policyRevisionScope(args) {
+                return { taskId: args.id };
             },
             op: taskV2Ops.update,
         });

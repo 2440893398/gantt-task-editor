@@ -14,6 +14,8 @@ const FORMAT_BY_TYPE = {
     datetime: 'YYYY-MM-DDTHH:mm:ss[.sss][Z|+HH:mm|-HH:mm]',
 };
 
+const SYSTEM_SCHEDULE_FIELDS = new Set(['start_date', 'end_date']);
+
 function normalizeOverride(override) {
     if (typeof override === 'string') {
         return { type: override };
@@ -58,11 +60,13 @@ function hashString(value) {
 
 function buildField(key, base = {}, configured = {}, settings = {}) {
     const override = normalizeOverride(settings.typeOverrides?.[key]);
-    const type = override.type || configured.type || base.type || 'text';
+    const configuredType = override.type || configured.type || base.type || 'text';
+    const type = SYSTEM_SCHEDULE_FIELDS.has(key) ? 'date' : configuredType;
     const optionValues = override.options || configured.options || [];
     const options = normalizeOptions(optionValues);
     const defaultValue = override.defaultValue ?? configured.defaultValue ?? null;
     const derived = Boolean(base.derived || configured.derived);
+    const constraints = configured.constraints || base.constraints || null;
 
     return {
         key,
@@ -74,6 +78,7 @@ function buildField(key, base = {}, configured = {}, settings = {}) {
         writable: !derived,
         derived,
         defaultValue,
+        constraints,
         options,
         optionsAvailable: options.length > 0,
         optionSource: options.length > 0 ? 'config' : null,
@@ -89,6 +94,7 @@ function toRevisionFields(fields) {
         writable: field.writable,
         derived: field.derived,
         defaultValue: field.defaultValue,
+        constraints: field.constraints,
         options: field.options.map((option) => option.value),
         operators: field.operators,
     }));

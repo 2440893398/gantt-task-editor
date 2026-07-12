@@ -104,7 +104,11 @@ function createNavigation(error, command, args, getCommand) {
             if (command?.startsWith('link.')) {
                 return createReadAction('link.list', {}, 'List current dependency links.', options);
             }
-            if (command?.startsWith('task.') || command?.startsWith('hierarchy.')) {
+            if (
+                command?.startsWith('task.') ||
+                command?.startsWith('hierarchy.') ||
+                command?.startsWith('schedule.')
+            ) {
                 return createReadAction('task.list', {}, 'List current tasks.', options);
             }
             return createReadAction(

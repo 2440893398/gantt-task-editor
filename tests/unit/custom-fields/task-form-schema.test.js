@@ -3,7 +3,15 @@ import { buildTaskFormSchema } from '../../../src/features/customFields/task-for
 
 function createState() {
     return {
-        fieldOrder: ['text', 'priority', 'assignee', 'risk_level', 'start_date'],
+        fieldOrder: [
+            'text',
+            'priority',
+            'assignee',
+            'risk_level',
+            'review_at',
+            'start_date',
+            'end_date',
+        ],
         customFields: [
             {
                 name: 'priority',
@@ -20,6 +28,7 @@ function createState() {
                 options: ['high', 'low'],
                 required: false,
             },
+            { name: 'review_at', label: 'Review at', type: 'datetime' },
         ],
         systemFieldSettings: { enabled: {}, typeOverrides: {} },
     };
@@ -75,5 +84,43 @@ describe('task form schema', () => {
         const updateSchema = buildTaskFormSchema({ mode: 'update', state: formState });
 
         expect(updateSchema.schemaRev).toBe(createSchema.schemaRev);
+    });
+
+    it('forces system schedule fields to date while preserving custom datetime fields', () => {
+        const formState = createState();
+        formState.systemFieldSettings.typeOverrides = {
+            start_date: { type: 'datetime' },
+            end_date: { type: 'datetime' },
+        };
+
+        const schema = buildTaskFormSchema({ mode: 'create', state: formState });
+
+        expect(schema.fields.find((field) => field.key === 'start_date')).toMatchObject({
+            type: 'date',
+            format: 'YYYY-MM-DD',
+        });
+        expect(schema.fields.find((field) => field.key === 'end_date')).toMatchObject({
+            type: 'date',
+            format: 'YYYY-MM-DD',
+        });
+        expect(schema.fields.find((field) => field.key === 'review_at')).toMatchObject({
+            type: 'datetime',
+        });
+    });
+
+    it('emits numeric constraints for system number fields', () => {
+        const formState = createState();
+        formState.fieldOrder = [...formState.fieldOrder, 'duration', 'progress'];
+
+        const schema = buildTaskFormSchema({ mode: 'create', state: formState });
+
+        expect(schema.fields.find((field) => field.key === 'duration').constraints).toEqual({
+            minimum: 1,
+            integer: true,
+        });
+        expect(schema.fields.find((field) => field.key === 'progress').constraints).toEqual({
+            minimum: 0,
+            maximum: 1,
+        });
     });
 });

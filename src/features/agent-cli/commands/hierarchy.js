@@ -1,6 +1,8 @@
 import { hierarchyOps } from '../../gantt/domain/hierarchy-ops.js';
 import { inspectHierarchy } from '../../gantt/domain/hierarchy-context.js';
 import { defineCommand, getCommand } from '../registry.js';
+import { taskExists } from '../runtime/guards.js';
+import { fail } from '../runtime/result.js';
 
 const moveParams = {
     type: 'object',
@@ -41,10 +43,11 @@ export function registerHierarchyCommands() {
             mutating: false,
             dynamic: true,
             handler(args, context) {
-                return inspectHierarchy({
-                    ...args,
-                    gantt: context.gantt || context.adapter?.gantt,
-                });
+                const gantt = context.gantt || context.adapter?.gantt;
+                if (!taskExists(gantt, args.taskId)) {
+                    return fail('NOT_FOUND', `Task not found: ${args.taskId}`);
+                }
+                return inspectHierarchy({ ...args, gantt });
             },
         });
     }

@@ -41,6 +41,19 @@ const undoManager = {
     saveState: vi.fn(),
 };
 
+function withDatetimeScheduleOverrides() {
+    return {
+        ...formState,
+        systemFieldSettings: {
+            ...formState.systemFieldSettings,
+            typeOverrides: {
+                start_date: { type: 'datetime' },
+                end_date: { type: 'datetime' },
+            },
+        },
+    };
+}
+
 describe('agent task v2 contract', () => {
     beforeEach(() => {
         clearCommandsForTest();
@@ -163,6 +176,75 @@ describe('agent task v2 contract', () => {
                 code: 'INVALID_FIELD_VALUE',
                 field: 'duration',
             },
+        });
+    });
+
+    it('creates date-only schedules when datetime overrides target system date fields', () => {
+        const command = getCommand('task.create');
+        const plan = command.op.plan(
+            {
+                values: {
+                    text: 'Date contract',
+                    assignee: 'Ada',
+                    start_date: '2026-07-13',
+                    end_date: '2026-07-17',
+                },
+            },
+            { gantt: createGantt(), formState: withDatetimeScheduleOverrides() }
+        );
+
+        expect(plan.task.start_date).toEqual(new Date(2026, 6, 13));
+        expect(plan.task.end_date).toEqual(new Date(2026, 6, 18));
+    });
+
+    it('updates date-only schedules when datetime overrides target system date fields', () => {
+        const gantt = createGantt([
+            {
+                id: 1,
+                text: 'Existing',
+                assignee: 'Ada',
+                start_date: new Date(2026, 6, 1),
+                end_date: new Date(2026, 6, 3),
+            },
+        ]);
+        const command = getCommand('task.update');
+        const plan = command.op.plan(
+            {
+                id: 1,
+                values: { start_date: '2026-07-13', end_date: '2026-07-17' },
+            },
+            { gantt, formState: withDatetimeScheduleOverrides() }
+        );
+
+        expect(plan.changes.start_date).toEqual(new Date(2026, 6, 13));
+        expect(plan.changes.end_date).toEqual(new Date(2026, 6, 18));
+    });
+
+    it.each([
+        [
+            'task.create',
+            { values: { text: 'Bad start', assignee: 'Ada', start_date: '2026-07-13T09:00:00' } },
+            'start_date',
+        ],
+        ['task.update', { id: 1, values: { end_date: '2026-07-17T18:00:00' } }, 'end_date'],
+    ])('rejects datetime input instead of silently defaulting in %s', (name, args, field) => {
+        const gantt = createGantt([
+            {
+                id: 1,
+                text: 'Existing',
+                assignee: 'Ada',
+                start_date: new Date(2026, 6, 1),
+                end_date: new Date(2026, 6, 3),
+            },
+        ]);
+        const result = getCommand(name).op.plan(args, {
+            gantt,
+            formState: withDatetimeScheduleOverrides(),
+        });
+
+        expect(result).toMatchObject({
+            ok: false,
+            error: { code: 'INVALID_FIELD_VALUE', field },
         });
     });
 
@@ -312,5 +394,75 @@ describe('agent task v2 contract', () => {
         );
 
         expect(result).toEqual({ id: 1, risk_level: 'high' });
+    });
+
+    it('rejects schedule writes to a parent task whose dates are derived', () => {
+        const gantt = createGantt([
+            {
+                id: 1,
+                text: 'Parent',
+                assignee: 'Ada',
+                start_date: new Date(2026, 6, 1),
+                end_date: new Date(2026, 6, 5),
+            },
+        ]);
+        gantt.getChildren = (id) => (Number(id) === 1 ? [2] : []);
+        const command = getCommand('task.update');
+
+        const result = command.op.plan(
+            { id: 1, values: { start_date: '2026-08-03' } },
+            { gantt, formState }
+        );
+
+        expect(result).toMatchObject({
+            ok: false,
+            error: {
+                code: 'CONSTRAINT',
+                field: 'start_date',
+                nextAction: { command: 'schedule.describe', args: { taskId: 1 } },
+            },
+        });
+    });
+
+    it('still updates non-schedule values on a parent task', () => {
+        const gantt = createGantt([{ id: 1, text: 'Parent', assignee: 'Ada', status: 'pending' }]);
+        gantt.getChildren = (id) => (Number(id) === 1 ? [2] : []);
+        const command = getCommand('task.update');
+
+        const plan = command.op.plan(
+            { id: 1, values: { status: 'completed' } },
+            { gantt, formState }
+        );
+
+        expect(plan.ok).not.toBe(false);
+        expect(plan.changes.status).toBe('completed');
+    });
+
+    it('compares date-typed fields by schema type, not field-name suffix', () => {
+        const command = getCommand('task.list');
+        const context = {
+            formState: { ...formState, fieldOrder: [...formState.fieldOrder, 'actual_start'] },
+            adapter: {
+                getTasks: () => [
+                    { id: 1, text: 'Inside', actual_start: new Date(2026, 6, 15) },
+                    { id: 2, text: 'Outside', actual_start: new Date(2026, 7, 2) },
+                ],
+            },
+        };
+
+        const result = command.handler(
+            {
+                filters: [
+                    {
+                        field: 'actual_start',
+                        operator: 'between',
+                        value: ['2026-07-01', '2026-07-31'],
+                    },
+                ],
+            },
+            context
+        );
+
+        expect(result.map((task) => task.text)).toEqual(['Inside']);
     });
 });
