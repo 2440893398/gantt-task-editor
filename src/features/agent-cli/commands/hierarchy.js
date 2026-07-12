@@ -5,8 +5,8 @@ import { defineCommand, getCommand } from '../registry.js';
 const moveParams = {
     type: 'object',
     properties: {
-        id: { type: 'integer' },
-        parent: { type: 'integer' },
+        id: { type: 'integer', 'x-batch-ref': true },
+        parent: { type: 'integer', 'x-batch-ref': true },
         index: { type: 'integer', minimum: 0 },
         dryRun: { type: 'boolean' },
     },
@@ -17,7 +17,7 @@ const moveParams = {
 const idParams = {
     type: 'object',
     properties: {
-        id: { type: 'integer' },
+        id: { type: 'integer', 'x-batch-ref': true },
         dryRun: { type: 'boolean' },
     },
     required: ['id'],

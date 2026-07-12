@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { clearCommandsForTest, defineCommand } from '../../../src/features/agent-cli/registry.js';
+import {
+    clearCommandsForTest,
+    defineCommand,
+    getCommand,
+} from '../../../src/features/agent-cli/registry.js';
 import { batch } from '../../../src/features/agent-cli/runtime/dispatch.js';
 import { clearCommandLog, getCommandLog } from '../../../src/features/agent-cli/runtime/log.js';
 import { getProjectRev, resetProjectRev } from '../../../src/features/gantt/domain/rev.js';
@@ -52,7 +56,7 @@ function registerCreateCommand({ commit } = {}) {
             type: 'object',
             properties: {
                 name: { type: 'string' },
-                parent: { type: 'integer' },
+                parent: { type: 'integer', 'x-batch-ref': true },
             },
             required: ['name'],
             additionalProperties: false,
@@ -239,6 +243,74 @@ describe('agent batch dispatch', () => {
         );
     });
 
+    it('keeps dollar-prefixed text literal while resolving marked id fields', async () => {
+        const commit = vi.fn((plan) => ({
+            id: plan.args.name === '$literal' ? 500 : 501,
+            task: { text: plan.args.name, parent: plan.args.parent ?? 0 },
+        }));
+        registerCreateCommand({ commit });
+
+        const result = await batch(
+            [
+                { op: 'task.create', as: 'root', args: { name: '$literal' } },
+                { op: 'task.create', args: { name: 'Child', parent: '$root' } },
+            ],
+            { projectId, gantt: {} }
+        );
+
+        expect(result.ok).toBe(true);
+        expect(commit.mock.calls[0][0].args.name).toBe('$literal');
+        expect(commit.mock.calls[1][0].args.parent).toBe(500);
+    });
+
+    it('requires and verifies schemaRev for schema-dependent batches', async () => {
+        const registered = registerCreateCommand();
+        // Attach the v2 runtime requirement to the registered command.
+        getCommand('task.create').revisionRequirements = () => ['schema'];
+
+        const missing = await batch([{ op: 'task.create', args: { name: 'Parent' } }], {
+            projectId,
+            gantt: {},
+            getSchemaRev: () => 'schema-current',
+        });
+        expect(missing).toMatchObject({
+            ok: false,
+            error: { code: 'SCHEMA_CONFLICT' },
+        });
+
+        const matching = await batch([{ op: 'task.create', args: { name: 'Parent' } }], {
+            projectId,
+            gantt: {},
+            schemaRev: 'schema-current',
+            getSchemaRev: () => 'schema-current',
+        });
+        expect(matching.ok).toBe(true);
+        expect(registered.commit).toHaveBeenCalled();
+    });
+
+    it('rechecks required revisions immediately before batch commit', async () => {
+        const registered = registerCreateCommand();
+        getCommand('task.create').revisionRequirements = () => ['schema'];
+        const getSchemaRev = vi
+            .fn()
+            .mockReturnValueOnce('schema-current')
+            .mockReturnValue('schema-changed');
+
+        const result = await batch([{ op: 'task.create', args: { name: 'Parent' } }], {
+            projectId,
+            gantt: {},
+            schemaRev: 'schema-current',
+            getSchemaRev,
+        });
+
+        expect(result).toMatchObject({
+            ok: false,
+            error: { code: 'SCHEMA_CONFLICT' },
+        });
+        expect(getSchemaRev).toHaveBeenCalledTimes(2);
+        expect(registered.commit).not.toHaveBeenCalled();
+    });
+
     it('fails with BAD_ARGS when a $ref names an unknown alias', async () => {
         registerCreateCommand();
 
@@ -410,8 +482,8 @@ describe('agent batch dispatch', () => {
             params: {
                 type: 'object',
                 properties: {
-                    source: { type: 'integer' },
-                    target: { type: 'integer' },
+                    source: { type: 'integer', 'x-batch-ref': true },
+                    target: { type: 'integer', 'x-batch-ref': true },
                 },
                 required: ['source', 'target'],
                 additionalProperties: false,

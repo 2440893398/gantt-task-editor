@@ -6,6 +6,8 @@ import { createEmptyDiff, mergeDiffs } from '../../gantt/domain/diff.js';
 import { DEFAULT_PROJECT_ID } from '../../../core/storage.js';
 import { runProjectMutationExclusive } from '../../../core/project-mutation-gate.js';
 import { state } from '../../../core/store.js';
+import { buildTaskFormSchema } from '../../customFields/task-form-schema.js';
+import { describeSchedulePolicy } from '../../gantt/domain/schedule-policy.js';
 import {
     beginCommandUndoScope,
     endCommandUndoScope,
@@ -59,6 +61,36 @@ function readOnlyResult(rev) {
         hint: 'Use read commands only or enable write mode in app configuration.',
         rev,
     });
+}
+
+async function getRuntimeRevision(kind, context) {
+    if (kind === 'schema') {
+        if (typeof context.getSchemaRev === 'function') return context.getSchemaRev();
+        return buildTaskFormSchema({ mode: 'create', state: context.formState || state }).schemaRev;
+    }
+    if (typeof context.getPolicyRev === 'function') return context.getPolicyRev();
+    return (
+        await describeSchedulePolicy({
+            ...(context.schedulePolicyDeps || {}),
+        })
+    ).policyRev;
+}
+
+async function validateCommandRevisions(requirements, context, { required = false } = {}) {
+    for (const kind of requirements) {
+        const option = kind === 'schema' ? 'schemaRev' : 'policyRev';
+        const code = kind === 'schema' ? 'SCHEMA_CONFLICT' : 'POLICY_CONFLICT';
+        if (required && !context[option]) {
+            return fail(code, `${option} is required for this batch.`);
+        }
+        if (context[option] !== undefined) {
+            const current = await getRuntimeRevision(kind, context);
+            if (context[option] !== current) {
+                return fail(code, `${option} changed.`, { current });
+            }
+        }
+    }
+    return null;
 }
 
 function cancelledResult(rev) {
@@ -345,6 +377,15 @@ async function dispatchUnlocked(name, args = {}, context = {}) {
             return result;
         }
 
+        const revisionFailure = await validateCommandRevisions(
+            command.revisionRequirements?.(resolvedArgs) || [],
+            context
+        );
+        if (revisionFailure) {
+            result = { ...revisionFailure, rev: currentRev };
+            return result;
+        }
+
         // Workspace-level mutations such as switching projects do not mutate
         // the current Gantt data and therefore must not open a Gantt
         // transaction, settle task state, or bump a project revision.
@@ -492,8 +533,8 @@ function refAlias(value) {
  * Recursively replace `$alias` reference tokens with values from `aliases`.
  * An unknown alias throws a CommandResultError carrying a BAD_ARGS result.
  */
-function resolveRefs(value, aliases) {
-    if (isRefToken(value)) {
+function resolveRefs(value, schema, aliases) {
+    if (schema?.['x-batch-ref'] === true && isRefToken(value)) {
         const alias = refAlias(value);
         if (!Object.hasOwn(aliases, alias)) {
             throw new CommandResultError(
@@ -506,12 +547,15 @@ function resolveRefs(value, aliases) {
     }
 
     if (Array.isArray(value)) {
-        return value.map((item) => resolveRefs(item, aliases));
+        return value.map((item) => resolveRefs(item, schema?.items, aliases));
     }
 
     if (value && typeof value === 'object') {
         return Object.fromEntries(
-            Object.entries(value).map(([key, item]) => [key, resolveRefs(item, aliases)])
+            Object.entries(value).map(([key, item]) => [
+                key,
+                resolveRefs(item, schema?.properties?.[key], aliases),
+            ])
         );
     }
 
@@ -552,17 +596,19 @@ function getStepCommand(step) {
 /**
  * Recursively determine whether a value contains at least one `$ref` token.
  */
-function containsRef(value) {
-    if (isRefToken(value)) {
+function containsRef(value, schema) {
+    if (schema?.['x-batch-ref'] === true && isRefToken(value)) {
         return true;
     }
 
     if (Array.isArray(value)) {
-        return value.some((item) => containsRef(item));
+        return value.some((item) => containsRef(item, schema?.items));
     }
 
     if (value && typeof value === 'object') {
-        return Object.values(value).some((item) => containsRef(item));
+        return Object.entries(value).some(([key, item]) =>
+            containsRef(item, schema?.properties?.[key])
+        );
     }
 
     return false;
@@ -574,8 +620,8 @@ function containsRef(value) {
  * This is an existence check only — it does NOT substitute values, because a
  * forward ref's real id does not exist until the referenced step commits.
  */
-function assertRefsDeclared(value, declaredAliases) {
-    if (isRefToken(value)) {
+function assertRefsDeclared(value, schema, declaredAliases) {
+    if (schema?.['x-batch-ref'] === true && isRefToken(value)) {
         const alias = refAlias(value);
         if (!declaredAliases.has(alias)) {
             throw new CommandResultError(
@@ -588,12 +634,14 @@ function assertRefsDeclared(value, declaredAliases) {
     }
 
     if (Array.isArray(value)) {
-        value.forEach((item) => assertRefsDeclared(item, declaredAliases));
+        value.forEach((item) => assertRefsDeclared(item, schema?.items, declaredAliases));
         return;
     }
 
     if (value && typeof value === 'object') {
-        Object.values(value).forEach((item) => assertRefsDeclared(item, declaredAliases));
+        Object.entries(value).forEach(([key, item]) =>
+            assertRefsDeclared(item, schema?.properties?.[key], declaredAliases)
+        );
     }
 }
 
@@ -631,12 +679,12 @@ async function preflightBatch(steps, ctx) {
 
         // Every forward ref must name an already-declared alias.
         try {
-            assertRefsDeclared(stepArgs, declaredAliases);
+            assertRefsDeclared(stepArgs, command.params, declaredAliases);
         } catch (error) {
             return { ok: false, result: getCommitFailureResult(error, undefined) };
         }
 
-        if (containsRef(stepArgs)) {
+        if (containsRef(stepArgs, command.params)) {
             // Defer validateArgs + plan to the transaction (real ids needed).
             warnings.push(
                 `Step ${index + 1} (${command.name}) not previewed: depends on an id created in this batch.`
@@ -704,6 +752,21 @@ async function batchUnlocked(steps = [], context = {}) {
             return result;
         }
 
+        const revisionRequirements = new Set();
+        for (const step of steps) {
+            const command = getCommand(step.op);
+            for (const kind of command?.revisionRequirements?.(step.args || {}) || []) {
+                revisionRequirements.add(kind);
+            }
+        }
+        const revisionFailure = await validateCommandRevisions(revisionRequirements, context, {
+            required: true,
+        });
+        if (revisionFailure) {
+            result = { ...revisionFailure, rev: currentRev };
+            return result;
+        }
+
         // An empty batch is a no-op: no transaction, no settle, no rev bump.
         if (steps.length === 0) {
             result = ok({ steps: [], diff: createEmptyDiff() }, currentRev);
@@ -719,6 +782,14 @@ async function batchUnlocked(steps = [], context = {}) {
 
         if (context.dryRun) {
             result = ok({ steps: [], diff: preflight.diff }, currentRev, preflight.warnings);
+            return result;
+        }
+
+        const commitRevisionFailure = await validateCommandRevisions(revisionRequirements, ctx, {
+            required: true,
+        });
+        if (commitRevisionFailure) {
+            result = { ...commitRevisionFailure, rev: currentRev };
             return result;
         }
 
@@ -750,7 +821,7 @@ async function batchUnlocked(steps = [], context = {}) {
                             currentStep: index + 1,
                             totalSteps: steps.length,
                         });
-                        const resolvedArgs = resolveRefs(step.args || {}, aliases);
+                        const resolvedArgs = resolveRefs(step.args || {}, command.params, aliases);
                         const validated = validateArgs(command.params, resolvedArgs);
 
                         if (!validated.ok) {

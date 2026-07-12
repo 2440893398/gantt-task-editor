@@ -65,6 +65,7 @@ export function registerScheduleCommands() {
             summary: 'Set task schedule dates or duration',
             params: setDatesParams,
             mutating: true,
+            revisionRequirements: () => ['policy'],
             op: scheduleOps.setDates,
         });
     }
@@ -75,6 +76,7 @@ export function registerScheduleCommands() {
             summary: 'Move a task schedule by working days',
             params: moveParams,
             mutating: true,
+            revisionRequirements: () => ['policy'],
             op: scheduleOps.move,
         });
     }

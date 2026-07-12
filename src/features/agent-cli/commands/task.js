@@ -30,7 +30,7 @@ const createParams = {
 const updateParams = {
     type: 'object',
     properties: {
-        id: { type: 'integer' },
+        id: { type: 'integer', 'x-batch-ref': true },
         values: { type: 'object' },
         dryRun: { type: 'boolean' },
         idempotencyKey: { type: 'string' },
@@ -42,7 +42,7 @@ const updateParams = {
 const deleteParams = {
     type: 'object',
     properties: {
-        id: { type: 'integer' },
+        id: { type: 'integer', 'x-batch-ref': true },
         cascade: { type: 'boolean' },
         dryRun: { type: 'boolean' },
         idempotencyKey: { type: 'string' },
@@ -433,6 +433,12 @@ export function registerTaskCommands() {
             mutating: true,
             dynamic: true,
             supports: ['dryRun', 'batch', 'operation'],
+            revisionRequirements(args) {
+                const scheduled = ['start_date', 'end_date', 'duration'].some(
+                    (field) => args.values?.[field] !== undefined
+                );
+                return scheduled ? ['schema', 'policy'] : ['schema'];
+            },
             op: taskV2Ops.create,
         });
     }
@@ -445,6 +451,12 @@ export function registerTaskCommands() {
             mutating: true,
             dynamic: true,
             supports: ['dryRun', 'batch', 'operation'],
+            revisionRequirements(args) {
+                const scheduled = ['start_date', 'end_date', 'duration'].some(
+                    (field) => args.values?.[field] !== undefined
+                );
+                return scheduled ? ['schema', 'policy'] : ['schema'];
+            },
             op: taskV2Ops.update,
         });
     }

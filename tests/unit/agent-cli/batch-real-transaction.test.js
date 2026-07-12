@@ -15,6 +15,17 @@ vi.mock('../../../src/features/gantt/domain/settle.js', () => ({
 const { settleAndPersist } = await import('../../../src/features/gantt/domain/settle.js');
 
 const projectId = 'batch-real-transaction-test';
+const schemaRev = 'schema-test-rev';
+
+function createBatchContext(gantt, overrides = {}) {
+    return {
+        projectId,
+        gantt,
+        schemaRev,
+        getSchemaRev: () => schemaRev,
+        ...overrides,
+    };
+}
 
 const ORIGINAL_SNAPSHOT = Object.freeze({ data: [{ id: 1, text: 'Before' }], links: [] });
 
@@ -113,7 +124,7 @@ describe('agent batch with real transaction rollback', () => {
                 },
                 { op: 'task.boom', args: {} },
             ],
-            { projectId, gantt }
+            createBatchContext(gantt)
         );
 
         // 1. Failure carries the thrown error and the pre-batch rev.
@@ -163,7 +174,7 @@ describe('agent batch with real transaction rollback', () => {
                 },
                 { op: 'hierarchy.move', args: { id: '$child', parent: '$root' } },
             ],
-            { projectId, gantt }
+            createBatchContext(gantt)
         );
 
         expect(result.ok).toBe(true);
@@ -204,7 +215,7 @@ describe('agent batch with real transaction rollback', () => {
                 },
                 { op: 'hierarchy.move', args: { id: '$child', parent: '$root' } },
             ],
-            { projectId, gantt, dryRun: true }
+            createBatchContext(gantt, { dryRun: true })
         );
 
         expect(result.ok).toBe(true);

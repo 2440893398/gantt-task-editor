@@ -71,7 +71,7 @@ export async function executeCommand(name, args = {}, context = {}) {
 // ALLOWLIST (default-deny): a raw `{ ...context, ...execOptions }` spread let a
 // caller pass `{ readOnly: false }` to clear read-only mode and bypass the write
 // guard, so we copy only whitelisted keys instead.
-const CALLER_EXEC_OPTIONS = ['ifRev', 'dryRun', 'sync'];
+const CALLER_EXEC_OPTIONS = ['ifRev', 'schemaRev', 'policyRev', 'dryRun', 'sync'];
 
 function pickCallerExecOptions(execOptions = {}) {
     const safe = {};

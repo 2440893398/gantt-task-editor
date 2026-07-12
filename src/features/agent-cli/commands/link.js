@@ -4,8 +4,8 @@ import { linkOps, listLinks } from '../../gantt/domain/link-ops.js';
 const addParams = {
     type: 'object',
     properties: {
-        source: { type: 'integer' },
-        target: { type: 'integer' },
+        source: { type: 'integer', 'x-batch-ref': true },
+        target: { type: 'integer', 'x-batch-ref': true },
         type: {
             type: 'string',
             enum: ['fs', 'ss', 'ff', 'sf'],
@@ -19,9 +19,9 @@ const addParams = {
 const removeParams = {
     type: 'object',
     properties: {
-        id: { type: 'integer' },
-        source: { type: 'integer' },
-        target: { type: 'integer' },
+        id: { type: 'integer', 'x-batch-ref': true },
+        source: { type: 'integer', 'x-batch-ref': true },
+        target: { type: 'integer', 'x-batch-ref': true },
         type: {
             type: 'string',
             enum: ['fs', 'ss', 'ff', 'sf'],
