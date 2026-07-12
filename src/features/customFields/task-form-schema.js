@@ -98,7 +98,7 @@ export function buildTaskFormSchema({ mode = 'create', state } = {}) {
     const fields = orderedKeys.map((key) =>
         buildField(key, SYSTEM_FIELD_CONFIG[key], configuredByKey.get(key), settings)
     );
-    const revisionInput = stableValue({ mode, fields: toRevisionFields(fields) });
+    const revisionInput = stableValue({ fields: toRevisionFields(fields) });
 
     return {
         form: 'task',

@@ -33,9 +33,13 @@ describe('agent manifest v2 discovery contract', () => {
             examples: ["app.task.create({ values: { text: 'A' } })"],
         };
 
-        const manifest = buildManifest([command]);
+        const commands = [
+            { name: 'form.describe', summary: 'Describe form', mutating: false },
+            command,
+        ];
+        const manifest = buildManifest(commands);
         const entry = manifest.commands.find((item) => item.name === 'task.create');
-        const help = buildHelp([command], 'task.create');
+        const help = buildHelp(commands, 'task.create');
 
         expect(manifest.version).toBe(2);
         expect(entry).toEqual({
@@ -89,5 +93,51 @@ describe('agent manifest v2 discovery contract', () => {
         expect(() =>
             createReadAction('missing.command', {}, 'Missing action', { getCommand })
         ).toThrow('must target a read-only command');
+    });
+
+    it('publishes safe default discovery for built-in dynamic and structural commands', () => {
+        const reads = [
+            'form.describe',
+            'form.field',
+            'schedule.describe',
+            'calendar.describe',
+            'hierarchy.inspect',
+            'link.list',
+            'project.list',
+            'state.rev',
+            'task.get',
+        ].map((name) => ({ name, summary: name, mutating: false }));
+        const commands = [
+            ...reads,
+            { name: 'task.create', summary: 'Create task', mutating: true },
+            { name: 'task.update', summary: 'Update task', mutating: true },
+            { name: 'task.list', summary: 'List tasks', mutating: false },
+            { name: 'state.export', summary: 'Export tasks', mutating: false },
+            { name: 'schedule.move', summary: 'Move schedule', mutating: true },
+            { name: 'hierarchy.move', summary: 'Move hierarchy', mutating: true },
+            { name: 'link.add', summary: 'Add link', mutating: true },
+            { name: 'project.switch', summary: 'Switch project', mutating: true },
+        ];
+
+        expect(buildHelp(commands, 'task.create').discovery).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({ command: 'form.describe' }),
+                expect.objectContaining({ command: 'schedule.describe' }),
+            ])
+        );
+        expect(buildHelp(commands, 'task.update').discovery[0]).toMatchObject({
+            command: 'form.describe',
+            args: { form: 'task', mode: 'update' },
+        });
+        expect(buildHelp(commands, 'task.list').discovery[0].command).toBe('form.describe');
+        expect(buildHelp(commands, 'state.export').discovery[0].command).toBe('form.describe');
+        expect(buildHelp(commands, 'schedule.move').discovery).toEqual(
+            expect.arrayContaining([expect.objectContaining({ command: 'calendar.describe' })])
+        );
+        expect(buildHelp(commands, 'hierarchy.move').discovery[0].command).toBe(
+            'hierarchy.inspect'
+        );
+        expect(buildHelp(commands, 'link.add').discovery[0].command).toBe('link.list');
+        expect(buildHelp(commands, 'project.switch').discovery[0].command).toBe('project.list');
     });
 });

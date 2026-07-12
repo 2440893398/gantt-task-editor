@@ -74,4 +74,19 @@ describe('agent domain discovery commands', () => {
                 .every((command) => command.mutating === false)
         ).toBe(true);
     });
+
+    it('requires a bounded range before disclosing exceptions or leaves', async () => {
+        const result = await app.calendar.describe({ include: ['exceptions'] });
+
+        expect(result).toMatchObject({
+            ok: false,
+            error: {
+                code: 'BAD_ARGS',
+                nextAction: {
+                    command: 'help',
+                    args: { command: 'calendar.describe' },
+                },
+            },
+        });
+    });
 });

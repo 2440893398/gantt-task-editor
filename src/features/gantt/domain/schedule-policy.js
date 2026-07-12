@@ -23,7 +23,6 @@ function hashString(value) {
 }
 
 export async function describeSchedulePolicy({
-    assignee,
     loadSettings = getCalendarSettings,
     loadHolidays = getAllHolidays,
     loadCustomDays = getAllCustomDays,
@@ -35,14 +34,11 @@ export async function describeSchedulePolicy({
         loadCustomDays(),
         loadLeaves(),
     ]);
-    const leaves = assignee
-        ? allLeaves.filter((leave) => String(leave.assignee) === String(assignee))
-        : allLeaves;
     const revisionValue = JSON.stringify({
         settings,
         holidays: stableRecords(holidays),
         customDays: stableRecords(customDays),
-        leaves: stableRecords(leaves),
+        leaves: stableRecords(allLeaves),
     });
 
     return {

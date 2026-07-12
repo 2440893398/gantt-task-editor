@@ -18,15 +18,6 @@ vi.mock('../../../src/features/gantt/domain/settle.js', () => ({
 
 const projectId = 'error-navigation-test';
 
-function emptyDiff() {
-    return {
-        created: [],
-        updated: [],
-        deleted: [],
-        links: { added: [], removed: [] },
-    };
-}
-
 function registerFormReads() {
     for (const name of ['form.describe', 'form.field', 'form.options']) {
         defineCommand({

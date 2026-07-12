@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildApi } from '../../../src/features/agent-cli/runtime/api-builder.js';
-import { clearCommandsForTest } from '../../../src/features/agent-cli/registry.js';
+import { clearCommandsForTest, getCommand } from '../../../src/features/agent-cli/registry.js';
 import { registerHierarchyCommands } from '../../../src/features/agent-cli/commands/hierarchy.js';
 import { registerLinkCommands } from '../../../src/features/agent-cli/commands/link.js';
 import { registerScheduleCommands } from '../../../src/features/agent-cli/commands/schedule.js';
@@ -122,6 +122,12 @@ describe('agent project hierarchy, link, and schedule commands', () => {
             ],
         });
         const app = createApp(gantt);
+
+        expect(getCommand('schedule.setDates').params.properties.id['x-batch-ref']).toBe(true);
+        expect(getCommand('schedule.move').params.properties.id['x-batch-ref']).toBe(true);
+        expect(getCommand('schedule.recalc').params.properties.fromTaskId['x-batch-ref']).toBe(
+            true
+        );
 
         const result = await app.hierarchy.move({ id: 2, parent: 1, index: 0, dryRun: true });
 

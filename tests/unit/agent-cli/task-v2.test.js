@@ -68,6 +68,20 @@ describe('agent task v2 contract', () => {
         expect(result.task.risk_level).toBe('high');
     });
 
+    it('supplies a valid one-day schedule when create values omit dates', () => {
+        const command = getCommand('task.create');
+        const plan = command.op.plan(
+            { values: { text: 'Unscheduled input', assignee: 'Ada' } },
+            { gantt: createGantt(), formState, today: new Date(2026, 6, 13) }
+        );
+
+        expect(plan.task).toMatchObject({
+            text: 'Unscheduled input',
+            start_date: new Date(2026, 6, 13),
+            duration: 1,
+        });
+    });
+
     it('rejects invalid dynamic values before planning a write', () => {
         const command = getCommand('task.create');
         const result = command.op.plan(
@@ -84,6 +98,30 @@ describe('agent task v2 contract', () => {
         expect(result).toMatchObject({
             ok: false,
             error: { code: 'INVALID_FIELD_VALUE', field: 'risk_level' },
+        });
+    });
+
+    it('rejects inconsistent start, inclusive end, and duration values', () => {
+        const command = getCommand('task.create');
+        const result = command.op.plan(
+            {
+                values: {
+                    text: 'Inconsistent schedule',
+                    assignee: 'Ada',
+                    start_date: '2026-07-13',
+                    end_date: '2026-07-17',
+                    duration: 2,
+                },
+            },
+            { gantt: createGantt(), formState }
+        );
+
+        expect(result).toMatchObject({
+            ok: false,
+            error: {
+                code: 'INVALID_FIELD_VALUE',
+                field: 'duration',
+            },
         });
     });
 
@@ -108,6 +146,27 @@ describe('agent task v2 contract', () => {
         expect(result).toEqual([{ id: 1, text: 'A', risk_level: 'high' }]);
     });
 
+    it('rejects unknown query fields and unsupported operators', () => {
+        const command = getCommand('task.list');
+        const context = { formState, adapter: { getTasks: () => [] } };
+
+        expect(
+            command.handler(
+                { filters: [{ field: 'missing_field', operator: 'eq', value: 'x' }] },
+                context
+            )
+        ).toMatchObject({ ok: false, error: { code: 'INVALID_FIELD' } });
+        expect(
+            command.handler(
+                { filters: [{ field: 'risk_level', operator: 'gt', value: 'high' }] },
+                context
+            )
+        ).toMatchObject({
+            ok: false,
+            error: { code: 'INVALID_FIELD_VALUE', field: 'risk_level' },
+        });
+    });
+
     it('returns user-facing inclusive end_date values', () => {
         const command = getCommand('task.get');
         const result = command.handler(
@@ -128,5 +187,20 @@ describe('agent task v2 contract', () => {
             start_date: '2026-07-13',
             end_date: '2026-07-17',
         });
+    });
+
+    it('projects selected fields from task.get', () => {
+        const command = getCommand('task.get');
+        const result = command.handler(
+            { id: 1, fields: ['id', 'risk_level'] },
+            {
+                formState,
+                adapter: {
+                    getTask: () => ({ id: 1, text: 'A', risk_level: 'high' }),
+                },
+            }
+        );
+
+        expect(result).toEqual({ id: 1, risk_level: 'high' });
     });
 });

@@ -1,5 +1,8 @@
 import { queryCalendarContext } from '../../calendar/calendar-query.js';
 import { defineCommand, getCommand } from '../registry.js';
+import { fail } from '../runtime/result.js';
+
+const CALENDAR_INCLUDES = ['settings', 'exceptions', 'leaves'];
 
 const describeParams = {
     type: 'object',
@@ -7,7 +10,10 @@ const describeParams = {
         start: { type: 'string' },
         end: { type: 'string' },
         assignee: { type: 'string' },
-        include: {},
+        include: {
+            type: 'array',
+            items: { type: 'string', enum: CALENDAR_INCLUDES },
+        },
     },
     additionalProperties: false,
 };
@@ -21,8 +27,28 @@ export function registerCalendarCommands() {
             mutating: false,
             dynamic: true,
             handler(args, context) {
+                const include = args.include || ['settings'];
+                if (
+                    !Array.isArray(include) ||
+                    include.some((item) => !CALENDAR_INCLUDES.includes(item))
+                ) {
+                    return fail('BAD_ARGS', 'include contains an unsupported calendar section.', {
+                        allowed: CALENDAR_INCLUDES,
+                    });
+                }
+                if (
+                    include.some((item) => item === 'exceptions' || item === 'leaves') &&
+                    (!args.start || !args.end)
+                ) {
+                    return fail(
+                        'BAD_ARGS',
+                        'start and end are required for calendar exceptions or leaves.',
+                        { hint: 'Provide a bounded YYYY-MM-DD start and end range.' }
+                    );
+                }
                 return queryCalendarContext({
                     ...args,
+                    include,
                     ...(context.calendarQueryDeps || {}),
                 });
             },

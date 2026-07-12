@@ -36,6 +36,22 @@ const tasks = [
 ];
 
 const links = [{ id: 10, source: 1, target: 2, type: '0' }];
+const formState = {
+    fieldOrder: [
+        'text',
+        'start_date',
+        'end_date',
+        'duration',
+        'progress',
+        'status',
+        'priority',
+        'assignee',
+        'parent',
+        'risk_level',
+    ],
+    customFields: [{ name: 'risk_level', label: 'Risk', type: 'select', options: ['high', 'low'] }],
+    systemFieldSettings: { enabled: {}, typeOverrides: {} },
+};
 
 function createAdapter() {
     return {
@@ -68,6 +84,7 @@ describe('state.export command', () => {
             context: {
                 adapter: createAdapter(),
                 projectId,
+                formState,
             },
         });
     });
@@ -115,12 +132,14 @@ describe('state.export command', () => {
 
         const lines = result.data.content.split('\n');
         expect(lines[0]).toBe(
-            'id,text,start,end,duration,progress,status,priority,assignee,parent'
+            'id,text,start_date,end_date,duration,progress,status,priority,assignee,parent,risk_level'
         );
-        expect(lines[1]).toBe('1,Design phase,2026-06-30,2026-07-02,2,0.25,in_progress,high,Ada,0');
+        expect(lines[1]).toBe(
+            '1,Design phase,2026-06-30,2026-07-02,2,0.25,in_progress,high,Ada,0,high'
+        );
         // Fields with commas/quotes are RFC-4180 escaped.
         expect(lines[2]).toBe(
-            '2,"Build, ship & ""quote""",2026-07-03,2026-07-05,2,0,todo,medium,Grace,1'
+            '2,"Build, ship & ""quote""",2026-07-03,2026-07-05,2,0,todo,medium,Grace,1,low'
         );
     });
 
@@ -133,9 +152,11 @@ describe('state.export command', () => {
 
         const lines = result.data.content.split('\n');
         expect(lines[0]).toBe(
-            '| id | text | start | end | duration | progress | status | priority | assignee | parent |'
+            '| id | text | start_date | end_date | duration | progress | status | priority | assignee | parent | risk_level |'
         );
-        expect(lines[1]).toBe('| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |');
+        expect(lines[1]).toBe(
+            '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |'
+        );
         expect(lines[2]).toContain('| 1 | Design phase | 2026-06-30 | 2026-07-02 |');
         // Pipe characters inside cells are escaped so the table stays valid.
         expect(lines[3]).toContain('Build, ship &');
@@ -161,5 +182,25 @@ describe('state.export command', () => {
         expect(result.ok).toBe(false);
         expect(result.error.code).toBe('BAD_ARGS');
         expect(result.error.allowed).toEqual(['json', 'csv', 'md']);
+    });
+
+    it('validates export fields and applies selected fields to json', async () => {
+        const invalid = await app.state.export({ format: 'json', fields: ['missing_field'] });
+        expect(invalid).toMatchObject({
+            ok: false,
+            error: { code: 'INVALID_FIELD', field: 'missing_field' },
+        });
+
+        const selected = await app.state.export({
+            format: 'json',
+            fields: ['id', 'risk_level'],
+        });
+        expect(selected.data.content).toEqual({
+            data: [
+                { id: 1, risk_level: 'high' },
+                { id: 2, risk_level: 'low' },
+            ],
+            links,
+        });
     });
 });

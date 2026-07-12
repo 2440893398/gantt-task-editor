@@ -468,8 +468,11 @@ async function dispatchUnlocked(name, args = {}, context = {}) {
         }
 
         const nextRev = bumpProjectRev(projectId);
+        const settledData = command.op?.readResult
+            ? await command.op.readResult(txResult.data.result.data, ctx)
+            : txResult.data.result.data;
         result = command.op
-            ? ok(buildOpSuccessData(txResult.data.result.data, plan.diff), nextRev)
+            ? ok(buildOpSuccessData(settledData, plan.diff), nextRev)
             : replaceRev(txResult.data.result, nextRev);
         maybeMarkLocalOnlyAutosave(context, resolvedArgs, projectId);
         maybeScheduleCloudSync(context, resolvedArgs, projectId);
@@ -907,7 +910,7 @@ async function batchUnlocked(steps = [], context = {}) {
                         }
 
                         changed = true;
-                        stepResults.push(commandResult.data);
+                        stepResults.push({ command, data: commandResult.data });
                         diffs.push(stepDiff);
 
                         if (step.as && commandResult.data?.id !== undefined) {
@@ -933,7 +936,16 @@ async function batchUnlocked(steps = [], context = {}) {
                         });
                     }
 
-                    return { changed, steps: stepResults, diff: mergeDiffs(diffs) };
+                    const settledSteps = [];
+                    for (const stepResult of stepResults) {
+                        settledSteps.push(
+                            stepResult.command.op.readResult
+                                ? await stepResult.command.op.readResult(stepResult.data, ctx)
+                                : stepResult.data
+                        );
+                    }
+
+                    return { changed, steps: settledSteps, diff: mergeDiffs(diffs) };
                 } finally {
                     endCommandUndoScope();
                 }

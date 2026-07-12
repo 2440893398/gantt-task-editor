@@ -62,6 +62,14 @@ function normalizeDateValue(value) {
     return value;
 }
 
+function toExclusiveEnd(value) {
+    const date = normalizeDateValue(value);
+    if (!(date instanceof Date)) return date;
+    const exclusive = new Date(date);
+    exclusive.setDate(exclusive.getDate() + 1);
+    return exclusive;
+}
+
 function validateDateValue(name, value) {
     if (value === undefined || value === null || value === '') {
         return { ok: true };
@@ -106,7 +114,7 @@ function setDatesArgsToChanges(args) {
         changes.start_date = args.start;
     }
     if (args.end !== undefined) {
-        changes.end_date = args.end;
+        changes.end_date = toExclusiveEnd(args.end);
     }
     if (args.duration !== undefined) {
         changes.duration = args.duration;
@@ -176,7 +184,10 @@ function setDatesPlan(args, ctx) {
     const gantt = resolveGantt(ctx);
     const task = gantt.getTask(args.id);
 
-    return createUpdatePlan(args.id, task, setDatesArgsToChanges(args));
+    const plan = createUpdatePlan(args.id, task, setDatesArgsToChanges(args));
+    const endDiff = plan.diff.updated[0]?.fields?.end_date;
+    if (endDiff) endDiff.new = args.end;
+    return plan;
 }
 
 function commitTaskChanges(plan, ctx) {

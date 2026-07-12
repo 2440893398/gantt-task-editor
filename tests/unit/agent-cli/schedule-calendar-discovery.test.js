@@ -25,6 +25,23 @@ describe('schedule and calendar discovery services', () => {
         expect(after.durationUnit).toBe('working-day');
     });
 
+    it('uses one policy revision regardless of discovery assignee filters', async () => {
+        const deps = {
+            loadSettings: async () => settings,
+            loadHolidays: async () => [],
+            loadCustomDays: async () => [],
+            loadLeaves: async () => [
+                { assignee: 'Ada', startDate: '2026-07-10', endDate: '2026-07-11' },
+                { assignee: 'Lin', startDate: '2026-07-12', endDate: '2026-07-13' },
+            ],
+        };
+
+        const globalPolicy = await describeSchedulePolicy(deps);
+        const assigneePolicy = await describeSchedulePolicy({ ...deps, assignee: 'Ada' });
+
+        expect(assigneePolicy.policyRev).toBe(globalPolicy.policyRev);
+    });
+
     it('returns only range and assignee relevant calendar records', async () => {
         const result = await queryCalendarContext({
             start: '2026-07-01',

@@ -81,6 +81,7 @@ describe('schedule ops', () => {
 
         expect(gantt.updateTask).toHaveBeenCalledWith(1);
         expect(gantt.getTask(1).start_date).toBeInstanceOf(Date);
+        expect(gantt.getTask(1).end_date).toEqual(new Date(2026, 6, 7));
     });
 
     it('moves start and end by working days through scheduler utilities', async () => {

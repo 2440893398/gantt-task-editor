@@ -147,6 +147,13 @@ describe('agent api builder', () => {
         expect(app.help('task.list')?.name).toBe('task.list');
         expect(app.manifest().commands.map((command) => command.name)).toContain('task.list');
         expect(app.manifest().commands.map((command) => command.name)).toContain('batch');
+        expect(app.help('task.missing')).toMatchObject({
+            ok: false,
+            error: {
+                code: 'UNKNOWN_COMMAND',
+                nextAction: { command: 'help', args: {} },
+            },
+        });
     });
 
     it('adds current rev to exec parse failures', async () => {

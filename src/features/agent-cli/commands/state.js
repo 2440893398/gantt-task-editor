@@ -1,5 +1,8 @@
 import { defineCommand, getCommand } from '../registry.js';
 import { getProjectRev } from '../../gantt/domain/rev.js';
+import { state } from '../../../core/store.js';
+import { buildTaskFormSchema } from '../../customFields/task-form-schema.js';
+import { fail } from '../runtime/result.js';
 
 const snapshotParams = {
     type: 'object',
@@ -24,20 +27,7 @@ const exportParams = {
     additionalProperties: false,
 };
 
-// Task columns emitted by the csv/md exporters, in order. Keys map to task
-// fields; label is the header shown to the agent.
-const EXPORT_COLUMNS = [
-    { key: 'id', label: 'id' },
-    { key: 'text', label: 'text' },
-    { key: 'start_date', label: 'start' },
-    { key: 'end_date', label: 'end' },
-    { key: 'duration', label: 'duration' },
-    { key: 'progress', label: 'progress' },
-    { key: 'status', label: 'status' },
-    { key: 'priority', label: 'priority' },
-    { key: 'assignee', label: 'assignee' },
-    { key: 'parent', label: 'parent' },
-];
+const EXPORT_META_FIELDS = ['id', 'parent'];
 
 function getRev(context) {
     return getProjectRev(context.projectId);
@@ -51,6 +41,53 @@ function toCellValue(value) {
         return value.toISOString();
     }
     return String(value);
+}
+
+function formatLocalDate(date) {
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(
+        date.getDate()
+    ).padStart(2, '0')}`;
+}
+
+function normalizeExportTask(task) {
+    const normalized = { ...task };
+    if (task.start_date instanceof Date) {
+        normalized.start_date = formatLocalDate(task.start_date);
+    }
+    if (task.end_date instanceof Date) {
+        const inclusive = new Date(task.end_date);
+        inclusive.setDate(inclusive.getDate() - 1);
+        normalized.end_date = formatLocalDate(inclusive);
+    }
+    return normalized;
+}
+
+function getExportColumns(args, context) {
+    const schema = buildTaskFormSchema({
+        mode: 'export',
+        state: context.formState || state,
+    });
+    const schemaFields = schema.fields.map((field) => field.key);
+    const allowed = new Set([...EXPORT_META_FIELDS, ...schemaFields]);
+    const fields = args.fields?.length
+        ? args.fields
+        : ['id', ...schemaFields.filter((field) => field !== 'id')];
+
+    for (const field of fields) {
+        if (!allowed.has(field)) {
+            return fail('INVALID_FIELD', `Unknown export field: ${field}`, { field });
+        }
+    }
+
+    return {
+        ok: true,
+        fields,
+        columns: fields.map((field) => ({ key: field, label: field })),
+    };
+}
+
+function projectTask(task, fields) {
+    return Object.fromEntries(fields.map((field) => [field, task[field]]));
 }
 
 // RFC-4180: quote a field only when it contains a comma, quote, or newline,
@@ -145,22 +182,26 @@ export function registerStateCommands() {
             mutating: false,
             handler(args, context) {
                 const format = args.format || 'json';
+                const selected = getExportColumns(args, context);
+                if (!selected.ok) return selected;
+                const tasks = context.adapter
+                    .getTasks()
+                    .map(normalizeExportTask)
+                    .map((task) => projectTask(task, selected.fields));
 
                 if (format === 'json') {
-                    return { format, content: context.adapter.serialize() };
+                    return {
+                        format,
+                        content: { data: tasks, links: context.adapter.getLinks() },
+                    };
                 }
 
-                const tasks = context.adapter.getTasks();
-                const columns = args.fields?.length
-                    ? args.fields.map((field) => ({ key: field, label: field }))
-                    : EXPORT_COLUMNS;
-
                 if (format === 'csv') {
-                    return { format, content: toCsv(tasks, columns) };
+                    return { format, content: toCsv(tasks, selected.columns) };
                 }
 
                 // md: markdown table of tasks for cheap agent self-inspection.
-                return { format, content: toMarkdown(tasks, columns) };
+                return { format, content: toMarkdown(tasks, selected.columns) };
             },
         });
     }

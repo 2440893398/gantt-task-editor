@@ -354,6 +354,7 @@ describe('agent dispatch write commands', () => {
         expect(result).toMatchObject({
             ok: true,
             data: {
+                task: { id: 4, text: 'New name' },
                 diff: {
                     updated: [
                         {
@@ -371,6 +372,37 @@ describe('agent dispatch write commands', () => {
         expect(runGanttTransaction).toHaveBeenCalledTimes(1);
         expect(settleAndPersist).toHaveBeenCalledTimes(1);
         expect(getProjectRev(projectId)).toBe(1);
+    });
+
+    it('returns settled task.create data with an inclusive end date', async () => {
+        registerTaskCommands();
+        const gantt = createGantt();
+        globalThis.gantt = gantt;
+
+        const result = await dispatch(
+            'task.create',
+            {
+                values: {
+                    text: 'Settled task',
+                    assignee: 'Ada',
+                    start_date: '2026-07-13',
+                    end_date: '2026-07-17',
+                },
+            },
+            { projectId, gantt }
+        );
+
+        expect(result).toMatchObject({
+            ok: true,
+            data: {
+                task: {
+                    text: 'Settled task',
+                    start_date: '2026-07-13',
+                    end_date: '2026-07-17',
+                },
+            },
+            rev: 1,
+        });
     });
 
     it('commits changed date-only task updates through transaction and persistence', async () => {

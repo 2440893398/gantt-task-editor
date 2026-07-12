@@ -975,8 +975,12 @@ function renderPanel({ app, readOnly = false }) {
                 <pre class="agent-guide-code">const snapshot = await window.app.state.snapshot({ level: 'summary' });
 const rev = snapshot.rev;
 
-await window.app.task.create({ name: '新任务', duration: 1, dryRun: true });
-await window.app.task.create({ name: '新任务', duration: 1 }, { ifRev: rev });</pre>
+const form = await window.app.form.describe({ form: 'task', mode: 'create' });
+await window.app.task.create({ values: { text: '新任务', assignee: '负责人', duration: 1 }, dryRun: true });
+await window.app.task.create(
+    { values: { text: '新任务', assignee: '负责人', duration: 1 } },
+    { ifRev: rev, schemaRev: form.data.schemaRev }
+);</pre>
             </section>
         </main>
     `;

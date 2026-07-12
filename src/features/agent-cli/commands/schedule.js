@@ -5,7 +5,7 @@ import { defineCommand, getCommand } from '../registry.js';
 const setDatesParams = {
     type: 'object',
     properties: {
-        id: { type: 'integer' },
+        id: { type: 'integer', 'x-batch-ref': true },
         start: { type: 'string' },
         end: { type: 'string' },
         duration: { type: 'integer', minimum: 1 },
@@ -18,7 +18,7 @@ const setDatesParams = {
 const moveParams = {
     type: 'object',
     properties: {
-        id: { type: 'integer' },
+        id: { type: 'integer', 'x-batch-ref': true },
         days: { type: 'integer', minimum: 1 },
         dryRun: { type: 'boolean' },
     },
@@ -29,7 +29,7 @@ const moveParams = {
 const recalcParams = {
     type: 'object',
     properties: {
-        fromTaskId: { type: 'integer' },
+        fromTaskId: { type: 'integer', 'x-batch-ref': true },
         dryRun: { type: 'boolean' },
     },
     additionalProperties: false,

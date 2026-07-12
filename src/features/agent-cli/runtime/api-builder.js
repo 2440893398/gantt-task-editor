@@ -7,7 +7,7 @@ import { batch, dispatch } from './dispatch.js';
 import { parseExec } from './exec.js';
 import { buildHelp, buildManifest } from './manifest.js';
 import { createOperationManager } from './operations.js';
-import { withErrorNavigation } from './result.js';
+import { fail, withErrorNavigation } from './result.js';
 
 function resolveProjectId(context = {}) {
     if (context.projectId) {
@@ -168,7 +168,14 @@ export function buildApi(options = {}) {
         });
     };
     app.operation = operationManager;
-    app.help = (commandName) => buildHelp(getCommands(), commandName);
+    app.help = (commandName) => {
+        const help = buildHelp(getCommands(), commandName);
+        if (help || !commandName) return help;
+        return withErrorNavigation(fail('UNKNOWN_COMMAND', `Unknown command: ${commandName}`), {
+            command: commandName,
+            getCommand,
+        });
+    };
     app.manifest = () => buildManifest(getCommands());
     app.version = 2;
 

@@ -67,4 +67,13 @@ describe('task form schema', () => {
 
         expect(second.schemaRev).not.toBe(first.schemaRev);
     });
+
+    it('uses one validation revision across create and update modes', () => {
+        const formState = createState();
+
+        const createSchema = buildTaskFormSchema({ mode: 'create', state: formState });
+        const updateSchema = buildTaskFormSchema({ mode: 'update', state: formState });
+
+        expect(updateSchema.schemaRev).toBe(createSchema.schemaRev);
+    });
 });

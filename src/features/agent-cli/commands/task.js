@@ -15,6 +15,8 @@ const listParams = {
     additionalProperties: false,
 };
 
+const QUERY_META_FIELDS = new Set(['id', 'parent']);
+
 const createParams = {
     type: 'object',
     properties: {
@@ -191,15 +193,30 @@ function mapV2WriteArgs(args, context, mode) {
     if (!validation.ok) return validation;
 
     const values = { ...validation.values };
-    const start =
-        values.start_date === undefined ? undefined : parseLocalDateOnly(values.start_date);
+    let start = values.start_date === undefined ? undefined : parseLocalDateOnly(values.start_date);
     const inclusiveEnd =
         values.end_date === undefined ? undefined : parseLocalDateOnly(values.end_date);
     const exclusiveEnd = inclusiveEnd ? addDays(inclusiveEnd, 1) : undefined;
     const currentTask = mode === 'update' ? context.gantt.getTask(args.id) : null;
     let duration = values.duration;
+    if (mode === 'create' && !start && !inclusiveEnd && duration === undefined) {
+        start = startOfDay(context.today || new Date());
+        duration = 1;
+    }
     if ((start || currentTask?.start_date) && exclusiveEnd) {
-        duration = calculateDuration(context.gantt, start || currentTask.start_date, exclusiveEnd);
+        const calculatedDuration = calculateDuration(
+            context.gantt,
+            start || currentTask.start_date,
+            exclusiveEnd
+        );
+        if (values.duration !== undefined && values.duration !== calculatedDuration) {
+            return fail(
+                'INVALID_FIELD_VALUE',
+                `duration must equal ${calculatedDuration} for the provided start_date and end_date`,
+                { field: 'duration', expected: calculatedDuration }
+            );
+        }
+        duration = calculatedDuration;
     }
 
     const fields = { ...values };
@@ -226,6 +243,9 @@ const taskV2Ops = {
             return mapped.ok === false ? mapped : taskOps.create.plan(mapped, context);
         },
         commit: taskOps.create.commit,
+        readResult(data, context) {
+            return { ...data, task: toAgentTask(context.gantt.getTask(data.id)) };
+        },
     },
     update: {
         plan(args, context) {
@@ -233,6 +253,9 @@ const taskV2Ops = {
             return mapped.ok === false ? mapped : taskOps.update.plan(mapped, context);
         },
         commit: taskOps.update.commit,
+        readResult(data, context) {
+            return { ...data, task: toAgentTask(context.gantt.getTask(data.id)) };
+        },
         skipEmptyDiff: true,
     },
 };
@@ -250,6 +273,16 @@ function matchesFilter(task, filter) {
     if (filter.operator === 'eq') return value === expected;
     if (filter.operator === 'in') return expected.includes(value);
     if (filter.operator === 'contains') return String(value || '').includes(String(expected));
+    if (filter.operator === 'containsAny') {
+        const values = Array.isArray(value) ? value : [];
+        const expectedValues = Array.isArray(expected) ? expected : [expected];
+        return expectedValues.some((item) => values.includes(item));
+    }
+    if (filter.operator === 'containsAll') {
+        const values = Array.isArray(value) ? value : [];
+        const expectedValues = Array.isArray(expected) ? expected : [expected];
+        return expectedValues.every((item) => values.includes(item));
+    }
     if (filter.operator === 'gt') return value > expected;
     if (filter.operator === 'gte') return value >= expected;
     if (filter.operator === 'lt') return value < expected;
@@ -260,85 +293,53 @@ function matchesFilter(task, filter) {
     return false;
 }
 
-function taskNotFound(id) {
-    return fail('NOT_FOUND', `Task not found: ${id}`);
-}
+function validateQueryArgs(args, context) {
+    const schema = getFormSchema('query', context);
+    const fields = new Map(schema.fields.map((field) => [field.key, field]));
+    const requestedFields = normalizeFields(args.fields) || [];
 
-function isMissingTask(task) {
-    return !task || task.id === undefined || task.id === null;
-}
-
-function matchesDateRange(task, args) {
-    const start = toDate(args.dateRange?.start || args.start);
-    const end = toDate(args.dateRange?.end || args.end);
-
-    if (!start && !end) {
-        return true;
+    for (const key of requestedFields) {
+        if (!QUERY_META_FIELDS.has(key) && !fields.has(key)) {
+            return fail('INVALID_FIELD', `Unknown task field: ${key}`, { field: key });
+        }
     }
 
-    const taskStart = toDate(task.start_date);
-    const taskEnd = toDate(task.end_date) || taskStart;
-
-    if (!taskStart || !taskEnd) {
-        return false;
-    }
-
-    return (!end || taskStart <= endOfDay(end)) && (!start || taskEnd >= startOfDay(start));
-}
-
-function validateDateArg(name, value) {
-    if (!value) {
-        return { ok: true };
-    }
-
-    const date = toDate(value);
-    if (date) {
-        return { ok: true };
-    }
-
-    return fail('BAD_ARGS', `Invalid date for ${name}: ${value}`, {
-        hint: 'Use YYYY-MM-DD or a valid date value.',
-    });
-}
-
-function validateDateFilters(args) {
-    const checks = [
-        ['dateRange.start', args.dateRange?.start],
-        ['dateRange.end', args.dateRange?.end],
-        ['start', args.start],
-        ['end', args.end],
-    ];
-
-    for (const [name, value] of checks) {
-        const result = validateDateArg(name, value);
-        if (!result.ok) {
-            return result;
+    for (const filter of args.filters || []) {
+        const field = fields.get(filter?.field);
+        if (!field && !QUERY_META_FIELDS.has(filter?.field)) {
+            return fail('INVALID_FIELD', `Unknown task field: ${filter?.field}`, {
+                field: filter?.field,
+            });
+        }
+        const operators = field?.operators || ['eq', 'in'];
+        if (!operators.includes(filter?.operator)) {
+            return fail(
+                'INVALID_FIELD_VALUE',
+                `Unsupported operator for ${filter?.field}: ${filter?.operator}`,
+                { field: filter?.field, allowed: operators }
+            );
+        }
+        if (field?.optionsAvailable) {
+            const allowed = field.options.map((option) => option.value);
+            const values = Array.isArray(filter.value) ? filter.value : [filter.value];
+            if (values.some((value) => !allowed.includes(String(value)))) {
+                return fail('INVALID_FIELD_VALUE', `Invalid option for ${filter.field}`, {
+                    field: filter.field,
+                    allowed,
+                });
+            }
         }
     }
 
     return { ok: true };
 }
 
-function filterTasks(tasks, args, today) {
-    return tasks.filter((task) => {
-        if (args.status !== undefined && task.status !== args.status) {
-            return false;
-        }
-        if (args.priority !== undefined && task.priority !== args.priority) {
-            return false;
-        }
-        if (args.assignee !== undefined && task.assignee !== args.assignee) {
-            return false;
-        }
-        if (args.parent !== undefined && Number(task.parent || 0) !== args.parent) {
-            return false;
-        }
-        if (args.overdue !== undefined && isTaskOverdue(task, today) !== args.overdue) {
-            return false;
-        }
+function taskNotFound(id) {
+    return fail('NOT_FOUND', `Task not found: ${id}`);
+}
 
-        return matchesDateRange(task, args);
-    });
+function isMissingTask(task) {
+    return !task || task.id === undefined || task.id === null;
 }
 
 export function registerTaskCommands() {
@@ -350,15 +351,20 @@ export function registerTaskCommands() {
                 type: 'object',
                 properties: {
                     id: { type: 'integer' },
+                    fields: { type: 'array', items: { type: 'string' } },
                 },
                 required: ['id'],
                 additionalProperties: false,
             },
             mutating: false,
             handler(args, context) {
+                const queryValidation = validateQueryArgs(args, context);
+                if (!queryValidation.ok) return queryValidation;
                 try {
                     const task = context.adapter.getTask(args.id);
-                    return isMissingTask(task) ? taskNotFound(args.id) : toAgentTask(task);
+                    return isMissingTask(task)
+                        ? taskNotFound(args.id)
+                        : projectTask(toAgentTask(task), args.fields);
                 } catch {
                     return taskNotFound(args.id);
                 }
@@ -373,6 +379,8 @@ export function registerTaskCommands() {
             params: listParams,
             mutating: false,
             handler(args, context) {
+                const queryValidation = validateQueryArgs(args, context);
+                if (!queryValidation.ok) return queryValidation;
                 const limit = args.limit || 100;
                 return context.adapter
                     .getTasks()
