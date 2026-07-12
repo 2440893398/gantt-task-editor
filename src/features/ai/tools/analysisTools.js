@@ -9,6 +9,7 @@ import {
     getSystemFieldDefaultValue,
 } from '../../../core/store.js';
 import { SYSTEM_FIELD_CONFIG, INTERNAL_FIELDS } from '../../../data/fields.js';
+import { buildTaskFormSchema } from '../../customFields/task-form-schema.js';
 
 const emptyObjectSchema = jsonSchema({
     type: 'object',
@@ -395,6 +396,8 @@ export const analysisTools = {
         description: '获取 Gantt 列/字段配置信息',
         inputSchema: emptyObjectSchema,
         execute: async () => {
+            const formSchema = buildTaskFormSchema({ mode: 'create', state });
+            const formFields = new Map(formSchema.fields.map((field) => [field.key, field]));
             const ganttColumns =
                 typeof gantt !== 'undefined' && gantt.config?.columns ? gantt.config.columns : [];
 
@@ -404,32 +407,38 @@ export const analysisTools = {
                 width: col.width || null,
             }));
 
-            const visibleFieldOrder = (state.fieldOrder || []).filter(
-                (fieldName) => !INTERNAL_FIELDS.includes(fieldName)
-            );
+            const visibleFieldOrder = formSchema.fields
+                .map((field) => field.key)
+                .filter((fieldName) => !INTERNAL_FIELDS.includes(fieldName));
 
-            const systemFields = Object.entries(SYSTEM_FIELD_CONFIG).map(([name, config]) => ({
-                name,
-                i18nKey: config.i18nKey,
-                type: getFieldType(name),
-                baseType: config.type,
-                allowedTypes: config.allowedTypes,
-                canDisable: config.canDisable,
-                linkedGroup: config.linkedGroup,
-                enabled: isFieldEnabled(name),
-                options: getSystemFieldOptions(name),
-                defaultValue: getSystemFieldDefaultValue(name),
-            }));
+            const systemFields = Object.entries(SYSTEM_FIELD_CONFIG).map(([name, config]) => {
+                const field = formFields.get(name);
+                return {
+                    name,
+                    i18nKey: config.i18nKey,
+                    type: field?.type || getFieldType(name),
+                    baseType: config.type,
+                    allowedTypes: config.allowedTypes,
+                    canDisable: config.canDisable,
+                    linkedGroup: config.linkedGroup,
+                    enabled: isFieldEnabled(name),
+                    options: getSystemFieldOptions(name),
+                    defaultValue: field?.defaultValue ?? getSystemFieldDefaultValue(name),
+                };
+            });
 
-            const customFields = (state.customFields || []).map((field) => ({
-                name: field.name,
-                label: field.label || field.name,
-                type: field.type,
-                required: !!field.required,
-                width: field.width || null,
-                options: field.options || null,
-                enabled: visibleFieldOrder.includes(field.name),
-            }));
+            const customFields = (state.customFields || []).map((configured) => {
+                const field = formFields.get(configured.name);
+                return {
+                    name: configured.name,
+                    label: configured.label || configured.name,
+                    type: field?.type || configured.type,
+                    required: field?.required ?? !!configured.required,
+                    width: configured.width || null,
+                    options: configured.options || null,
+                    enabled: visibleFieldOrder.includes(configured.name),
+                };
+            });
 
             return {
                 columns,

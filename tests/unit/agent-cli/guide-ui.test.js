@@ -11,7 +11,7 @@ function createAppStub() {
     const operationResults = new Map();
     let nextOperationId = 1;
     const app = {
-        version: 1,
+        version: 2,
         state: {
             snapshot: vi.fn(async (args) => ({
                 ok: true,
@@ -33,14 +33,14 @@ function createAppStub() {
             rev: 2,
         })),
         help: () => ({
-            version: 1,
+            version: 2,
             commands: [
                 { name: 'state.snapshot', summary: 'Read project state', mutating: false },
                 { name: 'task.create', summary: 'Create a task', mutating: true },
             ],
         }),
         manifest: () => ({
-            version: 1,
+            version: 2,
             commands: [
                 {
                     name: 'state.snapshot',
@@ -171,6 +171,10 @@ describe('agent guide ui', () => {
         expect(instruction).toContain('先打开这个页面地址');
         expect(instruction).toContain('window.app');
         expect(instruction).toContain('window.app.manifest()');
+        expect(instruction).toContain("window.app.help('task.create')");
+        expect(instruction).toContain('form.describe');
+        expect(instruction).toContain('nextAction');
+        expect(instruction).toContain('Do not inspect source code');
         expect(instruction).toContain('dryRun');
         expect(instruction).toContain('ifRev');
         expect(instruction).toContain('CONFLICT');
@@ -183,7 +187,7 @@ describe('agent guide ui', () => {
         expect(instruction).toContain('一次 batch');
         expect(instruction).toContain('只尝试一次');
         expect(instruction).toContain('不要先调用 help/manifest');
-        expect(instruction.length).toBeLessThan(1400);
+        expect(instruction.length).toBeLessThan(2000);
     });
 
     it('includes the target page URL in generated Skill.md content', () => {
@@ -200,6 +204,10 @@ describe('agent guide ui', () => {
         expect(skillMarkdown).toContain('operation.start');
         expect(skillMarkdown).toContain('idempotencyKey');
         expect(skillMarkdown).toContain('Do not call help or manifest before known commands');
+        expect(skillMarkdown).toContain("window.app.help('task.create')");
+        expect(skillMarkdown).toContain('form.describe');
+        expect(skillMarkdown).toContain('nextAction');
+        expect(skillMarkdown).toContain('Do not inspect source code');
         expect(skillMarkdown).toContain('Try the visible runner once');
         expect(skillMarkdown).toContain('one batch dry-run');
     });
@@ -263,6 +271,42 @@ describe('agent guide ui', () => {
             expect(document.getElementById('agent-guide-run-output').textContent).toContain(
                 '"operationId": "op-1"'
             );
+        });
+    });
+
+    it('renders structured nextAction unchanged in the visible guide runner', async () => {
+        const app = createAppStub();
+        app.state.snapshot.mockResolvedValue({
+            ok: false,
+            error: {
+                code: 'CONFLICT',
+                message: 'Project revision changed.',
+                nextAction: {
+                    command: 'state.rev',
+                    args: {},
+                    reason: 'Read the current project revision.',
+                },
+            },
+            rev: 2,
+        });
+        initAgentGuideUi({ app, readOnly: false });
+        document.getElementById('agent-guide-btn').click();
+        document.getElementById('agent-guide-command-input').value = JSON.stringify({
+            command: 'state.snapshot',
+            args: { level: 'summary' },
+        });
+
+        document.getElementById('agent-guide-run-command').click();
+
+        await vi.waitFor(() => {
+            const output = JSON.parse(
+                document.getElementById('agent-guide-run-output').textContent
+            );
+            expect(output.error.nextAction).toEqual({
+                command: 'state.rev',
+                args: {},
+                reason: 'Read the current project revision.',
+            });
         });
     });
 

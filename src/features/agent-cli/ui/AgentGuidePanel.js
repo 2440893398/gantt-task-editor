@@ -75,7 +75,12 @@ ${pageAddressInstruction}
 
 ${projectWorkflow}
 
-安全规则：不要直接操作 DOM、IndexedDB、localStorage 或模拟拖拽。CONFLICT 时刷新 rev 后重试一次；CONSTRAINT 时停止；需要回滚时用 session.undo()。
+Progressive disclosure:
+- For a known command, execute it directly. If its parameters are unclear, call await window.app.help('task.create') and follow only the returned discovery entries needed for the current operation.
+- Before writing dynamic task values, call form.describe, then form.field/form.options only for unknown fields. Reuse schemaRev/policyRev for the write or batch.
+- When an error includes nextAction, call that read-only action before retrying. Do not inspect source code to guess dynamic configuration.
+
+安全规则：不要直接操作 DOM、IndexedDB、localStorage 或模拟拖拽。CONFLICT 等错误含 nextAction 时先执行该只读动作；没有恢复动作的 CONSTRAINT 才停止；需要回滚时用 session.undo()。
 
 兼容 fallback：若 typeof window.app === "undefined"，读取 #agent-api-discovery，打开 #agent-guide-btn，将 JSON 填入 #agent-guide-command-input，点击 #agent-guide-run-command，并从 #agent-guide-run-output 读取结果。fallback 只尝试一次；控件不可用或超时就报告阻塞，不要反复重开页面、切换浏览器或重复探测。`;
 }
@@ -136,6 +141,11 @@ Do not use \`javascript:\` URLs or mutate DOM, IndexedDB, or localStorage as a w
 - Complete the user's requested task; do not stop after evaluating capabilities.
 - Do not call help or manifest before known commands. Read \`window.app.manifest()\`
   once only when a command or parameter is unknown.
+- If a known command's parameters are unclear, call \`window.app.help('task.create')\` and
+  follow its discovery entries. For dynamic task fields, use \`form.describe\`, then
+  \`form.field\` or \`form.options\` only as needed.
+- If an error contains \`nextAction\`, call that read-only action before retrying.
+- Do not inspect source code to guess runtime fields, options, calendars, or policies.
 - Read only the minimum project state required for the task.
 - Never mutate DOM, IndexedDB, or localStorage directly.
 - For multiple task creates, use one batch dry-run and one batch commit with \`ifRev\`;

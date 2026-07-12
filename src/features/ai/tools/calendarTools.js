@@ -1,7 +1,7 @@
 // src/features/ai/tools/calendarTools.js
 import { tool, jsonSchema } from 'ai';
-import { db, getCalendarSettings, getAllCustomDays, getAllLeaves } from '../../../core/storage.js';
 import { attachHierarchyIds } from '../utils/hierarchy-id.js';
+import { queryCalendarContext } from '../../calendar/calendar-query.js';
 
 const calendarInfoSchema = jsonSchema({
     type: 'object',
@@ -55,33 +55,6 @@ function normalizeDateString(value) {
     return `${year}-${month}-${day}`;
 }
 
-function normalizeRangeBoundary(value, isEnd = false) {
-    if (!value) return null;
-    const d = new Date(value);
-    if (Number.isNaN(d.getTime())) return null;
-    if (isEnd) {
-        d.setHours(23, 59, 59, 999);
-    } else {
-        d.setHours(0, 0, 0, 0);
-    }
-    return d;
-}
-
-function isDateInRange(dateValue, rangeStart, rangeEnd) {
-    if (!rangeStart && !rangeEnd) return true;
-    const d = new Date(dateValue);
-    if (Number.isNaN(d.getTime())) return false;
-    return (!rangeStart || d >= rangeStart) && (!rangeEnd || d <= rangeEnd);
-}
-
-function isOverlapRange(startValue, endValue, rangeStart, rangeEnd) {
-    if (!rangeStart && !rangeEnd) return true;
-    const start = new Date(startValue);
-    const end = new Date(endValue);
-    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return false;
-    return (!rangeEnd || start <= rangeEnd) && (!rangeStart || end >= rangeStart);
-}
-
 function compareByFields(a, b, fields) {
     for (const field of fields) {
         const av = String(a[field] ?? '');
@@ -102,25 +75,25 @@ export const calendarTools = {
         description: '查询工作日历信息，支持按类型与日期范围过滤',
         inputSchema: calendarInfoSchema,
         execute: async ({ type = 'all', start_date, end_date } = {}) => {
-            const rangeStart = normalizeRangeBoundary(start_date, false);
-            const rangeEnd = normalizeRangeBoundary(end_date, true);
-
             const includeSettings = type === 'all' || type === 'settings';
             const includeHolidays = type === 'all' || type === 'holidays';
             const includeCustomDays = type === 'all' || type === 'custom_days';
             const includeLeaves = type === 'all' || type === 'leaves';
 
-            const settings = includeSettings ? await getCalendarSettings() : null;
+            const include = [];
+            if (includeSettings) include.push('settings');
+            if (includeHolidays || includeCustomDays) include.push('exceptions');
+            if (includeLeaves) include.push('leaves');
+            const calendar = await queryCalendarContext({
+                start: normalizeDateString(start_date),
+                end: normalizeDateString(end_date),
+                include,
+            });
+            const settings = includeSettings ? calendar.settings : null;
 
             let holidays = [];
             if (includeHolidays) {
-                try {
-                    holidays = await db.calendar_holidays.orderBy('date').toArray();
-                } catch (_err) {
-                    holidays = [];
-                }
-                holidays = holidays
-                    .filter((item) => isDateInRange(item.date, rangeStart, rangeEnd))
+                holidays = calendar.holidays
                     .map((item) => ({
                         date: item.date,
                         country_code: item.countryCode || null,
@@ -132,9 +105,7 @@ export const calendarTools = {
 
             let customDays = [];
             if (includeCustomDays) {
-                customDays = await getAllCustomDays();
-                customDays = customDays
-                    .filter((item) => isDateInRange(item.date, rangeStart, rangeEnd))
+                customDays = calendar.customDays
                     .map((item) => ({
                         id: item.id,
                         date: item.date,
@@ -147,11 +118,7 @@ export const calendarTools = {
 
             let leaves = [];
             if (includeLeaves) {
-                leaves = await getAllLeaves();
-                leaves = leaves
-                    .filter((item) =>
-                        isOverlapRange(item.startDate, item.endDate, rangeStart, rangeEnd)
-                    )
+                leaves = calendar.leaves
                     .map((item) => ({
                         id: item.id,
                         assignee: item.assignee || '未分配',

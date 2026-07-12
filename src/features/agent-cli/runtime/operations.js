@@ -1,5 +1,5 @@
 import { getProjectRev } from '../../gantt/domain/rev.js';
-import { fail, ok } from './result.js';
+import { fail, ok, withErrorNavigation } from './result.js';
 
 const TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'cancelled']);
 const MAX_OPERATION_HISTORY = 50;
@@ -368,10 +368,18 @@ export function createOperationManager({
         return ok(publicOperation(operation), getRev(operation.projectId));
     }
 
+    function navigate(method, args, commandResult) {
+        return withErrorNavigation(commandResult, {
+            command: `operation.${method}`,
+            args,
+            getCommand,
+        });
+    }
+
     return {
-        start,
-        status,
-        result,
-        cancel,
+        start: async (request) => navigate('start', request, await start(request)),
+        status: async (args) => navigate('status', args, await status(args)),
+        result: async (args) => navigate('result', args, await result(args)),
+        cancel: async (args) => navigate('cancel', args, await cancel(args)),
     };
 }

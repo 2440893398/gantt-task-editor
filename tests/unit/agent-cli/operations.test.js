@@ -225,6 +225,11 @@ describe('agent operation runtime', () => {
                 hint: 'Wait for the active operation to finish, request cancellation, or poll operation.status.',
                 operationId: first.data.operationId,
                 status: 'running',
+                nextAction: {
+                    command: 'operation.status',
+                    args: { id: first.data.operationId },
+                    reason: 'Poll the active operation status.',
+                },
             },
             rev: 0,
         });
@@ -238,6 +243,29 @@ describe('agent operation runtime', () => {
                 data: { status: 'succeeded' },
             });
         });
+    });
+
+    it('guides a premature result read back to operation.status', async () => {
+        const pending = deferred();
+        const app = buildApi({
+            executeCommand: vi.fn(() => pending.promise),
+            context: { projectId, adapter: {} },
+        });
+        const started = await app.operation.start({
+            command: 'task.create',
+            args: { name: 'Still running' },
+        });
+
+        const result = await app.operation.result({ id: started.data.operationId });
+
+        expect(result.error).toMatchObject({
+            code: 'RUNNING',
+            nextAction: {
+                command: 'operation.status',
+                args: { id: started.data.operationId },
+            },
+        });
+        pending.resolve({ ok: true, data: { id: 1 }, rev: 1 });
     });
 
     it('uses idempotencyKey to return the existing operation on start retries', async () => {

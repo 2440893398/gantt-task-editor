@@ -145,6 +145,15 @@ describe('agent command security controls', () => {
             );
             expect(document.getElementById('agent-api-discovery')).toBeTruthy();
             expect(document.getElementById('agent-api-manifest')).toBeTruthy();
+            const discovery = JSON.parse(
+                document.getElementById('agent-api-discovery').textContent
+            );
+            expect(discovery.version).toBe(2);
+            expect(discovery.progressiveDisclosure).toMatchObject({
+                commandHelp: expect.stringContaining("help('task.create')"),
+                taskForm: expect.stringContaining('form.describe'),
+                errorRecovery: expect.stringContaining('nextAction'),
+            });
         });
     });
 

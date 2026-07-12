@@ -36,12 +36,14 @@ function compactCommands(manifest = {}) {
         name: command.name,
         summary: command.summary,
         mutating: Boolean(command.mutating),
+        dynamic: Boolean(command.dynamic),
+        supports: command.supports || [],
     }));
 }
 
-function buildDiscovery({ manifest = { version: 1, commands: [] }, readOnly = false } = {}) {
+function buildDiscovery({ manifest = { version: 2, commands: [] }, readOnly = false } = {}) {
     return {
-        version: 1,
+        version: manifest.version || 2,
         pageUrl: getCurrentPageUrl(),
         readOnly: Boolean(readOnly),
         primary: {
@@ -50,6 +52,13 @@ function buildDiscovery({ manifest = { version: 1, commands: [] }, readOnly = fa
             readyCheck: 'typeof window.app?.help === "function"',
             help: 'window.app.help()',
             manifest: 'window.app.manifest()',
+        },
+        progressiveDisclosure: {
+            commandHelp: "await window.app.help('task.create')",
+            taskForm: "await window.app.form.describe({ form: 'task', mode: 'create' })",
+            fieldRules:
+                "await window.app.form.field({ form: 'task', mode: 'create', field: 'priority' })",
+            errorRecovery: 'Read error.nextAction and call only its read-only command.',
         },
         fallback: {
             type: 'visible-dom-runner',
@@ -67,13 +76,13 @@ function buildDiscovery({ manifest = { version: 1, commands: [] }, readOnly = fa
 }
 
 export function injectAgentDiscovery(options = {}) {
-    const manifest = options.manifest || { version: 1, commands: [] };
+    const manifest = options.manifest || { version: 2, commands: [] };
     document.documentElement.dataset.agentApi = 'window.app';
     document.documentElement.dataset.agentApiFallback = 'dom-runner';
 
     upsertMeta(
         'agent-api',
-        'window.app.help(); fallback: #agent-guide-btn -> #agent-guide-command-input/#agent-guide-run-command/#agent-guide-run-output'
+        "window.app.help(); window.app.help('command'); follow discovery and error.nextAction; fallback: #agent-guide-btn -> #agent-guide-command-input/#agent-guide-run-command/#agent-guide-run-output"
     );
     upsertMeta(
         'agent-api-runner',
