@@ -186,6 +186,47 @@ describe('read-only agent commands', () => {
         expect(getProjectRev(projectId)).toBe(before);
     });
 
+    it('serializes snapshot task dates with inclusive public end dates', async () => {
+        const tasksSnapshot = await app.state.snapshot({ level: 'tasks' });
+        expect(tasksSnapshot.ok).toBe(true);
+        expect(tasksSnapshot.data.tasks[0]).toMatchObject({
+            start_date: '2026-06-30',
+            end_date: '2026-07-01',
+        });
+
+        const fullSnapshot = await app.state.snapshot({ level: 'full' });
+        expect(fullSnapshot.ok).toBe(true);
+        expect(fullSnapshot.data.snapshot.data[0]).toMatchObject({ end_date: '2026-07-01' });
+    });
+
+    it('marks a raw exclusive end boundary overdue on the following day', async () => {
+        const boundaryApp = buildApi({
+            context: {
+                adapter: {
+                    getTasks: () => [
+                        {
+                            id: 30,
+                            text: 'Ended yesterday',
+                            start_date: new Date(2026, 5, 29),
+                            end_date: new Date(2026, 5, 30),
+                            progress: 0,
+                            status: 'todo',
+                        },
+                    ],
+                    getLinks: () => [],
+                    serialize: () => ({ data: [], links: [] }),
+                },
+                projectId,
+                today: new Date(2026, 5, 30, 12),
+            },
+        });
+
+        await expect(boundaryApp.task.overdue()).resolves.toMatchObject({
+            ok: true,
+            data: [expect.objectContaining({ id: 30, end_date: '2026-06-29' })],
+        });
+    });
+
     it('gets, lists, and filters tasks without bumping project rev', async () => {
         const before = getProjectRev(projectId);
 

@@ -53,6 +53,7 @@ export function registerScheduleCommands() {
             handler(args, context) {
                 return describeSchedulePolicy({
                     ...args,
+                    gantt: context.gantt || context.adapter?.gantt,
                     ...(context.schedulePolicyDeps || {}),
                 });
             },

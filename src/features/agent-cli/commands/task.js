@@ -4,6 +4,7 @@ import { taskOps } from '../../gantt/domain/task-ops.js';
 import { state } from '../../../core/store.js';
 import { buildTaskFormSchema } from '../../customFields/task-form-schema.js';
 import { validateTaskValues } from '../../customFields/task-value-validator.js';
+import { serializePublicTask } from '../task-serialization.js';
 
 const listParams = {
     type: 'object',
@@ -149,23 +150,6 @@ function projectTask(task, fields) {
     return Object.fromEntries(normalizedFields.map((field) => [field, task[field]]));
 }
 
-function formatLocalDate(date) {
-    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(
-        date.getDate()
-    ).padStart(2, '0')}`;
-}
-
-function toAgentTask(task) {
-    const normalized = { ...task };
-    if (task.start_date instanceof Date) {
-        normalized.start_date = formatLocalDate(task.start_date);
-    }
-    if (task.end_date instanceof Date) {
-        normalized.end_date = formatLocalDate(addDays(task.end_date, -1));
-    }
-    return normalized;
-}
-
 function getFormSchema(mode, context) {
     return buildTaskFormSchema({ mode, state: context.formState || state });
 }
@@ -199,9 +183,24 @@ function mapV2WriteArgs(args, context, mode) {
     const exclusiveEnd = inclusiveEnd ? addDays(inclusiveEnd, 1) : undefined;
     const currentTask = mode === 'update' ? context.gantt.getTask(args.id) : null;
     let duration = values.duration;
-    if (mode === 'create' && !start && !inclusiveEnd && duration === undefined) {
-        start = startOfDay(context.today || new Date());
-        duration = 1;
+    if (mode === 'create') {
+        const durationProvided = args.values.duration !== undefined;
+        if (!start && inclusiveEnd && durationProvided && duration !== 1) {
+            return fail(
+                'INVALID_FIELD_VALUE',
+                'end_date with duration greater than 1 also requires start_date',
+                { field: 'start_date' }
+            );
+        }
+        if (!start) {
+            start = inclusiveEnd || startOfDay(context.today || new Date());
+        }
+        if (inclusiveEnd && !durationProvided) {
+            duration = 1;
+        }
+        if (duration === undefined && !inclusiveEnd) {
+            duration = 1;
+        }
     }
     if ((start || currentTask?.start_date) && exclusiveEnd) {
         const calculatedDuration = calculateDuration(
@@ -244,7 +243,7 @@ const taskV2Ops = {
         },
         commit: taskOps.create.commit,
         readResult(data, context) {
-            return { ...data, task: toAgentTask(context.gantt.getTask(data.id)) };
+            return { ...data, task: serializePublicTask(context.gantt.getTask(data.id)) };
         },
     },
     update: {
@@ -254,7 +253,7 @@ const taskV2Ops = {
         },
         commit: taskOps.update.commit,
         readResult(data, context) {
-            return { ...data, task: toAgentTask(context.gantt.getTask(data.id)) };
+            return { ...data, task: serializePublicTask(context.gantt.getTask(data.id)) };
         },
         skipEmptyDiff: true,
     },
@@ -367,7 +366,7 @@ export function registerTaskCommands() {
                     const task = context.adapter.getTask(args.id);
                     return isMissingTask(task)
                         ? taskNotFound(args.id)
-                        : projectTask(toAgentTask(task), args.fields);
+                        : projectTask(serializePublicTask(task), args.fields);
                 } catch {
                     return taskNotFound(args.id);
                 }
@@ -387,11 +386,12 @@ export function registerTaskCommands() {
                 const limit = args.limit || 100;
                 return context.adapter
                     .getTasks()
+                    .map(serializePublicTask)
                     .filter((task) =>
                         (args.filters || []).every((filter) => matchesFilter(task, filter))
                     )
                     .slice(0, limit)
-                    .map((task) => projectTask(toAgentTask(task), args.fields));
+                    .map((task) => projectTask(task, args.fields));
             },
         });
     }
@@ -410,8 +410,8 @@ export function registerTaskCommands() {
                 const today = context.today || new Date();
                 return context.adapter
                     .getTasks()
-                    .filter((task) => isTaskToday(task, today))
-                    .map(toAgentTask);
+                    .map(serializePublicTask)
+                    .filter((task) => isTaskToday(task, today));
             },
         });
     }
@@ -430,8 +430,8 @@ export function registerTaskCommands() {
                 const today = context.today || new Date();
                 return context.adapter
                     .getTasks()
-                    .filter((task) => isTaskOverdue(task, today))
-                    .map(toAgentTask);
+                    .map(serializePublicTask)
+                    .filter((task) => isTaskOverdue(task, today));
             },
         });
     }

@@ -31,12 +31,26 @@ function isValidDate(value) {
     );
 }
 
+function isValidDateTime(value) {
+    if (typeof value !== 'string') return false;
+    const match =
+        /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})?$/.exec(
+            value
+        );
+    if (!match || !isValidDate(`${match[1]}-${match[2]}-${match[3]}`)) return false;
+    if (Number(match[4]) > 23 || Number(match[5]) > 59 || Number(match[6]) > 59) return false;
+    return !Number.isNaN(Date.parse(value));
+}
+
 function validateType(field, value) {
     if (isEmpty(value)) return null;
     if (field.type === 'text' && typeof value !== 'string') return 'must be text';
     if (field.type === 'number' && typeof value !== 'number') return 'must be a number';
-    if ((field.type === 'date' || field.type === 'datetime') && !isValidDate(value)) {
+    if (field.type === 'date' && !isValidDate(value)) {
         return 'must use YYYY-MM-DD';
+    }
+    if (field.type === 'datetime' && !isValidDateTime(value)) {
+        return 'must use YYYY-MM-DDTHH:mm:ss with an optional timezone';
     }
     if (field.type === 'multiselect' && !Array.isArray(value)) return 'must be an array';
     return null;

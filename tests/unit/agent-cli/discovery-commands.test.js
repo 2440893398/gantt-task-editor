@@ -89,4 +89,20 @@ describe('agent domain discovery commands', () => {
             },
         });
     });
+
+    it.each([
+        ['invalid', '2026-02-30', '2026-03-01'],
+        ['reversed', '2026-03-02', '2026-03-01'],
+    ])('rejects an %s calendar command range', async (label, start, end) => {
+        const result = await app.calendar.describe({
+            start,
+            end,
+            include: ['exceptions'],
+        });
+
+        expect(result).toMatchObject({
+            ok: false,
+            error: { code: 'INVALID_FIELD_VALUE' },
+        });
+    });
 });

@@ -47,4 +47,29 @@ describe('hierarchy context discovery', () => {
             canOutdent: true,
         });
     });
+
+    it('bounds descendant disclosure to the requested depth', () => {
+        const gantt = createGantt([
+            { id: 1, text: 'Target', parent: 0 },
+            { id: 2, text: 'Child', parent: 1 },
+            { id: 3, text: 'Grandchild', parent: 2 },
+            { id: 4, text: 'Great-grandchild', parent: 3 },
+        ]);
+
+        expect(inspectHierarchy({ taskId: 1, depth: 0, gantt }).children).toEqual([]);
+        expect(inspectHierarchy({ taskId: 1, depth: 1, gantt }).children).toEqual([
+            { id: 2, text: 'Child', parent: 1 },
+        ]);
+        expect(inspectHierarchy({ taskId: 1, depth: 2, gantt }).children).toEqual([
+            {
+                id: 2,
+                text: 'Child',
+                parent: 1,
+                children: [{ id: 3, text: 'Grandchild', parent: 2 }],
+            },
+        ]);
+        expect(JSON.stringify(inspectHierarchy({ taskId: 1, depth: 2, gantt }))).not.toContain(
+            'Great-grandchild'
+        );
+    });
 });

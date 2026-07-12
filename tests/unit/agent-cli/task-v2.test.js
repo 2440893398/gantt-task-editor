@@ -92,6 +92,37 @@ describe('agent task v2 contract', () => {
         });
     });
 
+    it.each([
+        ['start only', { start_date: '2026-07-13' }, new Date(2026, 6, 13), 1],
+        ['end only', { end_date: '2026-07-17' }, new Date(2026, 6, 17), 1],
+        ['duration only', { duration: 3 }, new Date(2026, 6, 13), 3],
+    ])('creates a coherent schedule from %s values', (label, schedule, start, duration) => {
+        const command = getCommand('task.create');
+        const plan = command.op.plan(
+            { values: { text: label, assignee: 'Ada', ...schedule } },
+            { gantt: createGantt(), formState, today: new Date(2026, 6, 13) }
+        );
+
+        expect(plan.task.start_date).toEqual(start);
+        expect(plan.task.duration).toBe(duration);
+    });
+
+    it('accepts and preserves ISO datetime custom field writes', () => {
+        const command = getCommand('task.create');
+        const plan = command.op.plan(
+            {
+                values: {
+                    text: 'Timed review',
+                    assignee: 'Ada',
+                    review_at: '2026-07-15T12:30:00',
+                },
+            },
+            { gantt: createGantt(), formState, today: new Date(2026, 6, 13) }
+        );
+
+        expect(plan.task.review_at).toBe('2026-07-15T12:30:00');
+    });
+
     it('rejects invalid dynamic values before planning a write', () => {
         const command = getCommand('task.create');
         const result = command.op.plan(
@@ -174,6 +205,26 @@ describe('agent task v2 contract', () => {
             context
         );
         expect(before.map((task) => task.text)).toEqual(['Earlier']);
+    });
+
+    it('filters end_date against the inclusive public boundary', () => {
+        const command = getCommand('task.list');
+        const result = command.handler(
+            {
+                filters: [{ field: 'end_date', operator: 'before', value: '2026-07-18' }],
+            },
+            {
+                formState,
+                adapter: {
+                    getTasks: () => [
+                        { id: 1, text: 'Public 17th', end_date: new Date(2026, 6, 18) },
+                        { id: 2, text: 'Public 18th', end_date: new Date(2026, 6, 19) },
+                    ],
+                },
+            }
+        );
+
+        expect(result.map((task) => task.text)).toEqual(['Public 17th']);
     });
 
     it('filters datetime fields with the advertised after operator', () => {

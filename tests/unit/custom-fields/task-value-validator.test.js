@@ -3,7 +3,7 @@ import { buildTaskFormSchema } from '../../../src/features/customFields/task-for
 import { validateTaskValues } from '../../../src/features/customFields/task-value-validator.js';
 
 const state = {
-    fieldOrder: ['text', 'priority', 'assignee'],
+    fieldOrder: ['text', 'priority', 'assignee', 'review_at'],
     customFields: [
         { name: 'assignee', label: '负责人', type: 'text', required: true },
         {
@@ -13,6 +13,7 @@ const state = {
             options: ['high', 'medium', 'low'],
             required: false,
         },
+        { name: 'review_at', label: 'Review at', type: 'datetime' },
     ],
     systemFieldSettings: { enabled: {}, typeOverrides: {} },
 };
@@ -81,6 +82,33 @@ describe('task value validator', () => {
         expect(result).toMatchObject({
             ok: false,
             error: { code: 'INVALID_FIELD_VALUE', field: 'assignee' },
+        });
+    });
+
+    it('accepts ISO datetime values and rejects date-only datetime values', () => {
+        expect(
+            validateTaskValues({
+                mode: 'create',
+                schema,
+                values: {
+                    text: 'Timed review',
+                    assignee: 'Ada',
+                    review_at: '2026-07-15T12:30:00+08:00',
+                },
+            })
+        ).toMatchObject({
+            ok: true,
+            values: { review_at: '2026-07-15T12:30:00+08:00' },
+        });
+        expect(
+            validateTaskValues({
+                mode: 'create',
+                schema,
+                values: { text: 'Date only', assignee: 'Ada', review_at: '2026-07-15' },
+            })
+        ).toMatchObject({
+            ok: false,
+            error: { code: 'INVALID_FIELD_VALUE', field: 'review_at' },
         });
     });
 });

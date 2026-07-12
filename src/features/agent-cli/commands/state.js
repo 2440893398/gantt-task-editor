@@ -3,6 +3,7 @@ import { getProjectRev } from '../../gantt/domain/rev.js';
 import { state } from '../../../core/store.js';
 import { buildTaskFormSchema } from '../../customFields/task-form-schema.js';
 import { fail } from '../runtime/result.js';
+import { serializePublicSnapshot, serializePublicTask } from '../task-serialization.js';
 
 const snapshotParams = {
     type: 'object',
@@ -43,25 +44,6 @@ function toCellValue(value) {
     return String(value);
 }
 
-function formatLocalDate(date) {
-    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(
-        date.getDate()
-    ).padStart(2, '0')}`;
-}
-
-function normalizeExportTask(task) {
-    const normalized = { ...task };
-    if (task.start_date instanceof Date) {
-        normalized.start_date = formatLocalDate(task.start_date);
-    }
-    if (task.end_date instanceof Date) {
-        const inclusive = new Date(task.end_date);
-        inclusive.setDate(inclusive.getDate() - 1);
-        normalized.end_date = formatLocalDate(inclusive);
-    }
-    return normalized;
-}
-
 function getExportColumns(args, context) {
     const schema = buildTaskFormSchema({
         mode: 'export',
@@ -100,7 +82,7 @@ function escapeCsvCell(value) {
     return cell;
 }
 
-function toCsv(tasks, columns = EXPORT_COLUMNS) {
+function toCsv(tasks, columns) {
     const header = columns.map((column) => column.label).join(',');
     const rows = tasks.map((task) =>
         columns.map((column) => escapeCsvCell(task[column.key])).join(',')
@@ -113,7 +95,7 @@ function escapeMarkdownCell(value) {
     return toCellValue(value).replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
 }
 
-function toMarkdown(tasks, columns = EXPORT_COLUMNS) {
+function toMarkdown(tasks, columns) {
     const header = `| ${columns.map((column) => column.label).join(' | ')} |`;
     const divider = `| ${columns.map(() => '---').join(' | ')} |`;
     const rows = tasks.map(
@@ -147,7 +129,7 @@ export function registerStateCommands() {
             mutating: false,
             handler(args, context) {
                 const level = args.level || 'summary';
-                const tasks = context.adapter.getTasks();
+                const tasks = context.adapter.getTasks().map(serializePublicTask);
                 const links = context.adapter.getLinks();
                 const summary = {
                     rev: getRev(context),
@@ -165,7 +147,7 @@ export function registerStateCommands() {
                 if (level === 'full') {
                     return {
                         ...summary,
-                        snapshot: context.adapter.serialize(),
+                        snapshot: serializePublicSnapshot(context.adapter.serialize()),
                     };
                 }
 
@@ -186,7 +168,7 @@ export function registerStateCommands() {
                 if (!selected.ok) return selected;
                 const tasks = context.adapter
                     .getTasks()
-                    .map(normalizeExportTask)
+                    .map(serializePublicTask)
                     .map((task) => projectTask(task, selected.fields));
 
                 if (format === 'json') {

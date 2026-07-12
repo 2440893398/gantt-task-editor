@@ -4,7 +4,7 @@ import { clearCommandsForTest } from '../../../src/features/agent-cli/registry.j
 import { registerFormCommands } from '../../../src/features/agent-cli/commands/form.js';
 
 const formState = {
-    fieldOrder: ['text', 'priority', 'assignee'],
+    fieldOrder: ['text', 'priority', 'assignee', 'review_at'],
     customFields: [
         {
             name: 'priority',
@@ -13,6 +13,7 @@ const formState = {
             options: ['high', 'medium', 'low'],
         },
         { name: 'assignee', label: '负责人', type: 'text', required: true },
+        { name: 'review_at', label: 'Review at', type: 'datetime' },
     ],
     systemFieldSettings: { enabled: {}, typeOverrides: {} },
 };
@@ -91,5 +92,18 @@ describe('agent form discovery commands', () => {
             .commands.filter((command) => command.name.startsWith('form.'));
         expect(entries).toHaveLength(3);
         expect(entries.every((command) => command.mutating === false)).toBe(true);
+    });
+
+    it('advertises the accepted datetime write representation', async () => {
+        const detail = await app.form.field({
+            form: 'task',
+            mode: 'create',
+            field: 'review_at',
+        });
+
+        expect(detail.data).toMatchObject({
+            type: 'datetime',
+            format: 'YYYY-MM-DDTHH:mm:ss[.sss][Z|+HH:mm|-HH:mm]',
+        });
     });
 });

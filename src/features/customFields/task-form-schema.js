@@ -9,6 +9,11 @@ const OPERATORS_BY_TYPE = {
     datetime: ['before', 'after', 'between'],
 };
 
+const FORMAT_BY_TYPE = {
+    date: 'YYYY-MM-DD',
+    datetime: 'YYYY-MM-DDTHH:mm:ss[.sss][Z|+HH:mm|-HH:mm]',
+};
+
 function normalizeOverride(override) {
     if (typeof override === 'string') {
         return { type: override };
@@ -64,6 +69,7 @@ function buildField(key, base = {}, configured = {}, settings = {}) {
         label: configured.label || base.i18nKey || key,
         description: configured.description || null,
         type,
+        format: FORMAT_BY_TYPE[type] || null,
         required: key === 'text' || Boolean(configured.required),
         writable: !derived,
         derived,

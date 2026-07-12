@@ -1,4 +1,4 @@
-import { queryCalendarContext } from '../../calendar/calendar-query.js';
+import { queryCalendarContext, validateCalendarRange } from '../../calendar/calendar-query.js';
 import { defineCommand, getCommand } from '../registry.js';
 import { fail } from '../runtime/result.js';
 
@@ -46,6 +46,8 @@ export function registerCalendarCommands() {
                         { hint: 'Provide a bounded YYYY-MM-DD start and end range.' }
                     );
                 }
+                const validRange = validateCalendarRange(args.start, args.end);
+                if (!validRange.ok) return validRange;
                 return queryCalendarContext({
                     ...args,
                     include,
