@@ -59,6 +59,8 @@ function buildDiscovery({ manifest = { version: 2, commands: [] }, readOnly = fa
             fieldRules:
                 "await window.app.form.field({ form: 'task', mode: 'create', field: 'priority' })",
             errorRecovery: 'Read error.nextAction and call only its read-only command.',
+            projectUrl:
+                'project.list/create/switch results include url (?project=<id> deep link). Show it to the user when finishing a task so they can open the Gantt directly.',
         },
         fallback: {
             type: 'visible-dom-runner',

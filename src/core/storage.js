@@ -7,6 +7,11 @@
  */
 
 import Dexie from 'dexie';
+import {
+    defaultCustomFields,
+    defaultFieldOrder,
+    DEFAULT_SYSTEM_FIELD_SETTINGS,
+} from '../data/fields.js';
 
 // ========================================
 // IndexedDB 配置 (Dexie.js)
@@ -194,52 +199,152 @@ export function getTheme() {
     return getLocalStorage(STORAGE_KEYS.THEME);
 }
 
+// ========== 项目作用域字段配置 ==========
+// customFieldsDef / fieldOrder / systemFieldSettings 按项目隔离（键加 ::projectId 后缀）。
+// 惰性迁移：项目级键缺失时回退读旧全局键并落盘为该项目配置；
+// 旧全局键保留，作为尚未打开过的存量项目的回退源。列宽等视觉偏好保持全局。
+
+function scopedConfigKey(baseKey, projectId) {
+    return projectId ? `${baseKey}::${projectId}` : baseKey;
+}
+
+const PROJECT_SCOPED_CONFIG_BASE_KEYS = [
+    STORAGE_KEYS.CUSTOM_FIELDS_DEF,
+    STORAGE_KEYS.FIELD_ORDER,
+    STORAGE_KEYS.SYSTEM_FIELD_SETTINGS,
+];
+
+function getProjectScopedConfigKeys() {
+    const keys = [];
+    try {
+        for (let index = 0; index < localStorage.length; index += 1) {
+            const key = localStorage.key(index);
+            if (
+                key &&
+                PROJECT_SCOPED_CONFIG_BASE_KEYS.some((baseKey) => key.startsWith(`${baseKey}::`))
+            ) {
+                keys.push(key);
+            }
+        }
+    } catch (e) {
+        console.warn('[Storage] Failed to enumerate project config keys:', e);
+    }
+    return keys;
+}
+
+function getProjectScopedConfig(baseKey, projectId) {
+    if (!projectId) {
+        return getLocalStorage(baseKey);
+    }
+    const scoped = getLocalStorage(scopedConfigKey(baseKey, projectId));
+    if (scoped !== null) {
+        return scoped;
+    }
+    const legacy = getLocalStorage(baseKey);
+    if (legacy !== null) {
+        setLocalStorage(scopedConfigKey(baseKey, projectId), legacy);
+    }
+    return legacy;
+}
+
+function saveProjectScopedConfig(baseKey, value, projectId) {
+    setLocalStorage(scopedConfigKey(baseKey, projectId), value);
+}
+
 /**
  * 保存自定义字段定义
  * @param {Array} customFields
+ * @param {string} [projectId] - 省略时读写旧全局键（兼容旧调用）
  */
-export function saveCustomFieldsDef(customFields) {
-    setLocalStorage(STORAGE_KEYS.CUSTOM_FIELDS_DEF, customFields);
+export function saveCustomFieldsDef(customFields, projectId) {
+    saveProjectScopedConfig(STORAGE_KEYS.CUSTOM_FIELDS_DEF, customFields, projectId);
 }
 
 /**
  * 获取自定义字段定义
+ * @param {string} [projectId]
  * @returns {Array|null}
  */
-export function getCustomFieldsDef() {
-    return getLocalStorage(STORAGE_KEYS.CUSTOM_FIELDS_DEF);
+export function getCustomFieldsDef(projectId) {
+    return getProjectScopedConfig(STORAGE_KEYS.CUSTOM_FIELDS_DEF, projectId);
 }
 
 /**
  * 保存字段顺序
  * @param {Array} fieldOrder
+ * @param {string} [projectId]
  */
-export function saveFieldOrder(fieldOrder) {
-    setLocalStorage(STORAGE_KEYS.FIELD_ORDER, fieldOrder);
+export function saveFieldOrder(fieldOrder, projectId) {
+    saveProjectScopedConfig(STORAGE_KEYS.FIELD_ORDER, fieldOrder, projectId);
 }
 
 /**
  * 获取字段顺序
+ * @param {string} [projectId]
  * @returns {Array|null}
  */
-export function getFieldOrder() {
-    return getLocalStorage(STORAGE_KEYS.FIELD_ORDER);
+export function getFieldOrder(projectId) {
+    return getProjectScopedConfig(STORAGE_KEYS.FIELD_ORDER, projectId);
 }
 
 /**
  * Save system field settings
  * @param {Object} settings - { enabled: {}, typeOverrides: {} }
+ * @param {string} [projectId]
  */
-export function saveSystemFieldSettings(settings) {
-    setLocalStorage(STORAGE_KEYS.SYSTEM_FIELD_SETTINGS, settings);
+export function saveSystemFieldSettings(settings, projectId) {
+    saveProjectScopedConfig(STORAGE_KEYS.SYSTEM_FIELD_SETTINGS, settings, projectId);
 }
 
 /**
  * Get system field settings
+ * @param {string} [projectId]
  * @returns {Object|null}
  */
-export function getSystemFieldSettings() {
-    return getLocalStorage(STORAGE_KEYS.SYSTEM_FIELD_SETTINGS);
+export function getSystemFieldSettings(projectId) {
+    return getProjectScopedConfig(STORAGE_KEYS.SYSTEM_FIELD_SETTINGS, projectId);
+}
+
+/**
+ * 初始化新项目的字段配置（显式落盘，避免后续意外继承旧全局配置）
+ * @param {string} targetProjectId
+ * @param {string|'defaults'|undefined} source
+ *   - 项目 ID：复制该项目当前配置（含惰性迁移回退）
+ *   - 'defaults'：写入系统默认配置
+ *   - undefined：不写入，保持惰性回退（存量项目迁移语义）
+ */
+export function initProjectFieldConfig(targetProjectId, source) {
+    if (!targetProjectId || source === undefined || source === null) {
+        return;
+    }
+
+    if (source === 'defaults') {
+        saveCustomFieldsDef(structuredClone(defaultCustomFields), targetProjectId);
+        saveFieldOrder([...defaultFieldOrder], targetProjectId);
+        saveSystemFieldSettings(structuredClone(DEFAULT_SYSTEM_FIELD_SETTINGS), targetProjectId);
+        return;
+    }
+
+    saveCustomFieldsDef(
+        getCustomFieldsDef(source) ?? structuredClone(defaultCustomFields),
+        targetProjectId
+    );
+    saveFieldOrder(getFieldOrder(source) ?? [...defaultFieldOrder], targetProjectId);
+    saveSystemFieldSettings(
+        getSystemFieldSettings(source) ?? structuredClone(DEFAULT_SYSTEM_FIELD_SETTINGS),
+        targetProjectId
+    );
+}
+
+/**
+ * 删除项目的字段配置（随项目删除级联清理）
+ * @param {string} projectId
+ */
+export function removeProjectFieldConfig(projectId) {
+    if (!projectId) return;
+    removeLocalStorage(scopedConfigKey(STORAGE_KEYS.CUSTOM_FIELDS_DEF, projectId));
+    removeLocalStorage(scopedConfigKey(STORAGE_KEYS.FIELD_ORDER, projectId));
+    removeLocalStorage(scopedConfigKey(STORAGE_KEYS.SYSTEM_FIELD_SETTINGS, projectId));
 }
 
 /**
@@ -689,6 +794,9 @@ export async function clearAllCache() {
         Object.values(STORAGE_KEYS).forEach((key) => {
             removeLocalStorage(key);
         });
+        getProjectScopedConfigKeys().forEach((key) => {
+            removeLocalStorage(key);
+        });
 
         // 清除 IndexedDB（包含所有表）
         await db.transaction(
@@ -749,7 +857,11 @@ export async function clearTasksCache() {
 export function clearConfigCache() {
     removeLocalStorage(STORAGE_KEYS.CUSTOM_FIELDS_DEF);
     removeLocalStorage(STORAGE_KEYS.FIELD_ORDER);
+    removeLocalStorage(STORAGE_KEYS.SYSTEM_FIELD_SETTINGS);
     removeLocalStorage(STORAGE_KEYS.COLUMNS_CONFIG);
+    getProjectScopedConfigKeys().forEach((key) => {
+        removeLocalStorage(key);
+    });
     console.log('[Storage] Config cache cleared');
 }
 
@@ -768,7 +880,10 @@ export async function getStorageStatus() {
 
         // 估算 localStorage 使用量
         let localStorageSize = 0;
-        Object.values(STORAGE_KEYS).forEach((key) => {
+        const managedKeys = [
+            ...new Set([...Object.values(STORAGE_KEYS), ...getProjectScopedConfigKeys()]),
+        ];
+        managedKeys.forEach((key) => {
             const value = localStorage.getItem(key);
             if (value) {
                 localStorageSize += key.length + value.length;

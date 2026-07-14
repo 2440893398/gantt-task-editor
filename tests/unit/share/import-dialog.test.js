@@ -13,6 +13,9 @@ const mocks = vi.hoisted(() => ({
     refreshProjects: vi.fn(),
     persistCustomFields: vi.fn(),
     persistSystemFieldSettings: vi.fn(),
+    saveCustomFieldsDef: vi.fn(),
+    saveFieldOrder: vi.fn(),
+    saveSystemFieldSettings: vi.fn(),
     projectScope: vi.fn(),
     saveGanttData: vi.fn(),
     saveBaseline: vi.fn(),
@@ -43,6 +46,9 @@ vi.mock('../../../src/core/store.js', () => ({
 
 vi.mock('../../../src/core/storage.js', () => ({
     projectScope: mocks.projectScope,
+    saveCustomFieldsDef: mocks.saveCustomFieldsDef,
+    saveFieldOrder: mocks.saveFieldOrder,
+    saveSystemFieldSettings: mocks.saveSystemFieldSettings,
     getAllCustomDays: mocks.getAllCustomDays,
     getAllLeaves: mocks.getAllLeaves,
     saveCalendarSettings: mocks.saveCalendarSettings,
@@ -182,7 +188,7 @@ describe('ImportDialog', () => {
         });
     });
 
-    it('persists imported field settings before switching projects', async () => {
+    it('persists imported field settings to the new project without mutating the current project', async () => {
         const snapshot = createSnapshot();
         const { openImportDialog } = await import('../../../src/features/share/ImportDialog.js');
 
@@ -190,11 +196,20 @@ describe('ImportDialog', () => {
         document.querySelector('#import-confirm-btn').click();
         await flushPromises();
 
-        expect(mocks.state.customFields).toEqual(snapshot.customFields);
-        expect(mocks.state.fieldOrder).toEqual(snapshot.fieldOrder);
-        expect(mocks.state.systemFieldSettings).toEqual(snapshot.systemFieldSettings);
-        expect(mocks.persistCustomFields).toHaveBeenCalled();
-        expect(mocks.persistSystemFieldSettings).toHaveBeenCalled();
+        expect(mocks.state.customFields).toEqual([]);
+        expect(mocks.state.fieldOrder).toEqual([]);
+        expect(mocks.state.systemFieldSettings).toEqual({});
+        expect(mocks.saveCustomFieldsDef).toHaveBeenCalledWith(
+            snapshot.customFields,
+            'new-project'
+        );
+        expect(mocks.saveFieldOrder).toHaveBeenCalledWith(snapshot.fieldOrder, 'new-project');
+        expect(mocks.saveSystemFieldSettings).toHaveBeenCalledWith(
+            snapshot.systemFieldSettings,
+            'new-project'
+        );
+        expect(mocks.persistCustomFields).not.toHaveBeenCalled();
+        expect(mocks.persistSystemFieldSettings).not.toHaveBeenCalled();
         expect(mocks.switchProject).toHaveBeenCalledWith('new-project');
     });
 
@@ -239,6 +254,7 @@ describe('ImportDialog', () => {
         expect(mocks.createProject).toHaveBeenCalledWith({
             name: 'Imported Project',
             color: '#10b981',
+            copyConfigFrom: 'defaults',
         });
         expect(mocks.projectScope).toHaveBeenCalledWith('new-project');
         expect(mocks.switchProject).toHaveBeenCalledWith('new-project');

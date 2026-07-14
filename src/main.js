@@ -109,10 +109,6 @@ document.addEventListener(
             console.warn('⚠️ IndexedDB 不可用，任务数据将不会被保存');
         }
 
-        // 从缓存恢复状态（自定义字段、字段顺序）
-        await restoreStateFromCache();
-        console.log('📦 状态从缓存恢复完成');
-
         // 恢复语言设置
         const savedLocale = getSavedLocale();
         if (savedLocale) {
@@ -125,7 +121,13 @@ document.addEventListener(
         }
 
         // 初始化项目状态 + 渲染项目切换器
+        // 注意：必须先确定当前项目（含 ?project= 直达参数），再恢复字段配置——配置按项目隔离
         await initProjects();
+
+        // 从缓存恢复状态（自定义字段、字段顺序，按当前项目）
+        await restoreStateFromCache();
+        console.log('📦 状态从缓存恢复完成');
+
         const projectPickerMount = document.getElementById('project-picker-mount');
         if (projectPickerMount) {
             renderProjectPicker(projectPickerMount);

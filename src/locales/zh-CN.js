@@ -660,6 +660,10 @@ export default {
         deleted: '项目已删除',
         deleteTitle: '删除项目',
         deleteConfirm: '确认删除项目"{name}"？该项目包含 {count} 个任务，删除后无法恢复。',
+        fieldConfig: '字段配置',
+        fieldConfigCopyCurrent: '复制当前项目配置',
+        fieldConfigDefaults: '使用系统默认配置',
+        fieldConfigCopyFrom: '复制自：',
     },
 
     // 分享

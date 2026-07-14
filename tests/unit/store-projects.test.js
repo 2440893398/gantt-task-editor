@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db, projectScope } from '../../src/core/storage.js';
 import { createProject } from '../../src/features/projects/manager.js';
 import {
@@ -29,6 +29,11 @@ describe('store project management', () => {
         }));
     });
 
+    afterEach(() => {
+        // initProjects/switchProject 会把 ?project= 回写到地址栏，避免跨用例污染
+        window.history.replaceState(null, '', window.location.pathname);
+    });
+
     it('initProjects creates a default project when none exists', async () => {
         await initProjects();
 
@@ -49,6 +54,52 @@ describe('store project management', () => {
         await initProjects();
 
         expect(state.currentProjectId).toBe(first.id);
+    });
+
+    it('initProjects prefers the ?project= URL param over the saved project id', async () => {
+        const saved = await createProject({ name: 'Saved' });
+        const linked = await createProject({ name: 'Linked' });
+
+        localStorage.getItem.mockReturnValue(saved.id);
+        window.history.replaceState(null, '', `/?project=${linked.id}`);
+
+        await initProjects();
+
+        expect(state.currentProjectId).toBe(linked.id);
+    });
+
+    it('initProjects ignores an unknown ?project= URL param and falls back to saved id', async () => {
+        const saved = await createProject({ name: 'Saved' });
+
+        localStorage.getItem.mockReturnValue(saved.id);
+        window.history.replaceState(null, '', '/?project=prj_missing');
+
+        await initProjects();
+
+        expect(state.currentProjectId).toBe(saved.id);
+    });
+
+    it('initProjects normalizes the address bar to the resolved project', async () => {
+        const only = await createProject({ name: 'Only' });
+
+        await initProjects();
+
+        expect(window.location.search).toContain(`project=${only.id}`);
+        expect(state.currentProjectId).toBe(only.id);
+    });
+
+    it('switchProject rewrites the ?project= URL param and keeps other params', async () => {
+        const current = await createProject({ name: 'Current' });
+        const target = await createProject({ name: 'Target' });
+        state.currentProjectId = current.id;
+        state.projects = [current, target];
+        window.history.replaceState(null, '', `/?agentReadOnly=1&project=${current.id}`);
+
+        await switchProject(target.id);
+
+        const params = new URLSearchParams(window.location.search);
+        expect(params.get('project')).toBe(target.id);
+        expect(params.get('agentReadOnly')).toBe('1');
     });
 
     it('switchProject persists current project gantt data and dispatches event', async () => {

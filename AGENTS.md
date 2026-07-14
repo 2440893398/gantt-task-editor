@@ -41,6 +41,7 @@ src/
 ├── core/                # storage.js (Dexie), store.js (state)
 ├── data/                # fields.js, tasks.js
 ├── features/
+│   ├── agent-cli/       # AI agent command layer: commands/, runtime/ (dispatch, manifest, guards), discovery/, adapters/
 │   ├── ai/              # agent, api, components, prompts, renderers, services, skills/**, tools, utils
 │   ├── calendar/        # holidayFetcher, mini-calendar, panel, tab1-3, locale-country
 │   ├── config/configIO.js, customFields/, gantt/ (~18 modules)
@@ -86,10 +87,13 @@ tests/setup.js, unit/** (~100), e2e/** (~27)
 - **Vite chunks**: `vendor` (dexie, exceljs...) + `ai` (@ai-sdk/openai, ai)
 - **Project scoping**: all Dexie uses `projectScope(projectId)`
 - **Undo/redo**: `undoManager` singleton tracks AI mutations
+- **Agent CLI layer**: `src/features/agent-cli/` exposes app features as agent commands
+  (registry → manifest/discovery → dispatch → guards). It mirrors feature behavior, so it
+  goes stale silently when features change.
 
 ## Boundaries
 
-- ✅ **Always do:** Run `npm test` before committing. Include `.js` in import paths. Use `i18n.t()` in JS and `data-i18n` in HTML.
+- ✅ **Always do:** Run `npm test` before committing. Include `.js` in import paths. Use `i18n.t()` in JS and `data-i18n` in HTML. When changing or adding any feature, check the impact on the agent CLI command layer (`src/features/agent-cli/`) — adapt its commands/manifest/guards to match and update `tests/unit/agent-cli/` (plus `tests/e2e/agent-cli.spec.js` for user-visible flows).
 - ⚠️ **Ask first:** Adding new DHTMLX Gantt event listeners. Modifying `core/store.js` or `core/storage.js`. Changing `features/` module boundaries.
 - 🚫 **Never do:** Call Dexie directly — use `src/core/storage.js`. Import `window.gantt` as a module. Use `var`. Create files outside `src/` or `tests/`.
 

@@ -38,6 +38,7 @@ import { initSnapping } from './snapping.js';
 import { computeFieldOrderFromGridColumns, hasFieldOrderChanged } from './column-reorder-sync.js';
 import { initRowSortable } from './row-reorder.js';
 import { buildNewTaskPayload, getTaskByAnyId, normalizeToDayStart } from './new-task-payload.js';
+import { installSequentialIdGenerator } from './id-generator.js';
 import { ensureHolidaysCached, prefetchHolidays } from '../calendar/holidayFetcher.js';
 import { getAllCustomDays, getCalendarSettings, db } from '../../core/storage.js';
 import { syncGanttWorkTimeCalendar } from './calendar-worktime.js';
@@ -848,6 +849,9 @@ export function initGantt() {
     gantt.attachEvent('onGanttReady', updateLegendPosition);
     gantt.attachEvent('onGanttReady', bindGridColumnReorderSync);
     setTimeout(updateLegendPosition, 500);
+
+    // 新建任务/链接使用顺序短 ID（替代 DHTMLX 默认的时间戳大数字）
+    installSequentialIdGenerator(gantt);
 
     // 初始化甘特图
     gantt.init('gantt_here');

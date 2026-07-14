@@ -116,4 +116,15 @@ describe('agent command manifest golden contract', () => {
         expect(new Set(helpNames)).toEqual(new Set(manifestNames));
         expect(app.help('batch')?.name).toBe('batch');
     });
+
+    it('publishes project configuration reuse and direct-link help', () => {
+        const createHelp = app.help('project.create');
+
+        expect(createHelp.params.properties.copyConfigFrom).toEqual({ type: 'string' });
+        expect(createHelp.summary).toContain('copyConfigFrom');
+        expect(createHelp.summary).toContain('result.url');
+        expect(createHelp.discovery).toEqual(
+            expect.arrayContaining([expect.objectContaining({ command: 'project.list' })])
+        );
+    });
 });

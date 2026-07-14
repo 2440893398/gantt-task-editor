@@ -633,6 +633,10 @@ export default {
         createdAt: 'Created',
         deleted: 'Project deleted',
         deleteTitle: 'Delete Project',
+        fieldConfig: 'Field Configuration',
+        fieldConfigCopyCurrent: 'Copy current project config',
+        fieldConfigDefaults: 'Use system defaults',
+        fieldConfigCopyFrom: 'Copy from: ',
     },
 
     // Share

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { db } from '../../../src/core/storage.js';
+import { db, getCustomFieldsDef, saveCustomFieldsDef } from '../../../src/core/storage.js';
+import { defaultCustomFields } from '../../../src/data/fields.js';
 import { state } from '../../../src/core/store.js';
 import { registerProjectCommands } from '../../../src/features/agent-cli/commands/project.js';
 import { clearCommandsForTest } from '../../../src/features/agent-cli/registry.js';
@@ -14,13 +15,31 @@ describe('agent project management commands', () => {
         await db.links.clear();
         state.projects = [];
         state.currentProjectId = null;
+        localStorage.getItem.mockReset();
+        localStorage.setItem.mockReset();
+        localStorage.removeItem.mockReset();
         gantt.serialize = vi.fn(() => ({ data: [], links: [] }));
         registerProjectCommands();
     });
 
     afterEach(() => {
         clearCommandsForTest();
+        window.history.replaceState(null, '', window.location.pathname);
     });
+
+    function useMapBackedLocalStorage() {
+        const backing = new Map();
+        localStorage.getItem.mockImplementation((key) =>
+            backing.has(key) ? backing.get(key) : null
+        );
+        localStorage.setItem.mockImplementation((key, value) => {
+            backing.set(key, String(value));
+        });
+        localStorage.removeItem.mockImplementation((key) => {
+            backing.delete(key);
+        });
+        return backing;
+    }
 
     it('creates and lists projects through the public API', async () => {
         const app = buildApi();
@@ -52,6 +71,63 @@ describe('agent project management commands', () => {
                 }),
             ],
         });
+    });
+
+    it('returns a ?project= deep link from create/switch/list', async () => {
+        const app = buildApi();
+
+        const created = await app.project.create({ name: 'Deep link' });
+        const projectId = created.data.project.id;
+        expect(created.data.url).toContain(`?project=${projectId}`);
+
+        state.projects = [created.data.project];
+        const switched = await app.project.switch({ id: projectId });
+        expect(switched.data.url).toContain(`?project=${projectId}`);
+
+        const listed = await app.project.list();
+        expect(listed.data[0].url).toContain(`?project=${projectId}`);
+    });
+
+    it('copies the current project field config by default on create', async () => {
+        useMapBackedLocalStorage();
+        const app = buildApi();
+
+        const current = await app.project.create({ name: 'Current', copyConfigFrom: 'defaults' });
+        state.currentProjectId = current.data.project.id;
+        const customFields = [{ name: 'assignee', type: 'select', options: ['甲', '乙'] }];
+        saveCustomFieldsDef(customFields, current.data.project.id);
+
+        const copied = await app.project.create({ name: 'Copied' });
+
+        expect(getCustomFieldsDef(copied.data.project.id)).toEqual(customFields);
+    });
+
+    it('creates with system default config when copyConfigFrom is "defaults"', async () => {
+        useMapBackedLocalStorage();
+        const app = buildApi();
+
+        const current = await app.project.create({ name: 'Current', copyConfigFrom: 'defaults' });
+        state.currentProjectId = current.data.project.id;
+        saveCustomFieldsDef(
+            [{ name: 'assignee', type: 'select', options: ['甲'] }],
+            current.data.project.id
+        );
+
+        const clean = await app.project.create({ name: 'Clean', copyConfigFrom: 'defaults' });
+
+        expect(getCustomFieldsDef(clean.data.project.id)).toEqual(defaultCustomFields);
+    });
+
+    it('rejects an unknown copyConfigFrom project id', async () => {
+        const app = buildApi();
+
+        await expect(
+            app.project.create({ name: 'Broken', copyConfigFrom: 'prj_missing' })
+        ).resolves.toMatchObject({
+            ok: false,
+            error: { code: 'NOT_FOUND' },
+        });
+        expect(await db.projects.count()).toBe(0);
     });
 
     it('switches projects only after the target gantt has finished loading', async () => {

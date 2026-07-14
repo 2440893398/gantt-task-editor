@@ -13,6 +13,15 @@ async function waitForAgentBootstrap(page) {
     );
 }
 
+async function getTaskSchemaRev(page, mode = 'create') {
+    const form = await page.evaluate(
+        (formMode) => window.app.form.describe({ form: 'task', mode: formMode }),
+        mode
+    );
+    expect(form.ok).toBe(true);
+    return form.data.schemaRev;
+}
+
 test.describe('agent command layer', () => {
     test.beforeEach(async ({ page }) => {
         await page.goto('/');
@@ -59,6 +68,53 @@ test.describe('agent command layer', () => {
         expect(discovery.domManifest.commands.map((command) => command.name)).toContain(
             'state.snapshot'
         );
+    });
+
+    test('project.create copies active config and returns a switchable direct URL', async ({
+        page,
+    }) => {
+        const currentProjectId = new URL(page.url()).searchParams.get('project');
+        expect(currentProjectId).toBeTruthy();
+
+        const marker = `agent-project-${Date.now()}`;
+        await page.evaluate(
+            ({ projectId, markerValue }) => {
+                localStorage.setItem(
+                    `gantt_custom_fields_def::${projectId}`,
+                    JSON.stringify([
+                        {
+                            name: 'agent_marker',
+                            label: markerValue,
+                            type: 'text',
+                            required: false,
+                        },
+                    ])
+                );
+            },
+            { projectId: currentProjectId, markerValue: marker }
+        );
+
+        const created = await page.evaluate((name) => window.app.project.create({ name }), marker);
+        expect(created.ok).toBe(true);
+        expect(created.data.project.id).toMatch(/^prj_/);
+        expect(created.data.url).toContain(`project=${created.data.project.id}`);
+
+        const copiedConfig = await page.evaluate(
+            (projectId) =>
+                JSON.parse(localStorage.getItem(`gantt_custom_fields_def::${projectId}`) || 'null'),
+            created.data.project.id
+        );
+        expect(copiedConfig).toEqual(
+            expect.arrayContaining([expect.objectContaining({ label: marker })])
+        );
+
+        const switched = await page.evaluate(
+            (projectId) => window.app.project.switch({ id: projectId }),
+            created.data.project.id
+        );
+        expect(switched.ok).toBe(true);
+        expect(new URL(page.url()).searchParams.get('project')).toBe(created.data.project.id);
+        expect(switched.data.url).toContain(`project=${created.data.project.id}`);
     });
 
     test('shows an agent guide entry that copies instructions for external AI tools', async ({
@@ -139,9 +195,9 @@ test.describe('agent command layer external interaction', () => {
     test('help() returns a command index', async ({ page }) => {
         const help = await page.evaluate(() => window.app.help());
 
-        expect(help.version).toBe(1);
+        expect(help.version).toBe(2);
         const names = help.commands.map((command) => command.name);
-        // The command index advertises the full v1 surface, including batch.
+        // The command index advertises the full v2 surface, including batch.
         expect(names).toEqual(
             expect.arrayContaining(['task.create', 'task.update', 'batch', 'state.export'])
         );
@@ -176,8 +232,14 @@ test.describe('agent command layer external interaction', () => {
     }
 
     test('task.create creates a task visible in the gantt', async ({ page }) => {
-        const created = await page.evaluate(() =>
-            window.app.task.create({ name: 'Agent task', duration: 1 })
+        const schemaRev = await getTaskSchemaRev(page);
+        const created = await page.evaluate(
+            (revision) =>
+                window.app.task.create(
+                    { values: { text: 'Agent task', assignee: 'Agent' } },
+                    { schemaRev: revision }
+                ),
+            schemaRev
         );
 
         expect(created.ok).toBe(true);
@@ -192,9 +254,11 @@ test.describe('agent command layer external interaction', () => {
 
     test('visible guide runner returns completion for write commands', async ({ page }) => {
         const createdName = `Runner write ${Date.now()}`;
+        const schemaRev = await getTaskSchemaRev(page);
         const created = await runVisibleGuideCommand(page, {
             command: 'task.create',
-            args: { name: createdName, duration: 1 },
+            args: { values: { text: createdName, assignee: 'Agent' } },
+            options: { schemaRev },
         });
 
         expect(created.ok).toBe(true);
@@ -214,15 +278,17 @@ test.describe('agent command layer external interaction', () => {
     test('operation API runs a pollable write and reuses idempotency keys', async ({ page }) => {
         const createdName = `Operation write ${Date.now()}`;
         const idempotencyKey = `operation-e2e-${Date.now()}`;
+        const schemaRev = await getTaskSchemaRev(page);
 
         const started = await page.evaluate(
-            ({ name, key }) =>
+            ({ name, key, revision }) =>
                 window.app.operation.start({
                     command: 'task.create',
-                    args: { name, duration: 1 },
+                    args: { values: { text: name, assignee: 'Agent' } },
+                    options: { schemaRev: revision },
                     idempotencyKey: key,
                 }),
-            { name: createdName, key: idempotencyKey }
+            { name: createdName, key: idempotencyKey, revision: schemaRev }
         );
 
         expect(started.ok).toBe(true);
@@ -230,13 +296,14 @@ test.describe('agent command layer external interaction', () => {
         expect(started.data.operationId).toEqual(expect.any(String));
 
         const retried = await page.evaluate(
-            ({ name, key }) =>
+            ({ name, key, revision }) =>
                 window.app.operation.start({
                     command: 'task.create',
-                    args: { name, duration: 1 },
+                    args: { values: { text: name, assignee: 'Agent' } },
+                    options: { schemaRev: revision },
                     idempotencyKey: key,
                 }),
-            { name: createdName, key: idempotencyKey }
+            { name: createdName, key: idempotencyKey, revision: schemaRev }
         );
         expect(retried.data.operationId).toBe(started.data.operationId);
 
@@ -271,17 +338,28 @@ test.describe('agent command layer external interaction', () => {
     });
 
     test('task.update updates an existing task', async ({ page }) => {
-        const created = await page.evaluate(() =>
-            window.app.task.create({ name: 'Agent task', duration: 1 })
+        const createSchemaRev = await getTaskSchemaRev(page);
+        const created = await page.evaluate(
+            (revision) =>
+                window.app.task.create(
+                    { values: { text: 'Agent task', assignee: 'Agent' } },
+                    { schemaRev: revision }
+                ),
+            createSchemaRev
         );
         expect(created.ok).toBe(true);
 
         const id = await findTaskIdByText(page, 'Agent task');
         expect(id).not.toBeNull();
 
+        const updateSchemaRev = await getTaskSchemaRev(page, 'update');
         const updated = await page.evaluate(
-            (taskId) => window.app.task.update({ id: taskId, name: 'Agent task updated' }),
-            id
+            ({ taskId, revision }) =>
+                window.app.task.update(
+                    { id: taskId, values: { text: 'Agent task updated' } },
+                    { schemaRev: revision }
+                ),
+            { taskId: id, revision: updateSchemaRev }
         );
         expect(updated.ok).toBe(true);
 
@@ -292,24 +370,36 @@ test.describe('agent command layer external interaction', () => {
     test('batch creates a parent + child in a single rev bump', async ({ page }) => {
         const before = await page.evaluate(() => window.app.state.rev());
         expect(before.ok).toBe(true);
+        const schemaRev = await getTaskSchemaRev(page);
 
-        const result = await page.evaluate(() =>
-            window.app.batch([
-                {
-                    op: 'task.create',
-                    args: { name: 'Batch parent', start: '2026-07-01', duration: 1 },
-                    as: 'parent',
-                },
-                {
-                    op: 'task.create',
-                    args: {
-                        name: 'Batch child',
-                        parent: '$parent',
-                        start: '2026-07-01',
-                        duration: 1,
-                    },
-                },
-            ])
+        const result = await page.evaluate(
+            (revision) =>
+                window.app.batch(
+                    [
+                        {
+                            op: 'task.create',
+                            args: {
+                                values: {
+                                    text: 'Batch parent',
+                                    assignee: 'Agent',
+                                },
+                            },
+                            as: 'parent',
+                        },
+                        {
+                            op: 'task.create',
+                            args: {
+                                parent: '$parent',
+                                values: {
+                                    text: 'Batch child',
+                                    assignee: 'Agent',
+                                },
+                            },
+                        },
+                    ],
+                    { schemaRev: revision }
+                ),
+            schemaRev
         );
 
         expect(result.ok).toBe(true);
@@ -325,24 +415,36 @@ test.describe('agent command layer external interaction', () => {
 
     test('session.undo reverts a batch', async ({ page }) => {
         const before = await page.evaluate(() => window.app.state.rev());
+        const schemaRev = await getTaskSchemaRev(page);
 
-        const result = await page.evaluate(() =>
-            window.app.batch([
-                {
-                    op: 'task.create',
-                    args: { name: 'Undo parent', start: '2026-07-01', duration: 1 },
-                    as: 'parent',
-                },
-                {
-                    op: 'task.create',
-                    args: {
-                        name: 'Undo child',
-                        parent: '$parent',
-                        start: '2026-07-01',
-                        duration: 1,
-                    },
-                },
-            ])
+        const result = await page.evaluate(
+            (revision) =>
+                window.app.batch(
+                    [
+                        {
+                            op: 'task.create',
+                            args: {
+                                values: {
+                                    text: 'Undo parent',
+                                    assignee: 'Agent',
+                                },
+                            },
+                            as: 'parent',
+                        },
+                        {
+                            op: 'task.create',
+                            args: {
+                                parent: '$parent',
+                                values: {
+                                    text: 'Undo child',
+                                    assignee: 'Agent',
+                                },
+                            },
+                        },
+                    ],
+                    { schemaRev: revision }
+                ),
+            schemaRev
         );
         expect(result.ok).toBe(true);
 
@@ -386,13 +488,19 @@ test.describe('agent command security switches', () => {
         expect(snapshot.ok).toBe(true);
 
         // Mutating commands are exposed but rejected with the CONSTRAINT result.
-        const result = await page.evaluate(() => window.app.task.create({ name: 'Read-only' }));
-        expect(result).toEqual({
+        const result = await page.evaluate(() =>
+            window.app.task.create({ values: { text: 'Read-only' } })
+        );
+        expect(result).toMatchObject({
             ok: false,
             error: {
                 code: 'CONSTRAINT',
                 message: 'Agent command layer is read-only.',
                 hint: 'Use read commands only or enable write mode in app configuration.',
+                nextAction: {
+                    command: 'help',
+                    args: { command: 'task.create' },
+                },
             },
             rev: expect.any(Number),
         });

@@ -117,6 +117,25 @@ describe('ProjectModal inline create row', () => {
         );
     });
 
+    it('内联新建默认复制当前项目的字段配置', async () => {
+        const { createProject } = await import('../../../src/features/projects/manager.js');
+        const modal = await renderFreshModal();
+
+        const input = modal.querySelector('#project-inline-create-input');
+        const submitBtn = modal.querySelector('[data-testid="project-inline-create-btn"]');
+
+        input.value = 'Copied Config Project';
+        submitBtn.click();
+        await new Promise((r) => setTimeout(r, 50));
+
+        expect(createProject).toHaveBeenCalledWith(
+            expect.objectContaining({
+                name: 'Copied Config Project',
+                copyConfigFrom: 'prj_default',
+            })
+        );
+    });
+
     it('有效名称提交后应调用 createProject → refreshProjects 并派发 projectsUpdated 事件', async () => {
         const { createProject } = await import('../../../src/features/projects/manager.js');
         const { refreshProjects } = await import('../../../src/core/store.js');

@@ -137,6 +137,22 @@ export const SYSTEM_FIELD_CONFIG = {
 };
 
 /**
+ * System field settings 默认值（enabled/typeOverrides）
+ * store.js 的初始 state 与 storage.js 的项目配置初始化共用
+ */
+export const DEFAULT_SYSTEM_FIELD_SETTINGS = {
+    enabled: {
+        status: true,
+        progress: true,
+        duration: true,
+        actual_start: true,
+        actual_end: true,
+        actual_hours: true,
+    },
+    typeOverrides: {},
+};
+
+/**
  * Internal fields that should never be shown in field management
  */
 export const INTERNAL_FIELDS = [

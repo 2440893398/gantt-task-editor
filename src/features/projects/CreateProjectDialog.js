@@ -3,12 +3,20 @@
  */
 
 import { createProject } from './manager.js';
-import { refreshProjects, switchProject } from '../../core/store.js';
+import { refreshProjects, state, switchProject } from '../../core/store.js';
 import { i18n } from '../../utils/i18n.js';
 import { showToast } from '../../utils/toast.js';
 
 const MODAL_ID = 'project-create-modal';
 const COLORS = ['#4f46e5', '#0891b2', '#059669', '#d97706', '#dc2626', '#7c3aed', '#db2777'];
+
+function escapeHtml(text) {
+    return String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
 
 /**
  * 打开新建项目弹窗
@@ -93,6 +101,23 @@ function renderCreateModal(modal) {
 
                 <div class="form-control">
                     <label class="label py-1">
+                        <span class="label-text text-sm font-medium">${i18n.t('project.fieldConfig') || '字段配置'}</span>
+                    </label>
+                    <select id="project-config-source" class="select select-sm w-full bg-base-200 border-0 focus:outline-none">
+                        <option value="__current__" selected>${i18n.t('project.fieldConfigCopyCurrent') || '复制当前项目配置'}</option>
+                        <option value="defaults">${i18n.t('project.fieldConfigDefaults') || '使用系统默认配置'}</option>
+                        ${state.projects
+                            .filter((project) => project.id !== state.currentProjectId)
+                            .map(
+                                (project) =>
+                                    `<option value="${project.id}">${(i18n.t('project.fieldConfigCopyFrom') || '复制自：') + escapeHtml(project.name)}</option>`
+                            )
+                            .join('')}
+                    </select>
+                </div>
+
+                <div class="form-control">
+                    <label class="label py-1">
                         <span class="label-text text-sm font-medium">${i18n.t('project.description') || '项目描述'}</span>
                         <span class="label-text-alt text-base-content/50">（${i18n.t('common.optional') || '可选'}）</span>
                     </label>
@@ -151,12 +176,17 @@ function bindCreateModalEvents(modal) {
         }
 
         const description = descInput.value.trim();
+        // 字段配置来源：'__current__' → 当前项目；'defaults' → 系统默认；其余为源项目 ID
+        const sourceValue = modal.querySelector('#project-config-source')?.value ?? '__current__';
+        const copyConfigFrom =
+            sourceValue === '__current__' ? (state.currentProjectId ?? 'defaults') : sourceValue;
 
         try {
             const project = await createProject({
                 name,
                 color: selectedColor,
                 description,
+                copyConfigFrom,
             });
             await refreshProjects();
             document.dispatchEvent(new CustomEvent('projectsUpdated'));

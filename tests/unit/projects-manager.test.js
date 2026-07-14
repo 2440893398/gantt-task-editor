@@ -6,12 +6,26 @@ import {
     deleteProject,
     getProjectTaskCount,
 } from '../../src/features/projects/manager.js';
-import { db } from '../../src/core/storage.js';
+import {
+    db,
+    getCustomFieldsDef,
+    getFieldOrder,
+    getSystemFieldSettings,
+    saveCustomFieldsDef,
+    saveFieldOrder,
+    saveSystemFieldSettings,
+} from '../../src/core/storage.js';
 
 describe('projects manager', () => {
     beforeEach(async () => {
+        const storage = new Map();
+        localStorage.getItem.mockImplementation((key) => storage.get(key) ?? null);
+        localStorage.setItem.mockImplementation((key, value) => storage.set(key, String(value)));
+        localStorage.removeItem.mockImplementation((key) => storage.delete(key));
+        localStorage.clear.mockImplementation(() => storage.clear());
         // 清理 projects 表，保持测试隔离
         await db.projects.clear();
+        localStorage.clear();
     });
 
     it('creates a project with correct id prefix', async () => {
@@ -28,6 +42,57 @@ describe('projects manager', () => {
         const p = await createProject({ name: 'Custom', color: '#ff0000', description: 'desc' });
         expect(p.color).toBe('#ff0000');
         expect(p.description).toBe('desc');
+    });
+
+    it('copies the current project field config when copyConfigFrom is omitted', async () => {
+        const current = await createProject({ name: 'Current', copyConfigFrom: 'defaults' });
+        localStorage.setItem('gantt_current_project_id', current.id);
+        saveCustomFieldsDef(
+            [{ name: 'marker', label: 'Current marker', type: 'text' }],
+            current.id
+        );
+        saveFieldOrder(['marker'], current.id);
+        saveSystemFieldSettings(
+            { enabled: { marker: true }, typeOverrides: { marker: { type: 'text' } } },
+            current.id
+        );
+
+        const project = await createProject({ name: 'Copied' });
+
+        expect(getCustomFieldsDef(project.id)).toEqual([
+            { name: 'marker', label: 'Current marker', type: 'text' },
+        ]);
+        expect(getFieldOrder(project.id)).toEqual(['marker']);
+        expect(getSystemFieldSettings(project.id)).toEqual({
+            enabled: { marker: true },
+            typeOverrides: { marker: { type: 'text' } },
+        });
+    });
+
+    it('writes system defaults when no current project exists', async () => {
+        saveCustomFieldsDef([{ name: 'legacy', label: 'Legacy', type: 'text' }]);
+
+        const project = await createProject({ name: 'First' });
+
+        expect(getCustomFieldsDef(project.id)).not.toEqual([
+            { name: 'legacy', label: 'Legacy', type: 'text' },
+        ]);
+        expect(getCustomFieldsDef(project.id)).toEqual(expect.any(Array));
+        expect(getFieldOrder(project.id)).toEqual(expect.any(Array));
+        expect(getSystemFieldSettings(project.id)).toEqual(expect.any(Object));
+    });
+
+    it('writes system defaults when the remembered current project no longer exists', async () => {
+        localStorage.setItem('gantt_current_project_id', 'prj_stale');
+        saveCustomFieldsDef([{ name: 'stale', label: 'Stale', type: 'text' }], 'prj_stale');
+
+        const project = await createProject({ name: 'Recovered' });
+
+        expect(getCustomFieldsDef(project.id)).not.toEqual([
+            { name: 'stale', label: 'Stale', type: 'text' },
+        ]);
+        expect(getFieldOrder(project.id)).toEqual(expect.any(Array));
+        expect(getSystemFieldSettings(project.id)).toEqual(expect.any(Object));
     });
 
     it('getAllProjects returns created projects ordered by createdAt', async () => {

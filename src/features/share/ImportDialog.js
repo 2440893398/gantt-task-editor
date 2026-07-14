@@ -4,22 +4,19 @@
 import { downloadShare, getCloudShare } from './shareService.js';
 import { clearCloudBinding, saveCloudBinding } from './cloudBinding.js';
 import { openReadOnlyCloudView } from './readOnlyCloudView.js';
-import {
-    state,
-    switchProject,
-    refreshProjects,
-    persistCustomFields,
-    persistSystemFieldSettings,
-} from '../../core/store.js';
+import { state, switchProject, refreshProjects } from '../../core/store.js';
 import {
     deleteCustomDay,
     deleteLeave,
     getAllCustomDays,
     getAllLeaves,
     projectScope,
+    saveCustomFieldsDef,
     saveCalendarSettings,
     saveCustomDay,
+    saveFieldOrder,
     saveLeave,
+    saveSystemFieldSettings,
 } from '../../core/storage.js';
 import { createProject } from '../projects/manager.js';
 import { i18n } from '../../utils/i18n.js';
@@ -243,6 +240,7 @@ export async function applySnapshot(snapshot, mode) {
         const proj = await createProject({
             name: snapshot.project?.name || t('share.importedProject', '导入的项目'),
             color: snapshot.project?.color || '#4f46e5',
+            copyConfigFrom: 'defaults',
         });
         await refreshProjects();
         targetProjectId = proj.id;
@@ -251,11 +249,18 @@ export async function applySnapshot(snapshot, mode) {
     const scope = projectScope(targetProjectId);
     await scope.saveGanttData({ data: snapshot.tasks || [], links: snapshot.links || [] });
 
-    if (snapshot.customFields) state.customFields = snapshot.customFields;
-    if (snapshot.fieldOrder) state.fieldOrder = snapshot.fieldOrder;
-    if (snapshot.systemFieldSettings) state.systemFieldSettings = snapshot.systemFieldSettings;
-    persistCustomFields();
-    persistSystemFieldSettings();
+    if (targetProjectId === state.currentProjectId) {
+        if (snapshot.customFields) state.customFields = snapshot.customFields;
+        if (snapshot.fieldOrder) state.fieldOrder = snapshot.fieldOrder;
+        if (snapshot.systemFieldSettings) {
+            state.systemFieldSettings = snapshot.systemFieldSettings;
+        }
+    }
+    if (snapshot.customFields) saveCustomFieldsDef(snapshot.customFields, targetProjectId);
+    if (snapshot.fieldOrder) saveFieldOrder(snapshot.fieldOrder, targetProjectId);
+    if (snapshot.systemFieldSettings) {
+        saveSystemFieldSettings(snapshot.systemFieldSettings, targetProjectId);
+    }
 
     await applyCalendarSnapshot(snapshot.calendar);
 

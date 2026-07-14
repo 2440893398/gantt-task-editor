@@ -595,6 +595,10 @@ export default {
         createdAt: '作成日',
         deleted: 'プロジェクトが削除されました',
         deleteTitle: 'プロジェクトを削除',
+        fieldConfig: 'フィールド設定',
+        fieldConfigCopyCurrent: '現在のプロジェクト設定をコピー',
+        fieldConfigDefaults: 'システムデフォルトを使用',
+        fieldConfigCopyFrom: 'コピー元：',
     },
 
     // 共有

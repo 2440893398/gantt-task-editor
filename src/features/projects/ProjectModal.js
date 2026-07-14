@@ -371,7 +371,11 @@ function bindCreateRow(modal) {
 
         btn.disabled = true;
         try {
-            await createProject({ name, color: selectedColor });
+            await createProject({
+                name,
+                color: selectedColor,
+                copyConfigFrom: state.currentProjectId ?? 'defaults',
+            });
             await refreshProjects();
             document.dispatchEvent(new CustomEvent('projectsUpdated'));
         } catch (error) {

@@ -6,6 +6,7 @@
 import {
     defaultCustomFields,
     defaultFieldOrder,
+    DEFAULT_SYSTEM_FIELD_SETTINGS,
     SYSTEM_FIELD_CONFIG,
     INTERNAL_FIELDS,
 } from '../data/fields.js';
@@ -32,6 +33,39 @@ import { getAllProjects, createProject } from '../features/projects/manager.js';
 import { runProjectMutationExclusive } from './project-mutation-gate.js';
 
 const DEFAULT_PROJECT_ID_KEY = 'gantt_current_project_id';
+const PROJECT_URL_PARAM = 'project';
+
+/**
+ * 读取 URL 中的 ?project= 参数（项目直达链接）
+ * @returns {string|null}
+ */
+function readProjectIdFromUrl() {
+    try {
+        const search = globalThis.window?.location?.search;
+        if (!search) return null;
+        return new URLSearchParams(search).get(PROJECT_URL_PARAM);
+    } catch (error) {
+        console.warn('[Store] Failed to read project id from URL:', error);
+        return null;
+    }
+}
+
+/**
+ * 将当前项目 ID 回写到地址栏 ?project= 参数（保留其他参数，不产生历史记录）
+ * @param {string} projectId
+ */
+function syncProjectUrlParam(projectId) {
+    try {
+        const win = globalThis.window;
+        if (!projectId || !win?.history?.replaceState || !win.location) return;
+        const url = new URL(win.location.href);
+        if (url.searchParams.get(PROJECT_URL_PARAM) === projectId) return;
+        url.searchParams.set(PROJECT_URL_PARAM, projectId);
+        win.history.replaceState(win.history.state, '', url.pathname + url.search + url.hash);
+    } catch (error) {
+        console.warn('[Store] Failed to sync project URL param:', error);
+    }
+}
 
 function getStoredProjectId() {
     try {
@@ -71,18 +105,16 @@ export const state = {
     projects: [],
     isProjectSwitching: false,
     // System field settings
-    systemFieldSettings: {
-        enabled: {
-            status: true,
-            progress: true,
-            duration: true,
-            actual_start: true,
-            actual_end: true,
-            actual_hours: true,
-        },
-        typeOverrides: {},
-    },
+    systemFieldSettings: structuredClone(DEFAULT_SYSTEM_FIELD_SETTINGS),
 };
+
+/**
+ * 当前用于字段配置读写的项目 ID
+ * 启动早期 state.currentProjectId 尚未初始化时回退读 localStorage 记忆值
+ */
+function getConfigProjectId() {
+    return state.currentProjectId ?? getStoredProjectId() ?? undefined;
+}
 
 // ========================================
 // 状态初始化（从缓存恢复）
@@ -94,8 +126,12 @@ export const state = {
  */
 export async function restoreStateFromCache() {
     try {
+        // 字段配置按项目隔离：始终恢复当前项目的配置；
+        // 缺失时重置为默认，避免上一个项目的配置泄漏到当前项目
+        const configProjectId = getConfigProjectId();
+
         // 恢复自定义字段定义
-        const cachedCustomFields = getCustomFieldsDef();
+        const cachedCustomFields = getCustomFieldsDef(configProjectId);
         if (
             cachedCustomFields &&
             Array.isArray(cachedCustomFields) &&
@@ -103,10 +139,12 @@ export async function restoreStateFromCache() {
         ) {
             state.customFields = cachedCustomFields;
             console.log('[Store] Restored custom fields from cache:', cachedCustomFields.length);
+        } else {
+            state.customFields = structuredClone(defaultCustomFields);
         }
 
         // 恢复字段顺序
-        const cachedFieldOrder = getStoredFieldOrder();
+        const cachedFieldOrder = getStoredFieldOrder(configProjectId);
         if (cachedFieldOrder && Array.isArray(cachedFieldOrder) && cachedFieldOrder.length > 0) {
             // 兼容旧缓存：将 summary 替换为 description
             const summaryIdx = cachedFieldOrder.indexOf('summary');
@@ -160,10 +198,13 @@ export async function restoreStateFromCache() {
 
             state.fieldOrder = cachedFieldOrder;
             console.log('[Store] Restored field order from cache');
+        } else {
+            state.fieldOrder = [...defaultFieldOrder];
         }
 
-        // Restore system field settings
-        const cachedSystemFieldSettings = getSystemFieldSettings();
+        // Restore system field settings（先重置再合并，避免跨项目残留）
+        const cachedSystemFieldSettings = getSystemFieldSettings(configProjectId);
+        state.systemFieldSettings = structuredClone(DEFAULT_SYSTEM_FIELD_SETTINGS);
         if (cachedSystemFieldSettings) {
             state.systemFieldSettings = {
                 ...state.systemFieldSettings,
@@ -224,8 +265,9 @@ export async function restoreGanttDataFromCache(options = {}) {
  * 保存自定义字段配置到缓存
  */
 export function persistCustomFields() {
-    saveCustomFieldsDef(state.customFields);
-    saveFieldOrder(state.fieldOrder);
+    const configProjectId = getConfigProjectId();
+    saveCustomFieldsDef(state.customFields, configProjectId);
+    saveFieldOrder(state.fieldOrder, configProjectId);
     console.log('[Store] Persisted custom fields and field order');
 }
 
@@ -261,11 +303,16 @@ export async function initProjects() {
 
         state.projects = projects;
 
+        // URL ?project= 参数（直达链接）优先于 localStorage 记忆值；无效则逐级回退
+        const urlProjectId = readProjectIdFromUrl();
         const savedProjectId = getStoredProjectId();
-        const validProjectId = projects.find((project) => project.id === savedProjectId)?.id;
+        const validProjectId =
+            projects.find((project) => project.id === urlProjectId)?.id ??
+            projects.find((project) => project.id === savedProjectId)?.id;
 
         state.currentProjectId = validProjectId ?? projects[0].id;
         persistProjectId(state.currentProjectId);
+        syncProjectUrlParam(state.currentProjectId);
     } catch (e) {
         console.error('[Store] Failed to initialize projects:', e);
         state.projects = [];
@@ -334,6 +381,7 @@ async function performProjectSwitch(projectId) {
         );
         await Promise.all(pendingReloads);
         failedProjectReloadId = null;
+        syncProjectUrlParam(projectId);
         return { projectId, loaded: true, changed: !isRetry };
     } catch (e) {
         failedProjectReloadId = projectId;
@@ -368,7 +416,7 @@ export async function getCacheStatus() {
 export async function clearCache() {
     await clearAllCache();
     // 重置为默认状态
-    state.customFields = [...defaultCustomFields];
+    state.customFields = structuredClone(defaultCustomFields);
     state.fieldOrder = [...defaultFieldOrder];
     state.currentProjectId = null;
     state.projects = [];
@@ -552,7 +600,7 @@ export function setViewMode(mode) {
  * Persist system field settings to storage
  */
 export function persistSystemFieldSettings() {
-    saveSystemFieldSettings(state.systemFieldSettings);
+    saveSystemFieldSettings(state.systemFieldSettings, getConfigProjectId());
     console.log('[Store] Persisted system field settings');
 }
 

@@ -591,6 +591,10 @@ export default {
         createdAt: '생성일',
         deleted: '프로젝트가 삭제되었습니다',
         deleteTitle: '프로젝트 삭제',
+        fieldConfig: '필드 설정',
+        fieldConfigCopyCurrent: '현재 프로젝트 설정 복사',
+        fieldConfigDefaults: '시스템 기본값 사용',
+        fieldConfigCopyFrom: '복사 원본: ',
     },
 
     // 공유
