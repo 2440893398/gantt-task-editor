@@ -33,7 +33,7 @@ test.describe('Internationalization (I18n)', () => {
 
     test('TC-I18N-002: Switch to English', async ({ page }) => {
         // 1. Open More menu
-        await page.locator('.more-btn').click();
+        await page.locator('#more-actions-dropdown > label').click();
         // 等待下拉菜单内容可见
         await expect(page.locator('#more-actions-dropdown .dropdown-content')).toBeVisible();
 
@@ -57,7 +57,7 @@ test.describe('Internationalization (I18n)', () => {
     });
 
     test('TC-I18N-003: Switch to Japanese', async ({ page }) => {
-        await page.locator('.more-btn').click();
+        await page.locator('#more-actions-dropdown > label').click();
         await page.locator('#language-menu summary').click();
         await page.locator('#language-menu .dropdown-item[data-lang="ja-JP"]').click();
 
@@ -71,7 +71,7 @@ test.describe('Internationalization (I18n)', () => {
     });
 
     test('TC-I18N-004: Switch to Korean', async ({ page }) => {
-        await page.locator('.more-btn').click();
+        await page.locator('#more-actions-dropdown > label').click();
         await expect(page.locator('#more-actions-dropdown .dropdown-content')).toBeVisible();
         await page.locator('#language-menu summary').click();
         // 确保语言选项可见
@@ -87,7 +87,7 @@ test.describe('Internationalization (I18n)', () => {
 
     test('TC-I18N-005: Date format in Gantt header should change', async ({ page }) => {
         // Switch to English
-        await page.locator('.more-btn').click();
+        await page.locator('#more-actions-dropdown > label').click();
         await page.locator('#language-menu summary').click();
         await page.locator('#language-menu .dropdown-item[data-lang="en-US"]').click();
 

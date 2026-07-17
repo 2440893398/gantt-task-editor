@@ -137,7 +137,11 @@ export function bindLeftSectionEvents(panel, task, context = {}) {
         // 保存原始值用于比较
         titleInput.addEventListener('blur', () => {
             const newValue = titleInput.value.trim();
-            const nextTitle = newValue || i18n.t('taskDetails.newTask') || '新任务';
+            // Keep an untouched new-task draft empty. Substituting the localized
+            // placeholder on blur makes merely clicking Close look like an edit.
+            const nextTitle = isDraftMode
+                ? newValue
+                : newValue || i18n.t('taskDetails.newTask') || '新任务';
             if (nextTitle !== (draftTask.text || '')) {
                 mutateDraft((target) => {
                     target.text = nextTitle;

@@ -7,14 +7,14 @@ test.describe('AI @ Mention Search', () => {
                 'gantt_ai_config',
                 JSON.stringify({
                     apiKey: 'sk-test-key',
-                    baseUrl: 'https://api.openai.com/v1',
+                    baseUrl: 'https://mock-ai.example/v1',
                     model: 'gpt-3.5-turbo',
                 })
             );
         });
 
         // Mock API to return a response acknowledging referenced tasks
-        await page.route('https://api.openai.com/v1/chat/completions', async (route) => {
+        await page.route('**/chat/completions', async (route) => {
             const request = route.request();
             const postData = request.postDataJSON();
 
@@ -133,8 +133,8 @@ test.describe('AI @ Mention Search', () => {
                     await firstItem.click();
 
                     // Verify chip appears in mention area
-                    const chip = page.locator('.mention-chip, [data-mention-chip]');
-                    await expect(chip.first()).toBeVisible({ timeout: 3000 });
+                    const token = page.locator('#ai_chat_input .mention-token[data-task-id]');
+                    await expect(token.first()).toBeVisible({ timeout: 3000 });
                 }
             }
         }
@@ -144,7 +144,7 @@ test.describe('AI @ Mention Search', () => {
         let capturedPayload = null;
 
         // Re-route to capture the payload
-        await page.route('https://api.openai.com/v1/chat/completions', async (route) => {
+        await page.route('**/chat/completions', async (route) => {
             const request = route.request();
             capturedPayload = request.postDataJSON();
 

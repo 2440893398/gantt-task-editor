@@ -26,13 +26,15 @@ test.describe('Dependency Management Tests', () => {
 
     test('Should display empty predecessors section initially', async ({ page }) => {
         // Open Task 2
-        await page.locator('.gantt_task_row[data-task-id="2"]').dblclick();
+        await page.locator('.gantt-task-action-edit[data-task-id="2"]').click();
 
         // Check panel visibility
         await expect(page.locator('#task-details-panel')).toBeVisible();
 
         // Check section header
-        await expect(page.locator('text=Predecessors')).toBeVisible({ timeout: 5000 });
+        await expect(page.getByRole('heading', { name: 'Predecessors', exact: true })).toBeVisible({
+            timeout: 5000,
+        });
 
         // Check "No predecessors"
         await expect(page.locator('text=No predecessors')).toBeVisible();
@@ -42,7 +44,7 @@ test.describe('Dependency Management Tests', () => {
     });
 
     test('Should add predecessor link', async ({ page }) => {
-        await page.locator('.gantt_task_row[data-task-id="2"]').dblclick();
+        await page.locator('.gantt-task-action-edit[data-task-id="2"]').click();
 
         // Wait for Add button
         const addBtn = page.locator('#add-predecessor-btn');
@@ -57,17 +59,26 @@ test.describe('Dependency Management Tests', () => {
         await dropdown.locator('#new-predecessor-select-trigger').click();
 
         // Select Task A (id=1)
-        const itemTaskA = dropdown.locator('.dropdown-item[data-value="1"]');
+        // The reusable dropdown portals its menu to document.body.
+        const itemTaskA = page.locator('.dropdown-item[data-value="1"]:visible');
         await expect(itemTaskA).toBeVisible();
         await itemTaskA.click();
 
         // Verify link added UI
         await expect(page.locator('.delete-link-btn')).toHaveCount(1);
-        await expect(page.locator('text=Task A')).toBeVisible();
+        await expect(
+            page.locator('#predecessors-list').getByText('Task A', { exact: true })
+        ).toBeVisible();
 
         // Verify Gantt Data
-        const linkCount = await page.evaluate(() => gantt.getLinks().length);
-        expect(linkCount).toBe(1);
+        const links = await page.evaluate(() =>
+            gantt.getLinks().map((link) => ({
+                source: String(link.source),
+                target: String(link.target),
+                type: String(link.type),
+            }))
+        );
+        expect(links).toEqual([{ source: '1', target: '2', type: '0' }]);
     });
 
     test('Should delete predecessor link', async ({ page }) => {
@@ -76,7 +87,7 @@ test.describe('Dependency Management Tests', () => {
             gantt.addLink({ id: 100, source: 1, target: 2, type: '0' });
         });
 
-        await page.locator('.gantt_task_row[data-task-id="2"]').dblclick();
+        await page.locator('.gantt-task-action-edit[data-task-id="2"]').click();
 
         await expect(page.locator('.delete-link-btn')).toHaveCount(1);
 

@@ -313,8 +313,10 @@ export function initGantt() {
     // 智能调度配置 (PRD-竞品改进-v1.0)
     // ========================================
 
-    // 启用工作日历 - 跳过周末进行排程计算
-    gantt.config.work_time = true;
+    // 工期语义 = 日历天（2026-07-15 拍板，见 tests/scenarios/agent-cli.md EXC-AGT-01）：
+    // calculateDuration/calculateEndDate 全局按日历天计算，工期在重排中守恒。
+    // 周末/节假日仍通过 syncGanttWorkTimeCalendar + 高亮缓存用于视觉与起始日吸附。
+    gantt.config.work_time = false;
 
     // 手动异步调度替代原生 auto_scheduling（见 scheduler.js scheduleAsyncReschedule）
     // gantt.config.auto_scheduling = false;  // 已在 plugins 中禁用

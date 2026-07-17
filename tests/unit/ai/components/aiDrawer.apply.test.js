@@ -124,6 +124,20 @@ describe('AiDrawer apply button visibility', () => {
         expect(message2?.querySelector('.prose')?.textContent || '').toContain('not_registered');
     });
 
+    it('shows AI SDK 6 input/output token usage after streaming completes', async () => {
+        const AiDrawer = await import('../../../../src/features/ai/components/AiDrawer.js');
+
+        AiDrawer.initAiDrawer();
+        AiDrawer.openDrawer({ title: 'AI Chat', context: 'hello', agentId: 'chat' });
+        AiDrawer.startStreaming();
+        AiDrawer.appendText('done');
+        AiDrawer.finishStreaming({ inputTokens: 50, outputTokens: 30, totalTokens: 80 });
+
+        const stats = document.getElementById('ai_token_stats');
+        expect(stats?.classList.contains('hidden')).toBe(false);
+        expect(document.getElementById('ai_total_tokens')?.textContent).toBe('80');
+    });
+
     it('parses structured data only when type is registered', async () => {
         const AiDrawer = await import('../../../../src/features/ai/components/AiDrawer.js');
         const parser = AiDrawer.__test__?.tryParseStructuredData;

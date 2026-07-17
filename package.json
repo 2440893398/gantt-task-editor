@@ -20,6 +20,7 @@
     "format": "prettier --write \"src/**/*.js\" \"tests/**/*.js\"",
     "format:check": "prettier --check \"src/**/*.js\" \"tests/**/*.js\"",
     "check": "npm run lint && npm run format:check",
+    "check:scenarios": "node scripts/check-scenario-coverage.mjs",
     "check:full": "npm run lint && npm run format:check && npm run test",
     "prepare": "husky"
   },
@@ -33,6 +34,7 @@
     "eslint": "^9.39.4",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-import": "^2.32.0",
+    "espree": "^10.4.0",
     "fake-indexeddb": "^6.2.5",
     "happy-dom": "^20.1.0",
     "husky": "^9.1.7",

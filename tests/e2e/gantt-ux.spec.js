@@ -126,7 +126,7 @@ test.describe('Gantt Chart UX Optimization', () => {
         page,
     }) => {
         // Check primary buttons with correct IDs
-        const editFieldsBtn = page.locator('#add-field-btn');
+        const editFieldsBtn = page.locator('#task-header #add-field-btn');
         const batchEditBtn = page.locator('#batch-edit-btn');
         const todayBtn = page.locator('#scroll-to-today-btn');
         const newTaskBtn = page.locator('#new-task-btn');
@@ -139,7 +139,7 @@ test.describe('Gantt Chart UX Optimization', () => {
 
     test('TC-012: More actions dropdown should open on click', async ({ page }) => {
         // Updated selector to find the button inside the dropdown component
-        const moreActionsBtn = page.locator('#more-actions-dropdown .btn');
+        const moreActionsBtn = page.locator('#more-actions-dropdown > label');
         const dropdownMenu = page.locator('#more-actions-dropdown .dropdown-content');
 
         await expect(moreActionsBtn).toBeVisible();
@@ -150,7 +150,7 @@ test.describe('Gantt Chart UX Optimization', () => {
     });
 
     test('TC-013: Dropdown menu should contain import/export options', async ({ page }) => {
-        const moreActionsBtn = page.locator('#more-actions-dropdown .btn');
+        const moreActionsBtn = page.locator('#more-actions-dropdown > label');
         const dropdownMenu = page.locator('#more-actions-dropdown .dropdown-content');
 
         await moreActionsBtn.click();
@@ -174,7 +174,7 @@ test.describe('Gantt Chart UX Optimization', () => {
     });
 
     test.skip('TC-014: Dropdown should close when clicking outside', async ({ page }) => {
-        const moreActionsBtn = page.locator('#more-actions-dropdown .more-btn');
+        const moreActionsBtn = page.locator('#more-actions-dropdown > label');
         const dropdownMenu = page.locator('#more-actions-dropdown .dropdown-content');
 
         // Open dropdown
@@ -191,7 +191,7 @@ test.describe('Gantt Chart UX Optimization', () => {
 
     // ===== 3.5 Excel导入导出按钮测试 (TC-017, TC-019, TC-021, TC-022) =====
     test('TC-017: Export Excel button should be functional', async ({ page }) => {
-        const moreActionsBtn = page.locator('#more-actions-dropdown .btn');
+        const moreActionsBtn = page.locator('#more-actions-dropdown > label');
         await moreActionsBtn.click();
 
         const exportExcelBtn = page.locator('.dropdown-content').locator('text=导出Excel');
@@ -200,7 +200,7 @@ test.describe('Gantt Chart UX Optimization', () => {
     });
 
     test('TC-019: Import Excel button should be functional', async ({ page }) => {
-        const moreActionsBtn = page.locator('#more-actions-dropdown .btn');
+        const moreActionsBtn = page.locator('#more-actions-dropdown > label');
         await moreActionsBtn.click();
 
         const importExcelBtn = page.locator('.dropdown-content').locator('text=导入Excel');
@@ -209,7 +209,7 @@ test.describe('Gantt Chart UX Optimization', () => {
     });
 
     test('TC-021: Export JSON button should be preserved', async ({ page }) => {
-        const moreActionsBtn = page.locator('#more-actions-dropdown .btn');
+        const moreActionsBtn = page.locator('#more-actions-dropdown > label');
         await moreActionsBtn.click();
 
         const exportJsonBtn = page.locator('.dropdown-content').locator('text=导出JSON');
@@ -218,7 +218,7 @@ test.describe('Gantt Chart UX Optimization', () => {
     });
 
     test('TC-022: Import JSON button should be preserved', async ({ page }) => {
-        const moreActionsBtn = page.locator('#more-actions-dropdown .btn');
+        const moreActionsBtn = page.locator('#more-actions-dropdown > label');
         await moreActionsBtn.click();
 
         const importJsonBtn = page.locator('.dropdown-content').locator('text=导入JSON');

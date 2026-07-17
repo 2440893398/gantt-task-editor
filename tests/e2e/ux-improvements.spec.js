@@ -207,7 +207,7 @@ test.describe('交互体验优化模块 (UX Improvements) - P1', () => {
         // UX-010: 验证关键路径开关存在
         test('UX-010: 关键路径开关控件应存在', async ({ page }) => {
             // 首先打开更多操作下拉菜单
-            const moreBtn = page.locator('.more-btn, #more-actions-btn');
+            const moreBtn = page.locator('#more-actions-dropdown > label');
 
             if ((await moreBtn.count()) > 0) {
                 await moreBtn.click();
@@ -229,7 +229,7 @@ test.describe('交互体验优化模块 (UX Improvements) - P1', () => {
         // UX-011: 验证开启关键路径高亮
         test('UX-011: 开启关键路径应显示高亮', async ({ page }) => {
             // 打开更多操作菜单
-            const moreBtn = page.locator('.more-btn, #more-actions-btn');
+            const moreBtn = page.locator('#more-actions-dropdown > label');
 
             if ((await moreBtn.count()) > 0) {
                 await moreBtn.click();
@@ -256,7 +256,7 @@ test.describe('交互体验优化模块 (UX Improvements) - P1', () => {
 
         // UX-013: 验证关闭关键路径高亮
         test('UX-013: 关闭关键路径应移除高亮', async ({ page }) => {
-            const moreBtn = page.locator('.more-btn, #more-actions-btn');
+            const moreBtn = page.locator('#more-actions-dropdown > label');
 
             if ((await moreBtn.count()) > 0) {
                 // 开启关键路径
@@ -421,7 +421,7 @@ test.describe('综合交互测试', () => {
     test('导出 Excel 功能应可用', async ({ page }) => {
         // 查找更多操作下拉菜单
         const dropdown = page.locator('#more-actions-dropdown');
-        const moreBtn = dropdown.locator('.more-btn');
+        const moreBtn = dropdown.locator('> label');
 
         if ((await moreBtn.count()) > 0) {
             // 点击打开下拉菜单
@@ -457,7 +457,7 @@ test.describe('综合交互测试', () => {
     test('导入 Excel 功能应可用', async ({ page }) => {
         // 查找更多操作下拉菜单
         const dropdown = page.locator('#more-actions-dropdown');
-        const moreBtn = dropdown.locator('.more-btn');
+        const moreBtn = dropdown.locator('> label');
 
         if ((await moreBtn.count()) > 0) {
             // 点击打开下拉菜单
@@ -524,7 +524,7 @@ test.describe('截图证据收集', () => {
         await page.waitForSelector('#gantt_here', { timeout: 15000 });
         await page.waitForTimeout(1000);
 
-        const toolbar = page.locator('.toolbar, .gantt-toolbar, header');
+        const toolbar = page.locator('#task-header');
         if ((await toolbar.count()) > 0) {
             await toolbar.screenshot({
                 path: 'doc/testdoc/screenshots/toolbar.png',

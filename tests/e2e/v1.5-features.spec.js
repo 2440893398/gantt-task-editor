@@ -9,7 +9,8 @@ test.describe('Gantt v1.5 Features', () => {
 
     test('Baseline and export controls exist', async ({ page }) => {
         await expect(page.locator('#save-baseline-btn')).toBeVisible();
-        await expect(page.locator('#show-baseline-toggle')).toBeVisible();
+        await expect(page.locator('label:has(#show-baseline-toggle)')).toBeVisible();
+        await expect(page.locator('#show-baseline-toggle')).toBeAttached();
         await expect(page.locator('button[data-i18n-title="export.title"]')).toBeVisible();
 
         await page.locator('button[data-i18n-title="export.title"]').click();
@@ -24,29 +25,31 @@ test.describe('Gantt v1.5 Features', () => {
         expect(text.length).toBeGreaterThan(0);
     });
 
-    test('Resource conflict detection marks tasks', async ({ page }) => {
+    test('[SCN-GUI-006] Resource conflict detection marks tasks', async ({ page }) => {
+        // #gantt_here exists before the async project data has been parsed.
+        await expect(page.locator('.gantt_grid_data .gantt_row').first()).toBeVisible();
+
         await page.evaluate(() => {
-            const today = new Date();
+            const visibleStart = new Date(gantt.getTaskByIndex(0).start_date);
             gantt.addTask({
                 id: 8101,
                 text: 'Task A',
-                start_date: today,
+                start_date: visibleStart,
                 duration: 8,
                 assignee: 'Alice',
             });
             gantt.addTask({
                 id: 8102,
                 text: 'Task B',
-                start_date: today,
+                start_date: visibleStart,
                 duration: 8,
                 assignee: 'Alice',
             });
-            gantt.callEvent('onAfterTaskAdd', []);
+            gantt.showTask(8101);
         });
 
-        await page.waitForTimeout(1000);
-        const taskA = page.locator('.gantt_task_line[data-task-id="8101"]');
-        await expect(taskA).toHaveClass(/resource-conflict/);
+        const taskA = page.locator('.gantt_task_line[task_id="8101"]');
+        await expect(taskA).toHaveClass(/resource-conflict/, { timeout: 15000 });
     });
 
     test('Snapping config is enabled', async ({ page }) => {

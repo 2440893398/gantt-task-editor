@@ -18,14 +18,14 @@ test.describe('批量编辑功能 E2E 测试', () => {
         await checkboxes.nth(2).click();
 
         // 2. 验证选中计数显示正确
-        await expect(page.locator('#selected-count')).toHaveText('3');
+        await expect(page.locator('#selected-count-text')).toContainText('3');
 
         // 3. 打开批量编辑面板
         await page.locator('#batch-edit-btn').click();
         await expect(page.locator('#batch-edit-panel')).toHaveClass(/open/);
 
         // 4. 验证面板显示选中任务数
-        await expect(page.locator('#batch-selected-count')).toHaveText('3');
+        await expect(page.locator('#batch-selected-count-text')).toContainText('3');
 
         // 5. 选择文本类型字段（假设有"优先级"字段）
         const fieldSelect = page.locator('#batch-field-select');
@@ -46,10 +46,10 @@ test.describe('批量编辑功能 E2E 测试', () => {
             await expect(page.locator('#batch-edit-panel')).not.toHaveClass(/open/);
 
             // 10. 验证选中计数归零
-            await expect(page.locator('#selected-count')).toHaveText('0');
+            await expect(page.locator('#selected-count-text')).toContainText('0');
 
             // 11. 验证成功提示
-            await expect(page.locator('.toast.success')).toBeVisible();
+            await expect(page.locator('.gantt-toast:has(.text-success)')).toBeVisible();
         }
     });
 
@@ -92,7 +92,7 @@ test.describe('批量编辑功能 E2E 测试', () => {
 
             // 验证成功
             await expect(page.locator('#batch-edit-panel')).not.toHaveClass(/open/);
-            await expect(page.locator('.toast.success')).toBeVisible();
+            await expect(page.locator('.gantt-toast:has(.text-success)')).toBeVisible();
         }
     });
 
@@ -128,7 +128,7 @@ test.describe('批量编辑功能 E2E 测试', () => {
 
                     // 验证成功
                     await expect(page.locator('#batch-edit-panel')).not.toHaveClass(/open/);
-                    await expect(page.locator('.toast.success')).toBeVisible();
+                    await expect(page.locator('.gantt-toast:has(.text-success)')).toBeVisible();
                     return;
                 }
             }
@@ -167,7 +167,7 @@ test.describe('批量编辑功能 E2E 测试', () => {
 
                     // 验证成功
                     await expect(page.locator('#batch-edit-panel')).not.toHaveClass(/open/);
-                    await expect(page.locator('.toast.success')).toBeVisible();
+                    await expect(page.locator('.gantt-toast:has(.text-success)')).toBeVisible();
                     return;
                 }
             }
@@ -182,7 +182,7 @@ test.describe('批量编辑功能 E2E 测试', () => {
         await checkboxes.nth(2).click();
 
         // 验证选中计数
-        await expect(page.locator('#selected-count')).toHaveText('3');
+        await expect(page.locator('#selected-count-text')).toContainText('3');
 
         // 打开批量编辑面板
         await page.locator('#batch-edit-btn').click();
@@ -213,7 +213,7 @@ test.describe('批量编辑功能 E2E 测试', () => {
         await expect(page.locator('#batch-edit-panel')).not.toHaveClass(/open/);
 
         // 验证选中计数归零（选择已被清除）
-        await expect(page.locator('#selected-count')).toHaveText('0');
+        await expect(page.locator('#selected-count-text')).toContainText('0');
 
         // 注意：复选框UI状态的清除依赖applySelectionStyles()中的多个setTimeout
         // 由于时序复杂，这里只验证选择状态已清除（state.selectedTasks.clear()）
@@ -270,8 +270,9 @@ test.describe('批量编辑功能 E2E 测试', () => {
         await expect(page.locator('#batch-edit-panel')).not.toHaveClass(/open/);
 
         // 验证显示错误提示
-        await expect(page.locator('.toast.error')).toBeVisible();
-        await expect(page.locator('.toast.error')).toContainText('请先选择');
+        const errorToast = page.locator('.gantt-toast:has(.text-error)');
+        await expect(errorToast).toBeVisible();
+        await expect(errorToast).toContainText('暂无数据');
     });
 
     test('应该在未选择字段时显示错误提示', async ({ page }) => {
@@ -287,8 +288,9 @@ test.describe('批量编辑功能 E2E 测试', () => {
         await page.locator('#batch-apply-btn').click();
 
         // 验证显示错误提示
-        await expect(page.locator('.toast.error')).toBeVisible();
-        await expect(page.locator('.toast.error')).toContainText('请选择');
+        const errorToast = page.locator('.gantt-toast:has(.text-error)');
+        await expect(errorToast).toBeVisible();
+        await expect(errorToast).toContainText('选择要修改的字段');
     });
 
     test('应该能够取消批量编辑', async ({ page }) => {
@@ -312,7 +314,7 @@ test.describe('批量编辑功能 E2E 测试', () => {
         await expect(page.locator('#batch-edit-panel')).not.toHaveClass(/open/);
 
         // 验证选中状态保持（没有清除）
-        await expect(page.locator('#selected-count')).toHaveText('2');
+        await expect(page.locator('#selected-count-text')).toContainText('2');
     });
 
     test('应该能够通过X按钮关闭批量编辑面板', async ({ page }) => {

@@ -8,6 +8,7 @@
  */
 
 import { state, getFieldType, getSystemFieldOptions } from '../../core/store.js';
+import { reconcileScheduleFields } from './domain/schedule-ops.js';
 
 import { i18n } from '../../utils/i18n.js';
 import undoManager from './history/undoManager.js';
@@ -463,6 +464,13 @@ function saveAndCloseEditor() {
     if (newValue !== originalValue) {
         undoManager.saveState(taskId);
         task[columnName] = newValue;
+        if (['start_date', 'end_date', 'duration'].includes(columnName)) {
+            reconcileScheduleFields(
+                task,
+                { [columnName]: newValue },
+                { respectScheduleMode: true }
+            );
+        }
         gantt.updateTask(taskId);
         console.log('💾 内联编辑保存:', columnName, '=', newValue);
     }

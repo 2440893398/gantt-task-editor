@@ -1,0 +1,72 @@
+{
+  "taskCount": 6,
+  "linkCount": 2,
+  "tasks": [
+    {
+      "text": "需求阶段",
+      "parent": null,
+      "start": "2026-03-02",
+      "end": "2026-03-05",
+      "duration": 4,
+      "assignee": "阿珍",
+      "progress": 0
+    },
+    {
+      "text": "PRD 撰写",
+      "parent": "需求阶段",
+      "start": "2026-03-02",
+      "end": "2026-03-04",
+      "duration": 3,
+      "assignee": "阿珍",
+      "progress": 0
+    },
+    {
+      "text": "PRD 评审",
+      "parent": "需求阶段",
+      "start": "2026-03-05",
+      "end": "2026-03-05",
+      "duration": 1,
+      "assignee": "阿珍",
+      "progress": 0
+    },
+    {
+      "text": "开发阶段",
+      "parent": null,
+      "start": "2026-03-06",
+      "end": "2026-03-10",
+      "duration": 5,
+      "assignee": "阿强",
+      "progress": 0
+    },
+    {
+      "text": "接口开发",
+      "parent": "开发阶段",
+      "start": "2026-03-06",
+      "end": "2026-03-09",
+      "duration": 4,
+      "assignee": "阿强",
+      "progress": 0
+    },
+    {
+      "text": "界面开发",
+      "parent": "开发阶段",
+      "start": "2026-03-06",
+      "end": "2026-03-10",
+      "duration": 5,
+      "assignee": "阿强",
+      "progress": 0
+    }
+  ],
+  "links": [
+    {
+      "source": "PRD 评审",
+      "target": "接口开发",
+      "type": "fs"
+    },
+    {
+      "source": "PRD 评审",
+      "target": "界面开发",
+      "type": "fs"
+    }
+  ]
+}

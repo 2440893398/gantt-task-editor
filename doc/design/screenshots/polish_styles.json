@@ -1,0 +1,13 @@
+{
+  "drawer": {
+    "background": "oklch(1 0 0)",
+    "width": "360px",
+    "borderRadius": "12px 0px 0px 12px",
+    "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0.1) 0px 20px 25px -5px, rgba(0, 0, 0, 0.1) 0px 8px 10px -6px"
+  },
+  "aiBubble": {
+    "background": "rgba(0, 0, 0, 0)",
+    "color": "rgb(15, 23, 42)",
+    "borderRadius": "0px"
+  }
+}

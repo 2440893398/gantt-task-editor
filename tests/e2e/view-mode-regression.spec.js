@@ -29,8 +29,22 @@ test.describe('view mode regressions', () => {
         expect(textHeaderWidth).toBeLessThanOrEqual(320);
     });
 
-    test('task name cell should not render project id highlight badge', async ({ page }) => {
-        const badgeCount = await page.locator('.project-id-badge-gantt').count();
-        expect(badgeCount).toBe(0);
+    test('project id badge should only render on project rows', async ({ page }) => {
+        const badges = page.locator('.project-id-badge-gantt');
+        await expect(badges.first()).toBeVisible();
+
+        const badgeRows = page.locator('.gantt_row:has(.project-id-badge-gantt)');
+        const rowsAreProjects = await badgeRows.evaluateAll((rows) =>
+            rows.every((row) => {
+                const taskId = row.getAttribute('data-task-id');
+                const task = gantt.getTask(taskId);
+                return task.type === 'project' || gantt.hasChild(taskId);
+            })
+        );
+        expect(rowsAreProjects).toBe(true);
+
+        await expect(
+            page.locator('.gantt_row:not(:has(.project-id-badge-gantt))').first()
+        ).toBeVisible();
     });
 });

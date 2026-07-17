@@ -1,0 +1,31 @@
+{
+  "taskCount": 2,
+  "linkCount": 1,
+  "tasks": [
+    {
+      "text": "设计",
+      "parent": null,
+      "start": "2026-03-02",
+      "end": "2026-03-06",
+      "duration": 5,
+      "assignee": "阿珍",
+      "progress": 0
+    },
+    {
+      "text": "施工",
+      "parent": null,
+      "start": "2026-03-09",
+      "end": "2026-03-12",
+      "duration": 4,
+      "assignee": "阿强",
+      "progress": 0
+    }
+  ],
+  "links": [
+    {
+      "source": "设计",
+      "target": "施工",
+      "type": "fs"
+    }
+  ]
+}

@@ -25,7 +25,8 @@ test.describe('Gantt v1.5 Features', () => {
     test('Toolbar has Baseline and Export buttons', async ({ page }) => {
         // Check Baseline buttons
         await expect(page.locator('#save-baseline-btn')).toBeVisible();
-        await expect(page.locator('#show-baseline-toggle')).toBeVisible();
+        await expect(page.locator('label:has(#show-baseline-toggle)')).toBeVisible();
+        await expect(page.locator('#show-baseline-toggle')).toBeAttached();
 
         // Check Export dropdown trigger
         await expect(page.locator('button[data-i18n-title="export.title"]')).toBeVisible();
@@ -39,56 +40,61 @@ test.describe('Gantt v1.5 Features', () => {
         // Or we create one?
         // Let's create one via JS
         await page.evaluate(() => {
+            const visibleStart = new Date(gantt.getTaskByIndex(0).start_date);
             gantt.addTask({
                 id: 9999,
                 text: 'Short Task',
-                start_date: new Date(),
+                start_date: visibleStart,
                 duration: 0.125, // 1 hour
                 parent: 0,
             });
+            gantt.showDate(visibleStart);
             gantt.render();
         });
 
-        const shortTask = page.locator('.gantt_task_line[data-task-id="9999"]');
+        const shortTask = page.locator('.gantt_task_line[task_id="9999"]');
         await expect(shortTask).toHaveClass(/short-task/);
 
-        // Check CSS min-width (indirectly via box check)
-        const box = await shortTask.boundingBox();
+        // The minimum width is applied to the visible content so a zero-width
+        // DHTMLX geometry box still exposes a usable short-task target.
+        const box = await shortTask.locator('.gantt_task_content').boundingBox();
         expect(box.width).toBeGreaterThanOrEqual(20);
     });
 
-    test('Resource conflict detection', async ({ page }) => {
+    test('[SCN-GUI-006] Resource conflict detection', async ({ page }) => {
         // Add conflicting tasks
         await page.evaluate(() => {
-            const today = new Date();
+            // Keep the synthetic tasks inside the currently rendered timeline.
+            // The test protects both the overload marker and its explanatory tooltip;
+            // placing tasks at wall-clock "today" can leave their bars off-screen.
+            const visibleStart = new Date(gantt.getTaskByIndex(0).start_date);
             gantt.addTask({
                 id: 8001,
                 text: 'Task A',
-                start_date: today,
+                start_date: visibleStart,
                 duration: 8,
                 assignee: 'Alice',
             });
             gantt.addTask({
                 id: 8002,
                 text: 'Task B',
-                start_date: today,
+                start_date: visibleStart,
                 duration: 8,
                 assignee: 'Alice',
             });
-            // Trigger detection
-            gantt.callEvent('onAfterTaskAdd', []);
+            gantt.showTask(8001);
         });
 
-        // Wait for detection debounce (500ms)
-        await page.waitForTimeout(1000);
-
-        const taskA = page.locator('.gantt_task_line[data-task-id="8001"]');
-        await expect(taskA).toHaveClass(/resource-conflict/);
+        const taskA = page.locator('.gantt_task_line[task_id="8001"]');
+        // Conflict detection is debounced and reads calendar data asynchronously.
+        await expect(taskA).toHaveClass(/resource-conflict/, { timeout: 15000 });
 
         // Check Tooltip
         // Hover task A
         await taskA.hover();
-        await expect(page.locator('.gantt-tooltip-container')).toContainText('资源超载'); // or 'Resource Overload' depending on lang
+        await expect(page.locator('.gantt-tooltip-container')).toContainText(
+            /Resource Overload|资源超载/
+        );
     });
 
     test('Snapping config is enabled', async ({ page }) => {

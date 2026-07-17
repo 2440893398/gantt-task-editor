@@ -1121,16 +1121,20 @@ export function finishStreaming(usage = {}) {
         }
 
         // 更新 Token 统计 (F-111)
-        if (usage.promptTokens || usage.completionTokens) {
+        const promptTokens = Number(usage.inputTokens ?? usage.promptTokens) || 0;
+        const completionTokens = Number(usage.outputTokens ?? usage.completionTokens) || 0;
+        const totalTokens = Number(usage.totalTokens) || promptTokens + completionTokens;
+
+        if (totalTokens > 0) {
             lastMsg.tokens = {
-                prompt: usage.promptTokens || 0,
-                completion: usage.completionTokens || 0,
-                total: (usage.promptTokens || 0) + (usage.completionTokens || 0),
+                prompt: promptTokens,
+                completion: completionTokens,
+                total: totalTokens,
             };
 
             tokenStats.promptTokens += lastMsg.tokens.prompt;
             tokenStats.completionTokens += lastMsg.tokens.completion;
-            tokenStats.totalTokens += lastMsg.tokens.total;
+            tokenStats.totalTokens += totalTokens;
 
             updateTokenStats();
         }

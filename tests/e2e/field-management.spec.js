@@ -1,5 +1,14 @@
 import { test, expect } from '@playwright/test';
 
+test.use({ locale: 'zh-CN' });
+
+async function openAddFieldModal(page) {
+    await page.locator('#task-header #add-field-btn').click();
+    await expect(page.locator('#field-management-panel')).toHaveClass(/open/);
+    await page.locator('#add-field-from-panel-btn').click();
+    await expect(page.locator('#field-config-modal')).toHaveClass(/show/);
+}
+
 test.describe('字段管理功能 E2E 测试', () => {
     test.beforeEach(async ({ page }) => {
         await page.goto('http://localhost:5273/');
@@ -16,19 +25,20 @@ test.describe('字段管理功能 E2E 测试', () => {
 
     test('应该打开新建字段弹窗', async ({ page }) => {
         // 点击"编辑字段"按钮，直接打开字段配置弹窗
-        await page.locator('#add-field-btn').click();
+        await openAddFieldModal(page);
 
         // 验证字段配置弹窗显示
-        await expect(page.locator('#field-config-modal')).toBeVisible();
-        await expect(page.locator('#field-config-modal')).toHaveCSS('display', 'flex');
+        await expect(page.locator('#field-config-modal')).toHaveClass(/show/);
 
         // 验证弹窗标题
-        await expect(page.locator('#field-config-modal h3')).toContainText('字段配置');
+        await expect(
+            page.locator('#field-config-modal [data-i18n="fieldManagement.title"]')
+        ).toContainText('字段管理');
     });
 
     test('应该创建新字段', async ({ page }) => {
         // 打开字段配置弹窗
-        await page.locator('#add-field-btn').click();
+        await openAddFieldModal(page);
 
         // 填写字段信息
         await page.locator('#field-name').fill('测试字段E2E');
@@ -44,16 +54,16 @@ test.describe('字段管理功能 E2E 测试', () => {
         await page.locator('#save-field-btn').click();
 
         // 等待弹窗关闭
-        await expect(page.locator('#field-config-modal')).toHaveCSS('display', 'none');
+        await expect(page.locator('#field-config-modal')).not.toHaveClass(/show/);
 
         // 验证成功提示
-        await expect(page.locator('.toast.success')).toBeVisible();
+        await expect(page.locator('.gantt-toast:has(.text-success)')).toBeVisible();
 
         // 验证新字段出现在列表中
         await page.waitForTimeout(500);
-        const fieldItems = page.locator('#field-list-container .field-item');
-        const fieldNames = await fieldItems.locator('.field-name').allTextContents();
-        expect(fieldNames.some((name) => name.includes('测试字段E2E'))).toBeTruthy();
+        await expect(
+            page.locator('#field-list-container [data-field-label="测试字段E2E"]')
+        ).toHaveCount(1);
     });
 
     // 注意：删除字段的功能需要在字段管理面板中操作
@@ -62,7 +72,7 @@ test.describe('字段管理功能 E2E 测试', () => {
 
     test('字段类型选择器应该正确工作', async ({ page }) => {
         // 打开新建字段弹窗
-        await page.locator('#add-field-btn').click();
+        await openAddFieldModal(page);
 
         // 点击字段类型选择器
         await page.locator('#field-type-selector').click();
@@ -96,7 +106,7 @@ test.describe('字段管理功能 E2E 测试', () => {
 
     test('下拉选择和多选字段应该显示选项配置', async ({ page }) => {
         // 打开新建字段弹窗
-        await page.locator('#add-field-btn').click();
+        await openAddFieldModal(page);
 
         // 选择下拉选择类型
         await page.locator('#field-type-selector').click();
@@ -125,24 +135,23 @@ test.describe('字段管理功能 E2E 测试', () => {
 
     test('必填字段切换应该正确工作', async ({ page }) => {
         // 打开新建字段弹窗
-        await page.locator('#add-field-btn').click();
+        await openAddFieldModal(page);
 
         // 点击必填字段切换
-        const requiredToggle = page.locator('#required-toggle');
-        await requiredToggle.click();
+        await page.locator('#required-field-row').click();
 
         // 验证隐藏的checkbox被选中
         const checkbox = page.locator('#field-required');
         await expect(checkbox).toBeChecked();
 
         // 再次点击取消选中
-        await requiredToggle.click();
+        await page.locator('#required-field-row').click();
         await expect(checkbox).not.toBeChecked();
     });
 
     test('应该取消创建字段', async ({ page }) => {
         // 打开新建字段弹窗
-        await page.locator('#add-field-btn').click();
+        await openAddFieldModal(page);
 
         // 填写一些信息
         await page.locator('#field-name').fill('不保存的字段');
@@ -151,24 +160,23 @@ test.describe('字段管理功能 E2E 测试', () => {
         await page.locator('#cancel-field-btn').click();
 
         // 验证弹窗关闭
-        await expect(page.locator('#field-config-modal')).toHaveCSS('display', 'none');
+        await expect(page.locator('#field-config-modal')).not.toHaveClass(/show/);
 
         // 字段不应该被创建
         await page.waitForTimeout(500);
-        const fieldNames = await page
-            .locator('#field-list-container .field-item .field-name')
-            .allTextContents();
-        expect(fieldNames.every((name) => !name.includes('不保存的字段'))).toBeTruthy();
+        await expect(
+            page.locator('#field-list-container [data-field-label="不保存的字段"]')
+        ).toHaveCount(0);
     });
 
     test('应该通过X按钮关闭字段配置弹窗', async ({ page }) => {
         // 打开新建字段弹窗
-        await page.locator('#add-field-btn').click();
+        await openAddFieldModal(page);
 
         // 点击X关闭按钮
         await page.locator('#modal-close-x').click();
 
         // 验证弹窗关闭
-        await expect(page.locator('#field-config-modal')).toHaveCSS('display', 'none');
+        await expect(page.locator('#field-config-modal')).not.toHaveClass(/show/);
     });
 });

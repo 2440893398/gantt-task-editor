@@ -24,6 +24,26 @@ Single test: `npx vitest run tests/unit/xxx.test.js`
 
 Vitest: jsdom, `pool: 'forks'`. Playwright: Chromium only.
 
+## Business Testing Loop (mandatory)
+
+Business tests are driven by three assets — scenario inventory (`tests/scenarios/<domain>.md`),
+golden answers (`tests/e2e/agent-journeys/expected/*.json`), and journey specs. The single
+authoritative spec is [tests/scenarios/README.md](./tests/scenarios/README.md); read it before
+touching business behavior or those directories. Non-negotiable rules:
+
+1. **Requirement changes update the scenario inventory first.** Decide what you can infer
+   yourself (log it in the inventory changelog); ambiguous business intent goes to the
+   inventory's "例外队列" section for the user — never guess silently.
+2. **Contracts are protected.** `expected/` files and scenario verification points are the
+   contract. Editing test *implementation* is free; editing the contract requires an entry in
+   `expected/CHANGES.md` (date, SCN-ID, reason). Goldens are re-recorded only via
+   `UPDATE_GOLDEN=1`, never hand-edited.
+3. **Red before green.** Before fixing a failing business test, confirm the failure reflects a
+   real business difference and state what bad behavior the test would catch. Never silence
+   failures via `test.skip`, deleted assertions, or weakened comparisons.
+4. **Traceability.** Business test titles embed `[SCN-xxx]`; `npm run check:scenarios` must
+   pass before commit.
+
 ## AI Quality Gates
 
 Before code changes, classify the task using `docs/ai-development-quality-gates.md`.

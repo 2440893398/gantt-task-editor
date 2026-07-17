@@ -10,6 +10,7 @@ import {
     importFullBackup,
     importConfig,
     importFromExcel,
+    exportToExcel,
     initConfigIO,
 } from '../../src/features/config/configIO.js';
 import { state } from '../../src/core/store.js';
@@ -373,6 +374,69 @@ describe('Excel 导入', () => {
                 }),
             ],
         });
+    });
+});
+
+describe('Excel 导出日期边界', () => {
+    beforeEach(() => {
+        state.customFields = [];
+        state.fieldOrder = ['text', 'start_date', 'end_date', 'duration'];
+        state.systemFieldSettings = { enabled: {}, typeOverrides: {} };
+        global.URL.createObjectURL = vi.fn(() => 'blob:excel-url');
+        global.URL.revokeObjectURL = vi.fn();
+        global.Blob = vi.fn((parts, options) => ({ parts, options }));
+        global.gantt = {
+            serialize: vi.fn(() => ({
+                data: [
+                    {
+                        id: 1,
+                        text: 'Normal task',
+                        start_date: new Date(2026, 6, 1),
+                        end_date: new Date(2026, 6, 4),
+                        duration: 3,
+                    },
+                    {
+                        id: 2,
+                        text: 'Milestone',
+                        type: 'milestone',
+                        start_date: new Date(2026, 6, 5),
+                        end_date: new Date(2026, 6, 5),
+                        duration: 0,
+                    },
+                ],
+            })),
+            getTask: vi.fn(() => null),
+            eachTask: vi.fn(),
+            date: {
+                date_to_str: vi.fn(() => (date) => {
+                    const year = date.getFullYear();
+                    const month = String(date.getMonth() + 1).padStart(2, '0');
+                    const day = String(date.getDate()).padStart(2, '0');
+                    return `${year}-${month}-${day}`;
+                }),
+            },
+        };
+
+        vi.spyOn(document, 'createElement').mockReturnValue({
+            href: '',
+            download: '',
+            dispatchEvent: vi.fn(),
+        });
+    });
+
+    it('[SCN-GUI-009] preserves milestone due date while converting normal exclusive ends', async () => {
+        await exportToExcel();
+
+        const buffer = global.Blob.mock.calls[0][0][0];
+        const workbook = new ExcelJS.Workbook();
+        await workbook.xlsx.load(buffer);
+        const worksheet = workbook.worksheets[0];
+        const headers = worksheet.getRow(1).values;
+        const dueColumn = headers.findIndex((value) => value === '计划截止');
+
+        expect(dueColumn).toBeGreaterThan(0);
+        expect(worksheet.getRow(2).getCell(dueColumn).value).toBe('2026-07-03');
+        expect(worksheet.getRow(3).getCell(dueColumn).value).toBe('2026-07-05');
     });
 });
 

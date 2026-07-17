@@ -41,11 +41,18 @@ export function rollupStatus(statuses = [], mode = getStatusRollupMode()) {
 export function rollupAssignee(assignees = [], locked = false, currentValue = '') {
     if (locked) return currentValue;
 
-    const uniq = [...new Set(assignees.map(normalizeText).filter(Boolean))];
-    if (uniq.length === 1) return uniq[0];
-
-    // 多负责人时保持当前值（产品已确认）
-    return currentValue;
+    // 子任务负责人去重聚合（2026-07-15 拍板，取代旧的"多负责人保持当前值"），
+    // 分隔符与 assignee-focus 的 ASSIGNEE_SEPARATOR_RE 兼容。
+    const uniq = [
+        ...new Set(
+            assignees
+                .flatMap((value) => String(value || '').split(/[、,，/／;；|｜\n\r]+/))
+                .map(normalizeText)
+                .filter(Boolean)
+        ),
+    ];
+    if (uniq.length === 0) return currentValue;
+    return uniq.join('、');
 }
 
 export function sumNumberField(values = []) {

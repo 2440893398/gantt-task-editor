@@ -286,7 +286,7 @@ describe('边界条件测试', () => {
 });
 
 describe('父任务字段联动 (Parent Field Rollup)', () => {
-    test('recalculateParentTask sets duration from direct child duration sum', () => {
+    test('recalculateParentTask sets duration to the calendar span of children (EXC-AGT-01)', () => {
         const parent = {
             id: 100,
             parent: 0,
@@ -320,7 +320,8 @@ describe('父任务字段联动 (Parent Field Rollup)', () => {
 
         expect(parent.start_date).toEqual(new Date('2026-02-01'));
         expect(parent.end_date).toEqual(new Date('2026-02-10'));
-        expect(parent.duration).toBe(6);
+        // 02-01..02-10（exclusive）= 9 个日历天；工时合计由 estimated/actual_hours 承载。
+        expect(parent.duration).toBe(9);
         expect(parent.schedule_mode).toBe('start_end');
         expect(global.gantt.calculateDuration).not.toHaveBeenCalled();
         expect(global.gantt.updateTask).toHaveBeenCalledWith(100);
@@ -682,6 +683,34 @@ describe('scheduler parent rollup events', () => {
 });
 
 describe('scheduler project recalculation', () => {
+    test('[SCN-AGT-026] dependency rescheduling preserves fractional calendar days', async () => {
+        const predecessor = {
+            id: 1,
+            parent: 0,
+            end_date: new Date(2026, 1, 2),
+        };
+        const successor = {
+            id: 2,
+            parent: 0,
+            start_date: new Date(2026, 1, 1),
+            end_date: new Date(2026, 1, 1, 12),
+            duration: 0.5,
+        };
+        const tasks = { 1: predecessor, 2: successor };
+
+        global.gantt = {
+            getTask: vi.fn((id) => tasks[id]),
+            getLinks: vi.fn(() => [{ source: 1, target: 2, type: '0' }]),
+            updateTask: vi.fn(),
+        };
+
+        await recalculateProjectSchedule(1);
+
+        expect(successor.start_date).toEqual(new Date(2026, 1, 2));
+        expect(successor.end_date).toEqual(new Date(2026, 1, 2, 12));
+        expect(successor.duration).toBe(0.5);
+    });
+
     test('recalculateProjectSchedule awaits a task-specific reschedule', async () => {
         const predecessor = {
             id: 1,

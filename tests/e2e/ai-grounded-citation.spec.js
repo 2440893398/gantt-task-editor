@@ -7,16 +7,15 @@ test.describe('AI Grounded Task Citations', () => {
                 'gantt_ai_config',
                 JSON.stringify({
                     apiKey: 'sk-test-key',
-                    baseUrl: 'https://api.openai.com/v1',
+                    baseUrl: 'https://mock-ai.example/v1',
                     model: 'gpt-3.5-turbo',
                 })
             );
         });
 
-        // Mock API to return response with citation format
-        await page.route('https://api.openai.com/v1/chat/completions', async (route) => {
+        await page.route('**/chat/completions', async (route) => {
             const citationText =
-                '请关注 [#1.2] 设计登录页面 和 [#2.1] 实现用户认证，这两个任务需要优先处理。';
+                'Review [#1.2] Design Login and [#2.1] Implement Authentication first.';
             const responseBody = {
                 id: 'chatcmpl-mock',
                 object: 'chat.completion.chunk',
@@ -41,53 +40,27 @@ test.describe('AI Grounded Task Citations', () => {
 
         await page.goto('/');
         await page.waitForLoadState('networkidle');
+        await page.locator('#ai_floating_btn').click();
+        await expect(page.locator('#ai_drawer')).toBeVisible({ timeout: 5000 });
     });
 
-    test('citation chips render in AI response', async ({ page }) => {
-        // Open AI drawer via chat agent
-        const chatBtn = page.locator('#ai_chat_btn, [data-agent="chat"]');
-        if ((await chatBtn.count()) > 0) {
-            await chatBtn.first().click();
-        }
-
-        // Wait for drawer
-        const drawer = page.locator('#ai_drawer');
-        if ((await drawer.count()) > 0) {
-            await expect(drawer).toBeVisible({ timeout: 5000 });
-        }
-
-        // Type and send a message
+    test('[SCN-AIC-001] citation chips render in AI response', async ({ page }) => {
         const input = page.locator('#ai_chat_input');
-        if ((await input.count()) > 0) {
-            await input.fill('哪些任务需要关注？');
-            await input.press('Enter');
+        await input.fill('field: Which tasks need attention?');
+        await input.press('Enter');
 
-            // Wait for response with citations
-            const citationChip = page.locator('.ai-task-citation');
-            await expect(citationChip.first()).toBeVisible({ timeout: 10000 });
-
-            // Verify citation has hierarchy ID
-            await expect(citationChip.first()).toHaveAttribute('data-hierarchy-id');
-        }
+        const citationChips = page.locator('.ai-task-citation');
+        await expect(citationChips).toHaveCount(2, { timeout: 10000 });
+        await expect(citationChips.first()).toHaveAttribute('data-hierarchy-id', '#1.2');
     });
 
-    test('citation chip contains task name', async ({ page }) => {
-        const chatBtn = page.locator('#ai_chat_btn, [data-agent="chat"]');
-        if ((await chatBtn.count()) > 0) {
-            await chatBtn.first().click();
-        }
-
+    test('[SCN-AIC-001] citation chip contains task name', async ({ page }) => {
         const input = page.locator('#ai_chat_input');
-        if ((await input.count()) > 0) {
-            await input.fill('任务情况');
-            await input.press('Enter');
+        await input.fill('field: Summarize task status');
+        await input.press('Enter');
 
-            const citationChip = page.locator('.ai-task-citation');
-            await expect(citationChip.first()).toBeVisible({ timeout: 10000 });
-
-            // Should contain task name text
-            const chipText = await citationChip.first().textContent();
-            expect(chipText).toBeTruthy();
-        }
+        const citationChip = page.locator('.ai-task-citation').first();
+        await expect(citationChip).toBeVisible({ timeout: 10000 });
+        await expect(citationChip).toContainText('Design Login');
     });
 });

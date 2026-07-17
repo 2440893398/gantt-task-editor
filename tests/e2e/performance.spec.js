@@ -150,7 +150,10 @@ test.describe('性能优化模块 (Performance) - P0', () => {
     // 1.2 配置验证测试
     // ========================================
     test.describe('性能配置验证', () => {
-        test('work_time 配置应为 true', async ({ page }) => {
+        test('work_time 配置应为 false（日历天工期语义）', async ({ page }) => {
+            // 2026-07-15 拍板（tests/scenarios/agent-cli.md EXC-AGT-01）：工期按日历天，
+            // work_time 关闭使 calculateDuration/calculateEndDate 全局一致；
+            // 周末/假期仅用于视觉高亮与 ASAP 起始日吸附（scheduler.isWorkDay）。
             const workTime = await page.evaluate(() => {
                 if (typeof gantt !== 'undefined') {
                     return gantt.config.work_time;
@@ -158,18 +161,19 @@ test.describe('性能优化模块 (Performance) - P0', () => {
                 return null;
             });
 
-            expect(workTime).toBe(true);
+            expect(workTime).toBe(false);
         });
 
-        test('auto_scheduling 配置应为 true', async ({ page }) => {
-            const autoScheduling = await page.evaluate(() => {
+        test('[SCN-AGT-023] auto_scheduling 应关闭并使用手动异步调度', async ({ page }) => {
+            const autoSchedulingEnabled = await page.evaluate(() => {
                 if (typeof gantt !== 'undefined') {
-                    return gantt.config.auto_scheduling;
+                    const config = gantt.config.auto_scheduling;
+                    return config === true || config?.enabled === true;
                 }
                 return null;
             });
 
-            expect(autoScheduling).toBe(true);
+            expect(autoSchedulingEnabled).toBe(false);
         });
 
         test('static_background 配置应为 true', async ({ page }) => {
@@ -307,24 +311,26 @@ test.describe('智能调度引擎 E2E 测试 (Auto-Scheduling)', () => {
         await page.waitForTimeout(1000);
     });
 
-    // SCHED-004: 验证 work_time 配置正确启用
-    test('SCHED-004: work_time 配置应正确启用', async ({ page }) => {
+    // SCHED-004: 日历天工期由 work_time=false 保证，依赖重排使用手动异步调度。
+    test('[SCN-AGT-023] SCHED-004: 应启用日历天工期与手动异步调度', async ({ page }) => {
         const workTimeConfig = await page.evaluate(() => {
             if (typeof gantt !== 'undefined') {
                 return {
                     work_time: gantt.config.work_time,
-                    auto_scheduling: gantt.config.auto_scheduling,
+                    auto_scheduling_enabled:
+                        gantt.config.auto_scheduling === true ||
+                        gantt.config.auto_scheduling?.enabled === true,
                 };
             }
             return null;
         });
 
-        expect(workTimeConfig.work_time).toBe(true);
-        expect(workTimeConfig.auto_scheduling).toBe(true);
+        expect(workTimeConfig.work_time).toBe(false);
+        expect(workTimeConfig.auto_scheduling_enabled).toBe(false);
     });
 
-    // 测试工作日检测
-    test('周末应被识别为非工作日', async ({ page }) => {
+    // DHTMLX 工期计算按日历天，因此周末也计入工期；独立调度器仍负责工作日起点吸附。
+    test('[SCN-AGT-023] 日历天模式下周末应计入工期', async ({ page }) => {
         const weekendCheck = await page.evaluate(() => {
             if (typeof gantt !== 'undefined') {
                 // 2026-01-17 是周六
@@ -344,8 +350,8 @@ test.describe('智能调度引擎 E2E 测试 (Auto-Scheduling)', () => {
         });
 
         if (weekendCheck) {
-            expect(weekendCheck.saturdayIsWorkTime).toBe(false);
-            expect(weekendCheck.sundayIsWorkTime).toBe(false);
+            expect(weekendCheck.saturdayIsWorkTime).toBe(true);
+            expect(weekendCheck.sundayIsWorkTime).toBe(true);
             expect(weekendCheck.mondayIsWorkTime).toBe(true);
         }
     });

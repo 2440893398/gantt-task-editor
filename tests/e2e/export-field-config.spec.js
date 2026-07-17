@@ -27,7 +27,7 @@ function parseExcelFile(filePath) {
 
 // Helper: Import Excel
 async function importExcelFile(page, filePath) {
-    await page.click('#more-actions-dropdown .more-btn');
+    await page.click('#more-actions-dropdown > label');
     const [fileChooser] = await Promise.all([
         page.waitForEvent('filechooser'),
         page.click('#dropdown-import-excel'),
@@ -69,24 +69,24 @@ test.describe('Export/Import Field Configuration Tests', () => {
         expect(initialHeaders).toContain(targetHeader);
 
         // 2. Disable "Actual Start" via UI
-        await page.click('#manage-fields-btn');
-        const panel = page.locator('.field-management-panel');
-        await expect(panel).toBeVisible();
+        await page.locator('#task-header #add-field-btn').click();
+        const panel = page.locator('#field-management-panel');
+        await expect(panel).toHaveClass(/open/);
 
         // Use robust selector based on the container data attribute
         const hasContainer = (await page.locator('[data-field-name="actual_start"]').count()) > 0;
         if (hasContainer) {
             const toggle = page.locator('[data-field-name="actual_start"] .toggle-field-enabled');
             if ((await toggle.count()) > 0 && (await toggle.isChecked())) {
-                // Click the parent label (swap component) as it's the visible interactive element
-                await page.locator('[data-field-name="actual_start"] label.swap').click();
+                await toggle.uncheck();
             }
         } else {
             console.log('Container for actual_start not found!');
         }
 
         // Close panel
-        await page.click('.close-panel-btn');
+        await page.click('#close-field-management');
+        await expect(panel).not.toHaveClass(/open/);
         await page.waitForTimeout(1000); // Wait for persist and UI update
 
         // 3. Export again

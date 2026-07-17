@@ -19,14 +19,10 @@ test.describe('用户反馈优化测试套件', () => {
         await expect(page.locator('#gantt_here')).toBeVisible({ timeout: 30000 });
         // 等待工具栏初始化完成
         await expect(page.locator('#scroll-to-today-btn')).toBeVisible({ timeout: 15000 });
-        // 等待甘特图数据渲染完成
-        await expect(page.locator('.gantt_grid_data .gantt_row')).toHaveCount(
-            await page
-                .locator('.gantt_grid_data .gantt_row')
-                .count()
-                .then((c) => (c > 0 ? c : 1)),
-            { timeout: 10000 }
-        );
+        // 等待至少一行真实任务渲染；不要把异步渲染瞬间的 0/1 行数冻结为期望总数。
+        await expect(page.locator('.gantt_grid_data .gantt_row').first()).toBeVisible({
+            timeout: 10000,
+        });
     });
 
     // ===== 3.1 OPT-001: 移除表格悬浮查看详情功能 =====
@@ -62,24 +58,18 @@ test.describe('用户反馈优化测试套件', () => {
             }
         });
 
-        test('TC-001-03: 甘特图甘特条悬浮有tooltip', async ({ page }) => {
-            // 获取甘特图区域的任务条
-            const taskBar = page.locator('.gantt_task_content').first();
+        test('[SCN-GUI-007] TC-001-03: 甘特图甘特条悬浮有tooltip', async ({ page }) => {
+            // DHTMLX may retain off-screen virtual task nodes. Hover a genuinely
+            // visible bar so this test still catches a missing timeline tooltip.
+            const taskBar = page.locator('.gantt_task_line:visible').first();
+            await expect(taskBar).toBeVisible();
 
-            if ((await taskBar.count()) > 0) {
-                // 确保鼠标移动到任务条上触发 tooltip
-                // 先force hover一下body或者其他地方重置状态
-                await page.mouse.move(0, 0);
-                await page.waitForTimeout(100);
+            await page.mouse.move(0, 0);
+            await taskBar.hover();
 
-                await taskBar.hover({ force: true });
-                await page.waitForTimeout(1000); // 等待 tooltip 动画
-
-                // 甘特条应该显示tooltip
-                const tooltip = page.locator('.gantt_tooltip');
-                await expect(tooltip).toBeVisible();
-                console.log('甘特条悬停测试完成 - Tooltip可见');
-            }
+            const tooltip = page.locator('.gantt_tooltip');
+            await expect(tooltip).toBeVisible({ timeout: 5000 });
+            console.log('甘特条悬停测试完成 - Tooltip可见');
         });
     });
 
@@ -109,23 +99,32 @@ test.describe('用户反馈优化测试套件', () => {
             await expect(editor).not.toBeVisible();
         });
 
-        test('TC-002-03: 编辑工期', async ({ page }) => {
-            // 找到工期单元格
-            const durationCell = page.locator('.gantt_cell[data-column-name="duration"]').first();
+        test('[SCN-GUI-001] TC-002-03: 编辑工期', async ({ page }) => {
+            await page.locator('[data-view="table"]').click();
 
-            if ((await durationCell.count()) > 0) {
-                await durationCell.dblclick();
-                await page.waitForTimeout(300);
+            // 选择叶子任务，避免父任务上卷规则把手工工期立即覆盖。
+            const taskId = await page.evaluate(() => {
+                let leafId = null;
+                gantt.eachTask((task) => {
+                    if (leafId === null && !gantt.hasChild(task.id)) leafId = task.id;
+                });
+                return String(leafId);
+            });
+            const durationCell = page.locator(
+                `.gantt_row[data-task-id="${taskId}"] .gantt_cell[data-column-name="duration"]`
+            );
+            await expect(durationCell).toBeVisible();
+            await durationCell.dblclick();
 
-                // 工期编辑器是 number 类型
-                const editor = page.locator('.gantt-inline-editor');
-                if ((await editor.count()) > 0) {
-                    await editor.fill('5');
-                    await page.keyboard.press('Enter');
-                    await page.waitForTimeout(300);
-                    console.log('工期编辑测试完成');
-                }
-            }
+            // 工期编辑器必须是 number input；误命中其他列的 select 时测试应失败。
+            const editor = durationCell.locator('input.gantt-inline-editor[type="number"]');
+            await expect(editor).toBeVisible();
+            await editor.fill('5');
+            await page.keyboard.press('Enter');
+
+            await expect
+                .poll(() => page.evaluate((id) => gantt.getTask(id).duration, taskId))
+                .toBe(5);
         });
 
         test('TC-002-06: 编辑进度百分比', async ({ page }) => {
@@ -180,7 +179,7 @@ test.describe('用户反馈优化测试套件', () => {
     test.describe('OPT-003: 本地缓存持久化', () => {
         test('TC-003-07: 语言设置持久化', async ({ page }) => {
             // 打开更多下拉菜单
-            const moreBtn = page.locator('#more-actions-dropdown .btn');
+            const moreBtn = page.locator('#more-actions-dropdown > label');
             await moreBtn.click();
             await page.waitForTimeout(300);
 
@@ -210,7 +209,7 @@ test.describe('用户反馈优化测试套件', () => {
     test.describe('OPT-004: 导入导出图标优化', () => {
         test('TC-004-01: Excel导入图标可识别', async ({ page }) => {
             // 打开下拉菜单
-            const moreBtn = page.locator('#more-actions-dropdown .btn');
+            const moreBtn = page.locator('#more-actions-dropdown > label');
             await moreBtn.click();
             await page.waitForTimeout(300);
 
@@ -224,7 +223,7 @@ test.describe('用户反馈优化测试套件', () => {
         });
 
         test('TC-004-02: Excel导出图标可识别', async ({ page }) => {
-            const moreBtn = page.locator('#more-actions-dropdown .btn');
+            const moreBtn = page.locator('#more-actions-dropdown > label');
             await moreBtn.click();
             await page.waitForTimeout(300);
 
@@ -236,7 +235,7 @@ test.describe('用户反馈优化测试套件', () => {
         });
 
         test('TC-004-03: JSON导入图标可识别', async ({ page }) => {
-            const moreBtn = page.locator('#more-actions-dropdown .btn');
+            const moreBtn = page.locator('#more-actions-dropdown > label');
             await moreBtn.click();
             await page.waitForTimeout(300);
 
@@ -249,7 +248,7 @@ test.describe('用户反馈优化测试套件', () => {
         });
 
         test('TC-004-04: JSON导出图标可识别', async ({ page }) => {
-            const moreBtn = page.locator('#more-actions-dropdown .btn');
+            const moreBtn = page.locator('#more-actions-dropdown > label');
             await moreBtn.click();
             await page.waitForTimeout(300);
 
@@ -261,7 +260,7 @@ test.describe('用户反馈优化测试套件', () => {
         });
 
         test('TC-004-05: 图标风格统一', async ({ page }) => {
-            const moreBtn = page.locator('#more-actions-dropdown .btn');
+            const moreBtn = page.locator('#more-actions-dropdown > label');
             await moreBtn.click();
             await page.waitForTimeout(300);
 
@@ -277,7 +276,7 @@ test.describe('用户反馈优化测试套件', () => {
     test.describe('BUG-001: 下拉选项本地化', () => {
         test('TC-B01-01: 中文-优先级下拉本地化', async ({ page }) => {
             // 确保是中文环境 - 通过点击语言切换
-            const moreBtn = page.locator('#more-actions-dropdown .btn');
+            const moreBtn = page.locator('#more-actions-dropdown > label');
             await moreBtn.click();
             await page.waitForTimeout(300);
 
@@ -296,7 +295,7 @@ test.describe('用户反馈优化测试套件', () => {
 
         test('TC-B01-03: 英文-优先级下拉本地化', async ({ page }) => {
             // 切换到英文
-            const moreBtn = page.locator('#more-actions-dropdown .btn');
+            const moreBtn = page.locator('#more-actions-dropdown > label');
             await moreBtn.click();
             await page.waitForTimeout(300);
 
@@ -314,7 +313,7 @@ test.describe('用户反馈优化测试套件', () => {
 
         test('TC-B01-05: 日语-优先级下拉本地化', async ({ page }) => {
             // 切换到日语
-            const moreBtn = page.locator('#more-actions-dropdown .btn');
+            const moreBtn = page.locator('#more-actions-dropdown > label');
             await moreBtn.click();
             await page.waitForTimeout(300);
 
@@ -332,7 +331,7 @@ test.describe('用户反馈优化测试套件', () => {
 
         test('TC-B01-07: 韩语-优先级下拉本地化', async ({ page }) => {
             // 切换到韩语
-            const moreBtn = page.locator('#more-actions-dropdown .btn');
+            const moreBtn = page.locator('#more-actions-dropdown > label');
             await moreBtn.click();
             await page.waitForTimeout(300);
 
@@ -396,7 +395,7 @@ test.describe('用户反馈优化测试套件', () => {
     test.describe('国际化测试', () => {
         test('TC-I18N-01: 中文界面完整性', async ({ page }) => {
             // 确保中文环境
-            const moreBtn = page.locator('#more-actions-dropdown .btn');
+            const moreBtn = page.locator('#more-actions-dropdown > label');
             await moreBtn.click();
             await page.waitForTimeout(300);
             const langMenu = page.locator('#language-menu');
@@ -411,7 +410,7 @@ test.describe('用户反馈优化测试套件', () => {
         });
 
         test('TC-I18N-02: 英文界面完整性', async ({ page }) => {
-            const moreBtn = page.locator('#more-actions-dropdown .btn');
+            const moreBtn = page.locator('#more-actions-dropdown > label');
             await moreBtn.click();
             await page.waitForTimeout(300);
             const langMenu = page.locator('#language-menu');
@@ -424,7 +423,7 @@ test.describe('用户反馈优化测试套件', () => {
         });
 
         test('TC-I18N-03: 日语界面完整性', async ({ page }) => {
-            const moreBtn = page.locator('#more-actions-dropdown .btn');
+            const moreBtn = page.locator('#more-actions-dropdown > label');
             await moreBtn.click();
             await page.waitForTimeout(300);
             const langMenu = page.locator('#language-menu');
@@ -437,7 +436,7 @@ test.describe('用户反馈优化测试套件', () => {
         });
 
         test('TC-I18N-04: 韩语界面完整性', async ({ page }) => {
-            const moreBtn = page.locator('#more-actions-dropdown .btn');
+            const moreBtn = page.locator('#more-actions-dropdown > label');
             await moreBtn.click();
             await page.waitForTimeout(300);
             const langMenu = page.locator('#language-menu');

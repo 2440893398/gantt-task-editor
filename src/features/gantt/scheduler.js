@@ -23,6 +23,8 @@ import {
 import { rollupStatus, rollupAssignee, sumNumberField, rollupProgress } from './parent-rollup.js';
 import undoManager from './history/undoManager.js';
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 const dragSnapshotTaskIds = new Set();
 const dragDurationSnapshots = new Map();
 let pendingDeletedTaskParent = null;
@@ -357,9 +359,12 @@ export function recalculateParentTask(parentId) {
         changed = true;
     }
 
-    const nextDuration = childTasks.reduce(
-        (sum, child) => sum + calculateTaskSubtreeDuration(child),
-        0
+    // 父任务 duration = 日历跨度（EXC-AGT-01 拍板：工期按日历天）。
+    // 工时合计由 estimated_hours/actual_hours 的求和上卷承载，不复用 duration 字段，
+    // 否则会与 DHTMLX 依据 start/end 的归一化互相覆盖（试点实测 sum 被改回 span）。
+    const nextDuration = Math.max(
+        1,
+        Math.round((wbs.end_date - wbs.start_date) / (24 * 60 * 60 * 1000))
     );
     if ((parent.duration || 0) !== nextDuration) {
         parent.duration = nextDuration;
@@ -650,11 +655,20 @@ async function scheduleAsyncReschedule(taskId) {
                 newStart.setDate(newStart.getDate() + 1);
             }
 
+            // 工期语义 = 日历天（EXC-AGT-01 拍板）：重排只平移任务，
+            // 日历工期必须守恒，不得按工作日重新展开（BUG-AGT-03）。
             const duration = successor.duration || 1;
-            const newEnd = await addWorkDays(newStart, duration, successor.assignee);
+            const newEnd = new Date(newStart);
+            const wholeDays = duration < 0 ? Math.ceil(duration) : Math.floor(duration);
+            const fractionalDays = duration - wholeDays;
+            newEnd.setDate(newEnd.getDate() + wholeDays);
+            if (fractionalDays) {
+                newEnd.setTime(newEnd.getTime() + fractionalDays * DAY_MS);
+            }
 
             gantt.getTask(link.target).start_date = newStart;
             gantt.getTask(link.target).end_date = newEnd;
+            gantt.getTask(link.target).duration = duration;
             gantt.updateTask(link.target);
 
             // 递归处理下游

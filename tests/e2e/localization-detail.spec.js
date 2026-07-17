@@ -172,27 +172,27 @@ const LOCALIZATION_MAP = {
 
 // 切换语言的辅助函数
 async function switchLanguage(page, langCode) {
-    // 先点击空白处确保菜单关闭
-    await page.locator('#gantt_here').click({ position: { x: 10, y: 10 }, force: true });
-    await page.waitForTimeout(300);
+    // 先把焦点移出 DaisyUI dropdown，确保外层菜单从关闭态开始。
+    await page.locator('body').click({ position: { x: 5, y: 5 } });
 
     // 打开更多菜单
-    await page.locator('.more-btn').click();
-    await page.waitForTimeout(300);
+    await page.locator('#more-actions-dropdown > label').click();
 
-    // 语言菜单现在是 details/summary 结构
-    await page.locator('#language-menu summary').click();
-    await page.waitForTimeout(200);
+    // 语言菜单是 details/summary 结构；显式确认 open，避免连续切换时反向关闭。
+    const languageMenu = page.locator('#language-menu');
+    if (!(await languageMenu.evaluate((element) => element.open))) {
+        await languageMenu.locator('summary').click();
+    }
 
     // 点击语言选项
-    await page.locator(`#language-menu .dropdown-item[data-lang="${langCode}"]`).click();
+    const languageOption = languageMenu.locator(`.dropdown-item[data-lang="${langCode}"]`);
+    await expect(languageOption).toBeVisible();
+    await languageOption.click();
 
-    // 等待语言切换完成
-    await page.waitForTimeout(1000);
+    await expect.poll(() => page.evaluate(() => window.i18n.getLanguage())).toBe(langCode);
 
     // 关闭菜单
-    await page.locator('#gantt_here').click({ position: { x: 10, y: 10 }, force: true });
-    await page.waitForTimeout(200);
+    await page.locator('body').click({ position: { x: 5, y: 5 } });
 }
 
 // 展开快捷键面板
@@ -478,7 +478,7 @@ test.describe('Localization Detail Tests - 本地化细节测试', () => {
                 await switchLanguage(page, lang);
 
                 const moreText = await page
-                    .locator('.more-btn span[data-i18n="toolbar.more"]')
+                    .locator('#more-actions-dropdown > label span[data-i18n="toolbar.more"]')
                     .textContent();
                 const expected = LOCALIZATION_MAP[lang].more;
 
@@ -499,7 +499,9 @@ test.describe('Localization Detail Tests - 本地化细节测试', () => {
                 const expected = LOCALIZATION_MAP[lang];
 
                 // 编辑字段按钮
-                const editFieldsTitle = await page.locator('#add-field-btn').getAttribute('title');
+                const editFieldsTitle = await page
+                    .locator('#task-header #add-field-btn')
+                    .getAttribute('title');
                 // 批量编辑按钮
                 const batchEditTitle = await page.locator('#batch-edit-btn').getAttribute('title');
                 // 导出按钮
@@ -523,7 +525,7 @@ test.describe('Localization Detail Tests - 本地化细节测试', () => {
 
             for (const lang of languages) {
                 await switchLanguage(page, lang);
-                await page.locator('.more-btn').click();
+                await page.locator('#more-actions-dropdown > label').click();
                 await page.waitForTimeout(300);
 
                 const expected = LOCALIZATION_MAP[lang];

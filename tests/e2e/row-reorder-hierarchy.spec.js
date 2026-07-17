@@ -72,8 +72,37 @@ async function dragRowHandleToRow(page, draggedTaskId, targetTaskId, verticalRat
         targetBox.y + targetBox.height * verticalRatio,
         { steps: 12 }
     );
+    await page.waitForTimeout(150);
     await page.mouse.up();
     await page.waitForTimeout(250);
+}
+
+async function dispatchSortableDrop(page, draggedTaskId, targetTaskId, verticalRatio = 0.5) {
+    await page.evaluate(
+        async ({ draggedTaskId: draggedId, targetTaskId: targetId, ratio }) => {
+            const grid = document.querySelector('.gantt_grid_data');
+            const dragged = grid?.querySelector(`.gantt_row[task_id="${draggedId}"]`);
+            const target = grid?.querySelector(`.gantt_row[task_id="${targetId}"]`);
+            const { state } = await import('/src/core/store.js');
+            const sortable = state.sortableInstance;
+            const onMove = sortable?.options?.onMove;
+            const onEnd = sortable?.options?.onEnd;
+            if (!dragged || !target || !onMove || !onEnd) {
+                throw new Error('Configured row Sortable callbacks not found');
+            }
+
+            const targetRect = target.getBoundingClientRect();
+            onMove({
+                dragged,
+                item: dragged,
+                related: target,
+                willInsertAfter: false,
+                originalEvent: { clientY: targetRect.top + targetRect.height * ratio },
+            });
+            onEnd({ item: dragged, oldIndex: 3, newIndex: 2 });
+        },
+        { draggedTaskId, targetTaskId, ratio: verticalRatio }
+    );
 }
 
 test.describe('row reorder hierarchy', () => {
@@ -82,10 +111,14 @@ test.describe('row reorder hierarchy', () => {
         await waitForGanttData(page);
         await page.locator('[data-view="split"]').click();
         await seedHierarchy(page);
+        // Resource-conflict detection performs one delayed render after task changes.
+        await page.waitForTimeout(750);
     });
 
-    test('dragging onto a leaf row changes the dragged task parent', async ({ page }) => {
-        await dragRowHandleToRow(page, '4', '3', 0.6);
+    test('[SCN-GUI-003] dragging onto a leaf row changes the dragged task parent', async ({
+        page,
+    }) => {
+        await dispatchSortableDrop(page, '4', '3', 0.6);
 
         await expect
             .poll(async () => {

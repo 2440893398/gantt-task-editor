@@ -73,7 +73,7 @@ function parseExcelFile(filePath) {
 
 // 辅助函数：导入Excel文件
 async function importExcelFile(page, filePath) {
-    await page.click('#more-actions-dropdown .more-btn');
+    await page.click('#more-actions-dropdown > label');
     const [fileChooser] = await Promise.all([
         page.waitForEvent('filechooser'),
         page.click('#dropdown-import-excel'),
@@ -124,7 +124,8 @@ test.describe('Gantt Chart UI Tests', () => {
     test('TC-UI-003: Today Button', async ({ page }) => {
         const todayBtn = page.locator('#scroll-to-today-btn');
         await expect(todayBtn).toBeVisible();
-        await expect(todayBtn).toHaveClass(/today-btn-enhanced/);
+        // “今天”仍应保持主操作视觉层级；旧 today-btn-enhanced 类已被统一的 toolbar-primary 取代。
+        await expect(todayBtn).toHaveClass(/toolbar-primary/);
     });
 
     test('TC-UI-004: View Selector Removed from Menu', async ({ page }) => {
@@ -183,8 +184,9 @@ test.describe('Excel Export Tests', () => {
 
         expect(headers[0]).toBe('层级');
         expect(headers).toContain('任务名称');
-        expect(headers).toContain('开始时间');
-        expect(headers).toContain('工期(天)');
+        // 表头应与当前中文字段词汇一致，防止导出回退到已废弃的旧文案。
+        expect(headers).toContain('计划开始');
+        expect(headers).toContain('预计工期');
         expect(headers).toContain('进度(%)');
         expect(headers).toContain('优先级');
     });
@@ -248,7 +250,7 @@ test.describe('Excel Import Tests - Basic', () => {
         await page.waitForSelector('.gantt_task', { timeout: 10000 });
     });
 
-    test('TC-IM-001: Same Language Round Trip Import', async ({ page }) => {
+    test('[SCN-AGT-003] TC-IM-001: Same Language Round Trip Import', async ({ page }) => {
         await page.evaluate(() => window.i18n.setLanguage('en-US'));
 
         // 准备原始数据
@@ -300,8 +302,11 @@ test.describe('Excel Import Tests - Basic', () => {
         expect(child).toBeDefined();
 
         // 精确验证字段值
-        expect(parent.duration).toBe(5);
-        expect(Math.round(parent.progress * 100)).toBe(30);
+        // 父任务按唯一子任务上卷日期与进度，不保留导入文件中手填的父汇总值。
+        expect(parent.duration).toBe(child.duration);
+        expect(new Date(parent.start_date).getTime()).toBe(new Date(child.start_date).getTime());
+        expect(new Date(parent.end_date).getTime()).toBe(new Date(child.end_date).getTime());
+        expect(parent.progress).toBeCloseTo(child.progress, 2);
         expect(parent.priority).toBe('high');
 
         expect(child.duration).toBe(3);
@@ -310,7 +315,9 @@ test.describe('Excel Import Tests - Basic', () => {
         expect(child.parent).toBe(parent.id);
     });
 
-    test('TC-IM-002: Cross-Language Import (Zh -> En) Column Mapping', async ({ page }) => {
+    test('[SCN-GUI-002] TC-IM-002: Cross-Language Import (Zh -> En) Column Mapping', async ({
+        page,
+    }) => {
         // Step 1: 中文环境创建并导出
         await page.evaluate(() => window.i18n.setLanguage('zh-CN'));
         await page.waitForTimeout(500);
@@ -853,6 +860,34 @@ const LANGUAGES = [
     },
 ];
 
+function expectRoundTripTask(originalTask, importedTask, importedTasks) {
+    const originalHasChildren = multiLangTestData.data.some(
+        (candidate) => String(candidate.parent || 0) === String(originalTask.id)
+    );
+
+    expect(importedTask.priority).toBe(originalTask.priority);
+
+    if (!originalHasChildren) {
+        // 叶子任务是输入契约：工期、进度和状态必须逐字段守恒。
+        expect(importedTask.duration).toBe(originalTask.duration);
+        expect(importedTask.progress).toBeCloseTo(originalTask.progress, 2);
+        expect(importedTask.status).toBe(originalTask.status);
+        return;
+    }
+
+    // 当前数据集的每个父节点仅有一个直接子节点；父汇总字段必须精确等于该子树。
+    const children = importedTasks.filter(
+        (candidate) => String(candidate.parent || 0) === String(importedTask.id)
+    );
+    expect(children).toHaveLength(1);
+    const [child] = children;
+    expect(importedTask.duration).toBe(child.duration);
+    expect(new Date(importedTask.start_date).getTime()).toBe(new Date(child.start_date).getTime());
+    expect(new Date(importedTask.end_date).getTime()).toBe(new Date(child.end_date).getTime());
+    expect(importedTask.progress).toBeCloseTo(child.progress, 2);
+    expect(importedTask.status).toBe(child.status);
+}
+
 // 截图目录
 const screenshotPath = path.resolve(__dirname, 'screenshots');
 if (!fs.existsSync(screenshotPath)) {
@@ -967,13 +1002,7 @@ test.describe('Multi-Language Visual Consistency Tests - Same Language Round Tri
             for (const origTask of beforeData.tasks) {
                 const importedTask = afterData.tasks.find((t) => t.text === origTask.text);
                 expect(importedTask).toBeDefined();
-                expect(importedTask.duration).toBe(origTask.duration);
-                expect(importedTask.progress).toBeCloseTo(origTask.progress, 2);
-                // 优先级和状态应该是内部值
-                expect(['high', 'medium', 'low']).toContain(importedTask.priority);
-                expect(['pending', 'in_progress', 'completed', 'suspended']).toContain(
-                    importedTask.status
-                );
+                expectRoundTripTask(origTask, importedTask, afterData.tasks);
             }
         });
     }
@@ -1082,12 +1111,7 @@ test.describe('Multi-Language Visual Consistency Tests - Cross Language Import',
             for (const origTask of multiLangTestData.data) {
                 const importedTask = tasks.find((t) => t.text === origTask.text);
                 expect(importedTask).toBeDefined();
-                expect(importedTask.duration).toBe(origTask.duration);
-                expect(importedTask.progress).toBeCloseTo(origTask.progress, 2);
-
-                // 验证优先级和状态映射为内部值
-                expect(importedTask.priority).toBe(origTask.priority);
-                expect(importedTask.status).toBe(origTask.status);
+                expectRoundTripTask(origTask, importedTask, tasks);
             }
         });
     }

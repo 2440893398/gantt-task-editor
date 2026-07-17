@@ -17,7 +17,7 @@ import { updateGanttColumns } from '../gantt/columns.js';
 import { refreshLightbox } from '../lightbox/customization.js';
 import { i18n } from '../../utils/i18n.js';
 import { INTERNAL_PRIORITY_VALUES, INTERNAL_STATUS_VALUES } from '../../config/constants.js';
-import { inclusiveToExclusive } from '../../utils/time-formatter.js';
+import { exclusiveToInclusive, inclusiveToExclusive } from '../../utils/time-formatter.js';
 import { recalculateAllParentRollups } from '../gantt/scheduler.js';
 import { notifyProjectSnapshotChanged } from '../share/cloudChangeEvent.js';
 
@@ -787,6 +787,16 @@ export async function exportToExcel() {
                     } else {
                         row.push('');
                     }
+                }
+                // Excel 的“计划截止/Due”是含端点日期；内部 end_date 是排除边界。
+                // 若原样导出，回导时 inclusiveToExclusive 会再 +1 天，工期每轮膨胀一天。
+                else if (fieldName === 'end_date' && value) {
+                    const exclusiveEnd = value instanceof Date ? value : new Date(value);
+                    const isMilestone = task.type === 'milestone' || Number(task.duration) === 0;
+                    const inclusiveEnd = isMilestone
+                        ? exclusiveEnd
+                        : exclusiveToInclusive(exclusiveEnd);
+                    row.push(gantt.date.date_to_str('%Y-%m-%d')(inclusiveEnd));
                 }
                 // 特殊处理进度字段（转换为百分比）
                 else if (fieldName === 'progress') {

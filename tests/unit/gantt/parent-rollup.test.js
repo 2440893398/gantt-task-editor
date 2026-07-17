@@ -44,8 +44,16 @@ describe('parent-rollup helpers', () => {
         expect(rollupAssignee(['张三', ' 张三 '], false, '')).toBe('张三');
     });
 
-    test('rollupAssignee: multiple assignees keep current value', () => {
-        expect(rollupAssignee(['张三', '李四'], false, '项目经理')).toBe('项目经理');
+    test('rollupAssignee: multiple assignees aggregate deduped (2026-07-15 拍板)', () => {
+        expect(rollupAssignee(['张三', '李四'], false, '项目经理')).toBe('张三、李四');
+    });
+
+    test('rollupAssignee: nested multi-assignee strings dedupe across children', () => {
+        expect(rollupAssignee(['张三、李四', '李四,王五'], false, '')).toBe('张三、李四、王五');
+    });
+
+    test('rollupAssignee: empty children keep current value', () => {
+        expect(rollupAssignee(['', null], false, '项目经理')).toBe('项目经理');
     });
 
     test('rollupAssignee: locked keeps current value', () => {

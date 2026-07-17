@@ -364,6 +364,53 @@ describe('row reorder move position', () => {
         expect(gantt.render).toHaveBeenCalled();
     });
 
+    test('keeps the last valid child intent when Sortable reports the dragged row itself', () => {
+        document.body.innerHTML = `
+            <div class="gantt_grid_data">
+                <div class="gantt_row" task_id="1"><span class="gantt-drag-handle"></span></div>
+                <div class="gantt_row" task_id="2"><span class="gantt-drag-handle"></span></div>
+            </div>
+        `;
+
+        const tasks = {
+            1: { id: '1', parent: 0 },
+            2: { id: '2', parent: 0 },
+        };
+        const gridData = document.querySelector('.gantt_grid_data');
+        const targetRow = gridData.querySelector('[task_id="1"]');
+        const draggedRow = gridData.querySelector('[task_id="2"]');
+        targetRow.getBoundingClientRect = vi.fn(() => ({ top: 100, height: 40 }));
+        draggedRow.getBoundingClientRect = vi.fn(() => ({ top: 140, height: 40 }));
+
+        vi.stubGlobal('gantt', {
+            $grid_data: gridData,
+            getTask: vi.fn((id) => tasks[String(id)]),
+            getLinks: vi.fn(() => []),
+            hasChild: vi.fn(() => false),
+            moveTask: vi.fn(),
+            render: vi.fn(),
+        });
+
+        initRowSortable();
+
+        const sortableOptions = Sortable.create.mock.calls[0][1];
+        sortableOptions.onMove({
+            dragged: draggedRow,
+            related: targetRow,
+            willInsertAfter: false,
+            originalEvent: { clientY: 120 },
+        });
+        sortableOptions.onMove({
+            dragged: draggedRow,
+            related: draggedRow,
+            willInsertAfter: false,
+            originalEvent: { clientY: 160 },
+        });
+        sortableOptions.onEnd({ item: draggedRow, oldIndex: 1, newIndex: 1 });
+
+        expect(gantt.moveTask).toHaveBeenCalledWith('2', 0, '1');
+    });
+
     test('promotes a child task to root when dropped before a root sibling', () => {
         document.body.innerHTML = `
             <div class="gantt_grid_data">

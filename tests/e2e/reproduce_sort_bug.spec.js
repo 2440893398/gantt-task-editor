@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-test('should reorder fields in field management panel', async ({ page }) => {
+test('[SCN-GUI-005] should reorder fields in field management panel', async ({ page }) => {
     // 1. Visit page
     await page.goto('http://localhost:5273/');
     page.on('console', (msg) => console.log('PAGE LOG:', msg.text()));
@@ -12,13 +12,7 @@ test('should reorder fields in field management panel', async ({ page }) => {
     console.log('Is Sortable defined in window?', isSortableDefined);
     expect(isSortableDefined, 'SortableJS should be defined in window').toBe(true);
 
-    await page.evaluate(() => {
-        if (window.openFieldManagementPanel) {
-            window.openFieldManagementPanel();
-        } else {
-            throw new Error('openFieldManagementPanel not found on window');
-        }
-    });
+    await page.locator('#task-header #add-field-btn').click();
 
     const panel = page.locator('#field-management-panel');
     await expect(panel).toHaveClass(/open/);
@@ -37,27 +31,46 @@ test('should reorder fields in field management panel', async ({ page }) => {
     console.log('Initial Order:', initialOrder);
 
     // 4. Drag first item to be after second item
-    const firstItem = items.nth(0);
-    const secondItem = items.nth(1);
-    const dragHandle = firstItem.locator('.field-drag-handle');
+    // Playwright's synthetic mouse does not start Sortable's force-fallback drag in Chromium.
+    // Exercise the product's native HTML5 fallback with the same browser drag event sequence.
+    await page.evaluate(() => {
+        const source = document.querySelector('#field-list-container .field-item');
+        const handle = source?.querySelector('.field-drag-handle');
+        const target = source?.nextElementSibling;
+        if (!source || !handle || !target) throw new Error('Field drag elements not found');
 
-    // Calculate positions
-    const secondBox = await secondItem.boundingBox();
-    if (!secondBox) throw new Error('Second item bounding box not found');
-
-    // Perform drag
-    await dragHandle.hover();
-    await page.mouse.down();
-    // Move to the bottom of the second item
-    await page.mouse.move(secondBox.x + secondBox.width / 2, secondBox.y + secondBox.height);
-    await page.waitForTimeout(100); // Wait for sortable to detect
-    await page.mouse.up();
+        const dataTransfer = new DataTransfer();
+        handle.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+        source.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer }));
+        const targetRect = target.getBoundingClientRect();
+        target.dispatchEvent(
+            new DragEvent('dragover', {
+                bubbles: true,
+                cancelable: true,
+                dataTransfer,
+                clientY: targetRect.bottom - 1,
+            })
+        );
+        target.dispatchEvent(
+            new DragEvent('drop', {
+                bubbles: true,
+                cancelable: true,
+                dataTransfer,
+                clientY: targetRect.bottom - 1,
+            })
+        );
+        source.dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer }));
+    });
 
     await page.waitForTimeout(500); // Wait for animation
 
     // 5. Get final order
     const finalOrder = await items.evaluateAll((list) => list.map((el) => el.dataset.fieldName));
     console.log('Final Order:', finalOrder);
+    const storedOrder = await page.evaluate(async () => {
+        const { state } = await import('/src/core/store.js');
+        return state.fieldOrder;
+    });
 
     // 6. Assert order changed
     // Print captured logs
@@ -66,4 +79,5 @@ test('should reorder fields in field management panel', async ({ page }) => {
 
     expect(finalOrder).not.toEqual(initialOrder);
     expect(finalOrder[0]).not.toBe(initialOrder[0]);
+    expect(storedOrder.slice(0, finalOrder.length)).toEqual(finalOrder);
 });

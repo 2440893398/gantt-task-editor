@@ -1,9 +1,9 @@
-import { test, expect as _expect } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 import fs from 'fs';
 
 test('capture ui screenshots with mocked state', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
-    await page.goto('http://localhost:5173');
+    await page.goto('/');
     await page.waitForLoadState('networkidle');
 
     // 1. Ensure Task Panel is open
@@ -110,10 +110,10 @@ test('capture ui screenshots with mocked state', async ({ page }) => {
     await page.screenshot({ path: 'doc/design/screenshots/split_ui.png' });
 
     // --- 3. Capture Config Modal ---
-    // Click settings button in drawer
-    await page.click('#ai_drawer_settings');
-    await page.waitForSelector('#ai_config_modal');
-    await page.waitForTimeout(500);
+    // This is a screenshot fixture, so dispatch the same click event without
+    // coupling modal capture to whether the mocked drawer is inside the viewport.
+    await page.locator('#ai_drawer_settings').dispatchEvent('click');
+    await expect(page.locator('#ai_config_modal')).toBeVisible();
 
     const modalBox = page.locator('#ai_config_modal .modal-box');
     if ((await modalBox.count()) > 0) {

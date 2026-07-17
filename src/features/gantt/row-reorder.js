@@ -366,6 +366,23 @@ export function initRowSortable() {
 
             onMove(evt) {
                 const draggedTaskId = getRowTaskId(evt.dragged) || getRowTaskId(evt.item);
+                const relatedRow =
+                    evt.related && evt.related.closest ? evt.related.closest('.gantt_row') : null;
+                const relatedTaskId = getRowTaskId(relatedRow);
+
+                // Sortable can report the dragged row itself after it has moved the DOM
+                // placeholder. That is not a new drop target, so keep the last valid
+                // child/before/after intent instead of overwriting it with the old parent.
+                if (
+                    draggedTaskId &&
+                    relatedTaskId &&
+                    isSameTaskId(draggedTaskId, relatedTaskId) &&
+                    pendingDropIntent &&
+                    isSameTaskId(pendingDropIntent.draggedTaskId, draggedTaskId)
+                ) {
+                    return true;
+                }
+
                 const intent = resolveDropIntent(evt, draggedTaskId);
                 if (!intent) {
                     if (indicatorRow) {
@@ -375,15 +392,15 @@ export function initRowSortable() {
                     pendingDropIntent = null;
                     return false;
                 }
-                const relatedRow = intent.row;
+                const intentRow = intent.row;
 
-                if (indicatorRow && indicatorRow !== relatedRow) {
+                if (indicatorRow && indicatorRow !== intentRow) {
                     clearDropIndicator(indicatorRow);
                 }
 
-                if (relatedRow) {
-                    setDropIndicator(relatedRow, intent.mode);
-                    indicatorRow = relatedRow;
+                if (intentRow) {
+                    setDropIndicator(intentRow, intent.mode);
+                    indicatorRow = intentRow;
                     pendingDropIntent = {
                         draggedTaskId,
                         mode: intent.mode,
