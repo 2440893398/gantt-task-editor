@@ -54,7 +54,7 @@ test.describe('Bug Fixes Verification', () => {
                     {
                         id: 901,
                         text: '未修改保存验证',
-                        start_date: '2026-07-22',
+                        start_date: new Date(2026, 6, 22),
                         duration: 1,
                         progress: 0,
                         schedule_mode: 'start_end',
