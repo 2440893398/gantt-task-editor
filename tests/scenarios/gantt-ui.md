@@ -11,6 +11,7 @@
 | SCN-GUI-007 | P1 | 时间轴任务条保留详情 tooltip | 悬停当前视口内可见任务条时显示 `.gantt_tooltip`；表格行和单元格仍不得出现该 tooltip | active |
 | SCN-GUI-008 | P1 | 内联编辑日期遵守任务排期模式 | `start_end` 模式编辑开始日期时截止日期保持不变并重算 duration；`start_duration` 模式编辑截止日期时保持 duration 并反推 start | active |
 | SCN-GUI-009 | P1 | Excel 导出里程碑日期不提前 | 零工期/里程碑任务导出的“计划截止”与开始日期相同；普通任务仍把 exclusive end 转为含端点日期 | active |
+| SCN-GUI-010 | P1 | 桌面端通过任务条两端拖展调整 `start_end` 排期 | 桌面视口中 `gantt.config.drag_resize === true`；`start_end` 任务显示两端手柄，拖动右端后开始日期不变、结束日期后移且 `duration` 增加，拖动左端后结束日期不变、开始日期前移且 `duration` 增加；`start_duration` 任务不显示缩放手柄且拒绝缩放；移动端仍保持禁用缩放 | active |
 
 ## 变更日志
 
@@ -21,6 +22,7 @@
 | 2026-07-16 | 新增 `SCN-GUI-003~005` | 全量 E2E 分诊识别出层级拖拽竞态、新建空草稿误判为脏数据，以及字段排序自动化手势腐烂；固化为可观察业务状态回归 |
 | 2026-07-16 | 新增 `SCN-GUI-006~007` | 全量并发回归暴露资源冲突任务被测试放到视口外、tooltip 误选不可见虚拟节点；保留过载提示和时间轴详情的真实业务断言 |
 | 2026-07-17 | 新增 `SCN-GUI-008~009` | 未提交改动独立审查发现内联日期协调忽略 schedule_mode，且 Excel 对里程碑错误执行 exclusive→inclusive 减一天 |
+| 2026-07-22 | 新增 `SCN-GUI-010` | 反馈 `feedback:1784703689399:5n2nf6b8oj` 的录屏与原文共同确认桌面端“开始和结束日期”模式无法拖展；仅为 `start_end` 开放手柄，并依据既有 SCN-GUI-008 保持 `start_duration` 语义不变，按可观察日期与工期结果固化契约 |
 
 ## 例外队列
 

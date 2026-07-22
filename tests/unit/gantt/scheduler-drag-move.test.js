@@ -57,4 +57,37 @@ describe('gantt task bar move scheduling', () => {
         expect(task.end_date).toBe(calendarEnd);
         expect(gantt.updateTask).toHaveBeenCalledWith(1);
     });
+
+    test('only allows timeline resize for start_end tasks', async () => {
+        const { initScheduler } = await import('../../../src/features/gantt/scheduler.js');
+        const handlers = {};
+        const task = {
+            id: 1,
+            parent: 0,
+            start_date: new Date('2026-07-22'),
+            end_date: new Date('2026-07-24'),
+            duration: 2,
+            schedule_mode: 'start_duration',
+        };
+
+        global.gantt = {
+            attachEvent: vi.fn((eventName, handler) => {
+                handlers[eventName] = handler;
+                return true;
+            }),
+            getTask: vi.fn(() => task),
+            getChildren: vi.fn(() => []),
+            getLinks: vi.fn(() => []),
+        };
+
+        initScheduler();
+
+        expect(handlers.onBeforeTaskDrag(1, 'resize')).toBe(false);
+
+        delete task.schedule_mode;
+        expect(handlers.onBeforeTaskDrag(1, 'resize')).toBe(false);
+
+        task.schedule_mode = 'start_end';
+        expect(handlers.onBeforeTaskDrag(1, 'resize')).toBe(true);
+    });
 });

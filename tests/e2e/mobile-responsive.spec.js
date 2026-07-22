@@ -303,7 +303,7 @@ test.describe('移动端适配模块 (Mobile Responsive) - P0', () => {
         });
 
         // 桌面模式对比测试：拖拽应该启用
-        test('桌面模式应启用拖拽功能', async ({ page }) => {
+        test('[SCN-GUI-010] 桌面模式应启用任务移动与缩放', async ({ page }) => {
             await page.setViewportSize({ width: 1200, height: 800 });
             await page.goto('/');
 
@@ -323,12 +323,261 @@ test.describe('移动端适配模块 (Mobile Responsive) - P0', () => {
                 return null;
             });
 
-            if (dragConfig) {
-                expect(dragConfig.drag_move).toBe(true);
-                expect(dragConfig.drag_resize).toBe(false);
-                expect(dragConfig.drag_progress).toBe(true);
-                expect(dragConfig.drag_links).toBe(true);
-            }
+            expect(dragConfig).not.toBeNull();
+            expect(dragConfig.drag_move).toBe(true);
+            expect(dragConfig.drag_resize).toBe(true);
+            expect(dragConfig.drag_progress).toBe(true);
+            expect(dragConfig.drag_links).toBe(true);
+        });
+
+        test('[SCN-GUI-010] 桌面端可从任务条两端调整 start_end 排期', async ({ page }) => {
+            await page.setViewportSize({ width: 1536, height: 695 });
+            await page.goto('/');
+            await page.waitForSelector('#gantt_here', { timeout: 10000 });
+            await page.waitForSelector('#app-container.loaded', { timeout: 15000 });
+
+            const baseline = await page.evaluate(() => {
+                gantt.clearAll();
+                gantt.parse({
+                    data: [
+                        {
+                            id: 91001,
+                            text: '右端拖展',
+                            start_date: new Date(2026, 6, 22),
+                            end_date: new Date(2026, 6, 23),
+                            duration: 1,
+                            progress: 1,
+                            schedule_mode: 'start_end',
+                        },
+                        {
+                            id: 91002,
+                            text: '左端拖展',
+                            start_date: new Date(2026, 6, 27),
+                            end_date: new Date(2026, 6, 28),
+                            duration: 1,
+                            schedule_mode: 'start_end',
+                        },
+                        {
+                            id: 91003,
+                            text: '开始加工期模式',
+                            start_date: new Date(2026, 7, 1),
+                            end_date: new Date(2026, 7, 2),
+                            duration: 1,
+                            schedule_mode: 'start_duration',
+                        },
+                    ],
+                    links: [],
+                });
+                gantt.showDate(new Date(2026, 6, 22));
+                gantt.render();
+
+                const rightTask = gantt.getTask(91001);
+                const leftTask = gantt.getTask(91002);
+                return {
+                    right: {
+                        start: rightTask.start_date.getTime(),
+                        end: rightTask.end_date.getTime(),
+                        duration: rightTask.duration,
+                        scheduleMode: rightTask.schedule_mode,
+                    },
+                    left: {
+                        start: leftTask.start_date.getTime(),
+                        end: leftTask.end_date.getTime(),
+                        duration: leftTask.duration,
+                        scheduleMode: leftTask.schedule_mode,
+                    },
+                };
+            });
+
+            const startDurationTaskBar = page.locator('.gantt_task_line[task_id="91003"]');
+            await startDurationTaskBar.hover();
+            await expect(
+                startDurationTaskBar.locator('.gantt_task_drag.task_start_date')
+            ).toBeHidden();
+            await expect(
+                startDurationTaskBar.locator('.gantt_task_drag.task_end_date')
+            ).toBeHidden();
+
+            const rightTaskBar = page.locator('.gantt_task_line[task_id="91001"]');
+            await rightTaskBar.hover();
+            const rightHandle = page.locator(
+                '.gantt_task_line[task_id="91001"] .gantt_task_drag.task_end_date'
+            );
+            const progressHandle = rightTaskBar.locator('.gantt_task_progress_drag');
+            await expect(rightHandle).toBeVisible();
+            await expect(progressHandle).toBeVisible();
+            const rightBox = await rightHandle.boundingBox();
+            const progressBox = await progressHandle.boundingBox();
+            const rightTaskBox = await rightTaskBar.boundingBox();
+            expect(rightBox).toBeTruthy();
+            expect(progressBox).toBeTruthy();
+            expect(rightTaskBox).toBeTruthy();
+            const resizePoint = {
+                x: rightBox.x + rightBox.width / 2,
+                y: rightBox.y + 2,
+            };
+            const progressPoint = {
+                x: Math.min(
+                    progressBox.x + progressBox.width / 2,
+                    rightTaskBox.x + rightTaskBox.width - 2
+                ),
+                y: Math.min(
+                    Math.max(progressBox.y + 1, rightBox.y + rightBox.height),
+                    rightTaskBox.y + rightTaskBox.height - 2
+                ),
+            };
+            const pointerOwners = await page.evaluate(
+                ({ resizePoint, progressPoint }) => {
+                    const resizeHit = document.elementFromPoint(resizePoint.x, resizePoint.y);
+                    const progressHit = document.elementFromPoint(progressPoint.x, progressPoint.y);
+                    return {
+                        resize: resizeHit?.closest('.gantt_task_drag')?.className,
+                        progress: progressHit?.closest('.gantt_task_progress_drag')?.className,
+                    };
+                },
+                { resizePoint, progressPoint }
+            );
+            expect(pointerOwners.resize).toContain('task_end_date');
+            expect(pointerOwners).toMatchObject({
+                progress: expect.stringContaining('gantt_task_progress_drag'),
+            });
+            await page.mouse.move(
+                rightBox.x + rightBox.width / 2,
+                rightBox.y + rightBox.height / 2
+            );
+            await page.mouse.down();
+            await page.mouse.move(
+                rightBox.x + rightBox.width / 2 + 60,
+                rightBox.y + rightBox.height / 2,
+                { steps: 8 }
+            );
+            await page.mouse.up();
+
+            await expect
+                .poll(() => page.evaluate(() => gantt.getTask(91001).end_date.getTime()))
+                .toBeGreaterThan(baseline.right.end);
+            const rightResult = await page.evaluate(() => {
+                const task = gantt.getTask(91001);
+                return {
+                    start: task.start_date.getTime(),
+                    end: task.end_date.getTime(),
+                    duration: task.duration,
+                    scheduleMode: task.schedule_mode,
+                };
+            });
+            expect(rightResult.start).toBe(baseline.right.start);
+            expect(rightResult.end).toBeGreaterThan(baseline.right.end);
+            expect(rightResult.duration).toBeGreaterThan(baseline.right.duration);
+            expect(rightResult.scheduleMode).toBe('start_end');
+
+            const leftTaskBar = page.locator('.gantt_task_line[task_id="91002"]');
+            await leftTaskBar.hover();
+            const leftHandle = page.locator(
+                '.gantt_task_line[task_id="91002"] .gantt_task_drag.task_start_date'
+            );
+            await expect(leftHandle).toBeVisible();
+            const leftBox = await leftHandle.boundingBox();
+            expect(leftBox).toBeTruthy();
+            await page.mouse.move(leftBox.x + leftBox.width / 2, leftBox.y + leftBox.height / 2);
+            await page.mouse.down();
+            await page.mouse.move(
+                leftBox.x + leftBox.width / 2 - 60,
+                leftBox.y + leftBox.height / 2,
+                { steps: 8 }
+            );
+            await page.mouse.up();
+
+            await expect
+                .poll(() => page.evaluate(() => gantt.getTask(91002).start_date.getTime()))
+                .toBeLessThan(baseline.left.start);
+
+            const leftResult = await page.evaluate(() => {
+                const task = gantt.getTask(91002);
+                return {
+                    start: task.start_date.getTime(),
+                    end: task.end_date.getTime(),
+                    duration: task.duration,
+                    scheduleMode: task.schedule_mode,
+                };
+            });
+            expect(leftResult.start).toBeLessThan(baseline.left.start);
+            expect(leftResult.end).toBe(baseline.left.end);
+            expect(leftResult.duration).toBeGreaterThan(baseline.left.duration);
+            expect(leftResult.scheduleMode).toBe('start_end');
+
+            await page.keyboard.press('Control+z');
+            await expect
+                .poll(() => page.evaluate(() => gantt.getTask(91002).start_date.getTime()))
+                .toBe(baseline.left.start);
+
+            await page.keyboard.press('Control+y');
+            await expect
+                .poll(() => page.evaluate(() => gantt.getTask(91002).start_date.getTime()))
+                .toBe(leftResult.start);
+
+            await expect
+                .poll(
+                    () =>
+                        page.evaluate(
+                            async ({ rightResult, leftResult }) => {
+                                const [{ projectScope }, { state }] = await Promise.all([
+                                    import('/src/core/storage.js'),
+                                    import('/src/core/store.js'),
+                                ]);
+                                const stored = await projectScope(
+                                    state.currentProjectId
+                                ).getGanttData();
+                                const rightTask = stored.data.find((task) => task.id === 91001);
+                                const leftTask = stored.data.find((task) => task.id === 91002);
+
+                                return (
+                                    new Date(rightTask?.start_date).getTime() ===
+                                        rightResult.start &&
+                                    new Date(rightTask?.end_date).getTime() === rightResult.end &&
+                                    rightTask?.duration === rightResult.duration &&
+                                    new Date(leftTask?.start_date).getTime() === leftResult.start &&
+                                    new Date(leftTask?.end_date).getTime() === leftResult.end &&
+                                    leftTask?.duration === leftResult.duration
+                                );
+                            },
+                            { rightResult, leftResult }
+                        ),
+                    { timeout: 10000 }
+                )
+                .toBe(true);
+            await page.reload();
+            await page.waitForFunction(
+                () =>
+                    typeof gantt !== 'undefined' &&
+                    gantt.isTaskExists(91001) &&
+                    gantt.isTaskExists(91002)
+            );
+            const persisted = await page.evaluate(() => {
+                const rightTask = gantt.getTask(91001);
+                const leftTask = gantt.getTask(91002);
+                return {
+                    right: {
+                        start: rightTask.start_date.getTime(),
+                        end: rightTask.end_date.getTime(),
+                        duration: rightTask.duration,
+                    },
+                    left: {
+                        start: leftTask.start_date.getTime(),
+                        end: leftTask.end_date.getTime(),
+                        duration: leftTask.duration,
+                    },
+                };
+            });
+            expect(persisted.right).toEqual({
+                start: rightResult.start,
+                end: rightResult.end,
+                duration: rightResult.duration,
+            });
+            expect(persisted.left).toEqual({
+                start: leftResult.start,
+                end: leftResult.end,
+                duration: leftResult.duration,
+            });
         });
     });
 });

@@ -219,6 +219,34 @@
     transform: none;
 }
 
+/* Only start/end scheduling exposes resize handles. Keep the handles inside
+   the clipped bar and reserve its lower half for the progress handle. */
+.gantt_task_line:not(.gantt-task-resize-enabled) .gantt_task_drag.task_start_date,
+.gantt_task_line:not(.gantt-task-resize-enabled) .gantt_task_drag.task_end_date {
+    display: none !important;
+}
+
+.gantt_task_line.gantt-task-resize-enabled .gantt_task_drag.task_start_date,
+.gantt_task_line.gantt-task-resize-enabled .gantt_task_drag.task_end_date {
+    top: 0 !important;
+    width: 8px !important;
+    min-height: 8px !important;
+    height: 50% !important;
+    z-index: 4;
+}
+
+.gantt_task_line.gantt-task-resize-enabled .gantt_task_drag.task_start_date {
+    left: 0 !important;
+}
+
+.gantt_task_line.gantt-task-resize-enabled .gantt_task_drag.task_end_date {
+    right: 0 !important;
+}
+
+.gantt_task_line.gantt-task-resize-enabled .gantt_task_progress_drag {
+    z-index: 5;
+}
+
 .gantt_task_progress {
     background: #0ea5e9 !important;
     border-radius: 8px !important;

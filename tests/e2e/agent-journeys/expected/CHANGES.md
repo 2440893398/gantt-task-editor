@@ -10,3 +10,4 @@
 | 2026-07-15 | （未冻结 schedule-extend-duration.json） | SCN-AGT-006 | 因 BUG-AGT-01（setDates 工期改动被 settle 静默回退）测试保持红（test.fail 守望），不以缺陷状态建立基线；修复后录制 |
 | 2026-07-15 | import-project-plan.json（重录）、schedule-move-cascade.json（重录） | SCN-AGT-003/007 | BUG-AGT-03/05 修复后按拍板语义重录：日历天工期在重排/级联中守恒（接口开发 4 天保持 4 天，不再膨胀为 6）；父任务 duration=日历跨度、assignee=子任务去重聚合。已对照验证点逐条核对 |
 | 2026-07-15 | schedule-extend-duration.json（首次冻结） | SCN-AGT-006 | BUG-AGT-01 修复（commitTaskChanges 按日历天补齐 end_date）后录制：设计 duration 3→5 生效（03-02..03-06），下游施工沿依赖顺延且工期守恒。已核对 |
+| 2026-07-22 | （无 golden；新增 UI 交互契约） | SCN-GUI-010 | 反馈 `feedback:1784703689399:5n2nf6b8oj` 明确要求桌面端 `start_end` 任务可从任务条两端调整起止日期；登记场景验证点，`start_duration` 排期语义与移动端禁用策略保持不变。 |
