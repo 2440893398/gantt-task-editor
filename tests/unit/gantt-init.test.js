@@ -136,6 +136,37 @@ describe('甘特图初始化', () => {
         expect(gantt.templates.task_row_class).toBeDefined();
     });
 
+    it('only marks start_end tasks as resizable from the timeline', () => {
+        initGantt();
+
+        const startEndTask = {
+            id: 1,
+            duration: 2,
+            progress: 0,
+            schedule_mode: 'start_end',
+        };
+        const startDurationTask = {
+            id: 2,
+            duration: 2,
+            progress: 0,
+            schedule_mode: 'start_duration',
+        };
+
+        expect(gantt.templates.task_class(new Date(), new Date(), startEndTask)).toContain(
+            'gantt-task-resize-enabled'
+        );
+        expect(gantt.templates.task_class(new Date(), new Date(), startDurationTask)).not.toContain(
+            'gantt-task-resize-enabled'
+        );
+        expect(
+            gantt.templates.task_class(new Date(), new Date(), {
+                id: 3,
+                duration: 2,
+                progress: 0,
+            })
+        ).not.toContain('gantt-task-resize-enabled');
+    });
+
     it('应该让任务名搜索隐藏标记同时作用于任务条和行', () => {
         initGantt();
 

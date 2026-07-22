@@ -16,11 +16,16 @@ async function getTaskSchedule(page, taskId) {
 async function dragTaskEdge(page, taskId, edge, deltaX) {
     const taskBar = page.locator(`.gantt_task_line[task_id="${taskId}"]`);
     await expect(taskBar).toBeVisible();
-    const box = await taskBar.boundingBox();
-    expect(box).not.toBeNull();
+    await taskBar.hover();
 
-    const startX = edge === 'left' ? box.x + 1 : box.x + box.width - 1;
-    const y = box.y + box.height / 2;
+    const handleClass = edge === 'left' ? 'task_start_date' : 'task_end_date';
+    const resizeHandle = taskBar.locator(`.gantt_task_drag.${handleClass}`);
+    await expect(resizeHandle).toBeVisible();
+    const handleBox = await resizeHandle.boundingBox();
+    expect(handleBox).not.toBeNull();
+
+    const startX = handleBox.x + handleBox.width / 2;
+    const y = handleBox.y + handleBox.height / 2;
     await page.mouse.move(startX, y);
     await page.mouse.down();
     await page.mouse.move(startX + deltaX, y, { steps: 8 });
@@ -157,7 +162,10 @@ test.describe('Bug Fixes Verification', () => {
         expect(rightAfter.start).toBe(rightBefore.start);
         expect(rightAfter.end).toBeGreaterThan(rightBefore.end);
 
-        await dragTaskEdge(page, 912, 'right', dayWidth * 2);
+        const fixedTaskBar = page.locator('.gantt_task_line[task_id="912"]');
+        await fixedTaskBar.hover();
+        await expect(fixedTaskBar.locator('.gantt_task_drag.task_start_date')).toBeHidden();
+        await expect(fixedTaskBar.locator('.gantt_task_drag.task_end_date')).toBeHidden();
         expect(await getTaskSchedule(page, 912)).toEqual(fixedBefore);
     });
 });

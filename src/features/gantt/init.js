@@ -566,6 +566,10 @@ export function initGantt() {
     gantt.templates.task_class = function (start, end, task) {
         const classes = getTaskDisplayClasses(task);
 
+        if (task.schedule_mode === 'start_end') {
+            classes.push('gantt-task-resize-enabled');
+        }
+
         // Milestone
         if (task.type === 'milestone') {
             classes.push('task_milestone');

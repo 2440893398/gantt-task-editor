@@ -587,13 +587,13 @@ function bindWBSEvents() {
         const task = gantt.getTask(id);
         const children = gantt.getChildren(id);
 
-        // 如果是父任务且有子任务，禁止拖拽调整时间
-        if (children.length > 0 && (mode === 'resize' || mode === 'move')) {
-            console.log('🚫 父任务时间由子任务决定，禁止拖拽');
+        if (mode === 'resize' && task.schedule_mode !== 'start_end') {
             return false;
         }
 
-        if (mode === 'resize' && task.schedule_mode !== 'start_end') {
+        // 如果是父任务且有子任务，禁止拖拽调整时间
+        if (children.length > 0 && (mode === 'resize' || mode === 'move')) {
+            console.log('🚫 父任务时间由子任务决定，禁止拖拽');
             return false;
         }
 
