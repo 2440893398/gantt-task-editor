@@ -105,6 +105,7 @@ export default {
         success: '操作成功',
         error: '操作失败',
         saveSuccess: '保存成功',
+        noChanges: '没有可保存的变更',
         deleteSuccess: '删除成功',
         importSuccess: '导入成功，共 {{count}} 条数据',
         exportSuccess: '导出成功',

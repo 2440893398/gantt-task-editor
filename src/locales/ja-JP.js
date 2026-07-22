@@ -105,6 +105,7 @@ export default {
         success: '操作が成功しました',
         error: '操作が失敗しました',
         saveSuccess: '保存しました',
+        noChanges: '保存する変更はありません',
         deleteSuccess: '削除しました',
         importSuccess: '{{count}}件のデータをインポートしました',
         exportSuccess: 'エクスポートしました',

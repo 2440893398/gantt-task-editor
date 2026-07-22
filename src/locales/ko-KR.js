@@ -105,6 +105,7 @@ export default {
         success: '작업이 완료되었습니다',
         error: '작업이 실패했습니다',
         saveSuccess: '저장되었습니다',
+        noChanges: '저장할 변경 사항이 없습니다',
         deleteSuccess: '삭제되었습니다',
         importSuccess: '{{count}}개의 데이터를 가져왔습니다',
         exportSuccess: '내보내기가 완료되었습니다',

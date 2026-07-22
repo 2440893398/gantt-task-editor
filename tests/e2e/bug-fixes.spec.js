@@ -37,4 +37,40 @@ test.describe('Bug Fixes Verification', () => {
         await expect(toast).toContainText('Test Auto Hide');
         await expect(toast).toBeHidden({ timeout: 1000 });
     });
+
+    test('TC-BUG-003: 未修改直接保存应显示本地化提示', async ({ page }) => {
+        const missingTranslationWarnings = [];
+        page.on('console', (message) => {
+            if (message.text().includes('Missing translation for key: message.noChanges')) {
+                missingTranslationWarnings.push(message.text());
+            }
+        });
+
+        await page.evaluate(async () => {
+            await window.i18n.setLanguage('zh-CN');
+            window.gantt.clearAll();
+            window.gantt.parse({
+                data: [
+                    {
+                        id: 901,
+                        text: '未修改保存验证',
+                        start_date: '2026-07-22',
+                        duration: 1,
+                        progress: 0,
+                        schedule_mode: 'start_end',
+                        summary: '<p><br></p>',
+                        description: '<p><br></p>',
+                    },
+                ],
+                links: [],
+            });
+        });
+
+        await page.locator('.gantt-task-action-edit[data-task-id="901"]').click();
+        await expect(page.locator('#task-details-panel')).toBeVisible();
+        await page.locator('#btn-confirm-save').click();
+
+        await expect(page.locator('.gantt-toast')).toContainText('没有可保存的变更');
+        expect(missingTranslationWarnings).toEqual([]);
+    });
 });

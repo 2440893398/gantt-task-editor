@@ -105,6 +105,7 @@ export default {
         success: 'Operation successful',
         error: 'Operation failed',
         saveSuccess: 'Saved successfully',
+        noChanges: 'No changes to save',
         deleteSuccess: 'Deleted successfully',
         importSuccess: 'Imported {{count}} items successfully',
         exportSuccess: 'Exported successfully',
