@@ -11,7 +11,7 @@
 | SCN-GUI-007 | P1 | 时间轴任务条保留详情 tooltip | 悬停当前视口内可见任务条时显示 `.gantt_tooltip`；表格行和单元格仍不得出现该 tooltip | active |
 | SCN-GUI-008 | P1 | 内联编辑日期遵守任务排期模式 | `start_end` 模式编辑开始日期时截止日期保持不变并重算 duration；`start_duration` 模式编辑截止日期时保持 duration 并反推 start | active |
 | SCN-GUI-009 | P1 | Excel 导出里程碑日期不提前 | 零工期/里程碑任务导出的“计划截止”与开始日期相同；普通任务仍把 exclusive end 转为含端点日期 | active |
-| SCN-GUI-010 | P0 | 桌面端通过任务条两端拖展调整 `start_end` 排期 | 桌面视口中 `gantt.config.drag_resize === true`；`start_end` 任务显示两端手柄，拖动右端后开始日期不变、结束日期后移且 `duration` 增加，拖动左端后结束日期不变、开始日期前移且 `duration` 增加；`start_duration` 任务不显示缩放手柄且拒绝缩放；移动端仍保持禁用缩放，拖动主体仍只平移排期并保持工期 | active |
+| SCN-GUI-010 | P0 | 桌面端通过任务条两端拖展调整 `start_end` 排期 | 桌面视口中 `gantt.config.drag_resize === true`；`start_end` 任务显示两端手柄，左端中线拖动后结束日期不变、开始日期移动且 `duration` 改变，右端拖动后开始日期不变、结束日期移动且 `duration` 改变；日期调整使用任务条上方命中区，0% 进度手柄保留下方独立命中区并仍可拖动；`start_duration` 任务不显示缩放手柄且拒绝缩放；移动端仍保持禁用缩放，拖动主体仍只平移排期并保持工期 | active |
 
 ## 变更日志
 
@@ -23,6 +23,7 @@
 | 2026-07-16 | 新增 `SCN-GUI-006~007` | 全量并发回归暴露资源冲突任务被测试放到视口外、tooltip 误选不可见虚拟节点；保留过载提示和时间轴详情的真实业务断言 |
 | 2026-07-17 | 新增 `SCN-GUI-008~009` | 未提交改动独立审查发现内联日期协调忽略 schedule_mode，且 Excel 对里程碑错误执行 exclusive→inclusive 减一天 |
 | 2026-07-22 | 新增 `SCN-GUI-010` | 反馈 `feedback:1784703689399:5n2nf6b8oj` 的录屏与原文确认桌面端任务条边缘拖拽未进入 resize 模式；仅为 `start_end` 开放手柄并按可观察日期、工期与持久化结果固化契约，保持 `start_duration` 与移动端语义不变 |
+| 2026-07-22 | 细化 `SCN-GUI-010` | 合并后复现左侧日期手柄与 0% 进度手柄在任务条中线争抢指针；明确日期调整与进度调整使用互不重叠的上下命中区，中线归日期调整且下方进度拖动保持可用 |
 
 ## 例外队列
 

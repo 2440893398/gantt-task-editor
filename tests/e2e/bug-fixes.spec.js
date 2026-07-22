@@ -13,6 +13,29 @@ async function getTaskSchedule(page, taskId) {
     }, taskId);
 }
 
+async function getTaskProgress(page, taskId) {
+    return await page.evaluate((id) => window.gantt.getTask(id).progress, taskId);
+}
+
+async function getHitTargetClasses(page, x, y) {
+    return await page.evaluate(
+        ({ clientX, clientY }) => {
+            const classes = [];
+            let element = document.elementFromPoint(clientX, clientY);
+            while (element && classes.length < 3) {
+                const rect = element.getBoundingClientRect();
+                classes.push(
+                    `${element.tagName}.${element.getAttribute('class') || ''}` +
+                        `[${rect.x},${rect.y},${rect.width},${rect.height}]`
+                );
+                element = element.parentElement;
+            }
+            return classes.join(' ');
+        },
+        { clientX: x, clientY: y }
+    );
+}
+
 async function dragTaskEdge(page, taskId, edge, deltaX) {
     const taskBar = page.locator(`.gantt_task_line[task_id="${taskId}"]`);
     await expect(taskBar).toBeVisible();
@@ -22,10 +45,32 @@ async function dragTaskEdge(page, taskId, edge, deltaX) {
     const resizeHandle = taskBar.locator(`.gantt_task_drag.${handleClass}`);
     await expect(resizeHandle).toBeVisible();
     const handleBox = await resizeHandle.boundingBox();
+    const taskBarBox = await taskBar.boundingBox();
+    expect(handleBox).not.toBeNull();
+    expect(taskBarBox).not.toBeNull();
+
+    const startX = handleBox.x + handleBox.width / 2;
+    const y =
+        edge === 'left' ? taskBarBox.y + taskBarBox.height / 2 : handleBox.y + handleBox.height / 2;
+    expect(await getHitTargetClasses(page, startX, y)).toContain(handleClass);
+    await page.mouse.move(startX, y);
+    await page.mouse.down();
+    await page.mouse.move(startX + deltaX, y, { steps: 8 });
+    await page.mouse.up();
+}
+
+async function dragTaskProgress(page, taskId, deltaX) {
+    const taskBar = page.locator(`.gantt_task_line[task_id="${taskId}"]`);
+    await taskBar.hover();
+
+    const progressHandle = taskBar.locator('.gantt_task_progress_drag');
+    await expect(progressHandle).toBeVisible();
+    const handleBox = await progressHandle.boundingBox();
     expect(handleBox).not.toBeNull();
 
     const startX = handleBox.x + handleBox.width / 2;
     const y = handleBox.y + handleBox.height / 2;
+    expect(await getHitTargetClasses(page, startX, y)).toContain('gantt_task_progress_drag');
     await page.mouse.move(startX, y);
     await page.mouse.down();
     await page.mouse.move(startX + deltaX, y, { steps: 8 });
@@ -136,6 +181,15 @@ test.describe('Bug Fixes Verification', () => {
                         duration: 5,
                         schedule_mode: 'start_duration',
                     },
+                    {
+                        id: 913,
+                        text: '零进度拖动',
+                        start_date: new Date(2026, 6, 20),
+                        end_date: new Date(2026, 6, 25),
+                        duration: 5,
+                        progress: 0,
+                        schedule_mode: 'start_end',
+                    },
                 ],
                 links: [],
             });
@@ -145,6 +199,8 @@ test.describe('Bug Fixes Verification', () => {
         const leftBefore = await getTaskSchedule(page, 910);
         const rightBefore = await getTaskSchedule(page, 911);
         const fixedBefore = await getTaskSchedule(page, 912);
+        const progressScheduleBefore = await getTaskSchedule(page, 913);
+        const progressBefore = await getTaskProgress(page, 913);
         const dayWidth = await page.evaluate(() => {
             return (
                 window.gantt.posFromDate(new Date(2026, 6, 21)) -
@@ -152,9 +208,9 @@ test.describe('Bug Fixes Verification', () => {
             );
         });
 
-        await dragTaskEdge(page, 910, 'left', dayWidth * 2);
+        await dragTaskEdge(page, 910, 'left', -dayWidth * 2);
         const leftAfter = await getTaskSchedule(page, 910);
-        expect(leftAfter.start).toBeGreaterThan(leftBefore.start);
+        expect(leftAfter.start).toBeLessThan(leftBefore.start);
         expect(leftAfter.end).toBe(leftBefore.end);
 
         await dragTaskEdge(page, 911, 'right', dayWidth * 2);
@@ -167,5 +223,9 @@ test.describe('Bug Fixes Verification', () => {
         await expect(fixedTaskBar.locator('.gantt_task_drag.task_start_date')).toBeHidden();
         await expect(fixedTaskBar.locator('.gantt_task_drag.task_end_date')).toBeHidden();
         expect(await getTaskSchedule(page, 912)).toEqual(fixedBefore);
+
+        await dragTaskProgress(page, 913, dayWidth * 2);
+        expect(await getTaskProgress(page, 913)).toBeGreaterThan(progressBefore);
+        expect(await getTaskSchedule(page, 913)).toEqual(progressScheduleBefore);
     });
 });
