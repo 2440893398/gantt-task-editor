@@ -593,6 +593,10 @@ function bindWBSEvents() {
             return false;
         }
 
+        if (mode === 'resize' && task.schedule_mode !== 'start_end') {
+            return false;
+        }
+
         if (!dragSnapshotTaskIds.has(id)) {
             undoManager.saveState(id);
             dragSnapshotTaskIds.add(id);

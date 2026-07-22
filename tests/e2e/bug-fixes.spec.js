@@ -2,6 +2,31 @@ import { test, expect } from '@playwright/test';
 
 test.use({ locale: 'zh-CN' });
 
+async function getTaskSchedule(page, taskId) {
+    return await page.evaluate((id) => {
+        const task = window.gantt.getTask(id);
+        return {
+            start: task.start_date.getTime(),
+            end: task.end_date.getTime(),
+            duration: task.duration,
+        };
+    }, taskId);
+}
+
+async function dragTaskEdge(page, taskId, edge, deltaX) {
+    const taskBar = page.locator(`.gantt_task_line[task_id="${taskId}"]`);
+    await expect(taskBar).toBeVisible();
+    const box = await taskBar.boundingBox();
+    expect(box).not.toBeNull();
+
+    const startX = edge === 'left' ? box.x + 1 : box.x + box.width - 1;
+    const y = box.y + box.height / 2;
+    await page.mouse.move(startX, y);
+    await page.mouse.down();
+    await page.mouse.move(startX + deltaX, y, { steps: 8 });
+    await page.mouse.up();
+}
+
 test.describe('Bug Fixes Verification', () => {
     test.beforeEach(async ({ page }) => {
         await page.goto('/');
@@ -72,5 +97,67 @@ test.describe('Bug Fixes Verification', () => {
 
         await expect(page.locator('.gantt-toast')).toContainText('没有可保存的变更');
         expect(missingTranslationWarnings).toEqual([]);
+    });
+
+    test('[SCN-GUI-010] start/end tasks resize one boundary while fixed-duration tasks reject resize', async ({
+        page,
+    }) => {
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await page.evaluate(() => {
+            window.gantt.clearAll();
+            window.gantt.parse({
+                data: [
+                    {
+                        id: 910,
+                        text: '左边缘调整',
+                        start_date: new Date(2026, 6, 20),
+                        end_date: new Date(2026, 6, 25),
+                        duration: 5,
+                        schedule_mode: 'start_end',
+                    },
+                    {
+                        id: 911,
+                        text: '右边缘调整',
+                        start_date: new Date(2026, 6, 20),
+                        end_date: new Date(2026, 6, 25),
+                        duration: 5,
+                        schedule_mode: 'start_end',
+                    },
+                    {
+                        id: 912,
+                        text: '固定工期',
+                        start_date: new Date(2026, 6, 20),
+                        end_date: new Date(2026, 6, 25),
+                        duration: 5,
+                        schedule_mode: 'start_duration',
+                    },
+                ],
+                links: [],
+            });
+            window.gantt.showDate(new Date(2026, 6, 20));
+        });
+
+        const leftBefore = await getTaskSchedule(page, 910);
+        const rightBefore = await getTaskSchedule(page, 911);
+        const fixedBefore = await getTaskSchedule(page, 912);
+        const dayWidth = await page.evaluate(() => {
+            return (
+                window.gantt.posFromDate(new Date(2026, 6, 21)) -
+                window.gantt.posFromDate(new Date(2026, 6, 20))
+            );
+        });
+
+        await dragTaskEdge(page, 910, 'left', dayWidth * 2);
+        const leftAfter = await getTaskSchedule(page, 910);
+        expect(leftAfter.start).toBeGreaterThan(leftBefore.start);
+        expect(leftAfter.end).toBe(leftBefore.end);
+
+        await dragTaskEdge(page, 911, 'right', dayWidth * 2);
+        const rightAfter = await getTaskSchedule(page, 911);
+        expect(rightAfter.start).toBe(rightBefore.start);
+        expect(rightAfter.end).toBeGreaterThan(rightBefore.end);
+
+        await dragTaskEdge(page, 912, 'right', dayWidth * 2);
+        expect(await getTaskSchedule(page, 912)).toEqual(fixedBefore);
     });
 });

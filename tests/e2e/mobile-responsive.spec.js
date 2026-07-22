@@ -303,7 +303,7 @@ test.describe('移动端适配模块 (Mobile Responsive) - P0', () => {
         });
 
         // 桌面模式对比测试：拖拽应该启用
-        test('桌面模式应启用拖拽功能', async ({ page }) => {
+        test('[SCN-GUI-010] 桌面模式应启用拖拽和任务条尺寸调整', async ({ page }) => {
             await page.setViewportSize({ width: 1200, height: 800 });
             await page.goto('/');
 
@@ -325,7 +325,7 @@ test.describe('移动端适配模块 (Mobile Responsive) - P0', () => {
 
             if (dragConfig) {
                 expect(dragConfig.drag_move).toBe(true);
-                expect(dragConfig.drag_resize).toBe(false);
+                expect(dragConfig.drag_resize).toBe(true);
                 expect(dragConfig.drag_progress).toBe(true);
                 expect(dragConfig.drag_links).toBe(true);
             }

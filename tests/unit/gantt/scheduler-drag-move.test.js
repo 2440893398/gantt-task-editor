@@ -57,4 +57,31 @@ describe('gantt task bar move scheduling', () => {
         expect(task.end_date).toBe(calendarEnd);
         expect(gantt.updateTask).toHaveBeenCalledWith(1);
     });
+
+    test('[SCN-GUI-010] resize is allowed only for start/end date tasks', async () => {
+        const { initScheduler } = await import('../../../src/features/gantt/scheduler.js');
+        const handlers = {};
+        const task = {
+            id: 1,
+            parent: 0,
+            schedule_mode: 'start_end',
+        };
+
+        global.gantt = {
+            attachEvent: vi.fn((eventName, handler) => {
+                handlers[eventName] = handler;
+                return true;
+            }),
+            getTask: vi.fn(() => task),
+            getChildren: vi.fn(() => []),
+        };
+
+        initScheduler();
+
+        expect(handlers.onBeforeTaskDrag(1, 'resize')).toBe(true);
+
+        task.schedule_mode = 'start_duration';
+
+        expect(handlers.onBeforeTaskDrag(1, 'resize')).toBe(false);
+    });
 });

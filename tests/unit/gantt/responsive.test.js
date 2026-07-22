@@ -73,19 +73,19 @@ describe('responsive gantt drag configuration', () => {
         vi.useRealTimers();
     });
 
-    it('initial desktop mode enables moving but keeps task resize disabled', async () => {
+    it('[SCN-GUI-010] initial desktop mode enables moving and task resize', async () => {
         const { initResponsive } = await importResponsive();
 
         initResponsive();
 
         expect(gantt.config.drag_move).toBe(true);
-        expect(gantt.config.drag_resize).toBe(false);
+        expect(gantt.config.drag_resize).toBe(true);
         expect(gantt.config.drag_progress).toBe(true);
         expect(gantt.config.drag_links).toBe(true);
         expect(gantt.render).toHaveBeenCalled();
     });
 
-    it('restores desktop interactions without re-enabling task resize', async () => {
+    it('[SCN-GUI-010] restores desktop interactions and re-enables task resize', async () => {
         setViewportWidth(375);
         const media = mockMatchMedia();
         const { initResponsive } = await importResponsive();
@@ -101,7 +101,7 @@ describe('responsive gantt drag configuration', () => {
         media.dispatchChange(false);
 
         expect(gantt.config.drag_move).toBe(true);
-        expect(gantt.config.drag_resize).toBe(false);
+        expect(gantt.config.drag_resize).toBe(true);
         expect(gantt.config.drag_progress).toBe(true);
         expect(gantt.config.drag_links).toBe(true);
     });
