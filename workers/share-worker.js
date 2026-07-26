@@ -596,6 +596,27 @@ function serializeAdminIssue(issue) {
     };
 }
 
+function serializeAdminIssueSummary(issue) {
+    const ai = normalizeAiClassification(issue);
+    const workflow = normalizeWorkflow(issue);
+
+    return {
+        ...serializePublicIssue({
+            ...issue,
+            ai,
+            workflow,
+        }),
+        ai,
+        workflow: {
+            status: workflow.status,
+            priority: workflow.priority,
+            assignee: workflow.assignee,
+            publicNote: workflow.publicNote,
+            updatedAt: workflow.updatedAt,
+        },
+    };
+}
+
 async function readFeedbackIssue(env, key) {
     const store = getFeedbackStore(env);
     if (!store) return null;
@@ -1103,7 +1124,7 @@ function renderFeedbackBoardPage(apiBase = '') {
 
     .sidebar {
       display: grid;
-      grid-template-rows: auto auto 1fr;
+      grid-template-rows: auto auto auto minmax(0, 1fr);
       background: var(--panel);
       border: 1px solid var(--line);
       border-radius: 13px;
@@ -2912,7 +2933,7 @@ export default {
             return jsonResponse(
                 {
                     issues: result.issues.map((issue) =>
-                        isAdmin ? serializeAdminIssue(issue) : serializePublicIssue(issue)
+                        isAdmin ? serializeAdminIssueSummary(issue) : serializePublicIssue(issue)
                     ),
                     cursor: result.cursor,
                     listComplete: result.listComplete,

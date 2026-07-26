@@ -791,6 +791,7 @@ describe('feedback issue board Worker routes', () => {
         const html = await pageResponse.text();
 
         expect(html).toContain('.filters button');
+        expect(html).toContain('grid-template-rows: auto auto auto minmax(0, 1fr);');
         expect(html).toContain('min-width: 56px;');
         expect(html).toContain('min-height: 32px;');
         expect(html).toContain('white-space: nowrap;');
@@ -818,6 +819,44 @@ describe('feedback issue board Worker routes', () => {
         expect(JSON.stringify(body)).not.toContain('secret-image');
         expect(JSON.stringify(body)).not.toContain('secret stack');
         expect(JSON.stringify(body)).not.toContain('Full UA');
+    });
+
+    it('returns lightweight admin issue summaries while keeping evidence for detail requests', async () => {
+        const sessionResponse = await request(
+            '/api/feedback/admin/session',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: 'admin-pass' }),
+            },
+            env
+        );
+        const session = await json(sessionResponse);
+        const response = await request(
+            '/api/feedback/issues?limit=100',
+            {
+                headers: { Authorization: `Bearer ${session.token}` },
+            },
+            env
+        );
+        const body = await json(response);
+        const issue = body.issues[0];
+
+        expect(response.status).toBe(200);
+        expect(issue).toMatchObject({
+            key: feedbackKey,
+            title: 'Cannot save task',
+            status: 'open',
+            priority: 'medium',
+            attachmentCount: 2,
+            replayEventCount: 12,
+        });
+        expect(issue).not.toHaveProperty('attachments');
+        expect(issue).not.toHaveProperty('context');
+        expect(issue).not.toHaveProperty('contact');
+        expect(issue).not.toHaveProperty('description');
+        expect(JSON.stringify(body)).not.toContain('secret-image');
+        expect(JSON.stringify(body)).not.toContain('secret stack');
     });
 
     it('preserves legacy type values as submitted business type', async () => {
