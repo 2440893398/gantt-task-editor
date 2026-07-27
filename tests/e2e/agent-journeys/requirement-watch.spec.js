@@ -157,4 +157,58 @@ test.describe('requirement watch: 已拍板语义', () => {
         expect(parentAssignee).toContain('阿珍');
         expect(parentAssignee).toContain('阿强');
     });
+
+    test('[SCN-AGT-027] 父子任务间依赖被拒绝且排期保持稳定', async ({ page }) => {
+        const seeded = await runBatch(page, [
+            {
+                op: 'task.create',
+                as: 'parent',
+                args: {
+                    values: {
+                        text: '汇总阶段',
+                        assignee: '项目组',
+                        start_date: '2026-03-02',
+                        duration: 5,
+                    },
+                },
+            },
+            {
+                op: 'task.create',
+                as: 'child',
+                args: {
+                    parent: '$parent',
+                    values: {
+                        text: '阶段子任务',
+                        assignee: '阿珍',
+                        start_date: '2026-03-02',
+                        duration: 5,
+                    },
+                },
+            },
+        ]);
+        expect(seeded.ok, JSON.stringify(seeded.error ?? {})).toBe(true);
+
+        const outcome = await page.evaluate(async () => {
+            const before = await window.app.task.list({
+                fields: ['id', 'text', 'start_date', 'end_date'],
+            });
+            const parent = before.data.find((task) => task.text === '汇总阶段');
+            const child = before.data.find((task) => task.text === '阶段子任务');
+            const linked = await window.app.link.add({
+                source: parent.id,
+                target: child.id,
+                type: 'fs',
+            });
+            const after = await window.app.task.list({
+                fields: ['id', 'text', 'start_date', 'end_date'],
+            });
+            const links = await window.app.link.list();
+            return { before: before.data, linked, after: after.data, links: links.data };
+        });
+
+        expect(outcome.linked.ok).toBe(false);
+        expect(outcome.linked.error?.code).toBe('CYCLE');
+        expect(outcome.links).toEqual([]);
+        expect(outcome.after).toEqual(outcome.before);
+    });
 });

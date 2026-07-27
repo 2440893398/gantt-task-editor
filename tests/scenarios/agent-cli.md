@@ -36,6 +36,7 @@
 | SCN-AGT-024 | P1 | 父任务聚合：子任务负责人不同时，父任务 assignee 聚合去重全部负责人；父任务工时为子任务工时合计 | 父任务 assignee 同时包含全部子任务负责人；工时合计由 estimated_hours/actual_hours 求和上卷承载（EXC-AGT-02 拍板语义，BUG-AGT-05 已修复 2026-07-15） | active |
 | SCN-AGT-025 | P1 | `schedule.setDates` 用任意两个排期字段补齐第三个，且预演准确披露派生变更 | 无开始日期任务传 `end+duration` 后生成 start；仅传 duration 时 dry-run diff 同时包含派生的 end，真实提交与预演一致 | active |
 | SCN-AGT-026 | P1 | 小数日工期在 FS 依赖重排后保持精度 | 下游 duration=0.5 时，重排后 start/end 相差 12 小时且 duration 仍为 0.5，不得坍缩为零长度 | active |
+| SCN-AGT-027 | P0 | 层级与依赖组合循环防护：父子/祖孙任务之间不得创建依赖 | UI 连线与 `link.add` 均拒绝祖先与后代之间的依赖，返回可恢复错误；链接数和任务日期不变，页面保持响应且不持续重绘 | active |
 
 ## 已知缺陷（全部已于 2026-07-15 修复；守望标记已摘除，对应测试转为回归保护）
 
@@ -67,3 +68,4 @@
 | 2026-07-15 | BUG-AGT-01~05 全部修复（work_time=false 日历天总开关、重排/move 工期守恒、setDates 字段补齐+撤销注册、受约束 move 显式 CONSTRAINT、assignee 聚合）；守望标记全部摘除，requirement-watch 转回归保护；黄金答案 3 份按新语义重录；4 个断言旧语义的单测更新并新增 9 个回归单测 | 拍板决策落地；单测 1170 全绿、agent e2e 27 全绿 |
 | 2026-07-16 | 修复冲击面全量验证：stash 前后各跑一次全量 e2e 做集合对比。基线（改动前）已有 120 个存量失败；本次改动净效果 = 修好 6 个（Excel 导出数据/层级等）+ 引入 0 个回归（唯一新增失败是断言旧 work_time 配置的测试，已按拍板语义更新；另一条 gantt-ux TC-011 复跑通过属偶发） | results-baseline.json / results-after-fix.json 集合对比；114 条存量失败与本次无关，已另行立项 |
 | 2026-07-17 | 新增 SCN-AGT-025/026，覆盖排期字段补齐、dry-run 派生 diff 与小数日依赖重排 | 未提交改动独立审查发现计划/提交不一致、无 start 早退及 `Date#setDate` 截断小数日 |
+| 2026-07-27 | 新增 SCN-AGT-027，覆盖父子/祖孙任务间依赖的隐式调度循环 | 反馈 `feedback:1785133854652:wmrdjik6e1` 的 rrweb 证据显示父任务→子任务 FS 依赖导致日期跨异常年份循环漂移，并在 0.76 秒内触发 60 次甘特图重建 |

@@ -597,6 +597,43 @@ describe('父任务字段联动 (Parent Field Rollup)', () => {
 });
 
 describe('scheduler parent rollup events', () => {
+    test('[SCN-AGT-027] rejects a dependency between a parent and its descendant', () => {
+        const parent = {
+            id: 1,
+            parent: 0,
+            start_date: new Date('2026-02-01'),
+            end_date: new Date('2026-02-06'),
+            duration: 5,
+        };
+        const child = {
+            id: 2,
+            parent: 1,
+            start_date: new Date('2026-02-02'),
+            end_date: new Date('2026-02-06'),
+            duration: 4,
+        };
+        const handlers = {};
+
+        global.gantt = {
+            attachEvent: vi.fn((name, handler) => {
+                handlers[name] = handler;
+            }),
+            getTask: vi.fn((id) => ({ 1: parent, 2: child })[id]),
+            getChildren: vi.fn((id) => (id === 1 ? [2] : [])),
+            getLinks: vi.fn(() => []),
+            updateTask: vi.fn(),
+        };
+        window.showToast = vi.fn();
+
+        initScheduler();
+
+        expect(handlers.onBeforeLinkAdd(10, { source: 1, target: 2, type: '0' })).toBe(false);
+        expect(window.showToast).toHaveBeenCalledWith(
+            '无法创建依赖：父任务与其子孙任务之间不能建立依赖',
+            'error'
+        );
+    });
+
     test('duration recalculation does not reschedule successor tasks through update events', () => {
         const predecessor = {
             id: 1,
@@ -637,6 +674,53 @@ describe('scheduler parent rollup events', () => {
         expect(global.gantt.getLinks).not.toHaveBeenCalled();
         expect(successor.start_date).toEqual(new Date('2026-02-10'));
         expect(successor.end_date).toEqual(new Date('2026-02-12'));
+    });
+
+    test('internal dependency updates schedule each downstream task once', async () => {
+        const first = {
+            id: 1,
+            parent: 0,
+            start_date: new Date('2026-02-02'),
+            end_date: new Date('2026-02-03'),
+            duration: 1,
+        };
+        const second = {
+            id: 2,
+            parent: 0,
+            start_date: new Date('2026-02-03'),
+            end_date: new Date('2026-02-04'),
+            duration: 1,
+        };
+        const third = {
+            id: 3,
+            parent: 0,
+            start_date: new Date('2026-02-04'),
+            end_date: new Date('2026-02-05'),
+            duration: 1,
+        };
+        const tasks = { 1: first, 2: second, 3: third };
+        const handlers = {};
+
+        global.gantt = {
+            attachEvent: vi.fn((name, handler) => {
+                handlers[name] = handler;
+            }),
+            getTask: vi.fn((id) => tasks[id]),
+            getChildren: vi.fn(() => []),
+            getLinks: vi.fn(() => [
+                { source: 1, target: 2, type: '0' },
+                { source: 2, target: 3, type: '0' },
+            ]),
+            updateTask: vi.fn((id) => {
+                handlers.onAfterTaskUpdate?.(id, tasks[id]);
+            }),
+        };
+
+        initScheduler();
+        await recalculateProjectSchedule(1);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(global.gantt.updateTask.mock.calls.map(([id]) => id)).toEqual([2, 3]);
     });
 
     test('task add/delete events recalculate the affected parent chain', () => {

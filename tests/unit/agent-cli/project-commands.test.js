@@ -215,6 +215,34 @@ describe('agent project hierarchy, link, and schedule commands', () => {
         expect(getProjectRev(projectId)).toBe(0);
     });
 
+    it('[SCN-AGT-027] rejects parent-child links without transaction or rev bump', async () => {
+        const gantt = createGantt({
+            tasks: [
+                { id: 1, text: 'Parent', parent: 0 },
+                { id: 2, text: 'Child', parent: 1 },
+            ],
+        });
+        const app = createApp(gantt);
+
+        await expect(app.link.add({ source: 1, target: 2, type: 'fs' })).resolves.toEqual({
+            ok: false,
+            error: {
+                code: 'CYCLE',
+                message: 'Dependency conflicts with the task hierarchy.',
+                hint: 'Link tasks from separate hierarchy branches, then retry link.add.',
+                nextAction: {
+                    command: 'link.list',
+                    args: { taskId: 1 },
+                    reason: 'Inspect existing dependency links.',
+                },
+            },
+            rev: 0,
+        });
+        expect(gantt.addLink).not.toHaveBeenCalled();
+        expect(runGanttTransaction).not.toHaveBeenCalled();
+        expect(getProjectRev(projectId)).toBe(0);
+    });
+
     it('moves schedules through scheduler utilities and exposes recalc command', async () => {
         const gantt = createGantt({
             tasks: [

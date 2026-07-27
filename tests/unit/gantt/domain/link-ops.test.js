@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { linkOps, listLinks } from '../../../../src/features/gantt/domain/link-ops.js';
 
-function createGantt(links = []) {
+function createGantt(links = [], tasks = []) {
     const linkMap = new Map(links.map((link) => [link.id, { ...link }]));
+    const taskMap = new Map(tasks.map((task) => [task.id, { ...task }]));
 
     return {
         addLink: vi.fn((link) => {
@@ -14,6 +15,7 @@ function createGantt(links = []) {
             linkMap.delete(id);
         }),
         getLinks: vi.fn(() => [...linkMap.values()].map((link) => ({ ...link }))),
+        getTask: vi.fn((id) => taskMap.get(id)),
     };
 }
 
@@ -32,6 +34,40 @@ describe('link ops', () => {
                 code: 'CYCLE',
                 message: 'Dependency would create a cycle.',
                 hint: 'Remove or reverse an existing dependency, then retry link.add.',
+            },
+        });
+        expect(gantt.addLink).not.toHaveBeenCalled();
+    });
+
+    it('[SCN-AGT-027] rejects dependencies between ancestors and descendants', () => {
+        const tasks = [
+            { id: 1, parent: 0 },
+            { id: 2, parent: 1 },
+            { id: 3, parent: 2 },
+            { id: 4, parent: 0 },
+        ];
+        const gantt = createGantt([], tasks);
+
+        for (const [source, target] of [
+            [1, 2],
+            [1, 3],
+            [3, 1],
+        ]) {
+            expect(linkOps.add.plan({ source, target, type: 'fs' }, { gantt })).toEqual({
+                ok: false,
+                error: {
+                    code: 'CYCLE',
+                    message: 'Dependency conflicts with the task hierarchy.',
+                    hint: 'Link tasks from separate hierarchy branches, then retry link.add.',
+                },
+            });
+        }
+
+        expect(linkOps.add.plan({ source: 1, target: 4, type: 'fs' }, { gantt })).toMatchObject({
+            diff: {
+                links: {
+                    added: [{ source: 1, target: 4, type: 'fs' }],
+                },
             },
         });
         expect(gantt.addLink).not.toHaveBeenCalled();

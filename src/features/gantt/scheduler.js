@@ -20,6 +20,7 @@ import {
     getHolidayDayByCountry,
     isPersonOnLeave,
 } from '../../core/storage.js';
+import { hasHierarchyDependencyConflict } from './domain/link-ops.js';
 import { rollupStatus, rollupAssignee, sumNumberField, rollupProgress } from './parent-rollup.js';
 import undoManager from './history/undoManager.js';
 
@@ -567,6 +568,17 @@ function bindLinkEvents() {
             }
             return false;
         }
+        if (hasHierarchyDependencyConflict(gantt, link.source, link.target)) {
+            if (window.showToast) {
+                window.showToast(
+                    '无法创建依赖：父任务与其子孙任务之间不能建立依赖',
+                    'error'
+                );
+            } else {
+                alert('无法创建依赖：父任务与其子孙任务之间不能建立依赖');
+            }
+            return false;
+        }
         return true;
     });
 
@@ -673,7 +685,13 @@ async function scheduleAsyncReschedule(taskId) {
             gantt.getTask(link.target).start_date = newStart;
             gantt.getTask(link.target).end_date = newEnd;
             gantt.getTask(link.target).duration = duration;
-            gantt.updateTask(link.target);
+            const previousSuppressState = suppressTaskUpdateReschedule;
+            suppressTaskUpdateReschedule = true;
+            try {
+                gantt.updateTask(link.target);
+            } finally {
+                suppressTaskUpdateReschedule = previousSuppressState;
+            }
 
             // 递归处理下游
             await scheduleAsyncReschedule(link.target);

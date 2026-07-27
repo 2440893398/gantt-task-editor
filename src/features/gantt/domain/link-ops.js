@@ -52,6 +52,50 @@ function isSameTaskId(firstId, secondId) {
     return String(firstId) === String(secondId);
 }
 
+function normalizeParent(parentId) {
+    return parentId === null || parentId === undefined || String(parentId) === '0'
+        ? 0
+        : parentId;
+}
+
+function getTaskSafe(gantt, taskId) {
+    if (!gantt || typeof gantt.getTask !== 'function') {
+        return null;
+    }
+
+    try {
+        return gantt.getTask(taskId) || null;
+    } catch {
+        return null;
+    }
+}
+
+function isAncestor(gantt, ancestorId, descendantId) {
+    const ancestorKey = String(ancestorId);
+    let current = getTaskSafe(gantt, descendantId);
+    const visited = new Set();
+
+    while (current && normalizeParent(current.parent) !== 0) {
+        const parentId = normalizeParent(current.parent);
+        const parentKey = String(parentId);
+        if (parentKey === ancestorKey) {
+            return true;
+        }
+        if (visited.has(parentKey)) {
+            return false;
+        }
+
+        visited.add(parentKey);
+        current = getTaskSafe(gantt, parentId);
+    }
+
+    return false;
+}
+
+export function hasHierarchyDependencyConflict(gantt, source, target) {
+    return isAncestor(gantt, source, target) || isAncestor(gantt, target, source);
+}
+
 function wouldCreateCycle(links, source, target) {
     if (isSameTaskId(source, target)) {
         return true;
@@ -104,6 +148,17 @@ function cycleFailure() {
     };
 }
 
+function hierarchyCycleFailure() {
+    return {
+        ok: false,
+        error: {
+            code: 'CYCLE',
+            message: 'Dependency conflicts with the task hierarchy.',
+            hint: 'Link tasks from separate hierarchy branches, then retry link.add.',
+        },
+    };
+}
+
 function findLink(args, links) {
     if (args.id !== undefined) {
         return links.find((link) => String(link.id) === String(args.id));
@@ -118,10 +173,15 @@ function findLink(args, links) {
 }
 
 function addPlan(args, ctx) {
+    const gantt = resolveGantt(ctx);
     const rawLinks = getRawLinks(ctx);
 
     if (wouldCreateCycle(rawLinks, args.source, args.target)) {
         return cycleFailure();
+    }
+
+    if (hasHierarchyDependencyConflict(gantt, args.source, args.target)) {
+        return hierarchyCycleFailure();
     }
 
     const link = {
