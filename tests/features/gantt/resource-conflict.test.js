@@ -81,6 +81,23 @@ describe('detectResourceConflicts', () => {
         expect(result.conflictTaskIds.size).toBe(0);
     });
 
+    it('should not overload a single long task when duration includes non-workdays', async () => {
+        mockGantt.getTaskByTime.mockReturnValue([
+            {
+                id: 19,
+                type: 'task',
+                assignee: 'Liu',
+                start_date: new Date(2026, 6, 27),
+                end_date: new Date(2026, 7, 27),
+                duration: 31,
+            },
+        ]);
+
+        const result = await detectResourceConflicts();
+        expect(result.conflictTaskIds.size).toBe(0);
+        expect(result.conflictDetails).toEqual({});
+    });
+
     it('should detect conflicts when workload exceeds 8 hours', async () => {
         mockGantt.getTaskByTime.mockReturnValue([
             {

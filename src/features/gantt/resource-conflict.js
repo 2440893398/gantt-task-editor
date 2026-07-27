@@ -183,16 +183,10 @@ export async function detectResourceConflicts() {
             // Hour-level task: direct calculation
             hoursPerDay = duration * 8;
         } else {
-            // For multi-day tasks, distribute evenly or assume 8h if duration matches days
-            // Simplified: 8 hours per day usually
-            // However, if duration is 1.5 days, how is it distributed?
-            // Gantt usually treats duration in working time units.
-            // If duration is 1.5 days (12 hours) and spans 2 days.
-            // We'll simplify: spread duration equally across work days, max 8h/day.
-            // But for this feature, "overload" means > 8h/day.
-            // If a task is 1 day, it's 8h.
-            // If we have strict duration, we can use that.
-            hoursPerDay = (duration * 8) / workDays.length;
+            // Calendar-day duration can include weekends while workDays excludes them.
+            // A single all-day task must therefore stay capped at one workday of load;
+            // overload is produced by multiple assignments on the same day.
+            hoursPerDay = Math.min(8, (duration * 8) / workDays.length);
         }
 
         workDays.forEach((day) => {

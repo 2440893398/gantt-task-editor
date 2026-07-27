@@ -97,6 +97,39 @@ test.describe('Gantt v1.5 Features', () => {
         );
     });
 
+    test('[SCN-GUI-006] Single long task is not a resource conflict', async ({ page }) => {
+        await page.evaluate(() => {
+            const visibleStart = new Date(gantt.getTaskByIndex(0).start_date);
+            gantt.addTask({
+                id: 8010,
+                text: 'Single cross-week task',
+                start_date: visibleStart,
+                duration: 31,
+                assignee: 'Alice',
+            });
+            gantt.addTask({
+                id: 8011,
+                text: 'Detection sentinel A',
+                start_date: visibleStart,
+                duration: 8,
+                assignee: 'Bob',
+            });
+            gantt.addTask({
+                id: 8012,
+                text: 'Detection sentinel B',
+                start_date: visibleStart,
+                duration: 8,
+                assignee: 'Bob',
+            });
+            gantt.showTask(8010);
+        });
+
+        const singleTask = page.locator('.gantt_task_line[task_id="8010"]');
+        const detectionSentinel = page.locator('.gantt_task_line[task_id="8011"]');
+        await expect(detectionSentinel).toHaveClass(/resource-conflict/, { timeout: 15000 });
+        await expect(singleTask).not.toHaveClass(/resource-conflict/);
+    });
+
     test('Snapping config is enabled', async ({ page }) => {
         const config = await page.evaluate(() => {
             return {
