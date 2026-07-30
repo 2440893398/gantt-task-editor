@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { TextDecoder } from 'node:util';
 import worker from '../../../workers/share-worker.js';
@@ -6,13 +6,17 @@ import worker from '../../../workers/share-worker.js';
 class MemoryKV {
     constructor(seed = {}) {
         this.map = new Map(Object.entries(seed));
+        this.getCalls = [];
+        this.putCalls = [];
     }
 
     async get(key) {
+        this.getCalls.push(key);
         return this.map.get(key) || null;
     }
 
     async put(key, value) {
+        this.putCalls.push({ key, value });
         this.map.set(key, value);
     }
 
@@ -29,6 +33,583 @@ class MemoryKV {
             keys,
             list_complete: true,
             cursor: undefined,
+        };
+    }
+}
+
+class MemoryR2 {
+    constructor(options = {}) {
+        this.objects = new Map();
+        this.putCalls = [];
+        this.deleteCalls = [];
+        this.failPutAt = options.failPutAt || 0;
+    }
+
+    async put(key, value, options = {}) {
+        if (this.failPutAt && this.putCalls.length + 1 === this.failPutAt) {
+            throw new Error('R2 upload failed');
+        }
+        const bytes = new Uint8Array(value);
+        this.putCalls.push({ key, value: bytes, options });
+        this.objects.set(key, { value: bytes, options });
+    }
+
+    async delete(key) {
+        this.deleteCalls.push(key);
+        this.objects.delete(key);
+    }
+
+    async get(key) {
+        const stored = this.objects.get(key);
+        if (!stored) return null;
+        return {
+            body: stored.value,
+            httpMetadata: stored.options.httpMetadata || {},
+            text: async () => new TextDecoder().decode(stored.value),
+        };
+    }
+}
+
+class MemoryD1Statement {
+    constructor(database, query) {
+        this.database = database;
+        this.query = query;
+        this.values = [];
+    }
+
+    bind(...values) {
+        this.values = values;
+        return this;
+    }
+
+    async first() {
+        const result = await this.database.execute(this.query, this.values);
+        return result.results[0] || null;
+    }
+
+    async all() {
+        return this.database.execute(this.query, this.values);
+    }
+
+    async run() {
+        return this.database.execute(this.query, this.values);
+    }
+}
+
+class MemoryD1 {
+    constructor(seed = {}) {
+        this.tables = {
+            feedback_issues: new Map(),
+            feedback_events: new Map(),
+            feedback_attachments: new Map(),
+            feedback_migration_state: new Map(),
+            feedback_settings: new Map(),
+            feedback_human_actions: new Map(),
+            feedback_deliveries: new Map(),
+        };
+        this.queries = [];
+
+        for (const row of seed.feedback_settings || []) {
+            this.tables.feedback_settings.set(row.name, { ...row });
+        }
+        for (const row of seed.feedback_human_actions || []) {
+            this.tables.feedback_human_actions.set(row.id, { ...row });
+        }
+        for (const row of seed.feedback_deliveries || []) {
+            this.tables.feedback_deliveries.set(row.id, { ...row });
+        }
+
+        for (const row of seed.feedback_issues || []) {
+            this.tables.feedback_issues.set(row.id, { ...row });
+        }
+        for (const row of seed.feedback_events || []) {
+            this.tables.feedback_events.set(row.id, { ...row });
+        }
+        for (const row of seed.feedback_attachments || []) {
+            this.tables.feedback_attachments.set(row.id, { ...row });
+        }
+        for (const row of seed.feedback_migration_state || []) {
+            this.tables.feedback_migration_state.set(row.name, { ...row });
+        }
+    }
+
+    prepare(query) {
+        return new MemoryD1Statement(this, query);
+    }
+
+    async batch(statements) {
+        const snapshots = Object.fromEntries(
+            Object.entries(this.tables).map(([name, rows]) => [
+                name,
+                new Map(Array.from(rows.entries(), ([key, value]) => [key, { ...value }])),
+            ])
+        );
+        const results = [];
+        try {
+            for (const statement of statements) {
+                results.push(await statement.run());
+            }
+            return results;
+        } catch (error) {
+            for (const [name, rows] of Object.entries(snapshots)) {
+                this.tables[name] = rows;
+            }
+            throw error;
+        }
+    }
+
+    async execute(query, values) {
+        const normalized = query.replace(/\s+/g, ' ').trim().toLowerCase();
+        this.queries.push({ query: normalized, values });
+
+        const workbenchResult = this.executeWorkbenchQuery(normalized, values);
+        if (workbenchResult) return workbenchResult;
+
+        if (normalized.startsWith('select') && normalized.includes('from feedback_issues')) {
+            if (normalized.includes('where id = ?')) {
+                const row = this.tables.feedback_issues.get(values[0]);
+                return { success: true, results: row ? [{ ...row }] : [] };
+            }
+
+            const status = normalized.includes('where status = ?') ? values[0] : '';
+            const hasCursor = normalized.includes('created_at < ?');
+            const cursorOffset = status ? 1 : 0;
+            const cursorCreatedAt = hasCursor ? values[cursorOffset] : '';
+            const cursorId = hasCursor ? values[cursorOffset + 2] : '';
+            const limit = Number(values[values.length - 1]) || 100;
+            const rows = Array.from(this.tables.feedback_issues.values())
+                .filter((row) => !status || row.status === status)
+                .filter(
+                    (row) =>
+                        !hasCursor ||
+                        row.created_at < cursorCreatedAt ||
+                        (row.created_at === cursorCreatedAt && row.id < cursorId)
+                )
+                .sort(
+                    (a, b) =>
+                        String(b.created_at).localeCompare(String(a.created_at)) ||
+                        String(b.id).localeCompare(String(a.id))
+                )
+                .slice(0, limit);
+            return { success: true, results: rows.map((row) => ({ ...row })) };
+        }
+
+        if (
+            normalized.startsWith('select') &&
+            normalized.includes('from feedback_migration_state')
+        ) {
+            const row = this.tables.feedback_migration_state.get(values[0]);
+            return { success: true, results: row ? [{ ...row }] : [] };
+        }
+
+        if (normalized.startsWith('select') && normalized.includes('from feedback_events')) {
+            const publicOnly = normalized.includes("visibility = 'public'");
+            const rows = Array.from(this.tables.feedback_events.values())
+                .filter((row) => row.issue_id === values[0])
+                .filter((row) => !publicOnly || row.visibility === 'public')
+                .sort((a, b) => a.sequence - b.sequence);
+            return { success: true, results: rows.map((row) => ({ ...row })) };
+        }
+
+        if (normalized.startsWith('select') && normalized.includes('from feedback_attachments')) {
+            if (normalized.includes('where id = ?')) {
+                const row = this.tables.feedback_attachments.get(values[0]);
+                return { success: true, results: row ? [{ ...row }] : [] };
+            }
+            const rows = Array.from(this.tables.feedback_attachments.values())
+                .filter((row) => row.issue_id === values[0])
+                .sort((a, b) => a.legacy_attachment_index - b.legacy_attachment_index);
+            return { success: true, results: rows.map((row) => ({ ...row })) };
+        }
+
+        if (normalized.startsWith('update feedback_issues set')) {
+            const [
+                title,
+                description,
+                sourceType,
+                submittedType,
+                businessType,
+                scope,
+                automationDecision,
+                aiConfidence,
+                aiClassifiedAt,
+                status,
+                priority,
+                assignee,
+                publicNote,
+                internalNote,
+                updatedAt,
+                resolvedAt,
+                issueId,
+                expectedVersion,
+                eventId,
+            ] = values;
+            const current = this.tables.feedback_issues.get(issueId);
+            const event = eventId ? this.tables.feedback_events.get(eventId) : null;
+            if (
+                !current ||
+                current.version !== expectedVersion ||
+                (eventId && event?.issue_id !== issueId)
+            ) {
+                return { success: true, results: [], meta: { changes: 0 } };
+            }
+
+            const next = {
+                ...current,
+                title,
+                description,
+                source_type: sourceType,
+                submitted_type: submittedType,
+                business_type: businessType,
+                scope,
+                automation_decision: automationDecision,
+                ai_confidence: aiConfidence,
+                ai_classified_at: aiClassifiedAt,
+                status,
+                priority,
+                assignee,
+                legacy_public_note: publicNote,
+                legacy_internal_note: internalNote,
+                updated_at: updatedAt,
+                resolved_at: resolvedAt,
+                version: current.version + 1,
+            };
+            this.tables.feedback_issues.set(issueId, next);
+            return { success: true, results: [{ ...next }], meta: { changes: 1 } };
+        }
+
+        if (
+            normalized.startsWith('insert into feedback_events') &&
+            normalized.includes('select ?, id')
+        ) {
+            const [
+                id,
+                type,
+                actorType,
+                actorId,
+                visibility,
+                runId,
+                occurredAt,
+                bodyJson,
+                metadataJson,
+                legacyHash,
+                issueId,
+                expectedVersion,
+            ] = values;
+            const issue = this.tables.feedback_issues.get(issueId);
+            if (
+                !issue ||
+                issue.version !== expectedVersion ||
+                this.tables.feedback_events.has(id)
+            ) {
+                return { success: true, results: [], meta: { changes: 0 } };
+            }
+
+            const sequence =
+                Math.max(
+                    0,
+                    ...Array.from(this.tables.feedback_events.values())
+                        .filter((row) => row.issue_id === issueId)
+                        .map((row) => row.sequence)
+                ) + 1;
+            this.tables.feedback_events.set(id, {
+                id,
+                issue_id: issueId,
+                sequence,
+                type,
+                actor_type: actorType,
+                actor_id: actorId,
+                visibility,
+                run_id: runId,
+                occurred_at: occurredAt,
+                body_json: bodyJson,
+                metadata_json: metadataJson,
+                legacy_hash: legacyHash,
+            });
+            return { success: true, results: [], meta: { changes: 1 } };
+        }
+
+        if (normalized.startsWith('insert into feedback_migration_state')) {
+            const [name, cursor, completed, updatedAt] = values;
+            this.tables.feedback_migration_state.set(name, {
+                name,
+                cursor,
+                completed,
+                updated_at: updatedAt,
+            });
+            return { success: true, results: [], meta: { changes: 1 } };
+        }
+
+        const insert = normalized.match(/^insert into ([a-z_]+)\s*\(([^)]+)\)/);
+        if (insert) {
+            const [, tableName, rawColumns] = insert;
+            const columns = rawColumns.split(',').map((column) => column.trim());
+            const row = Object.fromEntries(columns.map((column, index) => [column, values[index]]));
+            const table = this.tables[tableName];
+            const id = row.id;
+
+            if (!table) throw new Error(`Unsupported in-memory D1 table: ${tableName}`);
+            if (!table.has(id)) {
+                table.set(id, row);
+                return { success: true, results: [], meta: { changes: 1 } };
+            }
+            return { success: true, results: [], meta: { changes: 0 } };
+        }
+
+        throw new Error(`Unsupported in-memory D1 query: ${normalized}`);
+    }
+
+    /** Workbench V2 statements (settings, human actions, deliveries, comments). */
+    executeWorkbenchQuery(normalized, values) {
+        const ok = (results = [], changes = results.length) => ({
+            success: true,
+            results,
+            meta: { changes },
+        });
+
+        // --- feedback_settings ---
+        if (normalized.includes('from feedback_settings where name = ?')) {
+            const row = this.tables.feedback_settings.get(values[0]);
+            return ok(row ? [{ ...row }] : []);
+        }
+        if (normalized.startsWith('insert into feedback_settings')) {
+            const [name, valueJson, updatedAt] = values;
+            if (this.tables.feedback_settings.has(name)) return ok([]);
+            this.tables.feedback_settings.set(name, {
+                name,
+                value_json: valueJson,
+                version: 1,
+                updated_at: updatedAt,
+                updated_by: 'admin',
+            });
+            return ok([{ version: 1 }]);
+        }
+        if (normalized.startsWith('update feedback_settings')) {
+            const [valueJson, updatedAt, name, expectedVersion] = values;
+            const current = this.tables.feedback_settings.get(name);
+            if (!current || current.version !== expectedVersion) return ok([]);
+            const next = {
+                ...current,
+                value_json: valueJson,
+                version: current.version + 1,
+                updated_at: updatedAt,
+            };
+            this.tables.feedback_settings.set(name, next);
+            return ok([{ version: next.version }]);
+        }
+
+        // --- feedback_human_actions ---
+        if (normalized.includes('from feedback_human_actions where id = ?')) {
+            const row = this.tables.feedback_human_actions.get(values[0]);
+            return ok(row ? [{ ...row }] : []);
+        }
+        if (normalized.includes('from feedback_human_actions where issue_id = ?')) {
+            const activeOnly = normalized.includes("status = 'active'");
+            const rows = Array.from(this.tables.feedback_human_actions.values())
+                .filter((row) => row.issue_id === values[0])
+                .filter((row) => !activeOnly || row.status === 'active')
+                .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+            return ok(rows.map((row) => ({ ...row })));
+        }
+        if (normalized.startsWith('update feedback_human_actions')) {
+            const [resolvedAt, resolutionJson, actionId] = values;
+            const current = this.tables.feedback_human_actions.get(actionId);
+            if (!current || current.status !== 'active') return ok([]);
+            const next = {
+                ...current,
+                status: 'resolved',
+                resolved_at: resolvedAt,
+                resolution_json: resolutionJson,
+            };
+            this.tables.feedback_human_actions.set(actionId, next);
+            return ok([{ id: actionId }]);
+        }
+
+        // --- feedback_deliveries ---
+        if (normalized.startsWith('insert into feedback_deliveries')) {
+            const [
+                id,
+                eventId,
+                destination,
+                idempotencyKey,
+                workflowInstanceId,
+                nextAttemptAt,
+                createdAt,
+                updatedAt,
+            ] = values;
+            const duplicate = Array.from(this.tables.feedback_deliveries.values()).some(
+                (row) => row.idempotency_key === idempotencyKey
+            );
+            if (duplicate) return ok([]);
+            this.tables.feedback_deliveries.set(id, {
+                id,
+                event_id: eventId,
+                destination,
+                idempotency_key: idempotencyKey,
+                workflow_instance_id: workflowInstanceId,
+                status: 'pending',
+                attempt_count: 0,
+                next_attempt_at: nextAttemptAt,
+                response_status: null,
+                last_error: null,
+                created_at: createdAt,
+                updated_at: updatedAt,
+            });
+            return ok([{ id }]);
+        }
+        if (
+            normalized.includes('from feedback_deliveries') &&
+            normalized.includes('group by status')
+        ) {
+            const totals = new Map();
+            for (const row of this.tables.feedback_deliveries.values()) {
+                totals.set(row.status, (totals.get(row.status) || 0) + 1);
+            }
+            return ok(Array.from(totals, ([status, total]) => ({ status, total })));
+        }
+        if (normalized.includes('from feedback_deliveries d')) {
+            const rows = Array.from(this.tables.feedback_deliveries.values())
+                .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))
+                .slice(0, 10)
+                .map((row) => ({
+                    ...row,
+                    event_type: this.tables.feedback_events.get(row.event_id)?.type || null,
+                }));
+            return ok(rows);
+        }
+
+        // --- aggregate over issues ---
+        if (normalized.startsWith('select count(*) as total from feedback_issues')) {
+            const status = normalized.match(/status = '([a-z_]+)'/)?.[1];
+            const total = Array.from(this.tables.feedback_issues.values()).filter(
+                (row) => !status || row.status === status
+            ).length;
+            return ok([{ total }]);
+        }
+
+        // --- append-only event inserts with literal event types ---
+        const eventInsert = this.parseEventSelectInsert(normalized, values);
+        if (eventInsert) {
+            const { row, issueId, expectedVersion, sequenceOffset } = eventInsert;
+            const issue = this.tables.feedback_issues.get(issueId);
+            if (
+                !issue ||
+                (expectedVersion !== undefined && issue.version !== expectedVersion) ||
+                this.tables.feedback_events.has(row.id)
+            ) {
+                return ok([], 0);
+            }
+
+            const maxSequence = Math.max(
+                0,
+                ...Array.from(this.tables.feedback_events.values())
+                    .filter((item) => item.issue_id === issueId)
+                    .map((item) => item.sequence)
+            );
+            this.tables.feedback_events.set(row.id, {
+                ...row,
+                issue_id: issueId,
+                sequence: maxSequence + sequenceOffset,
+            });
+            return ok([], 1);
+        }
+
+        // --- status-only issue updates (comment / reopen / human action) ---
+        if (normalized.startsWith('update feedback_issues set status = ?')) {
+            const guardedByVersion = normalized.includes('version = ?');
+            const [status] = values;
+            const issueId = guardedByVersion ? values[3] : values[values.length - 1];
+            const expectedVersion = guardedByVersion ? values[4] : undefined;
+            const eventId = guardedByVersion ? values[5] : null;
+            const current = this.tables.feedback_issues.get(issueId);
+            const event = eventId ? this.tables.feedback_events.get(eventId) : null;
+            if (
+                !current ||
+                (expectedVersion !== undefined && current.version !== expectedVersion) ||
+                (eventId && event?.issue_id !== issueId)
+            ) {
+                return ok([], 0);
+            }
+
+            const next = {
+                ...current,
+                status,
+                updated_at: guardedByVersion ? values[1] : values[values.length - 2],
+                version: current.version + 1,
+            };
+            if (!guardedByVersion) {
+                next.active_human_action_id = null;
+                if (values[1]) next.active_candidate_id = values[1];
+            }
+            this.tables.feedback_issues.set(issueId, next);
+            return ok([{ id: issueId }]);
+        }
+        if (normalized.startsWith("update feedback_issues set status = 'open'")) {
+            const [updatedAt, issueId, expectedVersion, eventId] = values;
+            const current = this.tables.feedback_issues.get(issueId);
+            const event = this.tables.feedback_events.get(eventId);
+            if (!current || current.version !== expectedVersion || event?.issue_id !== issueId) {
+                return ok([], 0);
+            }
+            const next = {
+                ...current,
+                status: 'open',
+                resolved_at: null,
+                updated_at: updatedAt,
+                version: current.version + 1,
+            };
+            this.tables.feedback_issues.set(issueId, next);
+            return ok([{ id: issueId }]);
+        }
+
+        return null;
+    }
+
+    /**
+     * Maps `INSERT INTO feedback_events (...) SELECT ?, id, (…sequence…), 'type', …`
+     * onto a row, so statements that inline the event type still resolve.
+     */
+    parseEventSelectInsert(normalized, values) {
+        const match = normalized.match(
+            /^insert into feedback_events \(([^)]+)\) select (.+) from feedback_issues where id = \?(?: and version = \?)?$/
+        );
+        if (!match) return null;
+
+        const columns = match[1].split(',').map((column) => column.trim());
+        let sequenceOffset = 1;
+        const selectList = match[2].replace(
+            /\(select coalesce\(max\(sequence\), 0\) \+ (\d+) from feedback_events where issue_id = feedback_issues\.id\)/,
+            (_full, offset) => {
+                sequenceOffset = Number(offset);
+                return '@sequence';
+            }
+        );
+
+        const tokens = selectList.split(',').map((token) => token.trim());
+        if (tokens.length !== columns.length) return null;
+
+        const row = {};
+        let cursor = 0;
+        tokens.forEach((token, index) => {
+            const column = columns[index];
+            if (token === '?') {
+                row[column] = values[cursor];
+                cursor += 1;
+            } else if (token === 'id' || token === '@sequence') {
+                row[column] = null;
+            } else if (token === 'null') {
+                row[column] = null;
+            } else {
+                row[column] = token.replace(/^'|'$/g, '');
+            }
+        });
+
+        const hasVersionGuard = normalized.endsWith('and version = ?');
+        return {
+            row,
+            issueId: values[cursor],
+            expectedVersion: hasVersionGuard ? values[cursor + 1] : undefined,
+            sequenceOffset,
         };
     }
 }
@@ -73,6 +654,39 @@ function createIssue(overrides = {}) {
     };
 }
 
+function createD1IssueRow(overrides = {}) {
+    return {
+        id: feedbackKey,
+        version: 1,
+        title: 'D1 issue title',
+        description: 'D1 issue description',
+        source_type: 'manual',
+        submitted_type: 'bug',
+        contact_encrypted: null,
+        contact_type: null,
+        attachment_count: 0,
+        context_json: JSON.stringify({
+            url: 'https://gantt-task-editor.pages.dev/d1',
+            project: { name: 'D1 Project' },
+        }),
+        business_type: 'bug',
+        scope: 'small',
+        automation_decision: '',
+        ai_confidence: '',
+        ai_classified_at: null,
+        status: 'open',
+        priority: 'medium',
+        assignee: '',
+        legacy_public_note: '',
+        legacy_internal_note: '',
+        legacy_kv_key: null,
+        created_at: '2026-07-28T08:00:00.000Z',
+        updated_at: '2026-07-28T08:00:00.000Z',
+        resolved_at: null,
+        ...overrides,
+    };
+}
+
 function createEnv(seed = {}) {
     const kv = new MemoryKV(seed);
 
@@ -81,6 +695,14 @@ function createEnv(seed = {}) {
         FEEDBACK_KV: kv,
         FEEDBACK_ADMIN_PASSWORD: 'admin-pass',
         FEEDBACK_ADMIN_TOKEN_SECRET: 'unit-test-secret',
+        FEEDBACK_PII_KEY: 'unit-test-pii-key',
+    };
+}
+
+function createV2Env(kvSeed = {}, d1Seed = {}) {
+    return {
+        ...createEnv(kvSeed),
+        FEEDBACK_DB: new MemoryD1(d1Seed),
     };
 }
 
@@ -137,6 +759,72 @@ async function waitFor(assertion) {
     throw lastError;
 }
 
+/**
+ * Boots the V2 workbench page (`/feedback`) in JSDOM with a stubbed API so the
+ * rendered UI — not a string snapshot — is what the assertions inspect.
+ */
+async function openWorkbench(env, { url = 'https://worker.test/feedback', routes = {} } = {}) {
+    const pageResponse = await request('/feedback', {}, env);
+    const html = await pageResponse.text();
+    const requests = [];
+    const dom = new JSDOM(html, {
+        runScripts: 'dangerously',
+        url,
+        pretendToBeVisual: true,
+        beforeParse(window) {
+            window.alert = () => {};
+            window.scrollTo = () => {};
+            window.fetch = async (path, options = {}) => {
+                requests.push({ path, options });
+                const route = routes[path];
+                if (!route) return Response.json({ error: 'not found' }, { status: 404 });
+                return typeof route === 'function' ? route(options) : Response.json(route);
+            };
+        },
+    });
+
+    dom.requests = requests;
+    return dom;
+}
+
+function ownerWorkbenchRoutes({ status = 'open', events, humanActions = [] } = {}) {
+    const detailPath = `/api/feedback/issues/${encodeURIComponent(feedbackKey)}`;
+
+    return {
+        [detailPath]: {
+            issue: {
+                key: feedbackKey,
+                title: 'Owner issue detail',
+                description: 'Visible only with the matching capability.',
+                receivedAt: '2026-07-28T08:00:00.000Z',
+                updatedAt: '2026-07-28T08:00:00.000Z',
+                status,
+                priority: 'medium',
+                businessType: 'bug',
+                scope: 'small',
+                attachments: [],
+                attachmentCount: 0,
+            },
+        },
+        [`${detailPath}/events`]: {
+            version: 1,
+            events: events || [
+                {
+                    id: 'evt_1',
+                    sequence: 1,
+                    type: 'issue.created',
+                    actorType: 'user',
+                    visibility: 'public',
+                    occurredAt: '2026-07-28T08:00:00.000Z',
+                    text: '',
+                    changes: {},
+                },
+            ],
+        },
+        [`${detailPath}/human-actions`]: { humanActions },
+    };
+}
+
 describe('feedback issue board Worker routes', () => {
     let env;
 
@@ -146,18 +834,49 @@ describe('feedback issue board Worker routes', () => {
         });
     });
 
-    it('serves the issue board page at /feedback', async () => {
-        const response = await request('/feedback', {}, env);
+    it('serves the legacy issue board at /feedback/legacy', async () => {
+        const response = await request('/feedback/legacy', {}, env);
         const html = await response.text();
 
         expect(response.status).toBe(200);
         expect(response.headers.get('Content-Type')).toContain('text/html');
+        expect(response.headers.get('Cache-Control')).toBe('no-store');
+        expect(response.headers.get('Referrer-Policy')).toBe('no-referrer');
+        expect(response.headers.get('Content-Security-Policy')).toContain("default-src 'self'");
         expect(html).toContain('Feedback Issues');
         expect(html).toContain('/api/feedback/issues');
+        expect(html).toContain('/feedback/assets/rrweb-replay-2.0.0-alpha.20.js');
+        expect(html).not.toContain('cdn.jsdelivr.net');
+        expect(html).not.toContain('rrweb-player@latest');
     });
 
-    it('serves the feedback handling workbench layout at /feedback', async () => {
-        const response = await request('/feedback', {}, env);
+    it('serves the pinned rrweb replay browser assets from the Worker origin', async () => {
+        const [scriptResponse, styleResponse] = await Promise.all([
+            request('/feedback/assets/rrweb-replay-2.0.0-alpha.20.js', {}, env),
+            request('/feedback/assets/rrweb-replay-2.0.0-alpha.20.css', {}, env),
+        ]);
+        const script = await scriptResponse.text();
+        const styles = await styleResponse.text();
+
+        expect(scriptResponse.status).toBe(200);
+        expect(scriptResponse.headers.get('Content-Type')).toContain('application/javascript');
+        expect(scriptResponse.headers.get('Cache-Control')).toBe(
+            'public, max-age=31536000, immutable'
+        );
+        expect(script).toContain('exports["rrweb"]');
+        const browser = new JSDOM('<!doctype html><body></body>', {
+            runScripts: 'outside-only',
+        });
+        browser.window.eval(script);
+        expect(typeof browser.window.rrweb?.Replayer).toBe('function');
+        browser.window.close();
+        expect(styleResponse.status).toBe(200);
+        expect(styleResponse.headers.get('Content-Type')).toContain('text/css');
+        expect(styles).toContain('.replayer-wrapper');
+    });
+
+    it('keeps the legacy board layout reachable at /feedback/legacy', async () => {
+        const response = await request('/feedback/legacy', {}, env);
         const html = await response.text();
 
         expect(response.status).toBe(200);
@@ -168,13 +887,25 @@ describe('feedback issue board Worker routes', () => {
         expect(html).toContain('@media (max-width: 1100px)');
     });
 
-    it('points the Pages-hosted feedback board at the configured feedback API backend', async () => {
+    it('only renders inline previews for the same inert raster image allowlist as the API', async () => {
+        const response = await request('/feedback/legacy', {}, env);
+        const html = await response.text();
+
+        expect(response.status).toBe(200);
+        expect(html).toContain(
+            "const inlineImageTypes = new Set(['image/avif', 'image/gif', 'image/jpeg', 'image/png', 'image/webp']);"
+        );
+        expect(html).toContain('const isImage = isInlineImageAttachment(att);');
+        expect(html).not.toContain("att.type.startsWith('image/')");
+    });
+
+    it('points the Pages-hosted legacy board at the configured feedback API backend', async () => {
         const pageEnv = {
             ...env,
             FEEDBACK_API_URL: 'https://gantt-share.ch451314.workers.dev',
         };
         const response = await worker.fetch(
-            new Request('https://gantt-task-editor.pages.dev/feedback'),
+            new Request('https://gantt-task-editor.pages.dev/feedback/legacy'),
             pageEnv
         );
         const html = await response.text();
@@ -203,6 +934,70 @@ describe('feedback issue board Worker routes', () => {
         expect(assetRequests).toEqual(['/projects/alpha']);
     });
 
+    it('[SCN-FWB-017] opens an owner capability link without enumerating issues', async () => {
+        const dom = await openWorkbench(env, {
+            url: `https://worker.test/feedback#issue=${encodeURIComponent(
+                feedbackKey
+            )}&capability=owner-token`,
+            routes: ownerWorkbenchRoutes(),
+        });
+
+        await waitFor(() => {
+            expect(dom.window.document.body.textContent).toContain('Owner issue detail');
+        });
+
+        const paths = dom.requests.map((entry) => entry.path);
+        expect(paths).toEqual(
+            expect.arrayContaining([
+                `/api/feedback/issues/${encodeURIComponent(feedbackKey)}`,
+                `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/events`,
+                `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/human-actions`,
+            ])
+        );
+        // Owner capability never enumerates the queue or reaches admin settings.
+        expect(paths).not.toContain('/api/feedback/issues');
+        expect(paths.some((path) => path.startsWith('/api/feedback/automation'))).toBe(false);
+        expect(
+            dom.requests.every(
+                (entry) => entry.options.headers.Authorization === 'Bearer owner-token'
+            )
+        ).toBe(true);
+    });
+
+    it('[SCN-FWB-019] tells the owner the link is the only way back, with no push notification', async () => {
+        const dom = await openWorkbench(env, {
+            url: `https://worker.test/feedback#issue=${encodeURIComponent(
+                feedbackKey
+            )}&capability=owner-token`,
+            routes: ownerWorkbenchRoutes({ status: 'needs_human' }),
+        });
+
+        await waitFor(() => {
+            expect(dom.window.document.getElementById('ownerNotice').hidden).toBe(false);
+        });
+
+        const notice = dom.window.document.getElementById('ownerNotice').textContent;
+        expect(notice).toContain('请保存此页面链接');
+        expect(notice).toContain('不会发送邮件、短信或 IM 通知');
+        // §21.1: the capability must not survive in the address bar.
+        expect(dom.window.location.hash).toBe('');
+    });
+
+    it('[SCN-FWB-017] hides admin surfaces until an admin session exists', async () => {
+        const dom = await openWorkbench(env, { routes: {} });
+
+        await waitFor(() => {
+            expect(dom.window.document.getElementById('loginView').className).toContain('active');
+        });
+
+        const doc = dom.window.document;
+        expect(doc.querySelector('[data-view="automations"]').hidden).toBe(true);
+        expect(doc.querySelector('[data-view="runners"]').hidden).toBe(true);
+        expect(doc.getElementById('queuePanel').hidden).toBe(true);
+        expect(doc.getElementById('composer').hidden).toBe(true);
+        expect(dom.requests).toHaveLength(0);
+    });
+
     it('renders admin workflow controls for admin issues without context', async () => {
         const noContextIssue = createIssue({ context: undefined });
         const sessionResponse = await request(
@@ -215,7 +1010,7 @@ describe('feedback issue board Worker routes', () => {
             env
         );
         const session = await json(sessionResponse);
-        const pageResponse = await request('/feedback', {}, env);
+        const pageResponse = await request('/feedback/legacy', {}, env);
         const html = await pageResponse.text();
         const dom = new JSDOM(html, {
             runScripts: 'dangerously',
@@ -312,7 +1107,7 @@ describe('feedback issue board Worker routes', () => {
                 replay: { eventCount: 1 },
             },
         });
-        const pageResponse = await request('/feedback', {}, env);
+        const pageResponse = await request('/feedback/legacy', {}, env);
         const html = await pageResponse.text();
         const dom = new JSDOM(html, {
             runScripts: 'dangerously',
@@ -390,7 +1185,7 @@ describe('feedback issue board Worker routes', () => {
                 replay: { eventCount: events.length },
             },
         });
-        const pageResponse = await request('/feedback', {}, env);
+        const pageResponse = await request('/feedback/legacy', {}, env);
         const html = await pageResponse.text();
         let playerEvents = [];
         const dom = new JSDOM(html, {
@@ -460,6 +1255,120 @@ describe('feedback issue board Worker routes', () => {
         expect(playerEvents[1].data.text).toBe('问题反馈复现');
     });
 
+    it('fetches and plays replay events stored behind a signed R2 attachment URL', async () => {
+        const events = [
+            { type: 4, data: { width: 1280, height: 720 } },
+            { type: 3, data: { source: 0, text: 'R2 replay event' } },
+        ];
+        const replayUrl =
+            'https://worker.test/api/feedback/attachments/att_replay?token=signed-token';
+        const replayIssue = createIssue({
+            attachments: [
+                {
+                    id: 'att_replay',
+                    name: 'feedback-rrweb-1780194478721.json',
+                    type: 'application/json',
+                    size: 180,
+                    url: replayUrl,
+                },
+            ],
+            context: {
+                replay: { eventCount: events.length },
+            },
+        });
+        const pageResponse = await request('/feedback/legacy', {}, env);
+        const html = await pageResponse.text();
+        const fetchedPaths = [];
+        let playerEvents = [];
+        let playCalls = 0;
+        const dom = new JSDOM(html, {
+            runScripts: 'dangerously',
+            url: 'https://worker.test/feedback',
+            beforeParse(window) {
+                window.alert = () => {};
+                window.TextDecoder = TextDecoder;
+                window.rrweb = {
+                    Replayer: class FakeReplayer {
+                        constructor(receivedEvents) {
+                            playerEvents = receivedEvents;
+                        }
+
+                        play() {
+                            playCalls += 1;
+                        }
+
+                        pause() {}
+                    },
+                };
+                window.fetch = async (path) => {
+                    fetchedPaths.push(path);
+                    if (path === '/api/feedback/issues') {
+                        return Response.json({
+                            issues: [
+                                {
+                                    key: feedbackKey,
+                                    title: replayIssue.title,
+                                    descriptionPreview: replayIssue.description,
+                                    receivedAt: replayIssue.receivedAt,
+                                    status: 'open',
+                                    priority: 'medium',
+                                    attachmentCount: 1,
+                                    replayEventCount: events.length,
+                                },
+                            ],
+                        });
+                    }
+
+                    if (path === `/api/feedback/issues/${encodeURIComponent(feedbackKey)}`) {
+                        return Response.json({
+                            issue: {
+                                ...replayIssue,
+                                key: feedbackKey,
+                                workflow: {
+                                    status: 'open',
+                                    priority: 'medium',
+                                    assignee: '',
+                                    publicNote: '',
+                                    internalNote: '',
+                                    history: [],
+                                },
+                            },
+                        });
+                    }
+
+                    if (path === replayUrl) {
+                        return Response.json({
+                            kind: 'rrweb-replay',
+                            eventCount: events.length,
+                            events,
+                        });
+                    }
+
+                    return Response.json({ error: 'not found' }, { status: 404 });
+                };
+                window.localStorage.setItem(
+                    'feedbackAdminSession',
+                    JSON.stringify({
+                        token: 'unit-token',
+                        expiresAt: '2099-01-01T00:00:00.000Z',
+                    })
+                );
+            },
+        });
+
+        await waitFor(() => {
+            expect(dom.window.document.querySelector('.btn-play-replay')).toBeTruthy();
+        });
+
+        dom.window.document.querySelector('.btn-play-replay').click();
+        await waitFor(() => {
+            expect(playCalls).toBe(1);
+        });
+
+        expect(fetchedPaths).toContain(replayUrl);
+        expect(playerEvents[1].data.text).toBe('R2 replay event');
+    });
+
     it('explains when replay event counts exist but replay JSON is missing', async () => {
         const replayIssue = createIssue({
             attachments: [],
@@ -467,7 +1376,7 @@ describe('feedback issue board Worker routes', () => {
                 replay: { eventCount: 8 },
             },
         });
-        const pageResponse = await request('/feedback', {}, env);
+        const pageResponse = await request('/feedback/legacy', {}, env);
         const html = await pageResponse.text();
         const dom = new JSDOM(html, {
             runScripts: 'dangerously',
@@ -595,7 +1504,7 @@ describe('feedback issue board Worker routes', () => {
                 history: [],
             },
         });
-        const pageResponse = await request('/feedback', {}, env);
+        const pageResponse = await request('/feedback/legacy', {}, env);
         const html = await pageResponse.text();
         const dom = new JSDOM(html, {
             runScripts: 'dangerously',
@@ -728,7 +1637,7 @@ describe('feedback issue board Worker routes', () => {
                 history: [],
             },
         });
-        const pageResponse = await request('/feedback', {}, env);
+        const pageResponse = await request('/feedback/legacy', {}, env);
         const html = await pageResponse.text();
         const dom = new JSDOM(html, {
             runScripts: 'dangerously',
@@ -787,7 +1696,7 @@ describe('feedback issue board Worker routes', () => {
     });
 
     it('keeps feedback status filters at stable readable widths while loading', async () => {
-        const pageResponse = await request('/feedback', {}, env);
+        const pageResponse = await request('/feedback/legacy', {}, env);
         const html = await pageResponse.text();
 
         expect(html).toContain('.filters button');
@@ -797,28 +1706,12 @@ describe('feedback issue board Worker routes', () => {
         expect(html).toContain('white-space: nowrap;');
     });
 
-    it('returns sanitized public issue summaries', async () => {
+    it('[SCN-FWB-017] rejects anonymous issue enumeration', async () => {
         const response = await request('/api/feedback/issues', {}, env);
         const body = await json(response);
 
-        expect(response.status).toBe(200);
-        expect(body.issues).toHaveLength(1);
-        expect(body.issues[0]).toMatchObject({
-            key: feedbackKey,
-            sourceType: 'manual',
-            submittedType: 'bug',
-            businessType: 'bug',
-            scope: 'unclear',
-            title: 'Cannot save task',
-            status: 'open',
-            priority: 'medium',
-            attachmentCount: 2,
-            replayEventCount: 12,
-        });
-        expect(JSON.stringify(body)).not.toContain('user@example.com');
-        expect(JSON.stringify(body)).not.toContain('secret-image');
-        expect(JSON.stringify(body)).not.toContain('secret stack');
-        expect(JSON.stringify(body)).not.toContain('Full UA');
+        expect(response.status).toBe(401);
+        expect(body).toEqual({ error: 'Unauthorized' });
     });
 
     it('returns lightweight admin issue summaries while keeping evidence for detail requests', async () => {
@@ -859,6 +1752,492 @@ describe('feedback issue board Worker routes', () => {
         expect(JSON.stringify(body)).not.toContain('secret stack');
     });
 
+    it('[SCN-FWB-018] paginates D1 issues with an opaque cursor', async () => {
+        const d1Env = createV2Env(
+            {},
+            {
+                feedback_issues: [
+                    createD1IssueRow({
+                        id: 'feedback:3',
+                        title: 'Newest',
+                        created_at: '2026-07-28T03:00:00.000Z',
+                    }),
+                    createD1IssueRow({
+                        id: 'feedback:2',
+                        title: 'Middle',
+                        created_at: '2026-07-28T02:00:00.000Z',
+                    }),
+                    createD1IssueRow({
+                        id: 'feedback:1',
+                        title: 'Oldest',
+                        created_at: '2026-07-28T01:00:00.000Z',
+                    }),
+                ],
+                feedback_migration_state: [
+                    {
+                        name: 'feedback-kv-v1',
+                        cursor: null,
+                        completed: 1,
+                        updated_at: '2026-07-28T04:00:00.000Z',
+                    },
+                ],
+            }
+        );
+        const sessionResponse = await request(
+            '/api/feedback/admin/session',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: 'admin-pass' }),
+            },
+            d1Env
+        );
+        const session = await json(sessionResponse);
+        const options = {
+            headers: { Authorization: `Bearer ${session.token}` },
+        };
+
+        const firstResponse = await request('/api/feedback/issues?limit=2', options, d1Env);
+        const first = await json(firstResponse);
+        const secondResponse = await request(
+            `/api/feedback/issues?limit=2&cursor=${encodeURIComponent(first.cursor)}`,
+            options,
+            d1Env
+        );
+        const second = await json(secondResponse);
+
+        expect(first.issues.map((issue) => issue.key)).toEqual(['feedback:3', 'feedback:2']);
+        expect(first.cursor).toBeTruthy();
+        expect(first.listComplete).toBe(false);
+        expect(second.issues.map((issue) => issue.key)).toEqual(['feedback:1']);
+        expect(second.cursor).toBeNull();
+        expect(second.listComplete).toBe(true);
+    });
+
+    it('[SCN-FWB-018] reads D1 before the legacy KV compatibility source', async () => {
+        const d1Env = createV2Env(
+            {
+                [feedbackKey]: JSON.stringify(
+                    createIssue({
+                        title: 'Legacy KV title',
+                    })
+                ),
+            },
+            {
+                feedback_issues: [
+                    createD1IssueRow({
+                        title: 'D1 is the source of truth',
+                    }),
+                ],
+            }
+        );
+        const sessionResponse = await request(
+            '/api/feedback/admin/session',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: 'admin-pass' }),
+            },
+            d1Env
+        );
+        const session = await json(sessionResponse);
+
+        const response = await request(
+            `/api/feedback/issues/${encodeURIComponent(feedbackKey)}`,
+            {
+                headers: { Authorization: `Bearer ${session.token}` },
+            },
+            d1Env
+        );
+        const body = await json(response);
+
+        expect(response.status).toBe(200);
+        expect(body.issue.title).toBe('D1 is the source of truth');
+        expect(d1Env.FEEDBACK_KV.getCalls).toEqual([]);
+        expect(d1Env.FEEDBACK_KV.putCalls).toEqual([]);
+    });
+
+    it('[SCN-FWB-001] backfills legacy history once while preserving private fields', async () => {
+        const legacyIssue = createIssue({
+            workflow: {
+                status: 'needs_human',
+                priority: 'high',
+                assignee: 'codex',
+                publicNote: '请补充稳定复现步骤。',
+                internalNote: 'private migration evidence',
+                updatedAt: '2026-07-28T09:00:00.000Z',
+                history: [
+                    {
+                        at: '2026-07-28T09:00:00.000Z',
+                        actor: 'admin',
+                        changes: {
+                            status: ['open', 'needs_human'],
+                            priority: ['medium', 'high'],
+                        },
+                        publicNote: '请补充稳定复现步骤。',
+                        internalNote: 'private migration evidence',
+                    },
+                ],
+            },
+        });
+        const d1Env = createV2Env({
+            [feedbackKey]: JSON.stringify(legacyIssue),
+        });
+
+        const sessionResponse = await request(
+            '/api/feedback/admin/session',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: 'admin-pass' }),
+            },
+            d1Env
+        );
+        const session = await json(sessionResponse);
+        const [publicResponse, concurrentResponse] = await Promise.all([
+            request(
+                `/api/feedback/issues/${encodeURIComponent(feedbackKey)}`,
+                {
+                    headers: { Authorization: `Bearer ${session.token}` },
+                },
+                d1Env
+            ),
+            request(
+                `/api/feedback/issues/${encodeURIComponent(feedbackKey)}`,
+                {
+                    headers: { Authorization: `Bearer ${session.token}` },
+                },
+                d1Env
+            ),
+        ]);
+        const publicBody = await json(publicResponse);
+        const issueRows = d1Env.FEEDBACK_DB.tables.feedback_issues;
+        const eventRows = d1Env.FEEDBACK_DB.tables.feedback_events;
+        const attachmentRows = d1Env.FEEDBACK_DB.tables.feedback_attachments;
+
+        expect(publicResponse.status).toBe(200);
+        expect(concurrentResponse.status).toBe(200);
+        expect(publicBody.issue.workflow.status).toBe('needs_human');
+        expect(issueRows.size).toBe(1);
+        expect(eventRows.size).toBe(3);
+        expect(attachmentRows.size).toBe(2);
+        const migratedPublicEvent = Array.from(eventRows.values()).find(
+            (event) => event.type === 'status.changed' && event.visibility === 'public'
+        );
+        expect(migratedPublicEvent.body_json).not.toContain('private migration evidence');
+
+        const storedIssue = issueRows.get(feedbackKey);
+        expect(storedIssue.contact_encrypted).toBeTruthy();
+        expect(storedIssue.contact_encrypted).not.toContain('user@example.com');
+        expect(JSON.parse(storedIssue.context_json).logs).toEqual([
+            { level: 'error', args: ['secret stack'] },
+        ]);
+        expect(JSON.stringify(Array.from(attachmentRows.values()))).not.toContain('data:image');
+        expect(Array.from(attachmentRows.values())[0]).toMatchObject({
+            issue_id: feedbackKey,
+            legacy_kv_key: feedbackKey,
+            legacy_attachment_index: 0,
+        });
+
+        const adminResponse = await request(
+            `/api/feedback/issues/${encodeURIComponent(feedbackKey)}`,
+            {
+                headers: { Authorization: `Bearer ${session.token}` },
+            },
+            d1Env
+        );
+        const adminBody = await json(adminResponse);
+
+        expect(adminResponse.status).toBe(200);
+        expect(adminBody.issue.contact).toBe('user@example.com');
+        expect(adminBody.issue.attachments[0].dataUrl).toBe('data:image/png;base64,secret-image');
+        expect(adminBody.issue.workflow.history).toHaveLength(2);
+        expect(issueRows.size).toBe(1);
+        expect(eventRows.size).toBe(3);
+        expect(attachmentRows.size).toBe(2);
+        expect(d1Env.FEEDBACK_KV.putCalls).toEqual([]);
+    });
+
+    it('[SCN-FWB-001] keeps oversized legacy context readable when R2 backfill is unavailable', async () => {
+        const oversizedLog = 'historical-log-'.repeat(150000);
+        const d1Env = createV2Env({
+            [feedbackKey]: JSON.stringify(
+                createIssue({
+                    attachments: [],
+                    context: {
+                        url: 'https://gantt-task-editor.pages.dev/history',
+                        project: { id: 'project-history', name: 'Historical Project' },
+                        logs: [{ level: 'error', args: [oversizedLog] }],
+                    },
+                })
+            ),
+        });
+        const sessionResponse = await request(
+            '/api/feedback/admin/session',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: 'admin-pass' }),
+            },
+            d1Env
+        );
+        const session = await json(sessionResponse);
+
+        const response = await request(
+            `/api/feedback/issues/${encodeURIComponent(feedbackKey)}`,
+            {
+                headers: { Authorization: `Bearer ${session.token}` },
+            },
+            d1Env
+        );
+        const body = await json(response);
+
+        expect(response.status).toBe(200);
+        expect(body.issue.context.logs[0].args[0]).toBe(oversizedLog);
+        expect(d1Env.FEEDBACK_DB.tables.feedback_issues.size).toBe(0);
+    });
+
+    it('[SCN-FWB-001] falls back to legacy KV if migrated context cannot be restored from R2', async () => {
+        const oversizedLog = 'historical-r2-log-'.repeat(50000);
+        const d1Env = createV2Env({
+            [feedbackKey]: JSON.stringify(
+                createIssue({
+                    attachments: [],
+                    context: {
+                        url: 'https://gantt-task-editor.pages.dev/history-r2',
+                        project: { id: 'project-history-r2', name: 'R2 History' },
+                        logs: [{ level: 'error', args: [oversizedLog] }],
+                    },
+                })
+            ),
+        });
+        d1Env.FEEDBACK_ARTIFACTS = new MemoryR2();
+        const sessionResponse = await request(
+            '/api/feedback/admin/session',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: 'admin-pass' }),
+            },
+            d1Env
+        );
+        const session = await json(sessionResponse);
+        const options = {
+            headers: { Authorization: `Bearer ${session.token}` },
+        };
+
+        const migrationResponse = await request(
+            `/api/feedback/issues/${encodeURIComponent(feedbackKey)}`,
+            options,
+            d1Env
+        );
+        expect(migrationResponse.status).toBe(200);
+        expect(d1Env.FEEDBACK_DB.tables.feedback_issues.size).toBe(1);
+        expect(d1Env.FEEDBACK_ARTIFACTS.objects.size).toBe(1);
+
+        d1Env.FEEDBACK_ARTIFACTS.objects.clear();
+        const response = await request(
+            `/api/feedback/issues/${encodeURIComponent(feedbackKey)}`,
+            options,
+            d1Env
+        );
+        const body = await json(response);
+
+        expect(response.status).toBe(200);
+        expect(body.issue.context.logs[0].args[0]).toBe(oversizedLog);
+    });
+
+    it('[SCN-FWB-019] keeps legacy feedback readable when encrypted backfill is unavailable', async () => {
+        const d1Env = createV2Env({
+            [feedbackKey]: JSON.stringify(createIssue()),
+        });
+        delete d1Env.FEEDBACK_PII_KEY;
+        const sessionResponse = await request(
+            '/api/feedback/admin/session',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: 'admin-pass' }),
+            },
+            d1Env
+        );
+        const session = await json(sessionResponse);
+
+        const response = await request(
+            `/api/feedback/issues/${encodeURIComponent(feedbackKey)}`,
+            {
+                headers: { Authorization: `Bearer ${session.token}` },
+            },
+            d1Env
+        );
+        const body = await json(response);
+
+        expect(response.status).toBe(200);
+        expect(body.issue.contact).toBe('user@example.com');
+        expect(d1Env.FEEDBACK_DB.tables.feedback_issues.size).toBe(0);
+        expect(d1Env.FEEDBACK_DB.tables.feedback_events.size).toBe(0);
+
+        const firstListResponse = await request(
+            '/api/feedback/issues',
+            {
+                headers: { Authorization: `Bearer ${session.token}` },
+            },
+            d1Env
+        );
+        const secondListResponse = await request(
+            '/api/feedback/issues',
+            {
+                headers: { Authorization: `Bearer ${session.token}` },
+            },
+            d1Env
+        );
+        const firstList = await json(firstListResponse);
+        const secondList = await json(secondListResponse);
+        const migrationState =
+            d1Env.FEEDBACK_DB.tables.feedback_migration_state.get('feedback-kv-v1');
+
+        expect(firstList.issues).toHaveLength(1);
+        expect(firstList.legacyMigrationPending).toBe(true);
+        expect(secondList.issues).toHaveLength(1);
+        expect(secondList.legacyMigrationPending).toBe(true);
+        expect(migrationState.completed).toBe(0);
+        expect(d1Env.FEEDBACK_KV.putCalls).toEqual([]);
+    });
+
+    it('[SCN-FWB-019] decrypts historical contact with its recorded key version', async () => {
+        const d1Env = createV2Env();
+        d1Env.FEEDBACK_PII_KEY = 'pii-key-v1';
+        d1Env.FEEDBACK_PII_KEY_VERSION = 'v1';
+        const createResponse = await request(
+            '/api/feedback',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    title: 'Key rotation',
+                    description: 'Keep historical PII readable after rotation.',
+                    contact: 'rotation@example.com',
+                }),
+            },
+            d1Env
+        );
+        const created = await json(createResponse);
+        d1Env.FEEDBACK_PII_KEY = 'pii-key-v2';
+        d1Env.FEEDBACK_PII_KEY_VERSION = 'v2';
+        d1Env.FEEDBACK_PII_KEYS = JSON.stringify({ v1: 'pii-key-v1' });
+        const sessionResponse = await request(
+            '/api/feedback/admin/session',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: 'admin-pass' }),
+            },
+            d1Env
+        );
+        const session = await json(sessionResponse);
+
+        const response = await request(
+            `/api/feedback/issues/${encodeURIComponent(created.issueId)}`,
+            {
+                headers: { Authorization: `Bearer ${session.token}` },
+            },
+            d1Env
+        );
+        const body = await json(response);
+
+        expect(response.status).toBe(200);
+        expect(body.issue.contact).toBe('rotation@example.com');
+        expect(
+            JSON.parse(
+                d1Env.FEEDBACK_DB.tables.feedback_issues.get(created.issueId).contact_encrypted
+            ).version
+        ).toBe('v1');
+    });
+
+    it('[SCN-FWB-001] migrates legacy issues before returning the admin list', async () => {
+        const d1Env = createV2Env({
+            [feedbackKey]: JSON.stringify(createIssue()),
+        });
+        const sessionResponse = await request(
+            '/api/feedback/admin/session',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: 'admin-pass' }),
+            },
+            d1Env
+        );
+        const session = await json(sessionResponse);
+        const options = {
+            headers: { Authorization: `Bearer ${session.token}` },
+        };
+
+        const firstResponse = await request('/api/feedback/issues', options, d1Env);
+        const firstBody = await json(firstResponse);
+        const rowCounts = {
+            issues: d1Env.FEEDBACK_DB.tables.feedback_issues.size,
+            events: d1Env.FEEDBACK_DB.tables.feedback_events.size,
+            attachments: d1Env.FEEDBACK_DB.tables.feedback_attachments.size,
+        };
+        const secondResponse = await request('/api/feedback/issues', options, d1Env);
+        const secondBody = await json(secondResponse);
+
+        expect(firstResponse.status).toBe(200);
+        expect(firstBody.issues).toHaveLength(1);
+        expect(firstBody.issues[0].key).toBe(feedbackKey);
+        expect(secondResponse.status).toBe(200);
+        expect(secondBody.issues).toHaveLength(1);
+        expect(d1Env.FEEDBACK_KV.getCalls).toEqual([feedbackKey]);
+        expect({
+            issues: d1Env.FEEDBACK_DB.tables.feedback_issues.size,
+            events: d1Env.FEEDBACK_DB.tables.feedback_events.size,
+            attachments: d1Env.FEEDBACK_DB.tables.feedback_attachments.size,
+        }).toEqual(rowCounts);
+        expect(d1Env.FEEDBACK_KV.putCalls).toEqual([]);
+    });
+
+    it('[SCN-FWB-001] retries a legacy page without advancing migration state after D1 failure', async () => {
+        const d1Env = createV2Env({
+            [feedbackKey]: JSON.stringify(createIssue()),
+        });
+        const originalBatch = d1Env.FEEDBACK_DB.batch.bind(d1Env.FEEDBACK_DB);
+        d1Env.FEEDBACK_DB.batch = vi
+            .fn()
+            .mockRejectedValueOnce(new Error('temporary D1 batch failure'))
+            .mockImplementation(originalBatch);
+        const sessionResponse = await request(
+            '/api/feedback/admin/session',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: 'admin-pass' }),
+            },
+            d1Env
+        );
+        const session = await json(sessionResponse);
+        const options = {
+            headers: { Authorization: `Bearer ${session.token}` },
+        };
+
+        await expect(request('/api/feedback/issues', options, d1Env)).rejects.toThrow(
+            'temporary D1 batch failure'
+        );
+        expect(
+            d1Env.FEEDBACK_DB.tables.feedback_migration_state.get('feedback-kv-v1')
+        ).toBeUndefined();
+        expect(d1Env.FEEDBACK_DB.tables.feedback_issues.size).toBe(0);
+
+        const retryResponse = await request('/api/feedback/issues', options, d1Env);
+        const retryBody = await json(retryResponse);
+        const migrationState =
+            d1Env.FEEDBACK_DB.tables.feedback_migration_state.get('feedback-kv-v1');
+
+        expect(retryResponse.status).toBe(200);
+        expect(retryBody.issues.map((issue) => issue.key)).toEqual([feedbackKey]);
+        expect(migrationState.completed).toBe(1);
+        expect(d1Env.FEEDBACK_DB.batch).toHaveBeenCalledTimes(2);
+    });
+
     it('preserves legacy type values as submitted business type', async () => {
         const legacyEnv = createEnv({
             [feedbackKey]: JSON.stringify(
@@ -868,7 +2247,23 @@ describe('feedback issue board Worker routes', () => {
             ),
         });
 
-        const response = await request('/api/feedback/issues', {}, legacyEnv);
+        const sessionResponse = await request(
+            '/api/feedback/admin/session',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: 'admin-pass' }),
+            },
+            legacyEnv
+        );
+        const session = await json(sessionResponse);
+        const response = await request(
+            '/api/feedback/issues',
+            {
+                headers: { Authorization: `Bearer ${session.token}` },
+            },
+            legacyEnv
+        );
         const body = await json(response);
 
         expect(response.status).toBe(200);
@@ -880,7 +2275,7 @@ describe('feedback issue board Worker routes', () => {
         });
     });
 
-    it('returns sanitized public issue detail', async () => {
+    it('[SCN-FWB-017] rejects anonymous issue detail reads', async () => {
         const response = await request(
             `/api/feedback/issues/${encodeURIComponent(feedbackKey)}`,
             {},
@@ -888,20 +2283,12 @@ describe('feedback issue board Worker routes', () => {
         );
         const body = await json(response);
 
-        expect(response.status).toBe(200);
-        expect(body.issue.key).toBe(feedbackKey);
-        expect(body.issue.projectName).toBe('Demo Project');
-        expect(body.issue.pagePath).toBe('/');
-        expect(body.issue.sourceType).toBe('manual');
-        expect(body.issue.submittedType).toBe('bug');
-        expect(body.issue.businessType).toBe('bug');
-        expect(body.issue.scope).toBe('unclear');
-        expect(JSON.stringify(body)).not.toContain('user@example.com');
-        expect(JSON.stringify(body)).not.toContain('secret-image');
-        expect(JSON.stringify(body)).not.toContain('secret stack');
+        expect(response.status).toBe(401);
+        expect(body).toEqual({ error: 'Unauthorized' });
     });
 
     it('normalizes submitted feedback classification fields', async () => {
+        const submitEnv = createV2Env();
         const response = await request(
             '/api/feedback',
             {
@@ -914,21 +2301,22 @@ describe('feedback issue board Worker routes', () => {
                     description: 'We need an approval step before publishing a schedule.',
                 }),
             },
-            env
+            submitEnv
         );
         const body = await json(response);
-        const stored = JSON.parse(await env.FEEDBACK_KV.get(body.key));
+        const stored = submitEnv.FEEDBACK_DB.tables.feedback_issues.get(body.key);
 
-        expect(response.status).toBe(200);
-        expect(stored.type).toBe('manual');
-        expect(stored.sourceType).toBe('manual');
-        expect(stored.submittedType).toBe('requirement');
-        expect(stored.ai.businessType).toBe('unclear');
-        expect(stored.ai.scope).toBe('unclear');
-        expect(stored.ai.automationDecision).toBe('');
+        expect(response.status).toBe(201);
+        expect(stored.source_type).toBe('manual');
+        expect(stored.submitted_type).toBe('requirement');
+        expect(stored.business_type).toBe('unclear');
+        expect(stored.scope).toBe('unclear');
+        expect(stored.automation_decision).toBe('');
+        expect(submitEnv.FEEDBACK_KV.putCalls).toEqual([]);
     });
 
     it('normalizes legacy submitted type payloads from older clients', async () => {
+        const submitEnv = createV2Env();
         const response = await request(
             '/api/feedback',
             {
@@ -940,19 +2328,20 @@ describe('feedback issue board Worker routes', () => {
                     description: 'Older client still sends type as business category.',
                 }),
             },
-            env
+            submitEnv
         );
         const body = await json(response);
-        const stored = JSON.parse(await env.FEEDBACK_KV.get(body.key));
+        const stored = submitEnv.FEEDBACK_DB.tables.feedback_issues.get(body.key);
 
-        expect(response.status).toBe(200);
-        expect(stored.type).toBe('manual');
-        expect(stored.sourceType).toBe('manual');
-        expect(stored.submittedType).toBe('bug');
-        expect(stored.ai.businessType).toBe('bug');
+        expect(response.status).toBe(201);
+        expect(stored.source_type).toBe('manual');
+        expect(stored.submitted_type).toBe('bug');
+        expect(stored.business_type).toBe('bug');
+        expect(submitEnv.FEEDBACK_KV.putCalls).toEqual([]);
     });
 
     it('defaults missing submitted type to unclear', async () => {
+        const submitEnv = createV2Env();
         const response = await request(
             '/api/feedback',
             {
@@ -963,14 +2352,393 @@ describe('feedback issue board Worker routes', () => {
                     description: 'User skipped the selector.',
                 }),
             },
-            env
+            submitEnv
         );
         const body = await json(response);
-        const stored = JSON.parse(await env.FEEDBACK_KV.get(body.key));
+        const stored = submitEnv.FEEDBACK_DB.tables.feedback_issues.get(body.key);
 
-        expect(response.status).toBe(200);
-        expect(stored.sourceType).toBe('manual');
-        expect(stored.submittedType).toBe('unclear');
+        expect(response.status).toBe(201);
+        expect(stored.source_type).toBe('manual');
+        expect(stored.submitted_type).toBe('unclear');
+        expect(submitEnv.FEEDBACK_KV.putCalls).toEqual([]);
+    });
+
+    it('[SCN-FWB-018] writes new feedback only to D1 and returns an owner capability', async () => {
+        const d1Env = createV2Env();
+        const response = await request(
+            '/api/feedback',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    sourceType: 'manual',
+                    submittedType: 'bug',
+                    title: 'D1-only feedback',
+                    description: 'This record must never be written to KV.',
+                    contact: 'owner@example.com',
+                }),
+            },
+            d1Env
+        );
+        const body = await json(response);
+        const storedIssue = d1Env.FEEDBACK_DB.tables.feedback_issues.get(body.issueId);
+
+        expect(response.status).toBe(201);
+        expect(body.issueId).toMatch(/^feedback:/);
+        expect(body.ownerCapability).toBeTruthy();
+        expect(storedIssue).toMatchObject({
+            id: body.issueId,
+            title: 'D1-only feedback',
+            version: 1,
+            status: 'open',
+        });
+        expect(storedIssue.owner_capability_hash).toBeTruthy();
+        expect(storedIssue.owner_capability_hash).not.toContain(body.ownerCapability);
+        expect(d1Env.FEEDBACK_DB.tables.feedback_events.size).toBe(1);
+        expect(d1Env.FEEDBACK_KV.putCalls).toEqual([]);
+    });
+
+    it('[SCN-FWB-017] limits an owner capability to its own issue detail', async () => {
+        const d1Env = createV2Env();
+        const createResponse = await request(
+            '/api/feedback',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    title: 'Owner-only issue',
+                    description: 'Only the returned capability may read this issue.',
+                    contact: 'private@example.com',
+                }),
+            },
+            d1Env
+        );
+        const created = await json(createResponse);
+        const ownerHeaders = {
+            Authorization: `Bearer ${created.ownerCapability}`,
+        };
+
+        const detailResponse = await request(
+            `/api/feedback/issues/${encodeURIComponent(created.issueId)}`,
+            { headers: ownerHeaders },
+            d1Env
+        );
+        const detail = await json(detailResponse);
+        const listResponse = await request(
+            '/api/feedback/issues',
+            { headers: ownerHeaders },
+            d1Env
+        );
+        const otherResponse = await request(
+            `/api/feedback/issues/${encodeURIComponent('feedback:other')}`,
+            { headers: ownerHeaders },
+            d1Env
+        );
+
+        expect(createResponse.status).toBe(201);
+        expect(created.ownerUrl).toContain('/feedback#issue=');
+        expect(detailResponse.status).toBe(200);
+        expect(detail.issue.key).toBe(created.issueId);
+        expect(JSON.stringify(detail)).not.toContain('private@example.com');
+        expect(listResponse.status).toBe(401);
+        expect(otherResponse.status).toBe(401);
+    });
+
+    it('[SCN-FWB-019] does not send V2 contact data to the legacy webhook', async () => {
+        const d1Env = createV2Env();
+        d1Env.FEEDBACK_WEBHOOK_URL = 'https://webhook.test/feedback';
+        const outboundFetch = vi.fn();
+        vi.stubGlobal('fetch', outboundFetch);
+
+        try {
+            const response = await request(
+                '/api/feedback',
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        title: 'No legacy webhook',
+                        description: 'Phase 0 keeps external notifications disabled.',
+                        contact: 'private@example.com',
+                    }),
+                },
+                d1Env
+            );
+
+            expect(response.status).toBe(201);
+            expect(outboundFetch).not.toHaveBeenCalled();
+        } finally {
+            vi.unstubAllGlobals();
+        }
+    });
+
+    it('[SCN-FWB-018] stores new attachment bodies in private R2 and only metadata in D1', async () => {
+        const d1Env = createV2Env();
+        d1Env.FEEDBACK_ARTIFACTS = new MemoryR2();
+        const response = await request(
+            '/api/feedback',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    title: 'R2 attachment',
+                    description: 'The body belongs in R2.',
+                    attachments: [
+                        {
+                            name: 'evidence.txt',
+                            type: 'text/plain',
+                            size: 999,
+                            dataUrl: 'data:text/plain;base64,aGVsbG8=',
+                        },
+                    ],
+                }),
+            },
+            d1Env
+        );
+        const body = await json(response);
+        const [attachment] = Array.from(d1Env.FEEDBACK_DB.tables.feedback_attachments.values());
+        const [put] = d1Env.FEEDBACK_ARTIFACTS.putCalls;
+        const detailResponse = await request(
+            `/api/feedback/issues/${encodeURIComponent(body.issueId)}`,
+            {
+                headers: { Authorization: `Bearer ${body.ownerCapability}` },
+            },
+            d1Env
+        );
+        const detail = await json(detailResponse);
+        const attachmentUrl = new URL(detail.issue.attachments[0].url);
+        const downloadResponse = await request(
+            `${attachmentUrl.pathname}${attachmentUrl.search}`,
+            {},
+            d1Env
+        );
+        const tamperedToken = attachmentUrl.searchParams.get('token');
+        attachmentUrl.searchParams.set(
+            'token',
+            `${tamperedToken.slice(0, -1)}${tamperedToken.endsWith('a') ? 'b' : 'a'}`
+        );
+        const tamperedResponse = await request(
+            `${attachmentUrl.pathname}${attachmentUrl.search}`,
+            {},
+            d1Env
+        );
+
+        expect(response.status).toBe(201);
+        expect(put.key).toBe(attachment.object_key);
+        expect(new TextDecoder().decode(put.value)).toBe('hello');
+        expect(put.options.httpMetadata.contentType).toBe('text/plain');
+        expect(attachment).toMatchObject({
+            issue_id: body.issueId,
+            name: 'evidence.txt',
+            content_type: 'text/plain',
+            size: 5,
+            sha256: '2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824',
+            legacy_kv_key: null,
+            legacy_attachment_index: null,
+            scan_status: 'pending',
+        });
+        expect(attachment).not.toHaveProperty('data_url');
+        expect(detailResponse.status).toBe(200);
+        expect(detail.issue.attachments[0]).toMatchObject({
+            id: attachment.id,
+            name: 'evidence.txt',
+            type: 'text/plain',
+            size: 5,
+        });
+        expect(downloadResponse.status).toBe(200);
+        expect(await downloadResponse.text()).toBe('hello');
+        expect(downloadResponse.headers.get('Cache-Control')).toBe('private, no-store');
+        expect(tamperedResponse.status).toBe(404);
+        expect(d1Env.FEEDBACK_KV.putCalls).toEqual([]);
+    });
+
+    it('[SCN-FWB-018] spills oversized context to private R2 and restores it for detail reads', async () => {
+        const oversizedLog = 'runtime-log-'.repeat(70000);
+        const d1Env = createV2Env();
+        d1Env.FEEDBACK_ARTIFACTS = new MemoryR2();
+        const response = await request(
+            '/api/feedback',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    title: 'Oversized context',
+                    description: 'The complete diagnostic context must remain readable.',
+                    context: {
+                        url: 'https://gantt-task-editor.pages.dev/oversized',
+                        project: { id: 'project-large', name: 'Large Context Project' },
+                        replay: { eventCount: 320 },
+                        logs: [{ level: 'error', args: [oversizedLog] }],
+                    },
+                }),
+            },
+            d1Env
+        );
+        const created = await json(response);
+        const storedIssue = d1Env.FEEDBACK_DB.tables.feedback_issues.get(created.issueId);
+        const storedContext = JSON.parse(storedIssue.context_json);
+        const contextObject = d1Env.FEEDBACK_ARTIFACTS.objects.get(
+            storedContext.__feedbackContextStorage.objectKey
+        );
+        const sessionResponse = await request(
+            '/api/feedback/admin/session',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: 'admin-pass' }),
+            },
+            d1Env
+        );
+        const session = await json(sessionResponse);
+        const detailResponse = await request(
+            `/api/feedback/issues/${encodeURIComponent(created.issueId)}`,
+            {
+                headers: { Authorization: `Bearer ${session.token}` },
+            },
+            d1Env
+        );
+        const detail = await json(detailResponse);
+
+        expect(response.status).toBe(201);
+        expect(new TextEncoder().encode(storedIssue.context_json).byteLength).toBeLessThan(
+            1024 * 1024
+        );
+        expect(storedContext).toMatchObject({
+            url: 'https://gantt-task-editor.pages.dev/oversized',
+            project: { id: 'project-large', name: 'Large Context Project' },
+            replay: { eventCount: 320 },
+            __feedbackContextStorage: {
+                storage: 'r2',
+                byteLength: expect.any(Number),
+                sha256: expect.any(String),
+                objectKey: expect.stringContaining(`/${created.issueId}/`),
+            },
+        });
+        expect(JSON.parse(new TextDecoder().decode(contextObject.value)).logs[0].args[0]).toBe(
+            oversizedLog
+        );
+        expect(detailResponse.status).toBe(200);
+        expect(detail.issue.context.logs[0].args[0]).toBe(oversizedLog);
+    });
+
+    it('[SCN-FWB-018] prevents active attachment content from executing on the admin origin', async () => {
+        const d1Env = createV2Env();
+        d1Env.FEEDBACK_ARTIFACTS = new MemoryR2();
+        const response = await request(
+            '/api/feedback',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    title: 'Active attachment content',
+                    description: 'HTML and SVG must never execute on the feedback origin.',
+                    attachments: [
+                        {
+                            name: 'payload.html',
+                            type: 'text/html',
+                            dataUrl: 'data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==',
+                        },
+                        {
+                            name: 'payload.svg',
+                            type: 'image/svg+xml',
+                            dataUrl:
+                                'data:image/svg+xml;base64,PHN2ZyBvbmxvYWQ9ImFsZXJ0KDEpIj48L3N2Zz4=',
+                        },
+                        {
+                            name: 'preview.png',
+                            type: 'image/png',
+                            dataUrl: 'data:image/png;base64,iVBORw0KGgo=',
+                        },
+                    ],
+                }),
+            },
+            d1Env
+        );
+        const created = await json(response);
+        const detailResponse = await request(
+            `/api/feedback/issues/${encodeURIComponent(created.issueId)}`,
+            {
+                headers: { Authorization: `Bearer ${created.ownerCapability}` },
+            },
+            d1Env
+        );
+        const detail = await json(detailResponse);
+        const downloads = await Promise.all(
+            detail.issue.attachments.map((attachment) => {
+                const url = new URL(attachment.url);
+                return request(`${url.pathname}${url.search}`, {}, d1Env);
+            })
+        );
+
+        expect(response.status).toBe(201);
+        for (const unsafeResponse of downloads.slice(0, 2)) {
+            expect(unsafeResponse.headers.get('Content-Type')).toBe('application/octet-stream');
+            expect(unsafeResponse.headers.get('Content-Disposition')).toMatch(/^attachment;/);
+            expect(unsafeResponse.headers.get('Content-Security-Policy')).toBe(
+                "sandbox; default-src 'none'"
+            );
+            expect(unsafeResponse.headers.get('X-Content-Type-Options')).toBe('nosniff');
+        }
+        expect(downloads[2].headers.get('Content-Type')).toBe('image/png');
+        expect(downloads[2].headers.get('Content-Disposition')).toMatch(/^inline;/);
+        expect(downloads[2].headers.get('Content-Security-Policy')).toBe(
+            "sandbox; default-src 'none'"
+        );
+    });
+
+    it('[SCN-FWB-018] cleans earlier R2 objects when a later attachment upload fails', async () => {
+        const d1Env = createV2Env();
+        d1Env.FEEDBACK_ARTIFACTS = new MemoryR2({ failPutAt: 2 });
+
+        const response = await request(
+            '/api/feedback',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    title: 'Partial R2 failure',
+                    description: 'No partial objects may remain.',
+                    attachments: [
+                        {
+                            name: 'first.txt',
+                            type: 'text/plain',
+                            dataUrl: 'data:text/plain;base64,Zmlyc3Q=',
+                        },
+                        {
+                            name: 'second.txt',
+                            type: 'text/plain',
+                            dataUrl: 'data:text/plain;base64,c2Vjb25k',
+                        },
+                    ],
+                }),
+            },
+            d1Env
+        );
+
+        expect(response.status).toBe(503);
+        expect(d1Env.FEEDBACK_ARTIFACTS.objects.size).toBe(0);
+        expect(d1Env.FEEDBACK_ARTIFACTS.deleteCalls).toHaveLength(1);
+        expect(d1Env.FEEDBACK_DB.tables.feedback_issues.size).toBe(0);
+        expect(d1Env.FEEDBACK_KV.putCalls).toEqual([]);
+    });
+
+    it('[SCN-FWB-018] rejects new writes when D1 is unavailable instead of falling back to KV', async () => {
+        const legacyOnlyEnv = createEnv();
+        const response = await request(
+            '/api/feedback',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    title: 'No dual write',
+                    description: 'Missing D1 must fail closed.',
+                }),
+            },
+            legacyOnlyEnv
+        );
+
+        expect(response.status).toBe(503);
+        expect(legacyOnlyEnv.FEEDBACK_KV.putCalls).toEqual([]);
     });
 
     it('rejects an invalid admin password', async () => {
@@ -1094,7 +2862,10 @@ describe('feedback issue board Worker routes', () => {
         expect(response.status).toBe(400);
     });
 
-    it('updates workflow with a valid admin token and exposes public status', async () => {
+    it('[SCN-FWB-003] requires an expected version for every admin patch', async () => {
+        const updateEnv = createV2Env({
+            [feedbackKey]: JSON.stringify(createIssue()),
+        });
         const sessionResponse = await request(
             '/api/feedback/admin/session',
             {
@@ -1102,7 +2873,39 @@ describe('feedback issue board Worker routes', () => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ password: 'admin-pass' }),
             },
-            env
+            updateEnv
+        );
+        const session = await json(sessionResponse);
+
+        const response = await request(
+            `/api/feedback/issues/${encodeURIComponent(feedbackKey)}`,
+            {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${session.token}`,
+                },
+                body: JSON.stringify({ status: 'in_progress' }),
+            },
+            updateEnv
+        );
+
+        expect(response.status).toBe(400);
+        expect(updateEnv.FEEDBACK_DB.tables.feedback_events.size).toBe(0);
+    });
+
+    it('updates workflow with a valid admin token and reads the persisted status', async () => {
+        const updateEnv = createV2Env({
+            [feedbackKey]: JSON.stringify(createIssue()),
+        });
+        const sessionResponse = await request(
+            '/api/feedback/admin/session',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: 'admin-pass' }),
+            },
+            updateEnv
         );
         const session = await json(sessionResponse);
         const updateResponse = await request(
@@ -1114,6 +2917,7 @@ describe('feedback issue board Worker routes', () => {
                     Authorization: `Bearer ${session.token}`,
                 },
                 body: JSON.stringify({
+                    expectedVersion: 1,
                     status: 'in_progress',
                     priority: 'high',
                     assignee: 'chenlonglong',
@@ -1121,29 +2925,55 @@ describe('feedback issue board Worker routes', () => {
                     internalNote: 'Check replay JSON.',
                 }),
             },
-            env
+            updateEnv
         );
         const updated = await json(updateResponse);
         const publicResponse = await request(
             `/api/feedback/issues/${encodeURIComponent(feedbackKey)}`,
-            {},
-            env
+            {
+                headers: { Authorization: `Bearer ${session.token}` },
+            },
+            updateEnv
         );
         const publicBody = await json(publicResponse);
-        const stored = JSON.parse(await env.FEEDBACK_KV.get(feedbackKey));
+        const stored = updateEnv.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey);
 
         expect(updateResponse.status).toBe(200);
         expect(updated.issue.workflow.status).toBe('in_progress');
         expect(updated.issue.workflow.priority).toBe('high');
-        expect(updated.issue.workflow.history).toHaveLength(1);
-        expect(publicBody.issue.status).toBe('in_progress');
-        expect(publicBody.issue.priority).toBe('high');
-        expect(publicBody.issue.publicNote).toBe('Reproduced and under investigation.');
-        expect(JSON.stringify(publicBody)).not.toContain('Check replay JSON.');
-        expect(stored.workflow.status).toBe('in_progress');
+        // §21.4: the status change, the public note and the internal note are
+        // three separate timeline facts, so the note is never buried inside
+        // `status.changed` where the workbench timeline would drop it.
+        expect(updated.issue.workflow.history).toHaveLength(3);
+        const events = Array.from(updateEnv.FEEDBACK_DB.tables.feedback_events.values());
+        const publicEvents = events.filter(
+            (event) => event.visibility === 'public' && event.type !== 'issue.created'
+        );
+        expect(publicEvents.map((event) => event.type)).toEqual([
+            'status.changed',
+            'comment.created',
+        ]);
+        expect(publicEvents[0].body_json).not.toContain('Reproduced and under investigation.');
+        expect(publicEvents[1].body_json).toContain('Reproduced and under investigation.');
+        for (const event of publicEvents) {
+            expect(event.body_json).not.toContain('Check replay JSON.');
+        }
+        expect(
+            events.filter((event) => event.visibility === 'internal').map((event) => event.type)
+        ).toEqual(['comment.created']);
+        expect(publicBody.issue.workflow.status).toBe('in_progress');
+        expect(publicBody.issue.workflow.priority).toBe('high');
+        expect(publicBody.issue.workflow.publicNote).toBe('Reproduced and under investigation.');
+        expect(stored.status).toBe('in_progress');
+        expect(updateEnv.FEEDBACK_KV.putCalls).toEqual([]);
     });
 
-    it('updates editable feedback content with a valid admin token', async () => {
+    it('[SCN-FWB-003] rejects stale D1 patches without appending duplicate events', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-07-28T12:00:00.000Z'));
+        const d1Env = createV2Env({
+            [feedbackKey]: JSON.stringify(createIssue()),
+        });
         const sessionResponse = await request(
             '/api/feedback/admin/session',
             {
@@ -1151,7 +2981,64 @@ describe('feedback issue board Worker routes', () => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ password: 'admin-pass' }),
             },
-            env
+            d1Env
+        );
+        const session = await json(sessionResponse);
+        const patchOptions = {
+            method: 'PATCH',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${session.token}`,
+            },
+            body: JSON.stringify({
+                expectedVersion: 1,
+                status: 'in_progress',
+                publicNote: 'Work started.',
+            }),
+        };
+
+        try {
+            const firstResponse = await request(
+                `/api/feedback/issues/${encodeURIComponent(feedbackKey)}`,
+                patchOptions,
+                d1Env
+            );
+            const firstBody = await json(firstResponse);
+            // Backfilled `issue.created`, plus `status.changed` and the public
+            // note's own `comment.created` from the accepted patch.
+            const eventsAfterAcceptedPatch = d1Env.FEEDBACK_DB.tables.feedback_events.size;
+            const secondResponse = await request(
+                `/api/feedback/issues/${encodeURIComponent(feedbackKey)}`,
+                patchOptions,
+                d1Env
+            );
+            const secondBody = await json(secondResponse);
+
+            expect(firstResponse.status).toBe(200);
+            expect(firstBody.issue.version).toBe(2);
+            expect(eventsAfterAcceptedPatch).toBe(3);
+            expect(secondResponse.status).toBe(409);
+            expect(secondBody.error).toBe('Version conflict');
+            // The rejected replay appends nothing.
+            expect(d1Env.FEEDBACK_DB.tables.feedback_events.size).toBe(eventsAfterAcceptedPatch);
+            expect(d1Env.FEEDBACK_KV.putCalls).toEqual([]);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('updates editable feedback content with a valid admin token', async () => {
+        const updateEnv = createV2Env({
+            [feedbackKey]: JSON.stringify(createIssue()),
+        });
+        const sessionResponse = await request(
+            '/api/feedback/admin/session',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: 'admin-pass' }),
+            },
+            updateEnv
         );
         const session = await json(sessionResponse);
         const updateResponse = await request(
@@ -1163,6 +3050,7 @@ describe('feedback issue board Worker routes', () => {
                     Authorization: `Bearer ${session.token}`,
                 },
                 body: JSON.stringify({
+                    expectedVersion: 1,
                     title: 'Clarified save failure',
                     description: 'The task disappears after clicking save.',
                     type: 'bug',
@@ -1175,16 +3063,18 @@ describe('feedback issue board Worker routes', () => {
                     },
                 }),
             },
-            env
+            updateEnv
         );
         const updated = await json(updateResponse);
         const publicResponse = await request(
             `/api/feedback/issues/${encodeURIComponent(feedbackKey)}`,
-            {},
-            env
+            {
+                headers: { Authorization: `Bearer ${session.token}` },
+            },
+            updateEnv
         );
         const publicBody = await json(publicResponse);
-        const stored = JSON.parse(await env.FEEDBACK_KV.get(feedbackKey));
+        const stored = updateEnv.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey);
 
         expect(updateResponse.status).toBe(200);
         expect(updated.issue.title).toBe('Clarified save failure');
@@ -1197,16 +3087,17 @@ describe('feedback issue board Worker routes', () => {
         expect(publicBody.issue.title).toBe('Clarified save failure');
         expect(publicBody.issue.description).toBe('The task disappears after clicking save.');
         expect(publicBody.issue.submittedType).toBe('bug');
-        expect(publicBody.issue.businessType).toBe('bug');
-        expect(publicBody.issue.scope).toBe('small');
+        expect(publicBody.issue.ai.businessType).toBe('bug');
+        expect(publicBody.issue.ai.scope).toBe('small');
         expect(stored.title).toBe('Clarified save failure');
         expect(stored.description).toBe('The task disappears after clicking save.');
-        expect(stored.submittedType).toBe('bug');
-        expect(stored.ai.businessType).toBe('bug');
+        expect(stored.submitted_type).toBe('bug');
+        expect(stored.business_type).toBe('bug');
+        expect(updateEnv.FEEDBACK_KV.putCalls).toEqual([]);
     });
 
     it('admin board submits submitted type instead of legacy type', async () => {
-        const pageResponse = await request('/feedback', {}, env);
+        const pageResponse = await request('/feedback/legacy', {}, env);
         const html = await pageResponse.text();
         const patchBodies = [];
         const dom = new JSDOM(html, {
@@ -1315,6 +3206,9 @@ describe('feedback issue board Worker routes', () => {
     });
 
     it('accepts Codex agent workflow statuses and exposes them in filters', async () => {
+        const statusEnv = createV2Env({
+            [feedbackKey]: JSON.stringify(createIssue()),
+        });
         const sessionResponse = await request(
             '/api/feedback/admin/session',
             {
@@ -1322,7 +3216,7 @@ describe('feedback issue board Worker routes', () => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ password: 'admin-pass' }),
             },
-            env
+            statusEnv
         );
         const session = await json(sessionResponse);
         const agentStatuses = [
@@ -1333,6 +3227,7 @@ describe('feedback issue board Worker routes', () => {
             'ready_for_deploy',
         ];
 
+        let expectedVersion = 1;
         for (const status of agentStatuses) {
             const updateResponse = await request(
                 `/api/feedback/issues/${encodeURIComponent(feedbackKey)}`,
@@ -1342,15 +3237,17 @@ describe('feedback issue board Worker routes', () => {
                         'Content-Type': 'application/json',
                         Authorization: `Bearer ${session.token}`,
                     },
-                    body: JSON.stringify({ status }),
+                    body: JSON.stringify({ expectedVersion, status }),
                 },
-                env
+                statusEnv
             );
             const updated = await json(updateResponse);
             const filteredResponse = await request(
                 `/api/feedback/issues?status=${status}`,
-                {},
-                env
+                {
+                    headers: { Authorization: `Bearer ${session.token}` },
+                },
+                statusEnv
             );
             const filtered = await json(filteredResponse);
 
@@ -1359,13 +3256,752 @@ describe('feedback issue board Worker routes', () => {
             expect(filteredResponse.status).toBe(200);
             expect(filtered.issues).toHaveLength(1);
             expect(filtered.issues[0].status).toBe(status);
+            expectedVersion = updated.issue.version;
         }
 
-        const pageResponse = await request('/feedback', {}, env);
+        const pageResponse = await request('/feedback/legacy', {}, statusEnv);
         const html = await pageResponse.text();
 
         for (const status of agentStatuses) {
             expect(html).toContain(status);
         }
+    });
+});
+
+describe('feedback workbench V2 routes', () => {
+    async function adminHeaders(env) {
+        const session = await json(
+            await request(
+                '/api/feedback/admin/session',
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password: 'admin-pass' }),
+                },
+                env
+            )
+        );
+
+        return { Authorization: `Bearer ${session.token}`, 'Content-Type': 'application/json' };
+    }
+
+    async function hashCapability(value) {
+        const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+        return Array.from(new Uint8Array(digest), (byte) =>
+            byte.toString(16).padStart(2, '0')
+        ).join('');
+    }
+
+    function humanActionRow(overrides = {}) {
+        return {
+            id: 'hac_1',
+            issue_id: feedbackKey,
+            workflow_id: null,
+            run_id: null,
+            candidate_id: null,
+            design_id: null,
+            type: 'need_reproduction',
+            requested_action: '请补充触发该问题的具体步骤',
+            evidence_json: JSON.stringify([{ label: '已检查', summary: '导入路径无异常' }]),
+            allowed_return_states_json: JSON.stringify(['queued', 'closed']),
+            status: 'active',
+            resolution_json: null,
+            created_at: '2026-07-28T09:00:00.000Z',
+            resolved_at: null,
+            ...overrides,
+        };
+    }
+
+    it('[SCN-FWB-017] refuses workbench settings without an admin session', async () => {
+        const env = createV2Env();
+
+        const responses = await Promise.all([
+            request('/api/feedback/automation/settings', {}, env),
+            request('/api/feedback/automation/health', {}, env),
+            request('/api/feedback/runners/settings', {}, env),
+            request('/api/feedback/automation/test', { method: 'POST' }, env),
+        ]);
+
+        expect(responses.map((response) => response.status)).toEqual([401, 401, 401, 401]);
+    });
+
+    it('[SCN-FWB-015] returns automation defaults without exposing the signing secret', async () => {
+        const env = createV2Env();
+        env.FEEDBACK_WEBHOOK_SECRET = 'super-secret-signing-key';
+        const headers = await adminHeaders(env);
+
+        const response = await request('/api/feedback/automation/settings', { headers }, env);
+        const payload = await json(response);
+
+        expect(response.status).toBe(200);
+        expect(payload.settings.subscribedEvents).toEqual([
+            'issue.created',
+            'comment.created',
+            'issue.reopened',
+        ]);
+        expect(payload.settings.connectionState).toBe('unverified');
+        expect(payload.settings.reconcileJobId).toBe('feedback-reconcile');
+        expect(payload.settings.signing.configured).toBe(true);
+        expect(payload.settings.signing.secretRef).toBe('FEEDBACK_WEBHOOK_SECRET');
+        expect(JSON.stringify(payload)).not.toContain('super-secret-signing-key');
+    });
+
+    it('[SCN-FWB-015] saving a new hook URL resets the verified state', async () => {
+        const env = createV2Env();
+        const headers = await adminHeaders(env);
+
+        const created = await json(
+            await request(
+                '/api/feedback/automation/settings',
+                {
+                    method: 'PATCH',
+                    headers,
+                    body: JSON.stringify({
+                        expectedVersion: 0,
+                        settings: {
+                            hookUrl: 'https://agent.example.com/hooks/feedback',
+                            subscribedEvents: ['issue.created', 'comment.created'],
+                        },
+                    }),
+                },
+                env
+            )
+        );
+
+        expect(created.settings.hookUrl).toBe('https://agent.example.com/hooks/feedback');
+        expect(created.settings.connectionState).toBe('unverified');
+        expect(created.settings.version).toBe(1);
+
+        const stale = await request(
+            '/api/feedback/automation/settings',
+            {
+                method: 'PATCH',
+                headers,
+                body: JSON.stringify({
+                    expectedVersion: 0,
+                    settings: { hookUrl: 'https://other.example.com/hook' },
+                }),
+            },
+            env
+        );
+
+        expect(stale.status).toBe(409);
+    });
+
+    it('[SCN-FWB-015] signs the hook test with HMAC over timestamp and raw body', async () => {
+        const env = createV2Env();
+        env.FEEDBACK_WEBHOOK_SECRET = 'signing-key';
+        const headers = await adminHeaders(env);
+        await request(
+            '/api/feedback/automation/settings',
+            {
+                method: 'PATCH',
+                headers,
+                body: JSON.stringify({
+                    expectedVersion: 0,
+                    settings: { hookUrl: 'https://agent.example.com/hooks/feedback' },
+                }),
+            },
+            env
+        );
+
+        const calls = [];
+        const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, options) => {
+            calls.push({ url, options });
+            return new Response('', { status: 202 });
+        });
+
+        try {
+            const payload = await json(
+                await request('/api/feedback/automation/test', { method: 'POST', headers }, env)
+            );
+
+            expect(payload.result.ok).toBe(true);
+            expect(payload.result.responseStatus).toBe(202);
+            expect(payload.result.signed).toBe(true);
+            expect(payload.settings.connectionState).toBe('connected');
+            expect(calls).toHaveLength(1);
+
+            const sent = calls[0].options;
+            const timestamp = sent.headers['X-Feedback-Timestamp'];
+            const key = await crypto.subtle.importKey(
+                'raw',
+                new TextEncoder().encode('signing-key'),
+                { name: 'HMAC', hash: 'SHA-256' },
+                false,
+                ['sign']
+            );
+            const signatureBytes = await crypto.subtle.sign(
+                'HMAC',
+                key,
+                new TextEncoder().encode(`${timestamp}.${sent.body}`)
+            );
+            const expected = Array.from(new Uint8Array(signatureBytes), (byte) =>
+                byte.toString(16).padStart(2, '0')
+            ).join('');
+
+            expect(sent.headers['X-Feedback-Signature-256']).toBe(`sha256=${expected}`);
+        } finally {
+            fetchSpy.mockRestore();
+        }
+    });
+
+    it('[SCN-FWB-016] rejects a Codex endpoint that is not a full /v1/responses URL', async () => {
+        const env = createV2Env();
+        const headers = await adminHeaders(env);
+        const rejected = [
+            'https://relay.example.com/v1',
+            'https://relay.example.com/v1/chat/completions',
+            'ftp://relay.example.com/v1/responses',
+            'not-a-url',
+        ];
+
+        for (const endpoint of rejected) {
+            const response = await request(
+                '/api/feedback/runners/settings',
+                {
+                    method: 'PATCH',
+                    headers,
+                    body: JSON.stringify({
+                        expectedVersion: 0,
+                        settings: { providers: { codex: { responsesEndpoint: endpoint } } },
+                    }),
+                },
+                env
+            );
+            const payload = await json(response);
+
+            expect(response.status).toBe(400);
+            expect(payload.field).toBe('providers.codex.responsesEndpoint');
+        }
+
+        const accepted = await request(
+            '/api/feedback/runners/settings',
+            {
+                method: 'PATCH',
+                headers,
+                body: JSON.stringify({
+                    expectedVersion: 0,
+                    settings: {
+                        defaultProvider: 'claude',
+                        providers: {
+                            codex: { responsesEndpoint: 'https://relay.example.com/v1/responses' },
+                        },
+                    },
+                }),
+            },
+            env
+        );
+        const payload = await json(accepted);
+
+        expect(accepted.status).toBe(200);
+        expect(payload.settings.defaultProvider).toBe('claude');
+        expect(payload.settings.providers.codex.responsesEndpoint).toBe(
+            'https://relay.example.com/v1/responses'
+        );
+        expect(payload.settings.providers.codex.connectionState).toBe('unverified');
+    });
+
+    it('[SCN-FWB-016] blocks a malformed endpoint before running any connection test', async () => {
+        const env = createV2Env();
+        const headers = await adminHeaders(env);
+        env.FEEDBACK_DB.tables.feedback_settings.set('runners', {
+            name: 'runners',
+            value_json: JSON.stringify({
+                defaultProvider: 'codex',
+                providers: { codex: { responsesEndpoint: 'https://relay.example.com/v1' } },
+            }),
+            version: 1,
+            updated_at: '2026-07-28T09:00:00.000Z',
+            updated_by: 'admin',
+        });
+
+        const fetchSpy = vi.spyOn(globalThis, 'fetch');
+        try {
+            const response = await request(
+                '/api/feedback/runners/test',
+                { method: 'POST', headers, body: JSON.stringify({ provider: 'codex' }) },
+                env
+            );
+            const payload = await json(response);
+
+            expect(response.status).toBe(400);
+            expect(payload.result.errorCode).toBe('ENDPOINT_NOT_RESPONSES');
+            expect(payload.result.field).toBe('providers.codex.responsesEndpoint');
+            expect(fetchSpy).not.toHaveBeenCalled();
+        } finally {
+            fetchSpy.mockRestore();
+        }
+    });
+
+    it('[SCN-FWB-016] reports an unconfigured Action smoke instead of claiming success', async () => {
+        const env = createV2Env();
+        const headers = await adminHeaders(env);
+
+        const response = await request(
+            '/api/feedback/runners/test',
+            { method: 'POST', headers, body: JSON.stringify({ provider: 'codex' }) },
+            env
+        );
+        const payload = await json(response);
+
+        expect(response.status).toBe(503);
+        expect(payload.result.ok).toBe(false);
+        expect(payload.result.errorCode).toBe('ACTION_SMOKE_NOT_CONFIGURED');
+        expect(payload.result.action).toBe('openai/codex-action@v1');
+        expect(payload.settings.providers.codex.connectionState).toBe('unverified');
+    });
+
+    it('[SCN-FWB-011] orders the admin queue by delivery, human wait, then failure', async () => {
+        const env = createV2Env(
+            {},
+            {
+                feedback_issues: [
+                    createD1IssueRow({
+                        id: 'feedback:1:a',
+                        status: 'open',
+                        created_at: '2026-07-28T05:00:00.000Z',
+                    }),
+                    createD1IssueRow({
+                        id: 'feedback:2:b',
+                        status: 'needs_human',
+                        created_at: '2026-07-28T06:00:00.000Z',
+                    }),
+                    createD1IssueRow({
+                        id: 'feedback:3:c',
+                        status: 'ready_for_deploy',
+                        created_at: '2026-07-28T04:00:00.000Z',
+                    }),
+                    createD1IssueRow({
+                        id: 'feedback:4:d',
+                        status: 'test_failed',
+                        created_at: '2026-07-28T07:00:00.000Z',
+                    }),
+                    createD1IssueRow({
+                        id: 'feedback:5:e',
+                        status: 'in_progress',
+                        created_at: '2026-07-28T08:00:00.000Z',
+                    }),
+                ],
+            }
+        );
+        const headers = await adminHeaders(env);
+
+        const all = await json(await request('/api/feedback/issues', { headers }, env));
+        expect(all.issues.map((issue) => issue.status)).toEqual([
+            'ready_for_deploy',
+            'needs_human',
+            'test_failed',
+            'open',
+            'in_progress',
+        ]);
+        expect(all.attentionCount).toBe(3);
+
+        const attention = await json(
+            await request('/api/feedback/issues?filter=attention', { headers }, env)
+        );
+        expect(attention.issues).toHaveLength(3);
+
+        const active = await json(
+            await request('/api/feedback/issues?filter=active', { headers }, env)
+        );
+        expect(active.issues.map((issue) => issue.status)).toEqual(['in_progress']);
+    });
+
+    it('[SCN-FWB-001] appends an immutable public comment and keeps sequence stable', async () => {
+        const env = createV2Env(
+            {},
+            {
+                feedback_issues: [createD1IssueRow({ status: 'in_progress' })],
+                feedback_events: [
+                    {
+                        id: 'evt_seed',
+                        issue_id: feedbackKey,
+                        sequence: 1,
+                        type: 'issue.created',
+                        actor_type: 'user',
+                        actor_id: null,
+                        visibility: 'public',
+                        run_id: null,
+                        occurred_at: '2026-07-28T08:00:00.000Z',
+                        body_json: '{}',
+                        metadata_json: '{}',
+                        legacy_hash: null,
+                    },
+                ],
+            }
+        );
+        const headers = await adminHeaders(env);
+
+        const response = await request(
+            `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/comments`,
+            {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({
+                    body: '@codex-agent 请继续处理这个问题',
+                    mode: 'resume',
+                    expectedVersion: 1,
+                }),
+            },
+            env
+        );
+        const payload = await json(response);
+
+        expect(response.status).toBe(201);
+        expect(payload.mode).toBe('resume');
+        expect(payload.mention).toBe('@codex-agent');
+        expect(payload.provider).toBe('codex');
+        expect(payload.issue.workflow.status).toBe('queued');
+
+        const events = await json(
+            await request(
+                `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/events`,
+                { headers },
+                env
+            )
+        );
+        const sequences = events.events.map((event) => event.sequence);
+
+        expect(sequences).toEqual([...sequences].sort((a, b) => a - b));
+        expect(new Set(sequences).size).toBe(sequences.length);
+        expect(events.events.map((event) => event.type)).toEqual([
+            'issue.created',
+            'comment.created',
+            'status.changed',
+        ]);
+        expect(events.events[1].text).toContain('请继续处理这个问题');
+    });
+
+    it('[SCN-FWB-003] rejects a stale comment version without appending an event', async () => {
+        const env = createV2Env({}, { feedback_issues: [createD1IssueRow({ status: 'open' })] });
+        const headers = await adminHeaders(env);
+
+        const response = await request(
+            `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/comments`,
+            {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({ body: '过期版本', mode: 'record', expectedVersion: 99 }),
+            },
+            env
+        );
+
+        expect(response.status).toBe(409);
+        expect(env.FEEDBACK_DB.tables.feedback_events.size).toBe(0);
+    });
+
+    it('[SCN-FWB-012] limits an owner comment to recording unless it answers the wait', async () => {
+        const capability = 'owner-capability-value';
+        const env = createV2Env(
+            {},
+            {
+                feedback_issues: [
+                    createD1IssueRow({
+                        status: 'in_progress',
+                        owner_capability_hash: await hashCapability(capability),
+                        owner_capability_expires_at: '2099-01-01T00:00:00.000Z',
+                    }),
+                ],
+            }
+        );
+        const ownerHeaders = {
+            Authorization: `Bearer ${capability}`,
+            'Content-Type': 'application/json',
+        };
+
+        const recorded = await json(
+            await request(
+                `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/comments`,
+                {
+                    method: 'POST',
+                    headers: ownerHeaders,
+                    body: JSON.stringify({
+                        body: '@codex-agent 立刻重新跑一遍',
+                        mode: 'resume',
+                        expectedVersion: 1,
+                    }),
+                },
+                env
+            )
+        );
+
+        // The Issue is not waiting on this owner, so the reply may only be recorded.
+        expect(recorded.mode).toBe('record');
+        expect(recorded.requestedMode).toBe('resume');
+        expect(recorded.provider).toBe('');
+        expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe('in_progress');
+
+        env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status = 'needs_human';
+        env.FEEDBACK_DB.tables.feedback_human_actions.set('hac_1', humanActionRow());
+
+        const resumed = await json(
+            await request(
+                `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/comments`,
+                {
+                    method: 'POST',
+                    headers: ownerHeaders,
+                    body: JSON.stringify({
+                        body: '复现步骤：导入 Excel 后立即撤销',
+                        mode: 'resume',
+                        expectedVersion: 2,
+                    }),
+                },
+                env
+            )
+        );
+
+        expect(resumed.mode).toBe('resume');
+        expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe('queued');
+        expect(env.FEEDBACK_DB.tables.feedback_human_actions.get('hac_1').status).toBe('resolved');
+    });
+
+    it('[SCN-FWB-020] only accepts a declared return state from a human action', async () => {
+        const env = createV2Env(
+            {},
+            {
+                feedback_issues: [createD1IssueRow({ status: 'needs_human' })],
+                feedback_human_actions: [humanActionRow()],
+            }
+        );
+        const headers = await adminHeaders(env);
+
+        const rejected = await request(
+            '/api/feedback/human-actions/hac_1/respond',
+            { method: 'POST', headers, body: JSON.stringify({ decision: 'resolved' }) },
+            env
+        );
+
+        expect(rejected.status).toBe(400);
+        expect(env.FEEDBACK_DB.tables.feedback_human_actions.get('hac_1').status).toBe('active');
+
+        const accepted = await json(
+            await request(
+                '/api/feedback/human-actions/hac_1/respond',
+                { method: 'POST', headers, body: JSON.stringify({ decision: 'queued' }) },
+                env
+            )
+        );
+
+        expect(accepted.action.status).toBe('resolved');
+        expect(accepted.issue.workflow.status).toBe('queued');
+    });
+
+    it('[SCN-FWB-021] requires the exact candidateId before approving delivery', async () => {
+        const env = createV2Env(
+            {},
+            {
+                feedback_issues: [createD1IssueRow({ status: 'needs_human' })],
+                feedback_human_actions: [
+                    humanActionRow({
+                        type: 'review_candidate',
+                        candidate_id: 'cnd_expected',
+                        allowed_return_states_json: JSON.stringify(['ready_for_deploy', 'queued']),
+                    }),
+                ],
+            }
+        );
+        const headers = await adminHeaders(env);
+
+        const missing = await request(
+            '/api/feedback/human-actions/hac_1/respond',
+            { method: 'POST', headers, body: JSON.stringify({ decision: 'ready_for_deploy' }) },
+            env
+        );
+        expect(missing.status).toBe(400);
+
+        const mismatched = await request(
+            '/api/feedback/human-actions/hac_1/respond',
+            {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({ decision: 'ready_for_deploy', candidateId: 'cnd_other' }),
+            },
+            env
+        );
+        expect(mismatched.status).toBe(409);
+        expect(env.FEEDBACK_DB.tables.feedback_human_actions.get('hac_1').status).toBe('active');
+
+        const approved = await json(
+            await request(
+                '/api/feedback/human-actions/hac_1/respond',
+                {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({
+                        decision: 'ready_for_deploy',
+                        candidateId: 'cnd_expected',
+                    }),
+                },
+                env
+            )
+        );
+        expect(approved.issue.workflow.status).toBe('ready_for_deploy');
+    });
+
+    it('[SCN-FWB-002] reports an event-driven health summary with no polling cron', async () => {
+        const env = createV2Env(
+            {},
+            { feedback_issues: [createD1IssueRow({ status: 'needs_human' })] }
+        );
+        const headers = await adminHeaders(env);
+
+        const payload = await json(
+            await request('/api/feedback/automation/health', { headers }, env)
+        );
+
+        expect(payload.health.pollingCronConfigured).toBe(false);
+        expect(payload.health.reconcile.jobId).toBe('feedback-reconcile');
+        expect(payload.health.reconcile.stuckCount).toBe(0);
+        expect(payload.health.reconcile.runCount).toBe(0);
+        expect(payload.health.needsHumanCount).toBe(1);
+        expect(payload.health.deliveries).toEqual([]);
+    });
+
+    it('[SCN-FWB-003] enqueues one delivery per event and never duplicates it', async () => {
+        const env = createV2Env({}, { feedback_issues: [createD1IssueRow({ status: 'open' })] });
+        const headers = await adminHeaders(env);
+        await request(
+            '/api/feedback/automation/settings',
+            {
+                method: 'PATCH',
+                headers,
+                body: JSON.stringify({
+                    expectedVersion: 0,
+                    settings: { hookUrl: 'https://agent.example.com/hooks/feedback' },
+                }),
+            },
+            env
+        );
+
+        const first = await json(
+            await request(
+                `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/comments`,
+                {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({
+                        body: '第一条回复',
+                        mode: 'record',
+                        expectedVersion: 1,
+                    }),
+                },
+                env
+            )
+        );
+        const second = await json(
+            await request(
+                `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/comments`,
+                {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({
+                        body: '第二条回复',
+                        mode: 'record',
+                        expectedVersion: 2,
+                    }),
+                },
+                env
+            )
+        );
+
+        expect(first.delivery.deliveryId).not.toBe(second.delivery.deliveryId);
+        expect(env.FEEDBACK_DB.tables.feedback_deliveries.size).toBe(2);
+
+        const health = await json(
+            await request('/api/feedback/automation/health', { headers }, env)
+        );
+        expect(health.health.deliveries).toHaveLength(2);
+        expect(health.health.pendingCount).toBe(2);
+        expect(health.health.deliveries.every((item) => item.eventType === 'comment.created')).toBe(
+            true
+        );
+    });
+
+    it('[SCN-FWB-011] reopens a closed Issue through its own endpoint', async () => {
+        const env = createV2Env({}, { feedback_issues: [createD1IssueRow({ status: 'closed' })] });
+        const headers = await adminHeaders(env);
+
+        const reopened = await json(
+            await request(
+                `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/reopen`,
+                { method: 'POST', headers, body: JSON.stringify({ expectedVersion: 1 }) },
+                env
+            )
+        );
+
+        expect(reopened.issue.workflow.status).toBe('open');
+
+        const again = await request(
+            `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/reopen`,
+            { method: 'POST', headers, body: JSON.stringify({ expectedVersion: 2 }) },
+            env
+        );
+        expect(again.status).toBe(409);
+    });
+
+    it('[SCN-FWB-001] hides internal events from the owner timeline', async () => {
+        const capability = 'owner-capability-value';
+        const env = createV2Env(
+            {},
+            {
+                feedback_issues: [
+                    createD1IssueRow({
+                        status: 'in_progress',
+                        owner_capability_hash: await hashCapability(capability),
+                        owner_capability_expires_at: '2099-01-01T00:00:00.000Z',
+                    }),
+                ],
+                feedback_events: [
+                    {
+                        id: 'evt_public',
+                        issue_id: feedbackKey,
+                        sequence: 1,
+                        type: 'comment.created',
+                        actor_type: 'agent',
+                        actor_id: null,
+                        visibility: 'public',
+                        run_id: 'run_1',
+                        occurred_at: '2026-07-28T08:00:00.000Z',
+                        body_json: JSON.stringify({ text: '已完成分析' }),
+                        metadata_json: '{}',
+                        legacy_hash: null,
+                    },
+                    {
+                        id: 'evt_internal',
+                        issue_id: feedbackKey,
+                        sequence: 2,
+                        type: 'comment.created',
+                        actor_type: 'agent',
+                        actor_id: null,
+                        visibility: 'internal',
+                        run_id: 'run_1',
+                        occurred_at: '2026-07-28T08:05:00.000Z',
+                        body_json: JSON.stringify({ internalNote: 'internal build log' }),
+                        metadata_json: '{}',
+                        legacy_hash: null,
+                    },
+                ],
+            }
+        );
+
+        const ownerEvents = await json(
+            await request(
+                `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/events`,
+                { headers: { Authorization: `Bearer ${capability}` } },
+                env
+            )
+        );
+        const adminEvents = await json(
+            await request(
+                `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/events`,
+                { headers: await adminHeaders(env) },
+                env
+            )
+        );
+
+        expect(ownerEvents.events.map((event) => event.id)).toEqual(['evt_public']);
+        expect(JSON.stringify(ownerEvents)).not.toContain('internal build log');
+        expect(adminEvents.events.map((event) => event.id)).toEqual(['evt_public', 'evt_internal']);
     });
 });

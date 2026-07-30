@@ -1,0 +1,1880 @@
+/* Feedback Workbench V2 client (spec §19). Served inline by the Worker. */
+(function () {
+    'use strict';
+
+    var config = JSON.parse(document.getElementById('workbenchConfig').textContent || '{}');
+    var API = String(config.apiBase || '').replace(/\/+$/, '');
+    var ADMIN_TOKEN_KEY = 'feedback.workbench.adminToken';
+    var OWNER_KEY = 'feedback.workbench.owner';
+
+    var STATUS_LABELS = {
+        open: '待处理',
+        queued: '已排队',
+        in_progress: '处理中',
+        testing: '验证中',
+        test_failed: '验证失败',
+        needs_human: '等待你的回复',
+        ready_for_deploy: '待交付',
+        resolved: '已解决',
+        closed: '已关闭'
+    };
+    var STATUS_TONES = {
+        open: '',
+        queued: 'blue',
+        in_progress: 'blue',
+        testing: 'blue',
+        test_failed: 'red',
+        needs_human: 'orange',
+        ready_for_deploy: 'orange',
+        resolved: 'green',
+        closed: ''
+    };
+    var BUSINESS_TYPE_LABELS = {
+        bug: 'Bug',
+        improvement: '体验优化',
+        requirement: '需求',
+        other: '其他',
+        unclear: '待分类'
+    };
+    var PRIORITY_LABELS = { low: '低', medium: '中', high: '高', urgent: '紧急' };
+    var SCOPE_LABELS = { small: '小', medium: '中', large: '大', unclear: '待评估' };
+    var PROVIDER_LABELS = { codex: 'Codex', claude: 'Claude Agent' };
+    var PROVIDER_MENTIONS = { codex: '@codex-agent', claude: '@claude-agent' };
+    var EVENT_DESCRIPTIONS = {
+        'issue.created': '新反馈创建后立即分流',
+        'comment.created': '用户补充或 @处理者',
+        'issue.reopened': '已解决问题重新打开',
+        'status.changed': '用于外部通知和同步'
+    };
+    var TERMINAL_STATUSES = ['resolved', 'closed'];
+    var FIELD_LABELS = {
+        priority: '优先级',
+        assignee: '处理者',
+        title: '标题',
+        description: '描述',
+        'ai.businessType': '类型',
+        'ai.scope': '范围',
+        'ai.automationDecision': '处理决策',
+        'ai.confidence': '分类置信度'
+    };
+    var EVENT_FALLBACK_TEXT = {
+        'issue.updated': '更新了 Issue 信息',
+        'issue.reopened': '重新打开了这条反馈',
+        'classification.changed': '更新了 AI 分类',
+        'status.changed': '更新了状态'
+    };
+    var ICON_CHECK =
+        '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m5 12 4 4L19 6"></path></svg>';
+    var ICON_ISSUE =
+        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v4m0 4h.01"></path></svg>';
+    var PROVIDER_ICONS = {
+        codex: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 5h16v14H4z"></path><path d="m8 10 2 2-2 2m4 0h4"></path></svg>',
+        claude: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M8 12h8M12 8v8"></path></svg>'
+    };
+    var ICON_ATTACHMENT =
+        '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="m7 15 3-3 3 3 2-2 3 3"></path></svg>';
+
+    var state = {
+        view: 'issues',
+        actor: 'anonymous',
+        adminToken: '',
+        ownerCapability: '',
+        ownerIssueId: '',
+        filter: 'attention',
+        query: '',
+        issues: [],
+        attentionCount: 0,
+        selectedKey: '',
+        issue: null,
+        events: [],
+        humanAction: null,
+        automation: null,
+        automationDirty: false,
+        runners: null,
+        runnersDirty: false,
+        health: null,
+        submitting: false
+    };
+
+    /* ---------------------------------------------------------------- utils */
+
+    function $(id) {
+        return document.getElementById(id);
+    }
+
+    function escapeHtml(value) {
+        return String(value == null ? '' : value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function paragraphs(value) {
+        var blocks = String(value == null ? '' : value).split(/\n{2,}/);
+        return blocks
+            .filter(function (block) {
+                return block.trim();
+            })
+            .map(function (block) {
+                return '<p>' + escapeHtml(block.trim()).replace(/\n/g, '<br />') + '</p>';
+            })
+            .join('');
+    }
+
+    function relativeTime(value) {
+        var timestamp = Date.parse(value);
+        if (!timestamp) return '';
+        var seconds = Math.floor((Date.now() - timestamp) / 1000);
+        if (seconds < 60) return '刚刚';
+        if (seconds < 3600) return Math.floor(seconds / 60) + ' 分钟前';
+        if (seconds < 86400) return Math.floor(seconds / 3600) + ' 小时前';
+        if (seconds < 2592000) return Math.floor(seconds / 86400) + ' 天前';
+        return new Date(timestamp).toLocaleDateString('zh-CN');
+    }
+
+    function absoluteTime(value) {
+        var timestamp = Date.parse(value);
+        return timestamp ? new Date(timestamp).toLocaleString('zh-CN') : '';
+    }
+
+    function formatBytes(size) {
+        var bytes = Number(size) || 0;
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1024 * 1024) return Math.round(bytes / 1024) + ' KB';
+        return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+
+    function statusLabel(status) {
+        return STATUS_LABELS[status] || status || '未知';
+    }
+
+    function statusTone(status) {
+        return STATUS_TONES[status] || '';
+    }
+
+    function safePagePath(value) {
+        if (!value) return '';
+        try {
+            return new URL(value).pathname;
+        } catch (error) {
+            return '';
+        }
+    }
+
+    function issueNumber(key) {
+        var parts = String(key || '').split(':');
+        return parts.length > 2 ? parts[2].slice(0, 6) : String(key || '').slice(0, 6);
+    }
+
+    function toastTimer(message) {
+        var toast = $('toast');
+        $('toastText').textContent = message;
+        toast.style.display = 'flex';
+        window.clearTimeout(toastTimer.handle);
+        toastTimer.handle = window.setTimeout(function () {
+            toast.style.display = 'none';
+        }, 3200);
+    }
+
+    function setHidden(element, hidden) {
+        if (!element) return;
+        element.hidden = Boolean(hidden);
+    }
+
+    /* ------------------------------------------------------------------ api */
+
+    function request(path, options) {
+        var settings = options || {};
+        var headers = { Accept: 'application/json' };
+        if (settings.body !== undefined) headers['Content-Type'] = 'application/json';
+        if (state.adminToken) {
+            headers.Authorization = 'Bearer ' + state.adminToken;
+        } else if (state.ownerCapability) {
+            headers.Authorization = 'Bearer ' + state.ownerCapability;
+        }
+
+        return fetch(API + path, {
+            method: settings.method || 'GET',
+            headers: headers,
+            body: settings.body === undefined ? undefined : JSON.stringify(settings.body)
+        }).then(function (response) {
+            return response
+                .json()
+                .catch(function () {
+                    return {};
+                })
+                .then(function (payload) {
+                    if (response.ok) return payload;
+                    var error = new Error(payload.error || response.statusText || '请求失败');
+                    error.status = response.status;
+                    error.payload = payload;
+                    throw error;
+                });
+        });
+    }
+
+    /* --------------------------------------------------------------- actors */
+
+    function readOwnerFromLocation() {
+        var hash = window.location.hash || '';
+        if (hash.indexOf('issue=') === -1) return null;
+
+        var params = new URLSearchParams(hash.replace(/^#/, ''));
+        var issueId = params.get('issue') || '';
+        var capability = params.get('capability') || '';
+        if (!issueId || !capability) return null;
+
+        // Keep the capability out of history, logs and Referer (§21.1).
+        window.history.replaceState({}, '', window.location.pathname + window.location.search);
+        return { issueId: issueId, capability: capability };
+    }
+
+    function restoreSession() {
+        var fromLocation = readOwnerFromLocation();
+        if (fromLocation) {
+            try {
+                window.sessionStorage.setItem(OWNER_KEY, JSON.stringify(fromLocation));
+            } catch (error) {
+                /* private mode: session-only */
+            }
+        }
+
+        var owner = fromLocation;
+        if (!owner) {
+            try {
+                owner = JSON.parse(window.sessionStorage.getItem(OWNER_KEY) || 'null');
+            } catch (error) {
+                owner = null;
+            }
+        }
+
+        var adminToken = '';
+        try {
+            adminToken = window.sessionStorage.getItem(ADMIN_TOKEN_KEY) || '';
+        } catch (error) {
+            adminToken = '';
+        }
+
+        if (adminToken) {
+            state.adminToken = adminToken;
+            state.actor = 'admin';
+        } else if (owner && owner.issueId && owner.capability) {
+            state.ownerIssueId = owner.issueId;
+            state.ownerCapability = owner.capability;
+            state.selectedKey = owner.issueId;
+            state.actor = 'owner';
+        }
+    }
+
+    function applyActorChrome() {
+        var isAdmin = state.actor === 'admin';
+        Array.prototype.forEach.call(document.querySelectorAll('.admin-only'), function (node) {
+            setHidden(node, !isAdmin);
+        });
+        $('accountButton').setAttribute('aria-label', isAdmin ? '退出管理员登录' : '管理员登录');
+        setHidden($('composer'), state.actor === 'anonymous');
+        $('composerAvatar').textContent = isAdmin ? '管' : '你';
+    }
+
+    /* ---------------------------------------------------------------- views */
+
+    function switchView(view) {
+        var allowed = state.actor === 'admin' ? ['issues', 'automations', 'runners'] : ['issues'];
+        var active = allowed.indexOf(view) === -1 ? 'issues' : view;
+        var loginVisible = state.actor === 'anonymous';
+        state.view = active;
+
+        $('issueView').classList.toggle('hidden', loginVisible || active !== 'issues');
+        $('settingsView').classList.toggle('active', !loginVisible && active === 'automations');
+        $('runnersView').classList.toggle('active', !loginVisible && active === 'runners');
+        $('loginView').classList.toggle('active', loginVisible);
+
+        Array.prototype.forEach.call(document.querySelectorAll('.top-tab'), function (tab) {
+            var isActive = tab.dataset.view === active;
+            tab.classList.toggle('active', isActive);
+            tab.setAttribute('aria-current', isActive ? 'page' : 'false');
+        });
+
+        if (active === 'automations' && !state.automation) loadAutomation();
+        if (active === 'runners' && !state.runners) loadRunners();
+    }
+
+    /* ----------------------------------------------------------- issue list */
+
+    function renderIssueList() {
+        var list = $('issueList');
+        var query = state.query.trim().toLowerCase();
+        var visible = state.issues.filter(function (issue) {
+            if (!query) return true;
+            return (
+                String(issue.title || '')
+                    .toLowerCase()
+                    .indexOf(query) !== -1 || issueNumber(issue.key).indexOf(query) !== -1
+            );
+        });
+
+        $('queueAttentionBadge').textContent = '需你处理 ' + state.attentionCount;
+        $('issueCount').textContent = String(state.issues.length);
+        setHidden($('issueCount'), state.issues.length === 0);
+
+        if (!visible.length) {
+            list.innerHTML =
+                '<div style="padding:28px 16px;text-align:center;color:var(--muted)">没有匹配的 Issue</div>';
+            return;
+        }
+
+        list.innerHTML = visible
+            .map(function (issue) {
+                var tone = statusTone(issue.status);
+                return (
+                    '<button class="issue-item' +
+                    (issue.key === state.selectedKey ? ' active' : '') +
+                    '" type="button" role="option" aria-selected="' +
+                    (issue.key === state.selectedKey) +
+                    '" data-issue="' +
+                    escapeHtml(issue.key) +
+                    '">' +
+                    '<div class="issue-item-title"><span>' +
+                    escapeHtml(issue.title || '(无标题)') +
+                    '</span><span class="badge ' +
+                    tone +
+                    '">' +
+                    escapeHtml(statusLabel(issue.status)) +
+                    '</span></div>' +
+                    '<div class="issue-item-copy">' +
+                    escapeHtml(issue.descriptionPreview || '') +
+                    '</div>' +
+                    '<div class="issue-item-meta"><span class="inline" style="gap:5px">' +
+                    ICON_ISSUE +
+                    ' #' +
+                    escapeHtml(issueNumber(issue.key)) +
+                    ' · ' +
+                    escapeHtml(BUSINESS_TYPE_LABELS[issue.businessType] || '待分类') +
+                    '</span><span>' +
+                    escapeHtml(relativeTime(issue.updatedAt || issue.receivedAt)) +
+                    '</span></div>' +
+                    '</button>'
+                );
+            })
+            .join('');
+    }
+
+    function loadIssues() {
+        if (state.actor !== 'admin') return Promise.resolve();
+
+        return request('/api/feedback/issues?filter=' + encodeURIComponent(state.filter))
+            .then(function (payload) {
+                state.issues = payload.issues || [];
+                state.attentionCount = Number(payload.attentionCount) || 0;
+                renderIssueList();
+
+                // §19.1: refreshing the list must not move the current selection.
+                var stillVisible = state.issues.some(function (issue) {
+                    return issue.key === state.selectedKey;
+                });
+                if (!state.selectedKey || (!stillVisible && !state.issue)) {
+                    var first = state.issues[0];
+                    if (first) return selectIssue(first.key);
+                }
+                return null;
+            })
+            .catch(handleAuthError);
+    }
+
+    /* --------------------------------------------------------- issue detail */
+
+    function renderTimelineEntry(event, issue) {
+        var isEventRow =
+            ['status.changed', 'issue.updated', 'issue.reopened', 'classification.changed'].indexOf(
+                event.type
+            ) !== -1;
+
+        if (isEventRow) {
+            var changeText = Object.keys(event.changes || {})
+                .map(function (field) {
+                    var pair = event.changes[field] || [];
+                    if (field === 'status') {
+                        return (
+                            '将状态改为 <span class="badge ' +
+                            statusTone(pair[1]) +
+                            '">' +
+                            escapeHtml(statusLabel(pair[1])) +
+                            '</span>'
+                        );
+                    }
+                    return (
+                        '更新' +
+                        escapeHtml(FIELD_LABELS[field] || field) +
+                        '为 <strong>' +
+                        escapeHtml(fieldValueLabel(field, pair[1])) +
+                        '</strong>'
+                    );
+                })
+                .join('，');
+            if (!changeText) changeText = EVENT_FALLBACK_TEXT[event.type] || '更新了这条反馈';
+
+            return (
+                '<div class="timeline-entry"><div class="avatar event" aria-hidden="true"></div>' +
+                '<div class="event-row"><span><strong>' +
+                escapeHtml(actorName(event.actorType)) +
+                '</strong> ' +
+                (changeText || escapeHtml(event.type)) +
+                '</span><span title="' +
+                escapeHtml(absoluteTime(event.occurredAt)) +
+                '">' +
+                escapeHtml(relativeTime(event.occurredAt)) +
+                '</span></div></div>'
+            );
+        }
+
+        var isAgent = event.actorType === 'agent';
+        var isCreation = event.type === 'issue.created';
+        var needsAttention = event.type === 'waiting_human';
+        var avatarClass = isAgent ? 'avatar ai' : 'avatar';
+        var avatarText = isAgent ? 'AI' : event.actorType === 'admin' ? '管' : '你';
+        var badge = isCreation
+            ? '<span class="badge blue">作者</span>'
+            : needsAttention
+              ? '<span class="badge orange">需要你处理</span>'
+              : isAgent
+                ? '<span class="badge purple">自动处理</span>'
+                : event.actorType === 'admin'
+                  ? '<span class="badge">管理员</span>'
+                  : '';
+        var headline = isCreation
+            ? '提交了反馈'
+            : needsAttention
+              ? '需要你补充信息'
+              : isAgent
+                ? '发布了处理结果'
+                : '回复了';
+        var bodyHtml = isCreation
+            ? paragraphs(issue && issue.description) + attachmentsHtml(issue)
+            : paragraphs(event.text || event.title);
+
+        return (
+            '<article class="timeline-entry"><div class="' +
+            avatarClass +
+            '">' +
+            escapeHtml(avatarText) +
+            '</div>' +
+            '<div class="comment-card' +
+            (needsAttention ? ' attention' : '') +
+            '"><div class="comment-head"><span><strong>' +
+            escapeHtml(actorName(event.actorType)) +
+            '</strong> ' +
+            headline +
+            ' · <span title="' +
+            escapeHtml(absoluteTime(event.occurredAt)) +
+            '">' +
+            escapeHtml(relativeTime(event.occurredAt)) +
+            '</span></span>' +
+            badge +
+            '</div><div class="comment-body">' +
+            (bodyHtml || '<p class="help">(无内容)</p>') +
+            (event.mention
+                ? '<p class="help">已唤醒 <code>' + escapeHtml(event.mention) + '</code></p>'
+                : '') +
+            '</div></div></article>'
+        );
+    }
+
+    function fieldValueLabel(field, value) {
+        var text = String(value == null ? '' : value);
+        if (field === 'priority') return PRIORITY_LABELS[text] || text;
+        if (field === 'ai.businessType') return BUSINESS_TYPE_LABELS[text] || text;
+        if (field === 'ai.scope') return SCOPE_LABELS[text] || text;
+        return text || '（空）';
+    }
+
+    function actorName(actorType) {
+        if (actorType === 'agent') return 'AI 处理者';
+        if (actorType === 'admin') return '管理员';
+        if (actorType === 'system') return '系统';
+        return '你';
+    }
+
+    function attachmentsHtml(issue) {
+        var attachments = (issue && issue.attachments) || [];
+        if (!attachments.length) return '';
+
+        return attachments
+            .map(function (attachment) {
+                var name = escapeHtml(attachment.name || '附件');
+                var meta = escapeHtml(
+                    (attachment.type || '文件') + ' · ' + formatBytes(attachment.size)
+                );
+                var inner =
+                    '<div class="attachment-thumb" aria-hidden="true">' +
+                    ICON_ATTACHMENT +
+                    '</div><div><strong>' +
+                    name +
+                    '</strong><span>' +
+                    meta +
+                    '</span></div>';
+                return attachment.url
+                    ? '<a class="attachment" href="' +
+                          escapeHtml(attachment.url) +
+                          '" target="_blank" rel="noopener noreferrer">' +
+                          inner +
+                          '</a>'
+                    : '<div class="attachment">' + inner + '</div>';
+            })
+            .join('');
+    }
+
+    function renderTimeline() {
+        var timeline = $('timeline');
+        if (!state.issue) {
+            timeline.innerHTML =
+                '<div style="padding:28px 16px;text-align:center;color:var(--muted)">选择左侧队列中的 Issue 查看处理时间线</div>';
+            return;
+        }
+
+        var issue = state.issue;
+        timeline.innerHTML = state.events
+            .map(function (event) {
+                return renderTimelineEntry(event, issue);
+            })
+            .join('');
+    }
+
+    function renderHeading() {
+        var issue = state.issue;
+        if (!issue) {
+            $('issueTitle').textContent = '反馈处理工作台';
+            $('issueHeadingMeta').innerHTML = '';
+            $('issueBreadcrumbs').innerHTML = '';
+            setHidden($('propertyCard'), true);
+            setHidden($('nextActionCard'), true);
+            return;
+        }
+
+        $('issueBreadcrumbs').innerHTML =
+            '<span>反馈</span><span>/</span><span>' +
+            escapeHtml(BUSINESS_TYPE_LABELS[issue.businessType] || '待分类') +
+            '</span>';
+        $('issueTitle').innerHTML =
+            escapeHtml(issue.title || '(无标题)') +
+            ' <span class="issue-number">#' +
+            escapeHtml(issueNumber(issue.key)) +
+            '</span>';
+
+        var replyCount = state.events.filter(function (event) {
+            return event.type === 'comment.created' || event.type === 'agent.message';
+        }).length;
+        var last = state.events[state.events.length - 1];
+        $('issueHeadingMeta').innerHTML =
+            '<span class="state-pill ' +
+            (statusTone(issue.status) === 'orange' ? 'attention' : '') +
+            '">' +
+            ICON_ISSUE +
+            escapeHtml(statusLabel(issue.status)) +
+            '</span>' +
+            '<span>创建于 <strong>' +
+            escapeHtml(relativeTime(issue.receivedAt)) +
+            '</strong></span><span>·</span><span><strong>' +
+            replyCount +
+            '</strong> 条回复</span>' +
+            (last
+                ? '<span>·</span><span>最近由 <strong>' +
+                  escapeHtml(actorName(last.actorType)) +
+                  '</strong> 更新</span>'
+                : '');
+    }
+
+    function renderProperties() {
+        var issue = state.issue;
+        setHidden($('propertyCard'), !issue);
+        if (!issue) return;
+
+        var rows = [
+            [
+                '状态',
+                '<span class="property-value badge ' +
+                    statusTone(issue.status) +
+                    '">' +
+                    escapeHtml(statusLabel(issue.status)) +
+                    '</span>'
+            ],
+            [
+                '处理者',
+                '<span class="property-value">' +
+                    escapeHtml(issue.assignee || '未指派') +
+                    '</span>'
+            ],
+            [
+                '优先级',
+                '<span class="property-value">' +
+                    escapeHtml(PRIORITY_LABELS[issue.priority] || issue.priority || '中') +
+                    '</span>'
+            ],
+            [
+                '类型',
+                '<span class="property-value badge blue">' +
+                    escapeHtml(BUSINESS_TYPE_LABELS[issue.businessType] || '待分类') +
+                    '</span>'
+            ],
+            [
+                '范围',
+                '<span class="property-value">' +
+                    escapeHtml(SCOPE_LABELS[issue.scope] || '待评估') +
+                    '</span>'
+            ]
+        ];
+        if (issue.pagePath) {
+            rows.push([
+                '页面',
+                '<span class="property-value">' + escapeHtml(issue.pagePath) + '</span>'
+            ]);
+        }
+
+        $('propertyList').innerHTML = rows
+            .map(function (row) {
+                return '<div class="property-row"><span>' + row[0] + '</span>' + row[1] + '</div>';
+            })
+            .join('');
+    }
+
+    /* §19.2/§19.3: the next step comes from the structured HumanAction, never
+       from parsing a free-text note. Buttons are limited to allowedReturnStates. */
+    function renderNextAction() {
+        var issue = state.issue;
+        var action = state.humanAction;
+        var card = $('nextActionCard');
+        if (!issue) {
+            setHidden(card, true);
+            return;
+        }
+
+        setHidden(card, false);
+        var isTerminal = TERMINAL_STATUSES.indexOf(issue.status) !== -1;
+
+        if (action) {
+            $('nextActionBadge').textContent = '等待你';
+            $('nextActionBadge').className = 'badge orange';
+            var evidence = (action.evidence || [])
+                .map(function (item) {
+                    return (
+                        '<div class="evidence-item"><span>' +
+                        escapeHtml(item.label || item.type || '证据') +
+                        '</span><strong>' +
+                        escapeHtml(item.summary || item.value || '') +
+                        '</strong></div>'
+                    );
+                })
+                .join('');
+            $('nextActionCopy').innerHTML =
+                '<strong>' +
+                escapeHtml(action.requestedAction || '需要你的确认') +
+                '</strong>' +
+                (evidence
+                    ? '<details class="evidence"><summary><span>查看已检查证据</span>' +
+                      '<span class="badge">' +
+                      (action.evidence || []).length +
+                      ' 项</span></summary>' +
+                      '<div class="evidence-grid">' +
+                      evidence +
+                      '</div></details>'
+                    : '');
+            $('nextActionButtons').innerHTML = (action.allowedReturnStates || [])
+                .map(function (nextState, index) {
+                    var tone = nextState === 'closed' ? 'danger' : index === 0 ? 'blue' : '';
+                    return (
+                        '<button class="button ' +
+                        tone +
+                        '" type="button" data-human-action="' +
+                        escapeHtml(action.id) +
+                        '" data-decision="' +
+                        escapeHtml(nextState) +
+                        '"' +
+                        (action.candidateId
+                            ? ' data-candidate="' + escapeHtml(action.candidateId) + '"'
+                            : '') +
+                        '>' +
+                        escapeHtml(humanActionLabel(nextState)) +
+                        '</button>'
+                    );
+                })
+                .join('');
+            return;
+        }
+
+        $('nextActionBadge').textContent = statusLabel(issue.status);
+        $('nextActionBadge').className = 'badge ' + statusTone(issue.status);
+        $('nextActionCopy').innerHTML =
+            '<strong>' +
+            escapeHtml(nextStepHeadline(issue.status)) +
+            '</strong>' +
+            escapeHtml(nextStepDetail(issue.status));
+        $('nextActionButtons').innerHTML = isTerminal
+            ? '<button class="button blue" type="button" data-action="reopen">重新打开</button>'
+            : '<button class="button" type="button" data-action="focus-reply">补充信息</button>' +
+              (state.actor === 'admin'
+                  ? '<button class="button danger" type="button" data-action="close">关闭 Issue</button>'
+                  : '');
+    }
+
+    function humanActionLabel(nextState) {
+        var labels = {
+            queued: '批准并继续处理',
+            ready_for_deploy: '批准并交付',
+            needs_human: '仍需补充',
+            closed: '关闭 Issue',
+            open: '退回待处理'
+        };
+        return labels[nextState] || statusLabel(nextState);
+    }
+
+    function nextStepHeadline(status) {
+        var headlines = {
+            open: '等待分流',
+            queued: '已排队',
+            in_progress: 'AI 正在处理',
+            testing: '正在验证',
+            test_failed: '验证失败，等待处理',
+            ready_for_deploy: '等待交付',
+            resolved: '已解决',
+            closed: '已关闭'
+        };
+        return headlines[status] || statusLabel(status);
+    }
+
+    function nextStepDetail(status) {
+        var details = {
+            open: '新反馈已记录，事件已进入投递队列，等待处理服务接手。',
+            queued: '事件已投递，处理任务会在 Runner 启动后开始。',
+            in_progress: '处理中的进展会以时间线回复的形式出现，无需刷新等待。',
+            testing: '正在运行构建与回归验证，结果会写回时间线。',
+            test_failed: '验证未通过，失败日志保留在时间线内供排查。',
+            ready_for_deploy: '候选实现已批准，等待干净集成与部署。',
+            resolved: '问题已解决。若仍有问题，可重新打开。',
+            closed: '该 Issue 已关闭。若仍有问题，可重新打开。'
+        };
+        return details[status] || '';
+    }
+
+    /* §19.2: owners keep their link — V2 sends no email/SMS/IM notification. */
+    function renderOwnerNotice() {
+        var notice = $('ownerNotice');
+        if (state.actor !== 'owner' || !state.issue) {
+            setHidden(notice, true);
+            return;
+        }
+
+        setHidden(notice, false);
+        notice.className = 'policy-callout';
+        notice.innerHTML =
+            '<strong>请保存此页面链接</strong>：它是你查看和回复这条反馈的唯一凭据。' +
+            '当前版本不会发送邮件、短信或 IM 通知，需要你补充信息时请凭该链接回访。';
+    }
+
+    function renderComposer() {
+        var issue = state.issue;
+        setHidden($('composer'), !issue || state.actor === 'anonymous');
+        if (!issue) return;
+
+        var isAdmin = state.actor === 'admin';
+        var isTerminal = TERMINAL_STATUSES.indexOf(issue.status) !== -1;
+        var canResume = isAdmin ? !isTerminal : issue.status === 'needs_human' && state.humanAction;
+
+        var options = [];
+        if (canResume) {
+            options.push({
+                value: 'resume',
+                label: '回复并交给 ' + defaultProviderLabel() + ' 继续处理'
+            });
+        }
+        options.push({ value: 'record', label: '仅记录回复，暂不触发' });
+        if (isAdmin && !isTerminal) options.push({ value: 'close', label: '回复并关闭 Issue' });
+
+        var select = $('replyMode');
+        select.innerHTML = options
+            .map(function (option) {
+                return (
+                    '<option value="' +
+                    option.value +
+                    '">' +
+                    escapeHtml(option.label) +
+                    '</option>'
+                );
+            })
+            .join('');
+
+        $('mentionBar').innerHTML = isAdmin
+            ? '<button class="mention-button" type="button" data-mention="@codex-agent">@ Codex Agent</button>' +
+              '<button class="mention-button" type="button" data-mention="@claude-agent">@ Claude Agent</button>' +
+              '<span class="mention-hint">提及处理者会立即触发新的处理任务</span>'
+            : canResume
+              ? '<span class="mention-hint">回复会恢复当前等待中的处理任务</span>'
+              : '<span class="mention-hint">你的回复会记录在时间线上</span>';
+
+        updateRouteHint();
+    }
+
+    function defaultProviderLabel() {
+        var provider = (state.runners && state.runners.defaultProvider) || 'codex';
+        return PROVIDER_LABELS[provider] || provider;
+    }
+
+    /* §19.3: always show which provider and policy the reply will wake. */
+    function updateRouteHint() {
+        var mode = $('replyMode').value;
+        var text = String($('replyInput').value || '').toLowerCase();
+        var provider = '';
+        Object.keys(PROVIDER_MENTIONS).forEach(function (id) {
+            if (text.indexOf(PROVIDER_MENTIONS[id]) !== -1) provider = id;
+        });
+
+        if (mode !== 'resume') {
+            $('replyRouteHint').textContent =
+                mode === 'close' ? '提交后写入回复并关闭 Issue，不唤醒处理者。' : '仅写入时间线，不唤醒处理者。';
+            return;
+        }
+
+        var label = provider ? PROVIDER_LABELS[provider] : defaultProviderLabel();
+        var source = provider ? '（由 @mention 指定）' : '（项目默认执行器）';
+        $('replyRouteHint').textContent =
+            '提交后将唤醒 ' + label + ' ' + source + '，策略由 Issue 分类决定，不由回复内容指定。';
+    }
+
+    function selectIssue(key) {
+        state.selectedKey = key;
+        renderIssueList();
+        return Promise.all([
+            request('/api/feedback/issues/' + encodeURIComponent(key)),
+            request('/api/feedback/issues/' + encodeURIComponent(key) + '/events'),
+            request('/api/feedback/issues/' + encodeURIComponent(key) + '/human-actions')
+        ])
+            .then(function (results) {
+                var issue = results[0].issue || {};
+                // Admin detail nests workflow fields; flatten to one shape.
+                state.issue = issue.workflow
+                    ? {
+                          key: issue.key,
+                          title: issue.title,
+                          description: issue.description,
+                          receivedAt: issue.receivedAt,
+                          version: issue.version,
+                          attachments: issue.attachments || [],
+                          businessType: (issue.ai || {}).businessType,
+                          scope: (issue.ai || {}).scope,
+                          status: issue.workflow.status,
+                          priority: issue.workflow.priority,
+                          assignee: issue.workflow.assignee,
+                          updatedAt: issue.workflow.updatedAt,
+                          pagePath: safePagePath((issue.context || {}).url)
+                      }
+                    : issue;
+                if (!state.issue.version) state.issue.version = results[1].version;
+                state.events = results[1].events || [];
+                state.humanAction =
+                    (results[2].humanActions || []).filter(function (action) {
+                        return action.status === 'active';
+                    })[0] || null;
+                renderIssueDetail();
+            })
+            .catch(handleAuthError);
+    }
+
+    function renderIssueDetail() {
+        renderHeading();
+        renderTimeline();
+        renderProperties();
+        renderNextAction();
+        renderOwnerNotice();
+        renderComposer();
+    }
+
+    /* ------------------------------------------------------------ automation */
+
+    function renderAutomation() {
+        var settings = state.automation;
+        if (!settings) return;
+
+        $('hookUrl').value = settings.hookUrl || '';
+        setConnectionBadge(
+            $('hookStatusBadge'),
+            settings.connectionState,
+            settings.hookUrl ? '' : '未配置'
+        );
+        renderHookTestStatus(settings);
+
+        $('hookSecretRef').textContent = settings.signing.secretRef;
+        $('hookSecretBadge').textContent = settings.signing.configured ? '已配置' : '未配置';
+        $('hookSecretBadge').className = 'badge ' + (settings.signing.configured ? 'green' : 'red');
+        $('hookSecretHint').textContent =
+            '签名密钥保存在 Worker Secret 中，工作台不显示也不保存明文。轮换请执行：' +
+            settings.signing.rotationHint;
+
+        $('eventChecks').innerHTML = ['issue.created', 'comment.created', 'issue.reopened', 'status.changed']
+            .map(function (type) {
+                var checked = (settings.subscribedEvents || []).indexOf(type) !== -1;
+                return (
+                    '<label class="check-card"><input type="checkbox" name="automationEvent" value="' +
+                    type +
+                    '"' +
+                    (checked ? ' checked' : '') +
+                    ' /><span><strong>' +
+                    type +
+                    '</strong><span>' +
+                    escapeHtml(EVENT_DESCRIPTIONS[type] || '') +
+                    '</span></span></label>'
+                );
+            })
+            .join('');
+
+        Array.prototype.forEach.call(
+            document.querySelectorAll('[data-automation-switch]'),
+            function (button) {
+                setSwitch(button, settings[button.dataset.automationSwitch] !== false);
+            }
+        );
+
+        $('reconcileHint').textContent = settings.reconcileJobId + ' · 每天 03:00';
+        renderAutomationHealth();
+    }
+
+    function renderHookTestStatus(settings) {
+        var node = $('hookTestStatus');
+        if (settings.connectionState === 'connected') {
+            node.className = 'connection-status success';
+            node.innerHTML = ICON_CHECK + '已验证 · ' + escapeHtml(relativeTime(settings.lastTestedAt));
+            return;
+        }
+        if (settings.connectionState === 'failed') {
+            node.className = 'connection-status error';
+            node.textContent =
+                '连接失败：' + ((settings.lastTestResult && settings.lastTestResult.errorCode) || '未知错误');
+            return;
+        }
+        node.className = 'connection-status';
+        node.textContent = settings.hookUrl ? '待验证' : '未配置';
+    }
+
+    function renderAutomationHealth() {
+        var health = state.health;
+        var settings = state.automation;
+        if (!health) return;
+
+        var stateText = !health.hookConfigured
+            ? '未配置'
+            : health.connectionState === 'connected'
+              ? '运行正常'
+              : health.connectionState === 'failed'
+                ? '连接失败'
+                : '待验证';
+        $('automationStateText').textContent = stateText;
+        $('automationStateBadge').className =
+            'badge ' +
+            (health.connectionState === 'connected'
+                ? 'green'
+                : health.connectionState === 'failed'
+                  ? 'red'
+                  : '');
+        $('automationSubtitle').textContent = health.lastSucceededAt
+            ? '事件即时处理 · 最近成功投递于 ' + relativeTime(health.lastSucceededAt)
+            : '事件即时处理，定时任务只保留低频兜底。';
+
+        // §19.4: no stuck items means "无需处理" and zero Runs.
+        $('reconcileStatus').textContent =
+            health.reconcile.stuckCount === 0
+                ? '当前无卡住事项：无需处理，Run 数 0。'
+                : '待处理卡住事项 ' + health.reconcile.stuckCount + ' 条。';
+
+        var deliveries = health.deliveries || [];
+        $('deliverySummary').textContent = deliveries.length
+            ? deliveries.length + ' 条最近记录'
+            : '暂无记录';
+        $('deliveryList').innerHTML = deliveries.length
+            ? deliveries
+                  .map(function (delivery) {
+                      return (
+                          '<div class="delivery"><div class="delivery-main">' +
+                          '<span class="delivery-icon">' +
+                          ICON_CHECK +
+                          '</span><div class="delivery-copy"><strong>' +
+                          escapeHtml(delivery.eventType) +
+                          ' · ' +
+                          escapeHtml(delivery.id.slice(0, 12)) +
+                          '</strong><span>' +
+                          escapeHtml(deliveryStatusText(delivery)) +
+                          '</span></div></div><span class="delivery-time">' +
+                          escapeHtml(relativeTime(delivery.createdAt)) +
+                          '</span></div>'
+                      );
+                  })
+                  .join('')
+            : '<p class="help">还没有投递记录。配置 Hook URL 并保存后，新事件会进入投递队列。</p>';
+
+        var healthBody = $('automationHealthBody');
+        if (healthBody) {
+            healthBody.innerHTML =
+                statusLine('Hook', health.hookConfigured ? stateText : '未配置') +
+                statusLine(
+                    '最近投递',
+                    health.lastSucceededAt ? relativeTime(health.lastSucceededAt) : '暂无'
+                ) +
+                statusLine('待投递', String(health.pendingCount)) +
+                statusLine('高频轮询', health.pollingCronConfigured ? '已开启' : '已关闭') +
+                '<div class="cost-note">处理由事件触发；每日 ' +
+                escapeHtml(health.reconcile.jobId) +
+                ' 只做一次低成本兜底巡检。</div>';
+        }
+
+        if (settings) {
+            $('automationExecutorName').textContent =
+                defaultProviderLabel() + ' · GitHub-hosted';
+            $('automationExecutorState').textContent = state.runners
+                ? providerStateText(state.runners.providers[state.runners.defaultProvider])
+                : '前往「AI 执行器」查看连接状态';
+        }
+    }
+
+    function statusLine(label, value) {
+        return (
+            '<div class="status-line"><span>' +
+            escapeHtml(label) +
+            '</span><span class="status-value">' +
+            escapeHtml(value) +
+            '</span></div>'
+        );
+    }
+
+    function deliveryStatusText(delivery) {
+        if (delivery.status === 'succeeded') {
+            return delivery.responseStatus + ' · 第 ' + Math.max(delivery.attemptCount, 1) + ' 次尝试';
+        }
+        if (delivery.status === 'pending') return '待投递 · 已入队';
+        if (delivery.status === 'dead_letter') return '进入 DLQ · ' + (delivery.lastError || '重试耗尽');
+        return delivery.status;
+    }
+
+    function loadAutomation() {
+        if (state.actor !== 'admin') return Promise.resolve();
+
+        return Promise.all([
+            request('/api/feedback/automation/settings'),
+            request('/api/feedback/automation/health')
+        ])
+            .then(function (results) {
+                state.automation = results[0].settings;
+                state.health = results[1].health;
+                state.automationDirty = false;
+                setSaveState('automation', false);
+                renderAutomation();
+            })
+            .catch(handleAuthError);
+    }
+
+    /* --------------------------------------------------------------- runners */
+
+    function providerStateText(provider) {
+        if (!provider) return '';
+        if (provider.connectionState === 'connected') {
+            return '已验证 · ' + relativeTime(provider.lastTestedAt);
+        }
+        if (provider.connectionState === 'failed') {
+            return '连接失败 · ' + ((provider.lastTestResult || {}).errorCode || '未知错误');
+        }
+        return provider.lastTestedAt ? '待验证 · 上次测试 ' + relativeTime(provider.lastTestedAt) : '待验证';
+    }
+
+    function setConnectionBadge(node, connectionState, fallback) {
+        if (fallback) {
+            node.className = 'badge';
+            node.textContent = fallback;
+            return;
+        }
+        if (connectionState === 'connected') {
+            node.className = 'badge green';
+            node.textContent = '已连接';
+        } else if (connectionState === 'failed') {
+            node.className = 'badge red';
+            node.textContent = '连接失败';
+        } else {
+            node.className = 'badge';
+            node.textContent = '待验证';
+        }
+    }
+
+    function renderRunners() {
+        var settings = state.runners;
+        if (!settings) return;
+
+        var order = ['codex', 'claude'];
+        $('providerGrid').innerHTML = order
+            .map(function (id) {
+                var provider = settings.providers[id];
+                var isDefault = settings.defaultProvider === id;
+                var connectionClass =
+                    provider.connectionState === 'connected'
+                        ? 'connection-status success'
+                        : provider.connectionState === 'failed'
+                          ? 'connection-status error'
+                          : 'connection-status';
+                var configFields =
+                    id === 'codex'
+                        ? '<div class="field"><label for="codexResponsesEndpoint">Responses API 地址</label>' +
+                          '<input id="codexResponsesEndpoint" type="url" value="' +
+                          escapeHtml(provider.responsesEndpoint || '') +
+                          '" />' +
+                          '<span class="help" id="codexEndpointHelp">中转服务需兼容 Responses API，并填写完整 <strong>/v1/responses</strong> 地址。</span></div>'
+                        : '';
+
+                return (
+                    '<article class="provider-card' +
+                    (isDefault ? ' selected' : '') +
+                    '" data-provider-card="' +
+                    id +
+                    '">' +
+                    '<div class="provider-head"><div class="provider-title">' +
+                    '<span class="provider-icon" aria-hidden="true">' +
+                    PROVIDER_ICONS[id] +
+                    '</span><span><strong>' +
+                    escapeHtml(provider.label) +
+                    '</strong><span>' +
+                    escapeHtml(provider.action) +
+                    '</span></span></div>' +
+                    '<span class="provider-state"><span class="badge" data-connection-badge></span>' +
+                    '<span class="badge blue' +
+                    (isDefault ? '' : ' hidden') +
+                    '" data-default-badge>默认</span></span></div>' +
+                    '<p class="provider-summary">' +
+                    escapeHtml(
+                        id === 'codex'
+                            ? '适合代码修改、测试、审查和 PR 交付。'
+                            : '适合长上下文分析或人工指定的任务。'
+                    ) +
+                    '</p>' +
+                    '<div class="provider-actions"><span class="' +
+                    connectionClass +
+                    '" data-connection-status role="status" aria-live="polite">' +
+                    escapeHtml(providerStateText(provider)) +
+                    '</span><span class="provider-buttons">' +
+                    '<button class="button" type="button" data-default-provider="' +
+                    id +
+                    '"' +
+                    (isDefault ? ' disabled' : '') +
+                    '>' +
+                    (isDefault ? '当前默认' : '设为默认') +
+                    '</button>' +
+                    '<button class="button" type="button" data-test-provider="' +
+                    id +
+                    '">测试连接</button></span></div>' +
+                    '<details class="provider-config advanced-details"><summary><span>连接配置</span>' +
+                    '<svg class="summary-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>' +
+                    '</summary><div class="advanced-details-body">' +
+                    configFields +
+                    '<div class="runner-secret-row"><div><span>凭据</span><strong>' +
+                    escapeHtml(provider.secretRef) +
+                    '</strong></div><span class="badge' +
+                    (provider.secretConfigured ? ' green' : '') +
+                    '">' +
+                    (provider.secretConfigured ? '已配置' : '在 GitHub Secrets 管理') +
+                    '</span></div>' +
+                    '</div></details></article>'
+                );
+            })
+            .join('');
+
+        order.forEach(function (id) {
+            var card = document.querySelector('[data-provider-card="' + id + '"]');
+            setConnectionBadge(
+                card.querySelector('[data-connection-badge]'),
+                settings.providers[id].connectionState,
+                ''
+            );
+        });
+
+        $('providerAvailability').textContent = order.length + ' 个可用';
+        $('defaultRunnerSelect').value = settings.defaultProvider;
+        setSwitch(
+            document.querySelector('[data-runner-switch="resumeSameWorkflow"]'),
+            settings.resumeSameWorkflow !== false
+        );
+        $('runnerCallbackUrl').value = settings.callbackUrl || '';
+        $('callbackContract').innerHTML = (settings.callbackContract || [])
+            .map(function (event) {
+                return '<code>' + escapeHtml(event) + '</code>';
+            })
+            .join('');
+
+        var runtime = settings.runtime || {};
+        $('runtimeBadge').className = 'badge ' + (runtime.orchestratorBound ? 'green' : '');
+        $('runtimeBadge').textContent = runtime.orchestratorBound ? '正常' : '待配置';
+        $('runtimeList').innerHTML =
+            '<div><span>编排</span><strong>' +
+            escapeHtml(runtime.orchestrator || '') +
+            (runtime.orchestratorBound ? '' : '（未绑定）') +
+            '</strong></div>' +
+            '<div><span>运行器</span><strong>' +
+            escapeHtml(runtime.runner || '') +
+            '</strong></div>' +
+            '<div><span>分发</span><strong>' +
+            (runtime.dispatchConfigured ? '已配置' : '未配置') +
+            '</strong></div>';
+    }
+
+    function loadRunners() {
+        if (state.actor !== 'admin') return Promise.resolve();
+
+        return request('/api/feedback/runners/settings')
+            .then(function (payload) {
+                state.runners = payload.settings;
+                state.runnersDirty = false;
+                setSaveState('runners', false);
+                renderRunners();
+                if (state.issue) renderComposer();
+            })
+            .catch(handleAuthError);
+    }
+
+    /* ----------------------------------------------------------- save states */
+
+    function setSaveState(scope, dirty, busy) {
+        if (scope === 'automation') {
+            var button = $('saveAutomation');
+            button.disabled = busy || !dirty;
+            button.classList.toggle('blue', Boolean(dirty) && !busy);
+            $('saveAutomationLabel').textContent = busy ? '保存中…' : dirty ? '保存更改' : '已保存';
+            return;
+        }
+        var runnerButton = $('saveRunnerSettings');
+        runnerButton.disabled = busy || !dirty;
+        runnerButton.classList.toggle('blue', Boolean(dirty) && !busy);
+        $('saveRunnerLabel').textContent = busy ? '保存中…' : dirty ? '保存更改' : '已保存';
+        $('runnerSaveState').textContent = busy
+            ? '正在保存'
+            : dirty
+              ? '有未保存的更改'
+              : '全部更改已保存';
+    }
+
+    function markDirty(scope) {
+        if (scope === 'automation') {
+            state.automationDirty = true;
+            setSaveState('automation', true);
+            return;
+        }
+        state.runnersDirty = true;
+        setSaveState('runners', true);
+    }
+
+    function setSwitch(button, on) {
+        if (!button) return;
+        button.classList.toggle('on', Boolean(on));
+        button.setAttribute('aria-checked', String(Boolean(on)));
+    }
+
+    function readSwitch(selector) {
+        var button = document.querySelector(selector);
+        return Boolean(button && button.classList.contains('on'));
+    }
+
+    function collectAutomationSettings() {
+        var events = Array.prototype.filter
+            .call(document.querySelectorAll('input[name="automationEvent"]'), function (input) {
+                return input.checked;
+            })
+            .map(function (input) {
+                return input.value;
+            });
+
+        return {
+            hookUrl: $('hookUrl').value.trim(),
+            subscribedEvents: events,
+            retryEnabled: readSwitch('[data-automation-switch="retryEnabled"]'),
+            deadLetterEnabled: readSwitch('[data-automation-switch="deadLetterEnabled"]'),
+            dailyReconcileEnabled: readSwitch('[data-automation-switch="dailyReconcileEnabled"]')
+        };
+    }
+
+    function collectRunnerSettings() {
+        var endpointInput = $('codexResponsesEndpoint');
+        return {
+            defaultProvider: $('defaultRunnerSelect').value,
+            resumeSameWorkflow: readSwitch('[data-runner-switch="resumeSameWorkflow"]'),
+            callbackUrl: $('runnerCallbackUrl').value.trim(),
+            providers: {
+                codex: { responsesEndpoint: endpointInput ? endpointInput.value.trim() : '' }
+            }
+        };
+    }
+
+    /* §19.5: block a malformed endpoint locally so the focus returns to the
+       field before any test request is made. The server enforces it too. */
+    function validateResponsesEndpoint(value) {
+        var raw = String(value || '').trim();
+        if (!raw) return false;
+        try {
+            var endpoint = new URL(raw);
+            if (['http:', 'https:'].indexOf(endpoint.protocol) === -1) return false;
+            var path = endpoint.pathname.replace(/\/+$/, '');
+            return path.slice(-13) === '/v1/responses';
+        } catch (error) {
+            return false;
+        }
+    }
+
+    /* ---------------------------------------------------------------- errors */
+
+    function handleAuthError(error) {
+        if (error && (error.status === 401 || error.status === 403)) {
+            signOut();
+            toastTimer('登录状态已失效，请重新登录');
+            return;
+        }
+        console.error('[Workbench]', error);
+        toastTimer((error && error.message) || '请求失败');
+    }
+
+    function signOut() {
+        state.adminToken = '';
+        state.actor = state.ownerCapability ? 'owner' : 'anonymous';
+        try {
+            window.sessionStorage.removeItem(ADMIN_TOKEN_KEY);
+        } catch (error) {
+            /* ignore */
+        }
+        state.issues = [];
+        state.automation = null;
+        state.runners = null;
+        applyActorChrome();
+        switchView('issues');
+    }
+
+    /* ---------------------------------------------------------------- events */
+
+    document.addEventListener('click', function (event) {
+        var viewButton = event.target.closest('[data-view]');
+        if (viewButton) {
+            switchView(viewButton.dataset.view);
+            return;
+        }
+
+        var issueButton = event.target.closest('[data-issue]');
+        if (issueButton) {
+            selectIssue(issueButton.dataset.issue);
+            $('queuePanel').classList.remove('open');
+            $('mobileQueueButton').setAttribute('aria-expanded', 'false');
+            return;
+        }
+
+        var mentionButton = event.target.closest('[data-mention]');
+        if (mentionButton) {
+            var input = $('replyInput');
+            var mention = mentionButton.dataset.mention + ' ';
+            if (input.value.indexOf(mentionButton.dataset.mention) === -1) {
+                input.value = mention + input.value;
+            }
+            input.focus();
+            updateRouteHint();
+            return;
+        }
+
+        var humanActionButton = event.target.closest('[data-human-action]');
+        if (humanActionButton) {
+            respondToHumanAction(humanActionButton);
+            return;
+        }
+
+        var actionButton = event.target.closest('[data-action]');
+        if (actionButton) {
+            var action = actionButton.dataset.action;
+            if (action === 'focus-reply') {
+                $('replyInput').focus();
+            } else if (action === 'close') {
+                $('replyMode').value = 'close';
+                updateRouteHint();
+                $('replyInput').focus();
+                toastTimer('请填写关闭理由后提交回复');
+            } else if (action === 'reopen') {
+                reopenIssue(actionButton);
+            }
+            return;
+        }
+
+        var defaultProviderButton = event.target.closest('[data-default-provider]');
+        if (defaultProviderButton) {
+            $('defaultRunnerSelect').value = defaultProviderButton.dataset.defaultProvider;
+            state.runners.defaultProvider = defaultProviderButton.dataset.defaultProvider;
+            renderRunners();
+            markDirty('runners');
+            return;
+        }
+
+        var testProviderButton = event.target.closest('[data-test-provider]');
+        if (testProviderButton) {
+            testProvider(testProviderButton);
+            return;
+        }
+
+        var switchButton = event.target.closest('.switch');
+        if (switchButton) {
+            setSwitch(switchButton, !switchButton.classList.contains('on'));
+            markDirty(switchButton.dataset.automationSwitch ? 'automation' : 'runners');
+        }
+    });
+
+    Array.prototype.forEach.call(document.querySelectorAll('.filter-chip'), function (chip) {
+        chip.addEventListener('click', function () {
+            state.filter = chip.dataset.filter;
+            Array.prototype.forEach.call(document.querySelectorAll('.filter-chip'), function (item) {
+                var isActive = item === chip;
+                item.classList.toggle('active', isActive);
+                item.setAttribute('aria-pressed', String(isActive));
+            });
+            loadIssues();
+        });
+    });
+
+    $('issueSearch').addEventListener('input', function (event) {
+        state.query = event.target.value;
+        renderIssueList();
+    });
+
+    $('mobileQueueButton').addEventListener('click', function () {
+        var panel = $('queuePanel');
+        var open = panel.classList.toggle('open');
+        $('mobileQueueButton').setAttribute('aria-expanded', String(open));
+    });
+
+    $('refreshButton').addEventListener('click', function () {
+        refreshAll().then(function () {
+            toastTimer('工作台已刷新');
+        });
+    });
+
+    $('accountButton').addEventListener('click', function () {
+        if (state.actor === 'admin') {
+            signOut();
+            toastTimer('已退出管理员登录');
+            return;
+        }
+        state.actor = 'anonymous';
+        applyActorChrome();
+        switchView('issues');
+        $('adminPassword').focus();
+    });
+
+    $('loginForm').addEventListener('submit', function (event) {
+        event.preventDefault();
+        var password = $('adminPassword').value;
+        var status = $('loginStatus');
+        var submit = $('loginSubmit');
+        if (!password) {
+            status.className = 'connection-status error';
+            status.textContent = '请输入管理员密码';
+            return;
+        }
+
+        submit.disabled = true;
+        submit.textContent = '登录中…';
+        status.className = 'connection-status';
+        status.textContent = '正在验证';
+
+        fetch(API + '/api/feedback/admin/session', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password: password })
+        })
+            .then(function (response) {
+                if (!response.ok) throw new Error('密码不正确');
+                return response.json();
+            })
+            .then(function (payload) {
+                state.adminToken = payload.token;
+                state.actor = 'admin';
+                try {
+                    window.sessionStorage.setItem(ADMIN_TOKEN_KEY, payload.token);
+                } catch (error) {
+                    /* ignore */
+                }
+                $('adminPassword').value = '';
+                status.className = 'connection-status success';
+                status.innerHTML = ICON_CHECK + '登录成功';
+                applyActorChrome();
+                switchView('issues');
+                return refreshAll();
+            })
+            .catch(function (error) {
+                status.className = 'connection-status error';
+                status.textContent = error.message || '登录失败';
+            })
+            .finally(function () {
+                submit.disabled = false;
+                submit.textContent = '登录';
+            });
+    });
+
+    $('replyMode').addEventListener('change', updateRouteHint);
+    $('replyInput').addEventListener('input', updateRouteHint);
+
+    Array.prototype.forEach.call(document.querySelectorAll('[data-composer-tab]'), function (tab) {
+        tab.addEventListener('click', function () {
+            var preview = tab.dataset.composerTab === 'preview';
+            Array.prototype.forEach.call(
+                document.querySelectorAll('[data-composer-tab]'),
+                function (item) {
+                    var isActive = item === tab;
+                    item.classList.toggle('active', isActive);
+                    item.setAttribute('aria-selected', String(isActive));
+                }
+            );
+            setHidden($('replyPreview'), !preview);
+            $('replyInput').style.display = preview ? 'none' : '';
+            if (preview) {
+                $('replyPreview').innerHTML =
+                    paragraphs($('replyInput').value) || '<p class="help">暂无内容</p>';
+            }
+        });
+    });
+
+    $('replyForm').addEventListener('submit', function (event) {
+        event.preventDefault();
+        if (state.submitting || !state.issue) return;
+
+        var input = $('replyInput');
+        var body = input.value.trim();
+        if (!body) {
+            input.focus();
+            toastTimer('请先填写回复内容');
+            return;
+        }
+
+        var mode = $('replyMode').value;
+        var submit = $('replySubmit');
+        state.submitting = true;
+        submit.disabled = true;
+        submit.textContent = '提交中…';
+
+        request('/api/feedback/issues/' + encodeURIComponent(state.issue.key) + '/comments', {
+            method: 'POST',
+            body: { body: body, mode: mode, expectedVersion: state.issue.version }
+        })
+            .then(function (payload) {
+                input.value = '';
+                setHidden($('replyPreview'), true);
+                input.style.display = '';
+                var success = $('replySuccess');
+                success.style.display = 'inline-flex';
+                success.innerHTML = ICON_CHECK + '已写入时间线';
+                if (payload.mode !== payload.requestedMode) {
+                    toastTimer('回复已记录；当前状态不支持唤醒处理者，本次仅写入时间线');
+                } else if (payload.mode === 'resume') {
+                    toastTimer(
+                        '回复已发布，并唤醒 ' + (PROVIDER_LABELS[payload.provider] || '处理者')
+                    );
+                } else if (payload.mode === 'close') {
+                    toastTimer('回复已发布，Issue 已关闭');
+                } else {
+                    toastTimer('回复已发布，本次未触发处理者');
+                }
+                return Promise.all([selectIssue(state.issue.key), loadIssues()]);
+            })
+            .catch(function (error) {
+                if (error && error.status === 409) {
+                    toastTimer('该 Issue 已被更新，正在重新载入');
+                    return selectIssue(state.issue.key);
+                }
+                handleAuthError(error);
+                return null;
+            })
+            .finally(function () {
+                state.submitting = false;
+                submit.disabled = false;
+                submit.textContent = '提交回复';
+            });
+    });
+
+    function respondToHumanAction(button) {
+        if (state.submitting) return;
+
+        var decision = button.dataset.decision;
+        var payload = { decision: decision };
+        if (decision === 'ready_for_deploy') {
+            if (!button.dataset.candidate) {
+                toastTimer('缺少候选实现标识，无法批准交付');
+                return;
+            }
+            payload.candidateId = button.dataset.candidate;
+        }
+
+        state.submitting = true;
+        button.disabled = true;
+        request('/api/feedback/human-actions/' + encodeURIComponent(button.dataset.humanAction) + '/respond', {
+            method: 'POST',
+            body: payload
+        })
+            .then(function () {
+                toastTimer('已提交决定：' + humanActionLabel(decision));
+                return Promise.all([selectIssue(state.issue.key), loadIssues()]);
+            })
+            .catch(handleAuthError)
+            .finally(function () {
+                state.submitting = false;
+                button.disabled = false;
+            });
+    }
+
+    function reopenIssue(button) {
+        if (state.submitting || !state.issue) return;
+
+        state.submitting = true;
+        button.disabled = true;
+        request('/api/feedback/issues/' + encodeURIComponent(state.issue.key) + '/reopen', {
+            method: 'POST',
+            body: { expectedVersion: state.issue.version }
+        })
+            .then(function () {
+                toastTimer('Issue 已重新打开');
+                return Promise.all([selectIssue(state.issue.key), loadIssues()]);
+            })
+            .catch(handleAuthError)
+            .finally(function () {
+                state.submitting = false;
+                button.disabled = false;
+            });
+    }
+
+    /* ------------------------------------------------------ settings actions */
+
+    $('hookUrl').addEventListener('input', function () {
+        // §19.4: editing the endpoint immediately invalidates the verified state.
+        $('hookStatusBadge').className = 'badge';
+        $('hookStatusBadge').textContent = '待验证';
+        $('hookTestStatus').className = 'connection-status';
+        $('hookTestStatus').textContent = '待验证';
+        markDirty('automation');
+    });
+
+    document.addEventListener('change', function (event) {
+        if (event.target.name === 'automationEvent') markDirty('automation');
+        if (event.target.id === 'defaultRunnerSelect') {
+            state.runners.defaultProvider = event.target.value;
+            renderRunners();
+            markDirty('runners');
+        }
+    });
+
+    document.addEventListener('input', function (event) {
+        if (event.target.id === 'codexResponsesEndpoint') {
+            var card = event.target.closest('[data-provider-card]');
+            setConnectionBadge(card.querySelector('[data-connection-badge]'), 'unverified', '');
+            var status = card.querySelector('[data-connection-status]');
+            status.className = 'connection-status';
+            status.textContent = '地址更改后请重新测试';
+            markDirty('runners');
+        }
+        if (event.target.id === 'runnerCallbackUrl') markDirty('runners');
+    });
+
+    $('testHook').addEventListener('click', function () {
+        var button = $('testHook');
+        var input = $('hookUrl');
+        if (!input.value.trim() || !input.checkValidity()) {
+            input.reportValidity();
+            $('hookTestStatus').className = 'connection-status error';
+            $('hookTestStatus').textContent = '请填写有效的 Hook URL';
+            input.focus();
+            return;
+        }
+        if (state.automationDirty) {
+            toastTimer('请先保存 Hook URL 再测试连接');
+            return;
+        }
+
+        button.disabled = true;
+        button.textContent = '测试中…';
+        $('hookTestStatus').className = 'connection-status';
+        $('hookTestStatus').textContent = '正在连接';
+
+        request('/api/feedback/automation/test', { method: 'POST', body: {} })
+            .then(function (payload) {
+                state.automation = payload.settings;
+                renderHookTestStatus(payload.settings);
+                setConnectionBadge($('hookStatusBadge'), payload.settings.connectionState, '');
+                toastTimer(
+                    '连接成功：' +
+                        payload.result.responseStatus +
+                        ' · ' +
+                        payload.result.latencyMs +
+                        ' ms'
+                );
+                return loadAutomation();
+            })
+            .catch(function (error) {
+                var result = (error.payload && error.payload.result) || {};
+                $('hookTestStatus').className = 'connection-status error';
+                $('hookTestStatus').textContent =
+                    result.message || '连接失败：' + (result.errorCode || error.message);
+                setConnectionBadge($('hookStatusBadge'), 'failed', '');
+                if (state.automation) {
+                    state.automation.connectionState = 'failed';
+                    state.automation.lastTestResult = result;
+                }
+            })
+            .finally(function () {
+                button.disabled = false;
+                button.textContent = '测试连接';
+            });
+    });
+
+    $('saveAutomation').addEventListener('click', function () {
+        if (!state.automation) return;
+
+        setSaveState('automation', true, true);
+        request('/api/feedback/automation/settings', {
+            method: 'PATCH',
+            body: {
+                expectedVersion: state.automation.version,
+                settings: collectAutomationSettings()
+            }
+        })
+            .then(function (payload) {
+                state.automation = payload.settings;
+                state.automationDirty = false;
+                renderAutomation();
+                setSaveState('automation', false);
+                toastTimer('自动化设置已保存');
+            })
+            .catch(function (error) {
+                setSaveState('automation', true);
+                if (error.status === 409) {
+                    toastTimer('设置已被其他会话更新，正在重新载入');
+                    return loadAutomation();
+                }
+                handleAuthError(error);
+                return null;
+            });
+    });
+
+    function testProvider(button) {
+        var provider = button.dataset.testProvider;
+        var card = button.closest('[data-provider-card]');
+        var badge = card.querySelector('[data-connection-badge]');
+        var status = card.querySelector('[data-connection-status]');
+
+        if (provider === 'codex') {
+            var endpointInput = $('codexResponsesEndpoint');
+            if (endpointInput && !validateResponsesEndpoint(endpointInput.value)) {
+                badge.className = 'badge orange';
+                badge.textContent = '需修正';
+                status.className = 'connection-status error';
+                status.textContent = '请填写完整的 /v1/responses 地址';
+                card.querySelector('details').open = true;
+                endpointInput.focus();
+                toastTimer('Codex 连接地址格式不正确');
+                return;
+            }
+        }
+        if (state.runnersDirty) {
+            toastTimer('请先保存执行器设置再测试连接');
+            return;
+        }
+
+        button.disabled = true;
+        button.textContent = '测试中…';
+        badge.className = 'badge';
+        badge.textContent = '测试中';
+        status.className = 'connection-status';
+        status.textContent = '正在检查端点与权限';
+
+        request('/api/feedback/runners/test', { method: 'POST', body: { provider: provider } })
+            .then(function (payload) {
+                state.runners = payload.settings;
+                renderRunners();
+                toastTimer(payload.result.message || '连接正常');
+            })
+            .catch(function (error) {
+                var result = (error.payload && error.payload.result) || {};
+                if (error.payload && error.payload.settings) {
+                    state.runners = error.payload.settings;
+                    renderRunners();
+                }
+                var refreshedCard = document.querySelector('[data-provider-card="' + provider + '"]');
+                var refreshedStatus = refreshedCard.querySelector('[data-connection-status]');
+                refreshedStatus.className = 'connection-status error';
+                refreshedStatus.textContent = result.message || error.message || '连接测试失败';
+                setConnectionBadge(
+                    refreshedCard.querySelector('[data-connection-badge]'),
+                    'unverified',
+                    ''
+                );
+                if (result.field === 'providers.codex.responsesEndpoint') {
+                    refreshedCard.querySelector('details').open = true;
+                    var input = $('codexResponsesEndpoint');
+                    if (input) input.focus();
+                }
+                toastTimer(result.message || '连接测试未通过');
+            })
+            .finally(function () {
+                var refreshedButton = document.querySelector(
+                    '[data-test-provider="' + provider + '"]'
+                );
+                if (refreshedButton) {
+                    refreshedButton.disabled = false;
+                    refreshedButton.textContent = '测试连接';
+                }
+            });
+    }
+
+    $('saveRunnerSettings').addEventListener('click', function () {
+        if (!state.runners) return;
+
+        var endpointInput = $('codexResponsesEndpoint');
+        if (endpointInput && !validateResponsesEndpoint(endpointInput.value)) {
+            endpointInput.closest('details').open = true;
+            endpointInput.focus();
+            toastTimer('请填写完整的 /v1/responses 地址后再保存');
+            return;
+        }
+
+        setSaveState('runners', true, true);
+        request('/api/feedback/runners/settings', {
+            method: 'PATCH',
+            body: {
+                expectedVersion: state.runners.version,
+                settings: collectRunnerSettings()
+            }
+        })
+            .then(function (payload) {
+                state.runners = payload.settings;
+                state.runnersDirty = false;
+                renderRunners();
+                setSaveState('runners', false);
+                if (state.issue) renderComposer();
+                toastTimer('AI 执行器设置已保存');
+            })
+            .catch(function (error) {
+                setSaveState('runners', true);
+                if (error.status === 409) {
+                    toastTimer('设置已被其他会话更新，正在重新载入');
+                    return loadRunners();
+                }
+                handleAuthError(error);
+                return null;
+            });
+    });
+
+    /* ------------------------------------------------------------------ boot */
+
+    function refreshAll() {
+        if (state.actor === 'admin') {
+            return Promise.all([loadIssues(), loadRunners(), loadAutomation()]);
+        }
+        if (state.actor === 'owner' && state.ownerIssueId) {
+            return selectIssue(state.ownerIssueId);
+        }
+        return Promise.resolve();
+    }
+
+    restoreSession();
+    applyActorChrome();
+    renderIssueDetail();
+    switchView(new URL(window.location.href).searchParams.get('view') || 'issues');
+    refreshAll();
+})();
