@@ -1,0 +1,392 @@
+name: Feedback Agent Codex
+
+on:
+  workflow_dispatch:
+    inputs:
+      issueId:
+        description: Feedback Issue identifier
+        required: true
+        type: string
+      issueVersion:
+        description: Immutable Issue version used for Context
+        required: true
+        type: string
+      workflowId:
+        description: Cloudflare Workflow instance identifier
+        required: true
+        type: string
+      runId:
+        description: Feedback Run identifier
+        required: true
+        type: string
+      policy:
+        description: Deterministic task policy
+        required: true
+        type: string
+      provider:
+        description: Agent provider
+        required: true
+        type: string
+      permissionProfile:
+        description: Codex permission profile selected by the Worker
+        required: true
+        type: string
+      baseCommit:
+        description: Exact repository commit to check out
+        required: true
+        type: string
+      contextUrl:
+        description: Run-scoped Context endpoint
+        required: true
+        type: string
+      contextToken:
+        description: Short-lived Context bearer token
+        required: true
+        type: string
+      callbackUrl:
+        description: Run-scoped Callback endpoint
+        required: true
+        type: string
+      callbackToken:
+        description: Short-lived Callback bearer token
+        required: true
+        type: string
+
+concurrency:
+  group: feedback-agent-${{ inputs.runId }}
+  cancel-in-progress: false
+
+jobs:
+  run-codex:
+    name: Run scoped Codex agent
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Mask scoped tokens and validate dispatch
+        env:
+          ISSUE_ID: ${{ inputs.issueId }}
+          ISSUE_VERSION: ${{ inputs.issueVersion }}
+          WORKFLOW_ID: ${{ inputs.workflowId }}
+          RUN_ID: ${{ inputs.runId }}
+          POLICY: ${{ inputs.policy }}
+          PROVIDER: ${{ inputs.provider }}
+          PERMISSION_PROFILE: ${{ inputs.permissionProfile }}
+          BASE_COMMIT: ${{ inputs.baseCommit }}
+          CONTEXT_URL: ${{ inputs.contextUrl }}
+          CONTEXT_TOKEN: ${{ inputs.contextToken }}
+          CALLBACK_URL: ${{ inputs.callbackUrl }}
+          CALLBACK_TOKEN: ${{ inputs.callbackToken }}
+        run: |
+          set -euo pipefail
+          echo "::add-mask::${CONTEXT_TOKEN}"
+          echo "::add-mask::${CALLBACK_TOKEN}"
+
+          node <<'NODE'
+          const fs = require('node:fs');
+          const eventPath = process.env.GITHUB_EVENT_PATH;
+          const event = JSON.parse(fs.readFileSync(eventPath, 'utf8'));
+          if (!event.inputs || typeof event.inputs !== 'object') {
+            throw new Error('workflow_dispatch inputs are missing');
+          }
+          delete event.inputs.contextToken;
+          delete event.inputs.callbackToken;
+          fs.writeFileSync(eventPath, JSON.stringify(event), { mode: 0o600 });
+          NODE
+
+          [[ "$ISSUE_ID" =~ ^[A-Za-z0-9:_-]{3,160}$ ]]
+          [[ "$ISSUE_VERSION" =~ ^[1-9][0-9]*$ ]]
+          [[ "$WORKFLOW_ID" =~ ^[A-Za-z0-9:_-]{3,200}$ ]]
+          [[ "$RUN_ID" =~ ^[A-Za-z0-9:_-]{3,160}$ ]]
+          [[ "$PROVIDER" == "codex" ]]
+          [[ "$BASE_COMMIT" =~ ^[0-9a-fA-F]{7,40}$ ]]
+          [[ "$CONTEXT_URL" == https://*/api/feedback/runs/"$RUN_ID"/context ]]
+          [[ "$CALLBACK_URL" == https://*/api/feedback/runs/"$RUN_ID"/events ]]
+          (( ${#CONTEXT_TOKEN} >= 16 && ${#CONTEXT_TOKEN} <= 256 ))
+          (( ${#CALLBACK_TOKEN} >= 16 && ${#CALLBACK_TOKEN} <= 256 ))
+          [[ "$CONTEXT_TOKEN" != "$CALLBACK_TOKEN" ]]
+
+          case "$POLICY" in
+            analyze|review)
+              [[ "$PERMISSION_PROFILE" == ":read-only" ]]
+              ;;
+            implement|implement_and_verify)
+              [[ "$PERMISSION_PROFILE" == "feedback-workspace" ]]
+              ;;
+            *)
+              echo "Unsupported feedback policy" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Check out immutable base commit
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ inputs.baseCommit }}
+          fetch-depth: 0
+          persist-credentials: false
+          clean: true
+
+      - name: Verify base commit belongs to the dispatch branch
+        env:
+          BASE_COMMIT: ${{ inputs.baseCommit }}
+          DISPATCH_COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          actual_commit="$(git rev-parse HEAD)"
+          expected_commit="$(git rev-parse "${BASE_COMMIT}^{commit}")"
+          dispatch_commit="$(git rev-parse "${DISPATCH_COMMIT}^{commit}")"
+          [[ "$actual_commit" == "$expected_commit" ]]
+          git merge-base --is-ancestor "$expected_commit" "$dispatch_commit"
+          git diff --quiet
+          [[ -z "$(git status --porcelain=v1)" ]]
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install trusted dependencies
+        run: npm ci
+
+      - name: Install Chromium for the verification policy
+        if: ${{ inputs.policy == 'implement_and_verify' }}
+        run: npx playwright install --with-deps chromium
+
+      - name: Fetch immutable Context and prepare Codex home
+        env:
+          ISSUE_ID: ${{ inputs.issueId }}
+          ISSUE_VERSION: ${{ inputs.issueVersion }}
+          WORKFLOW_ID: ${{ inputs.workflowId }}
+          RUN_ID: ${{ inputs.runId }}
+          POLICY: ${{ inputs.policy }}
+          PROVIDER: ${{ inputs.provider }}
+          PERMISSION_PROFILE: ${{ inputs.permissionProfile }}
+          BASE_COMMIT: ${{ inputs.baseCommit }}
+          CONTEXT_URL: ${{ inputs.contextUrl }}
+          CONTEXT_TOKEN: ${{ inputs.contextToken }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p .feedback-runtime "${RUNNER_TEMP}/codex-home" \
+            "${RUNNER_TEMP}/feedback-artifacts"
+          cp .github/codex/config.toml "${RUNNER_TEMP}/codex-home/config.toml"
+
+          /usr/bin/curl \
+            --fail \
+            --silent \
+            --show-error \
+            --proto '=https' \
+            --tlsv1.2 \
+            --max-filesize 131072 \
+            --header "Authorization: Bearer ${CONTEXT_TOKEN}" \
+            --output .feedback-runtime/context.json.partial \
+            "$CONTEXT_URL"
+
+          /usr/bin/node <<'NODE'
+          const fs = require('node:fs');
+          const contextPath = '.feedback-runtime/context.json.partial';
+          const raw = fs.readFileSync(contextPath, 'utf8');
+          const context = JSON.parse(raw);
+          if (!context || typeof context !== 'object' || Array.isArray(context)) {
+            throw new Error('Context must be a JSON object');
+          }
+          fs.renameSync(contextPath, '.feedback-runtime/context.json');
+          const run = {
+            issueId: process.env.ISSUE_ID,
+            issueVersion: Number(process.env.ISSUE_VERSION),
+            workflowId: process.env.WORKFLOW_ID,
+            runId: process.env.RUN_ID,
+            policy: process.env.POLICY,
+            provider: process.env.PROVIDER,
+            permissionProfile: process.env.PERMISSION_PROFILE,
+            baseCommit: process.env.BASE_COMMIT,
+          };
+          fs.writeFileSync(
+            '.feedback-runtime/run.json',
+            `${JSON.stringify(run, null, 2)}\n`,
+            { mode: 0o600 },
+          );
+          NODE
+
+      - name: Run Codex
+        id: run_codex
+        uses: openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56 # v1
+        with:
+          openai-api-key: ${{ secrets.CODEX_API_KEY }}
+          responses-api-endpoint: ${{ vars.CODEX_RESPONSES_API_ENDPOINT }}
+          model: ${{ vars.CODEX_MODEL }}
+          effort: high
+          codex-version: "0.138.0"
+          prompt-file: .github/codex/prompts/feedback-agent.md
+          output-file: ${{ runner.temp }}/feedback-artifacts/final-message.md
+          codex-home: ${{ runner.temp }}/codex-home
+          working-directory: ${{ github.workspace }}
+          permission-profile: ${{ inputs.permissionProfile }}
+          safety-strategy: drop-sudo
+
+      - name: Enforce the Runner diff gate
+        env:
+          BASE_COMMIT: ${{ inputs.baseCommit }}
+          POLICY: ${{ inputs.policy }}
+        run: |
+          set -euo pipefail
+          rm -rf .feedback-runtime
+          changed_count=0
+          while IFS= read -r -d '' path; do
+            changed_count=$((changed_count + 1))
+            printf '%q\n' "$path" >> "${RUNNER_TEMP}/feedback-artifacts/changed-files.txt"
+            case "$path" in
+              .github/*|scripts/*|wrangler.toml|wrangler.jsonc|AGENTS.md|.agents/*|.codex/*)
+                echo "Protected path changed by Agent" >&2
+                exit 1
+                ;;
+              tests/e2e/agent-journeys/expected/*.json|*.env|*.env.*|*.pem|*.key)
+                echo "Protected contract or credential path changed by Agent" >&2
+                exit 1
+                ;;
+            esac
+          done < <(
+            {
+              git diff --name-only -z --diff-filter=ACMRTUXB "$BASE_COMMIT" --
+              git ls-files --others --exclude-standard -z
+            } | sort -zu
+          )
+
+          if [[ "$POLICY" == "analyze" || "$POLICY" == "review" ]]; then
+            [[ "$changed_count" -eq 0 ]]
+          fi
+
+          if git diff --unified=0 "$BASE_COMMIT" -- src tests |
+            grep -Eq '^\+.*\b(describe|it|test)\.(only|skip)\b'; then
+            echo "Focused or skipped tests are not allowed" >&2
+            exit 1
+          fi
+
+      - name: Run policy quality gates
+        env:
+          POLICY: ${{ inputs.policy }}
+        run: |
+          set -euo pipefail
+          {
+            npm run check:scenarios
+            npm run lint
+            case "$POLICY" in
+              analyze|review)
+                ;;
+              implement)
+                npm test
+                ;;
+              implement_and_verify)
+                npm test
+                npm run build
+                npm run test:e2e
+                ;;
+            esac
+          } 2>&1 | tee "${RUNNER_TEMP}/feedback-artifacts/quality-gates.log"
+
+      - name: Build private evidence bundle
+        env:
+          BASE_COMMIT: ${{ inputs.baseCommit }}
+        run: |
+          set -euo pipefail
+          git ls-files --others --exclude-standard -z |
+            xargs -0 -r git add --intent-to-add --
+          git diff --binary "$BASE_COMMIT" -- . \
+            > "${RUNNER_TEMP}/feedback-artifacts/change.patch"
+          sha256sum "${RUNNER_TEMP}/feedback-artifacts/change.patch" |
+            cut -d ' ' -f 1 \
+            > "${RUNNER_TEMP}/feedback-artifacts/diff-manifest.sha256"
+          git reset --mixed "$BASE_COMMIT" --quiet
+
+      - name: Upload private Run evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: feedback-run-${{ inputs.runId }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/feedback-artifacts/
+          if-no-files-found: ignore
+          include-hidden-files: false
+          retention-days: 7
+          compression-level: 9
+
+      - name: Send terminal callback
+        if: always()
+        env:
+          CALLBACK_URL: ${{ inputs.callbackUrl }}
+          CALLBACK_TOKEN: ${{ inputs.callbackToken }}
+          RUN_ID: ${{ inputs.runId }}
+          WORKFLOW_ID: ${{ inputs.workflowId }}
+          POLICY: ${{ inputs.policy }}
+          BASE_COMMIT: ${{ inputs.baseCommit }}
+          JOB_STATUS: ${{ job.status }}
+          FINAL_MESSAGE_PATH: ${{ runner.temp }}/feedback-artifacts/final-message.md
+          DIFF_SHA_PATH: ${{ runner.temp }}/feedback-artifacts/diff-manifest.sha256
+        run: |
+          set -euo pipefail
+          echo "::add-mask::${CALLBACK_TOKEN}"
+          callback_body="${RUNNER_TEMP}/terminal-callback.json"
+
+          /usr/bin/node <<'NODE'
+          const crypto = require('node:crypto');
+          const fs = require('node:fs');
+          const readOptional = (path, limit) => {
+            if (!path || !fs.existsSync(path)) return '';
+            return fs.readFileSync(path, 'utf8').trim().slice(0, limit);
+          };
+          const completed = process.env.JOB_STATUS === 'success';
+          const digest = crypto
+            .createHash('sha256')
+            .update(`terminal:${process.env.RUN_ID}`)
+            .digest('hex')
+            .slice(0, 32);
+          const body = {
+            summary: readOptional(process.env.FINAL_MESSAGE_PATH, 16000),
+            policy: process.env.POLICY,
+            baseCommit: process.env.BASE_COMMIT,
+            evidence: {
+              githubRunId: process.env.GITHUB_RUN_ID,
+              githubRunAttempt: Number(process.env.GITHUB_RUN_ATTEMPT),
+              diffManifestSha256:
+                readOptional(process.env.DIFF_SHA_PATH, 64) || null,
+            },
+          };
+          if (!completed) {
+            body.errorCode = `GITHUB_ACTION_${process.env.JOB_STATUS.toUpperCase()}`;
+          }
+          const event = {
+            eventId: `evt_terminal_${digest}`,
+            type: completed ? 'run.completed' : 'run.failed',
+            occurredAt: new Date().toISOString(),
+            body,
+            metadata: {
+              provider: 'codex',
+              workflowId: process.env.WORKFLOW_ID,
+            },
+          };
+          fs.writeFileSync(
+            `${process.env.RUNNER_TEMP}/terminal-callback.json`,
+            JSON.stringify(event),
+            { mode: 0o600 },
+          );
+          NODE
+
+          /usr/bin/curl \
+            --fail \
+            --silent \
+            --show-error \
+            --retry 3 \
+            --retry-delay 2 \
+            --retry-max-time 30 \
+            --proto '=https' \
+            --tlsv1.2 \
+            --header "Authorization: Bearer ${CALLBACK_TOKEN}" \
+            --header "Content-Type: application/json" \
+            --data-binary "@${callback_body}" \
+            "$CALLBACK_URL"
