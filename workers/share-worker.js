@@ -4,13 +4,25 @@
  * TTL: 30 days
  */
 
+import { WorkflowEntrypoint } from 'cloudflare:workers';
+import { NonRetryableError } from 'cloudflare:workflows';
+import rrwebReplayBrowserScript from '../src/features/feedback/vendor/rrweb-replay-2.0.0-alpha.20.umd.min.txt';
+import rrwebReplayBrowserStyles from '../src/features/feedback/vendor/rrweb-replay-2.0.0-alpha.20.style.min.txt';
+
 const TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
 const FEEDBACK_TTL_SECONDS = 180 * 24 * 60 * 60; // 180 days
+const OWNER_CAPABILITY_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
 const CLOUD_DOC_TTL_SECONDS = 365 * 24 * 60 * 60; // 365 days
 const CLOUD_DOC_CREATE_ATTEMPTS = 3;
 const MAX_FEEDBACK_BYTES = 18 * 1024 * 1024;
+const MAX_FEEDBACK_CONTEXT_INLINE_BYTES = 512 * 1024;
+const FEEDBACK_CONTEXT_STORAGE_FIELD = '__feedbackContextStorage';
+const FEEDBACK_REPLAY_SCRIPT_PATH = '/feedback/assets/rrweb-replay-2.0.0-alpha.20.js';
+const FEEDBACK_REPLAY_STYLE_PATH = '/feedback/assets/rrweb-replay-2.0.0-alpha.20.css';
 const KEY_CHARS = 'abcdefghijklmnopqrstuvwxyz0123456789';
 const ADMIN_SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
+const FEEDBACK_ATTACHMENT_ACCESS_TTL_SECONDS = 5 * 60;
+const FEEDBACK_RUN_CAPABILITY_TTL_SECONDS = 30 * 60;
 const FEEDBACK_STATUSES = new Set([
     'open',
     'queued',
@@ -36,6 +48,29 @@ const FEEDBACK_AUTOMATION_DECISIONS = new Set([
     'close',
 ]);
 const FEEDBACK_AI_CONFIDENCE = new Set(['', 'low', 'medium', 'high']);
+const FEEDBACK_RUN_EVENT_TYPES = new Set([
+    'run.started',
+    'agent.message',
+    'agent.waiting_human',
+    'artifact.created',
+    'run.completed',
+    'run.failed',
+]);
+const FEEDBACK_RUN_POLICIES = new Set(['analyze', 'review', 'implement', 'implement_and_verify']);
+const FEEDBACK_RUNNER_TYPES = new Set(['github_hosted', 'local_required']);
+const FEEDBACK_RUN_PERMISSION_PROFILES = Object.freeze({
+    analyze: ':read-only',
+    review: ':read-only',
+    implement: 'feedback-workspace',
+    implement_and_verify: 'feedback-workspace',
+});
+const FEEDBACK_INLINE_ATTACHMENT_TYPES = new Set([
+    'image/avif',
+    'image/gif',
+    'image/jpeg',
+    'image/png',
+    'image/webp',
+]);
 const LEGACY_FEEDBACK_TYPE_TO_BUSINESS_TYPE = {
     bug: 'bug',
     suggestion: 'improvement',
@@ -64,7 +99,7 @@ function corsHeaders() {
     return {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization, Idempotency-Key',
     };
 }
 
@@ -331,6 +366,437 @@ export class CloudDocDurableObject {
     }
 }
 
+export class FeedbackWorkflow extends WorkflowEntrypoint {
+    async run(event, step) {
+        const payload = normalizeFeedbackWorkflowPayload(event.payload);
+        const { issueId, generation, runId } = payload;
+        const instanceId = String(event.instanceId || `${issueId}:${generation}`);
+        const workflowState = await step.do('record workflow start', async () => {
+            const database = this.env.FEEDBACK_DB;
+            const startedAt = new Date().toISOString();
+            const mapping = await database
+                .prepare(
+                    `SELECT issue_id, generation, instance_id, status, active_run_id,
+                            context_version, started_at
+                     FROM feedback_workflows
+                     WHERE issue_id = ? AND generation = ?`
+                )
+                .bind(issueId, generation)
+                .first();
+            if (
+                !mapping ||
+                mapping.instance_id !== instanceId ||
+                mapping.active_run_id !== runId ||
+                Number(mapping.context_version) !== payload.contextVersion
+            ) {
+                throw new NonRetryableError('FEEDBACK_WORKFLOW_INSTANCE_CONFLICT');
+            }
+            await database
+                .prepare(
+                    `UPDATE feedback_workflows
+                     SET status = ?, active_run_id = ?, started_at = ?
+                     WHERE instance_id = ?
+                       AND status IN ('queued', 'running')`
+                )
+                .bind('running', runId, mapping.started_at || startedAt, instanceId)
+                .run();
+
+            return {
+                issueId,
+                generation,
+                instanceId,
+                runId,
+                status: 'running',
+                startedAt: mapping.started_at || startedAt,
+            };
+        });
+
+        let dispatch;
+        try {
+            dispatch = await step.do(
+                'dispatch github action',
+                {
+                    retries: {
+                        limit: 3,
+                        delay: '10 seconds',
+                        backoff: 'exponential',
+                    },
+                    timeout: '2 minutes',
+                },
+                async () => dispatchFeedbackGitHubWorkflow(this.env, instanceId, payload)
+            );
+        } catch (error) {
+            await step.do('record dispatch failure', async () => {
+                await recordFeedbackDispatchFailure(this.env, instanceId, payload, error);
+            });
+            console.error('[Feedback] GitHub dispatch failed', {
+                issueId,
+                workflowId: instanceId,
+                runId,
+                errorCode: getFeedbackDispatchErrorCode(error),
+            });
+            throw error;
+        }
+
+        const terminalEvent = await step.waitForEvent('wait for terminal callback', {
+            type: 'feedback-run-terminal',
+            timeout: '24 hours',
+        });
+
+        return {
+            ...workflowState,
+            dispatchStatus: dispatch.responseStatus,
+            terminalType: String(terminalEvent?.payload?.type || ''),
+        };
+    }
+}
+
+function normalizeFeedbackWorkflowPayload(value) {
+    const payload = value && typeof value === 'object' ? value : {};
+    const issueId = String(payload.issueId || '');
+    const generation = Number(payload.generation);
+    const contextVersion = Number(payload.contextVersion);
+    const runId = String(payload.runId || '');
+    const policy = String(payload.policy || '');
+    const provider = String(payload.provider || '');
+    const permissionProfile = String(payload.permissionProfile || '');
+    const baseCommit = String(payload.baseCommit || '');
+    const contextUrl = String(payload.contextUrl || '');
+    const callbackUrl = String(payload.callbackUrl || '');
+    const contextToken = String(payload.contextToken || '');
+    const callbackToken = String(payload.callbackToken || '');
+    let parsedContextUrl;
+    let parsedCallbackUrl;
+    try {
+        parsedContextUrl = new URL(contextUrl);
+        parsedCallbackUrl = new URL(callbackUrl);
+    } catch {
+        throw new NonRetryableError('INVALID_FEEDBACK_WORKFLOW_EVENT');
+    }
+
+    if (
+        !issueId.startsWith('feedback:') ||
+        !Number.isInteger(generation) ||
+        generation < 1 ||
+        !Number.isInteger(contextVersion) ||
+        contextVersion < 1 ||
+        !/^run_[a-zA-Z0-9_-]{8,120}$/.test(runId) ||
+        !FEEDBACK_RUN_POLICIES.has(policy) ||
+        provider !== 'codex' ||
+        permissionProfile !== FEEDBACK_RUN_PERMISSION_PROFILES[policy] ||
+        (baseCommit && !/^[a-f0-9]{7,64}$/i.test(baseCommit)) ||
+        parsedContextUrl.protocol !== 'https:' ||
+        parsedCallbackUrl.protocol !== 'https:' ||
+        !parsedContextUrl.pathname.endsWith(
+            `/api/feedback/runs/${encodeURIComponent(runId)}/context`
+        ) ||
+        !parsedCallbackUrl.pathname.endsWith(
+            `/api/feedback/runs/${encodeURIComponent(runId)}/events`
+        ) ||
+        contextToken.length < 16 ||
+        contextToken.length > 256 ||
+        callbackToken.length < 16 ||
+        callbackToken.length > 256 ||
+        contextToken === callbackToken
+    ) {
+        throw new NonRetryableError('INVALID_FEEDBACK_WORKFLOW_EVENT');
+    }
+
+    return {
+        issueId,
+        generation,
+        contextVersion,
+        runId,
+        policy,
+        provider,
+        permissionProfile,
+        baseCommit,
+        contextUrl,
+        callbackUrl,
+        contextToken,
+        callbackToken,
+    };
+}
+
+function readFeedbackGitHubDispatchConfig(env) {
+    const repository = String(env.FEEDBACK_GITHUB_REPOSITORY || '');
+    const ref = String(env.FEEDBACK_GITHUB_REF || '');
+    const workflow = String(env.FEEDBACK_GITHUB_WORKFLOW || '');
+    const apiVersion = String(env.FEEDBACK_GITHUB_API_VERSION || '2026-03-10');
+    const token = String(env.FEEDBACK_GITHUB_TOKEN || '');
+    if (
+        !/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(repository) ||
+        !ref ||
+        ref.length > 255 ||
+        !/^[a-zA-Z0-9_.-]+\.ya?ml$/.test(workflow) ||
+        !/^\d{4}-\d{2}-\d{2}$/.test(apiVersion) ||
+        !token
+    ) {
+        throw new NonRetryableError('GITHUB_DISPATCH_NOT_CONFIGURED');
+    }
+
+    return {
+        repository,
+        ref,
+        workflow,
+        apiVersion,
+        token,
+    };
+}
+
+async function readFeedbackDeliveryByWorkflow(env, workflowId) {
+    return env.FEEDBACK_DB.prepare(
+        `SELECT * FROM feedback_deliveries
+         WHERE workflow_instance_id = ?`
+    )
+        .bind(workflowId)
+        .first();
+}
+
+async function markFeedbackDeliveryAttempt(env, workflowId, updatedAt) {
+    await env.FEEDBACK_DB.prepare(
+        `UPDATE feedback_deliveries
+         SET status = ?, attempt_count = attempt_count + 1,
+             next_attempt_at = NULL, updated_at = ?
+         WHERE workflow_instance_id = ? AND status != 'dispatched'`
+    )
+        .bind('dispatching', updatedAt, workflowId)
+        .run();
+}
+
+async function markFeedbackDeliveryResult(
+    env,
+    workflowId,
+    status,
+    responseStatus,
+    errorCode,
+    nextAttemptAt
+) {
+    await env.FEEDBACK_DB.prepare(
+        `UPDATE feedback_deliveries
+         SET status = ?, response_status = ?, last_error = ?,
+             next_attempt_at = ?, updated_at = ?
+         WHERE workflow_instance_id = ?`
+    )
+        .bind(
+            status,
+            responseStatus,
+            errorCode,
+            nextAttemptAt,
+            new Date().toISOString(),
+            workflowId
+        )
+        .run();
+}
+
+async function dispatchFeedbackGitHubWorkflow(env, workflowId, payload) {
+    const existingDelivery = await readFeedbackDeliveryByWorkflow(env, workflowId);
+    if (!existingDelivery) {
+        throw new NonRetryableError('FEEDBACK_DELIVERY_NOT_FOUND');
+    }
+    if (existingDelivery.status === 'dispatched') {
+        return {
+            replayed: true,
+            responseStatus: Number(existingDelivery.response_status) || 200,
+        };
+    }
+
+    const config = readFeedbackGitHubDispatchConfig(env);
+    const now = new Date().toISOString();
+    await markFeedbackDeliveryAttempt(env, workflowId, now);
+    const dispatchUrl = `https://api.github.com/repos/${config.repository
+        .split('/')
+        .map(encodeURIComponent)
+        .join('/')}/actions/workflows/${encodeURIComponent(config.workflow)}/dispatches`;
+    const body = {
+        ref: config.ref,
+        inputs: {
+            issueId: payload.issueId,
+            issueVersion: String(payload.contextVersion),
+            workflowId,
+            runId: payload.runId,
+            policy: payload.policy,
+            provider: payload.provider,
+            permissionProfile: payload.permissionProfile,
+            baseCommit: payload.baseCommit,
+            contextUrl: payload.contextUrl,
+            callbackUrl: payload.callbackUrl,
+            contextToken: payload.contextToken,
+            callbackToken: payload.callbackToken,
+        },
+    };
+
+    let response;
+    try {
+        response = await fetch(dispatchUrl, {
+            method: 'POST',
+            headers: {
+                Accept: 'application/vnd.github+json',
+                Authorization: `Bearer ${config.token}`,
+                'Content-Type': 'application/json',
+                'X-GitHub-Api-Version': config.apiVersion,
+            },
+            body: JSON.stringify(body),
+        });
+    } catch {
+        const errorCode = 'GITHUB_DISPATCH_NETWORK_ERROR';
+        await markFeedbackDeliveryResult(
+            env,
+            workflowId,
+            'retrying',
+            null,
+            errorCode,
+            new Date(Date.now() + 10_000).toISOString()
+        );
+        throw new Error(errorCode);
+    }
+
+    if (response.status === 429 || response.status >= 500) {
+        const errorCode = `GITHUB_DISPATCH_RETRYABLE_${response.status}`;
+        await markFeedbackDeliveryResult(
+            env,
+            workflowId,
+            'retrying',
+            response.status,
+            errorCode,
+            new Date(Date.now() + 10_000).toISOString()
+        );
+        throw new Error(errorCode);
+    }
+    if (!response.ok) {
+        const errorCode = `GITHUB_DISPATCH_REJECTED_${response.status}`;
+        await markFeedbackDeliveryResult(
+            env,
+            workflowId,
+            'failed',
+            response.status,
+            errorCode,
+            null
+        );
+        throw new NonRetryableError(errorCode);
+    }
+
+    await env.FEEDBACK_DB.batch([
+        env.FEEDBACK_DB.prepare(
+            `UPDATE feedback_deliveries
+             SET status = ?, response_status = ?, last_error = NULL,
+                 next_attempt_at = NULL, updated_at = ?
+             WHERE workflow_instance_id = ?`
+        ).bind('dispatched', response.status, new Date().toISOString(), workflowId),
+        env.FEEDBACK_DB.prepare(
+            `UPDATE feedback_runs
+             SET status = ?, updated_at = ?
+             WHERE id = ? AND status IN ('created', 'queued')`
+        ).bind('dispatched', new Date().toISOString(), payload.runId),
+    ]);
+
+    return {
+        replayed: false,
+        responseStatus: response.status,
+    };
+}
+
+function getFeedbackDispatchErrorCode(error) {
+    const value = String(error?.message || '');
+    return /^[A-Z0-9_]+$/.test(value) ? value : 'GITHUB_DISPATCH_FAILED';
+}
+
+async function recordFeedbackDispatchFailure(env, workflowId, payload, error) {
+    const errorCode = getFeedbackDispatchErrorCode(error);
+    const finishedAt = new Date().toISOString();
+    const actionHash = await hashFeedbackValue(`${payload.runId}\u0000dispatch-failed`);
+    const actionId = `human_${actionHash.slice(0, 32)}`;
+    const actionEventId = `evt_human_${actionHash.slice(0, 32)}`;
+    const requestedAction =
+        'GitHub Actions 投递失败。请检查 Worker Secret、仓库权限和目标 Workflow 配置后重试。';
+    const delivery = await readFeedbackDeliveryByWorkflow(env, workflowId);
+    await markFeedbackDeliveryResult(
+        env,
+        workflowId,
+        'failed',
+        delivery?.response_status ?? null,
+        errorCode,
+        null
+    );
+    await env.FEEDBACK_DB.batch([
+        env.FEEDBACK_DB.prepare(
+            `UPDATE feedback_runs
+             SET status = ?, finished_at = ?, error_code = ?,
+                 context_token_hash = NULL, context_token_expires_at = NULL,
+                 callback_token_hash = NULL, callback_token_expires_at = NULL,
+                 updated_at = ?
+             WHERE id = ? AND status NOT IN ('succeeded', 'failed', 'cancelled', 'timed_out')`
+        ).bind('failed', finishedAt, errorCode, finishedAt, payload.runId),
+        env.FEEDBACK_DB.prepare(
+            `UPDATE feedback_workflows
+             SET status = ?, finished_at = ?, terminal_reason = ?
+             WHERE instance_id = ?
+               AND status NOT IN ('succeeded', 'failed', 'cancelled')`
+        ).bind('failed', finishedAt, errorCode, workflowId),
+        env.FEEDBACK_DB.prepare(
+            `INSERT INTO feedback_human_actions (
+                id, issue_id, workflow_id, run_id, candidate_id, design_id,
+                type, requested_action, evidence_json,
+                allowed_return_states_json, status, resolution_json,
+                created_at, resolved_at
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(id) DO NOTHING`
+        ).bind(
+            actionId,
+            payload.issueId,
+            workflowId,
+            payload.runId,
+            null,
+            null,
+            'blocked_external',
+            requestedAction,
+            JSON.stringify([{ errorCode }]),
+            JSON.stringify(['queued', 'closed']),
+            'active',
+            null,
+            finishedAt,
+            null
+        ),
+        env.FEEDBACK_DB.prepare(
+            `UPDATE feedback_issues
+             SET version = version + 1, status = ?,
+                 active_workflow_id = NULL, active_human_action_id = ?,
+                 updated_at = ?
+             WHERE id = ? AND active_workflow_id = ?`
+        ).bind('needs_human', actionId, finishedAt, payload.issueId, workflowId),
+    ]);
+
+    const run = await env.FEEDBACK_DB.prepare('SELECT * FROM feedback_runs WHERE id = ?')
+        .bind(payload.runId)
+        .first();
+    if (run) {
+        await appendFeedbackRunEvent(env, run, {
+            eventId: `evt_dispatch_${(await hashFeedbackValue(workflowId)).slice(0, 32)}`,
+            type: 'run.failed',
+            occurredAt: finishedAt,
+            bodyJson: JSON.stringify({
+                errorCode,
+                summary: 'GitHub workflow dispatch failed.',
+            }),
+            metadataJson: JSON.stringify({ phase: 'dispatch' }),
+        });
+    }
+    const action = await env.FEEDBACK_DB.prepare(
+        'SELECT * FROM feedback_human_actions WHERE id = ?'
+    )
+        .bind(actionId)
+        .first();
+    if (action) {
+        await appendFeedbackHumanActionCreatedEvent(
+            env,
+            action,
+            actionEventId,
+            finishedAt,
+            'dispatch.failed'
+        );
+    }
+}
+
 function getFeedbackStore(env) {
     return env.FEEDBACK_KV || env.SHARE_KV;
 }
@@ -398,7 +864,7 @@ function base64UrlEncode(value) {
     return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 }
 
-function base64UrlDecode(value) {
+function base64UrlDecodeBytes(value) {
     const padded = value
         .replace(/-/g, '+')
         .replace(/_/g, '/')
@@ -409,7 +875,11 @@ function base64UrlDecode(value) {
         bytes[i] = binary.charCodeAt(i);
     }
 
-    return new TextDecoder().decode(bytes);
+    return bytes;
+}
+
+function base64UrlDecode(value) {
+    return new TextDecoder().decode(base64UrlDecodeBytes(value));
 }
 
 async function signValue(value, secret) {
@@ -535,6 +1005,1667 @@ function normalizeStoredFeedback(key, feedback) {
     };
 }
 
+function parseStoredJson(value, fallback) {
+    if (typeof value !== 'string' || !value) return fallback;
+
+    try {
+        return JSON.parse(value);
+    } catch {
+        return fallback;
+    }
+}
+
+function getBearerToken(request) {
+    const header = request.headers.get('Authorization') || '';
+    return header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+}
+
+function feedbackHashesMatch(left, right) {
+    const leftValue = String(left || '');
+    const rightValue = String(right || '');
+    if (leftValue.length !== rightValue.length || !leftValue) return false;
+
+    let difference = 0;
+    for (let index = 0; index < leftValue.length; index += 1) {
+        difference |= leftValue.charCodeAt(index) ^ rightValue.charCodeAt(index);
+    }
+    return difference === 0;
+}
+
+async function isValidFeedbackOwnerCapability(request, env, issueId) {
+    const capability = getBearerToken(request);
+    if (!capability || !env.FEEDBACK_DB) return false;
+
+    const row = await env.FEEDBACK_DB.prepare(
+        `SELECT owner_capability_hash, owner_capability_expires_at
+         FROM feedback_issues WHERE id = ?`
+    )
+        .bind(issueId)
+        .first();
+    if (!row?.owner_capability_hash) return false;
+
+    const expiresAt = Date.parse(row.owner_capability_expires_at || '');
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) return false;
+
+    return feedbackHashesMatch(await hashFeedbackValue(capability), row.owner_capability_hash);
+}
+
+function getFeedbackAttachmentTokenSecret(env) {
+    return String(env.FEEDBACK_ATTACHMENT_TOKEN_SECRET || getAdminSecret(env));
+}
+
+async function createFeedbackAttachmentAccessUrl(request, env, issueId, attachmentId) {
+    const secret = getFeedbackAttachmentTokenSecret(env);
+    if (!secret) return '';
+
+    const payload = base64UrlEncode(
+        JSON.stringify({
+            aud: 'feedback-attachment',
+            issueId,
+            attachmentId,
+            exp: Date.now() + FEEDBACK_ATTACHMENT_ACCESS_TTL_SECONDS * 1000,
+        })
+    );
+    const signature = await signValue(payload, secret);
+    const origin = new URL(request.url).origin;
+    return `${origin}/api/feedback/attachments/${encodeURIComponent(
+        attachmentId
+    )}?token=${encodeURIComponent(`${payload}.${signature}`)}`;
+}
+
+async function readFeedbackAttachmentWithToken(request, env, attachmentId) {
+    const token = new URL(request.url).searchParams.get('token') || '';
+    const [payload, signature] = token.split('.');
+    const secret = getFeedbackAttachmentTokenSecret(env);
+    if (!payload || !signature || !secret) return null;
+
+    const expectedSignature = await signValue(payload, secret);
+    if (!feedbackHashesMatch(signature, expectedSignature)) return null;
+
+    let claims;
+    try {
+        claims = JSON.parse(base64UrlDecode(payload));
+    } catch {
+        return null;
+    }
+    if (
+        claims.aud !== 'feedback-attachment' ||
+        claims.attachmentId !== attachmentId ||
+        Number(claims.exp) <= Date.now()
+    ) {
+        return null;
+    }
+
+    const attachment = await env.FEEDBACK_DB?.prepare(
+        'SELECT * FROM feedback_attachments WHERE id = ?'
+    )
+        .bind(attachmentId)
+        .first();
+    if (
+        !attachment?.object_key ||
+        attachment.issue_id !== claims.issueId ||
+        !env.FEEDBACK_ARTIFACTS
+    ) {
+        return null;
+    }
+
+    const object = await env.FEEDBACK_ARTIFACTS.get(attachment.object_key);
+    if (!object) return null;
+
+    return {
+        attachment,
+        object,
+    };
+}
+
+function getFeedbackAttachmentResponseMetadata(access) {
+    const sourceContentType = String(
+        access.object.httpMetadata?.contentType ||
+            access.attachment.content_type ||
+            'application/octet-stream'
+    )
+        .split(';')[0]
+        .trim()
+        .toLowerCase();
+    const canRenderInline = FEEDBACK_INLINE_ATTACHMENT_TYPES.has(sourceContentType);
+
+    return {
+        contentType: canRenderInline ? sourceContentType : 'application/octet-stream',
+        disposition: canRenderInline ? 'inline' : 'attachment',
+    };
+}
+
+function bytesToHex(value) {
+    return Array.from(new Uint8Array(value))
+        .map((byte) => byte.toString(16).padStart(2, '0'))
+        .join('');
+}
+
+async function hashFeedbackValue(value) {
+    const bytes =
+        typeof value === 'string'
+            ? new TextEncoder().encode(value)
+            : value instanceof ArrayBuffer
+              ? new Uint8Array(value)
+              : new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+    const digest = await crypto.subtle.digest('SHA-256', bytes);
+    return bytesToHex(digest);
+}
+
+async function readAuthorizedFeedbackRun(request, env, runId, scope) {
+    if (!env.FEEDBACK_DB) return null;
+
+    const token = getBearerToken(request);
+    if (!token) return null;
+
+    const run = await env.FEEDBACK_DB.prepare('SELECT * FROM feedback_runs WHERE id = ?')
+        .bind(runId)
+        .first();
+    if (!run) return null;
+
+    const tokenHash = scope === 'context' ? run.context_token_hash : run.callback_token_hash;
+    const expiresAt =
+        scope === 'context' ? run.context_token_expires_at : run.callback_token_expires_at;
+    if (!tokenHash || !expiresAt || Date.parse(expiresAt) <= Date.now()) return null;
+
+    const candidateHash = await hashFeedbackValue(token);
+    return feedbackHashesMatch(candidateHash, tokenHash) ? run : null;
+}
+
+function normalizeFeedbackRunEvent(body) {
+    const eventId = String(body?.eventId || '').trim();
+    const type = String(body?.type || '').trim();
+    if (!/^evt_[a-zA-Z0-9_-]{8,120}$/.test(eventId)) {
+        throw new Error('INVALID_FEEDBACK_RUN_EVENT_ID');
+    }
+    if (!FEEDBACK_RUN_EVENT_TYPES.has(type)) {
+        throw new Error('INVALID_FEEDBACK_RUN_EVENT_TYPE');
+    }
+
+    const occurredAt = String(body?.occurredAt || '');
+    const normalizedOccurredAt = Number.isFinite(Date.parse(occurredAt))
+        ? new Date(occurredAt).toISOString()
+        : new Date().toISOString();
+    const eventBody =
+        body?.body && typeof body.body === 'object' && !Array.isArray(body.body) ? body.body : {};
+    const metadata =
+        body?.metadata && typeof body.metadata === 'object' && !Array.isArray(body.metadata)
+            ? body.metadata
+            : {};
+    const bodyJson = JSON.stringify(eventBody);
+    const metadataJson = JSON.stringify(metadata);
+    if (bodyJson.length > 64 * 1024 || metadataJson.length > 16 * 1024) {
+        throw new Error('FEEDBACK_RUN_EVENT_TOO_LARGE');
+    }
+
+    return {
+        eventId,
+        type,
+        occurredAt: normalizedOccurredAt,
+        bodyJson,
+        metadataJson,
+    };
+}
+
+async function appendFeedbackRunEvent(env, run, event) {
+    const result = await env.FEEDBACK_DB.prepare(
+        `INSERT INTO feedback_events (
+            id, issue_id, sequence, type, actor_type, actor_id, visibility,
+            run_id, occurred_at, body_json, metadata_json, legacy_hash
+        )
+        SELECT ?, r.issue_id,
+            COALESCE((
+                SELECT MAX(existing.sequence) + 1
+                FROM feedback_events existing
+                WHERE existing.issue_id = r.issue_id
+            ), 1),
+            ?, 'agent', ?, ?, r.id, ?, ?, ?, NULL
+        FROM feedback_runs r
+        WHERE r.id = ?
+        ON CONFLICT(id) DO NOTHING`
+    )
+        .bind(
+            event.eventId,
+            event.type,
+            run.provider,
+            'public',
+            event.occurredAt,
+            event.bodyJson,
+            event.metadataJson,
+            run.id
+        )
+        .run();
+
+    if (Number(result?.meta?.changes) > 0) {
+        return { replayed: false };
+    }
+
+    const existing = await env.FEEDBACK_DB.prepare(
+        'SELECT id, run_id FROM feedback_events WHERE id = ?'
+    )
+        .bind(event.eventId)
+        .first();
+    if (existing?.run_id === run.id) {
+        return { replayed: true };
+    }
+
+    throw new Error('FEEDBACK_RUN_EVENT_CONFLICT');
+}
+
+async function appendFeedbackHumanActionCreatedEvent(
+    env,
+    action,
+    eventId,
+    occurredAt,
+    source = 'run.completed'
+) {
+    await env.FEEDBACK_DB.prepare(
+        `INSERT INTO feedback_events (
+            id, issue_id, sequence, type, actor_type, actor_id, visibility,
+            run_id, occurred_at, body_json, metadata_json, legacy_hash
+         )
+         SELECT ?, action.issue_id,
+            COALESCE((
+                SELECT MAX(existing.sequence) + 1
+                FROM feedback_events existing
+                WHERE existing.issue_id = action.issue_id
+            ), 1),
+            ?, ?, ?, ?, ?, ?, ?, ?, ?
+         FROM feedback_human_actions action
+         WHERE action.id = ?
+         ON CONFLICT(id) DO NOTHING`
+    )
+        .bind(
+            eventId,
+            'human_action.created',
+            'system',
+            null,
+            'public',
+            action.run_id,
+            occurredAt,
+            JSON.stringify({
+                humanActionId: action.id,
+                type: action.type,
+                requestedAction: action.requested_action,
+            }),
+            JSON.stringify({ source }),
+            null,
+            action.id
+        )
+        .run();
+}
+
+async function projectFeedbackRunTerminalEvent(env, run, event) {
+    if (event.type !== 'run.completed' && event.type !== 'run.failed') return;
+
+    const isCompleted = event.type === 'run.completed';
+    const body = parseStoredJson(event.bodyJson, {});
+    const finishedAt = event.occurredAt;
+    const errorCode = isCompleted ? null : limitText(body.errorCode || 'AGENT_RUN_FAILED', 120);
+    const runStatus = isCompleted ? 'succeeded' : 'failed';
+    const workflowStatus = runStatus;
+    const issueStatus = isCompleted ? 'needs_human' : 'test_failed';
+    const actionHash = await hashFeedbackValue(`${run.id}\u0000${event.eventId}`);
+    const actionId = `human_${actionHash.slice(0, 32)}`;
+    const actionEventId = `evt_human_${actionHash.slice(0, 32)}`;
+    const requestedAction =
+        '请审查本次 Agent Run 的结果和交付证据，并决定继续交付、要求修改或关闭问题。';
+    const statements = [
+        env.FEEDBACK_DB.prepare(
+            `UPDATE feedback_runs
+             SET status = ?, finished_at = ?, error_code = ?,
+                 context_token_hash = NULL, context_token_expires_at = NULL,
+                 updated_at = ?
+             WHERE id = ?
+               AND status NOT IN ('succeeded', 'failed', 'cancelled', 'timed_out')`
+        ).bind(runStatus, finishedAt, errorCode, finishedAt, run.id),
+        env.FEEDBACK_DB.prepare(
+            `UPDATE feedback_workflows
+             SET status = ?, finished_at = ?, terminal_reason = ?
+             WHERE instance_id = ?
+               AND status NOT IN ('succeeded', 'failed', 'cancelled')`
+        ).bind(workflowStatus, finishedAt, event.type, run.workflow_id),
+    ];
+
+    if (isCompleted) {
+        statements.push(
+            env.FEEDBACK_DB.prepare(
+                `INSERT INTO feedback_human_actions (
+                    id, issue_id, workflow_id, run_id, candidate_id, design_id,
+                    type, requested_action, evidence_json,
+                    allowed_return_states_json, status, resolution_json,
+                    created_at, resolved_at
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 ON CONFLICT(id) DO NOTHING`
+            ).bind(
+                actionId,
+                run.issue_id,
+                run.workflow_id,
+                run.id,
+                null,
+                null,
+                'run_result_review',
+                requestedAction,
+                JSON.stringify([{ eventId: event.eventId }]),
+                JSON.stringify(['queued', 'closed']),
+                'active',
+                null,
+                finishedAt,
+                null
+            ),
+            env.FEEDBACK_DB.prepare(
+                `UPDATE feedback_issues
+                 SET version = version + 1, status = ?,
+                     active_workflow_id = NULL, active_human_action_id = ?,
+                     updated_at = ?
+                 WHERE id = ? AND active_workflow_id = ?`
+            ).bind(issueStatus, actionId, finishedAt, run.issue_id, run.workflow_id)
+        );
+    } else {
+        statements.push(
+            env.FEEDBACK_DB.prepare(
+                `UPDATE feedback_issues
+                 SET version = version + 1, status = ?,
+                     active_workflow_id = NULL, updated_at = ?
+                 WHERE id = ? AND active_workflow_id = ?`
+            ).bind(issueStatus, finishedAt, run.issue_id, run.workflow_id)
+        );
+    }
+
+    await env.FEEDBACK_DB.batch(statements);
+    if (isCompleted) {
+        const action = await env.FEEDBACK_DB.prepare(
+            'SELECT * FROM feedback_human_actions WHERE id = ?'
+        )
+            .bind(actionId)
+            .first();
+        if (action) {
+            await appendFeedbackHumanActionCreatedEvent(env, action, actionEventId, finishedAt);
+        }
+    }
+}
+
+async function notifyFeedbackWorkflowOfTerminalEvent(env, run, event) {
+    if (
+        (event.type !== 'run.completed' && event.type !== 'run.failed') ||
+        !env.FEEDBACK_WORKFLOW ||
+        typeof env.FEEDBACK_WORKFLOW.get !== 'function'
+    ) {
+        return;
+    }
+
+    try {
+        const instance = await env.FEEDBACK_WORKFLOW.get(run.workflow_id);
+        if (!instance || typeof instance.sendEvent !== 'function') return;
+        await instance.sendEvent({
+            type: 'feedback-run-terminal',
+            payload: {
+                eventId: event.eventId,
+                runId: run.id,
+                type: event.type,
+            },
+        });
+    } catch (error) {
+        console.warn('[Feedback] Workflow terminal notification failed', {
+            issueId: run.issue_id,
+            workflowId: run.workflow_id,
+            runId: run.id,
+            eventId: event.eventId,
+            errorCode: limitText(error?.message || 'WORKFLOW_EVENT_FAILED', 120),
+        });
+    }
+}
+
+function normalizeFeedbackRunRequest(body) {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        throw feedbackStorageError('INVALID_FEEDBACK_RUN_REQUEST');
+    }
+
+    const policy = String(body.policy || '').trim();
+    const provider = String(body.provider || 'codex').trim();
+    const runnerType = String(body.runnerType || 'github_hosted').trim();
+    const baseCommit = String(body.baseCommit || '').trim();
+    if (
+        !FEEDBACK_RUN_POLICIES.has(policy) ||
+        provider !== 'codex' ||
+        !FEEDBACK_RUNNER_TYPES.has(runnerType) ||
+        (baseCommit && !/^[a-f0-9]{7,64}$/i.test(baseCommit))
+    ) {
+        throw feedbackStorageError('INVALID_FEEDBACK_RUN_REQUEST');
+    }
+
+    return {
+        policy,
+        provider,
+        runnerType,
+        baseCommit: baseCommit || null,
+        permissionProfile: FEEDBACK_RUN_PERMISSION_PROFILES[policy],
+        deliveryMode:
+            policy === 'analyze' || policy === 'review' ? 'no_delivery' : 'candidate_review',
+    };
+}
+
+function readFeedbackRunIdempotencyKey(request) {
+    const key = String(request.headers.get('Idempotency-Key') || '').trim();
+    if (!/^[a-zA-Z0-9._:-]{8,120}$/.test(key)) {
+        throw feedbackStorageError('INVALID_FEEDBACK_IDEMPOTENCY_KEY');
+    }
+    return key;
+}
+
+function serializeFeedbackRun(run) {
+    return {
+        id: run.id,
+        issueId: run.issue_id,
+        workflowId: run.workflow_id,
+        policy: run.policy,
+        deliveryMode: run.delivery_mode,
+        provider: run.provider,
+        runnerType: run.runner_type,
+        runnerLabel: run.runner_label || '',
+        permissionProfile: run.permission_profile,
+        status: run.status,
+        attempt: Number(run.attempt) || 1,
+        baseCommit: run.base_commit || '',
+        startedAt: run.started_at || '',
+        finishedAt: run.finished_at || '',
+        errorCode: run.error_code || '',
+    };
+}
+
+async function findFeedbackRunByIdempotencyKey(env, idempotencyKey) {
+    return env.FEEDBACK_DB.prepare(
+        `SELECT r.*, d.id AS delivery_id
+         FROM feedback_deliveries d
+         JOIN feedback_runs r ON r.workflow_id = d.workflow_instance_id
+         WHERE d.idempotency_key = ?`
+    )
+        .bind(idempotencyKey)
+        .first();
+}
+
+function createFeedbackRunContextSnapshot(issue) {
+    return {
+        schemaVersion: 1,
+        issueId: issue.id,
+        issueVersion: Number(issue.version) || 1,
+        title: limitText(issue.title, FEEDBACK_CONTENT_LIMITS.title),
+        description: limitText(issue.description, FEEDBACK_CONTENT_LIMITS.description),
+        sourceType: issue.source_type || 'manual',
+        submittedType: issue.submitted_type || 'unclear',
+        businessType: issue.business_type || 'unclear',
+        scope: issue.scope || 'unclear',
+        priority: issue.priority || 'medium',
+        context: createFeedbackContextPreview(parseStoredJson(issue.context_json, {})),
+    };
+}
+
+async function reserveFeedbackRun(env, issueId, runRequest, idempotencyKey, apiOrigin) {
+    const replay = await findFeedbackRunByIdempotencyKey(env, idempotencyKey);
+    if (replay) {
+        if (replay.issue_id !== issueId) {
+            throw feedbackStorageError('FEEDBACK_IDEMPOTENCY_CONFLICT');
+        }
+        return {
+            replayed: true,
+            run: replay,
+            workflowParams: null,
+        };
+    }
+
+    const issue = await env.FEEDBACK_DB.prepare('SELECT * FROM feedback_issues WHERE id = ?')
+        .bind(issueId)
+        .first();
+    if (!issue) throw feedbackStorageError('FEEDBACK_ISSUE_NOT_FOUND');
+    if (issue.active_workflow_id || issue.active_human_action_id) {
+        throw feedbackStorageError('FEEDBACK_ACTIVE_WORK_CONFLICT');
+    }
+
+    const generation = Number(issue.workflow_generation) + 1;
+    const workflowId = `${issueId}:${generation}`;
+    if (workflowId.length > 100) {
+        throw feedbackStorageError('FEEDBACK_WORKFLOW_ID_TOO_LONG');
+    }
+
+    const now = new Date().toISOString();
+    const capabilityExpiresAt = new Date(
+        Date.now() + FEEDBACK_RUN_CAPABILITY_TTL_SECONDS * 1000
+    ).toISOString();
+    const runId = `run_${crypto.randomUUID()}`;
+    const eventId = `evt_${crypto.randomUUID()}`;
+    const deliveryId = `delivery_${crypto.randomUUID()}`;
+    const contextToken = createFeedbackCapability();
+    const callbackToken = createFeedbackCapability();
+    const contextSnapshotJson = JSON.stringify(createFeedbackRunContextSnapshot(issue));
+    const contextTokenHash = await hashFeedbackValue(contextToken);
+    const callbackTokenHash = await hashFeedbackValue(callbackToken);
+    const existingEvents = await env.FEEDBACK_DB.prepare(
+        'SELECT sequence FROM feedback_events WHERE issue_id = ? ORDER BY sequence'
+    )
+        .bind(issueId)
+        .all();
+    const sequence =
+        Math.max(0, ...(existingEvents.results || []).map((event) => Number(event.sequence) || 0)) +
+        1;
+    const statements = [
+        env.FEEDBACK_DB.prepare(
+            `UPDATE feedback_issues SET
+                version = version + 1,
+                workflow_generation = ?,
+                active_workflow_id = ?,
+                last_run_id = ?,
+                status = ?,
+                updated_at = ?
+             WHERE id = ? AND version = ?
+               AND active_workflow_id IS NULL
+               AND active_human_action_id IS NULL
+             RETURNING *`
+        ).bind(generation, workflowId, runId, 'queued', now, issueId, Number(issue.version)),
+        env.FEEDBACK_DB.prepare(
+            `INSERT INTO feedback_workflows (
+                issue_id, generation, instance_id, status, active_run_id,
+                context_version, started_at, waiting_until, finished_at,
+                terminal_reason
+             )
+             SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+             FROM feedback_issues issue
+             WHERE issue.id = ? AND issue.active_workflow_id = ?`
+        ).bind(
+            issueId,
+            generation,
+            workflowId,
+            'queued',
+            runId,
+            Number(issue.version),
+            now,
+            null,
+            null,
+            null,
+            issueId,
+            workflowId
+        ),
+        env.FEEDBACK_DB.prepare(
+            `INSERT INTO feedback_runs (
+                id, issue_id, workflow_id, candidate_id, policy, delivery_mode,
+                provider, runner_type, runner_label, status, attempt, base_commit,
+                change_commit, provider_session_id, started_at, finished_at,
+                error_code, permission_profile, context_snapshot_json,
+                context_token_hash, context_token_expires_at, callback_token_hash,
+                callback_token_expires_at, updated_at
+             )
+             SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+             FROM feedback_issues issue
+             WHERE issue.id = ? AND issue.last_run_id = ?`
+        ).bind(
+            runId,
+            issueId,
+            workflowId,
+            null,
+            runRequest.policy,
+            runRequest.deliveryMode,
+            runRequest.provider,
+            runRequest.runnerType,
+            'ubuntu-latest',
+            'queued',
+            1,
+            runRequest.baseCommit,
+            null,
+            null,
+            null,
+            null,
+            null,
+            runRequest.permissionProfile,
+            contextSnapshotJson,
+            contextTokenHash,
+            capabilityExpiresAt,
+            callbackTokenHash,
+            capabilityExpiresAt,
+            now,
+            issueId,
+            runId
+        ),
+        env.FEEDBACK_DB.prepare(
+            `INSERT INTO feedback_events (
+                id, issue_id, sequence, type, actor_type, actor_id, visibility,
+                run_id, occurred_at, body_json, metadata_json, legacy_hash
+             )
+             SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+             FROM feedback_issues issue
+             WHERE issue.id = ? AND issue.last_run_id = ?`
+        ).bind(
+            eventId,
+            issueId,
+            sequence,
+            'run.queued',
+            'admin',
+            null,
+            'public',
+            runId,
+            now,
+            JSON.stringify({
+                policy: runRequest.policy,
+                provider: runRequest.provider,
+                runnerType: runRequest.runnerType,
+            }),
+            JSON.stringify({
+                generation,
+                permissionProfile: runRequest.permissionProfile,
+            }),
+            null,
+            issueId,
+            runId
+        ),
+        env.FEEDBACK_DB.prepare(
+            `INSERT INTO feedback_deliveries (
+                id, event_id, destination, idempotency_key, workflow_instance_id,
+                status, attempt_count, next_attempt_at, response_status,
+                last_error, created_at, updated_at
+             )
+             SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+             FROM feedback_events event
+             WHERE event.id = ?`
+        ).bind(
+            deliveryId,
+            eventId,
+            'cloudflare-workflow',
+            idempotencyKey,
+            workflowId,
+            'pending',
+            0,
+            now,
+            null,
+            null,
+            now,
+            now,
+            eventId
+        ),
+    ];
+
+    let results;
+    try {
+        results = await env.FEEDBACK_DB.batch(statements);
+    } catch (error) {
+        const concurrent = await findFeedbackRunByIdempotencyKey(env, idempotencyKey);
+        if (concurrent?.issue_id === issueId) {
+            return {
+                replayed: true,
+                run: concurrent,
+                workflowParams: null,
+            };
+        }
+        if (concurrent) {
+            throw feedbackStorageError('FEEDBACK_IDEMPOTENCY_CONFLICT');
+        }
+        throw error;
+    }
+
+    if (Number(results[0]?.meta?.changes) !== 1) {
+        const concurrent = await findFeedbackRunByIdempotencyKey(env, idempotencyKey);
+        if (concurrent?.issue_id === issueId) {
+            return {
+                replayed: true,
+                run: concurrent,
+                workflowParams: null,
+            };
+        }
+        throw feedbackStorageError('FEEDBACK_ACTIVE_WORK_CONFLICT');
+    }
+
+    const run = await env.FEEDBACK_DB.prepare('SELECT * FROM feedback_runs WHERE id = ?')
+        .bind(runId)
+        .first();
+    return {
+        replayed: false,
+        run,
+        workflowParams: {
+            issueId,
+            generation,
+            contextVersion: Number(issue.version),
+            runId,
+            policy: runRequest.policy,
+            provider: runRequest.provider,
+            permissionProfile: runRequest.permissionProfile,
+            baseCommit: runRequest.baseCommit,
+            contextUrl: `${apiOrigin}/api/feedback/runs/${encodeURIComponent(runId)}/context`,
+            callbackUrl: `${apiOrigin}/api/feedback/runs/${encodeURIComponent(runId)}/events`,
+            contextToken,
+            callbackToken,
+        },
+    };
+}
+
+async function createLocalRequiredHumanAction(env, issueId, idempotencyKey) {
+    const actionHash = await hashFeedbackValue(`${issueId}\u0000${idempotencyKey}`);
+    const actionId = `human_${actionHash.slice(0, 32)}`;
+    const eventId = `evt_${actionHash.slice(0, 32)}`;
+    const existing = await env.FEEDBACK_DB.prepare(
+        'SELECT * FROM feedback_human_actions WHERE id = ?'
+    )
+        .bind(actionId)
+        .first();
+    if (existing) {
+        return {
+            replayed: true,
+            issueStatus: 'needs_human',
+            action: existing,
+        };
+    }
+
+    const issue = await env.FEEDBACK_DB.prepare('SELECT * FROM feedback_issues WHERE id = ?')
+        .bind(issueId)
+        .first();
+    if (!issue) throw feedbackStorageError('FEEDBACK_ISSUE_NOT_FOUND');
+    if (issue.active_workflow_id || issue.active_human_action_id) {
+        throw feedbackStorageError('FEEDBACK_ACTIVE_WORK_CONFLICT');
+    }
+
+    const now = new Date().toISOString();
+    const requestedAction =
+        '该任务需要本地环境、既有登录态或专用设备。请配置并批准受限的 Self-hosted Runner 后重试。';
+    const results = await env.FEEDBACK_DB.batch([
+        env.FEEDBACK_DB.prepare(
+            `UPDATE feedback_issues SET
+                version = version + 1,
+                active_human_action_id = ?,
+                status = ?,
+                updated_at = ?
+             WHERE id = ? AND version = ?
+               AND active_workflow_id IS NULL
+               AND active_human_action_id IS NULL
+             RETURNING *`
+        ).bind(actionId, 'needs_human', now, issueId, Number(issue.version)),
+        env.FEEDBACK_DB.prepare(
+            `INSERT INTO feedback_human_actions (
+                id, issue_id, workflow_id, run_id, candidate_id, design_id,
+                type, requested_action, evidence_json,
+                allowed_return_states_json, status, resolution_json,
+                created_at, resolved_at
+             )
+             SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+             FROM feedback_issues issue
+             WHERE issue.id = ? AND issue.active_human_action_id = ?`
+        ).bind(
+            actionId,
+            issueId,
+            null,
+            null,
+            null,
+            null,
+            'local_execution_required',
+            requestedAction,
+            '[]',
+            JSON.stringify(['queued', 'closed']),
+            'active',
+            null,
+            now,
+            null,
+            issueId,
+            actionId
+        ),
+        env.FEEDBACK_DB.prepare(
+            `INSERT INTO feedback_events (
+                id, issue_id, sequence, type, actor_type, actor_id, visibility,
+                run_id, occurred_at, body_json, metadata_json, legacy_hash
+             )
+             SELECT ?, action.issue_id,
+                COALESCE((
+                    SELECT MAX(existing.sequence) + 1
+                    FROM feedback_events existing
+                    WHERE existing.issue_id = action.issue_id
+                ), 1),
+                ?, ?, ?, ?, ?, ?, ?, ?, ?
+             FROM feedback_human_actions action
+             WHERE action.id = ?`
+        ).bind(
+            eventId,
+            'human_action.created',
+            'admin',
+            null,
+            'public',
+            null,
+            now,
+            JSON.stringify({
+                humanActionId: actionId,
+                type: 'local_execution_required',
+                requestedAction,
+            }),
+            JSON.stringify({ runnerType: 'local_required' }),
+            null,
+            actionId
+        ),
+    ]);
+
+    if (Number(results[0]?.meta?.changes) !== 1) {
+        const concurrent = await env.FEEDBACK_DB.prepare(
+            'SELECT * FROM feedback_human_actions WHERE id = ?'
+        )
+            .bind(actionId)
+            .first();
+        if (concurrent) {
+            return {
+                replayed: true,
+                issueStatus: 'needs_human',
+                action: concurrent,
+            };
+        }
+        throw feedbackStorageError('FEEDBACK_ACTIVE_WORK_CONFLICT');
+    }
+
+    return {
+        replayed: false,
+        issueStatus: 'needs_human',
+        action: await env.FEEDBACK_DB.prepare('SELECT * FROM feedback_human_actions WHERE id = ?')
+            .bind(actionId)
+            .first(),
+    };
+}
+
+function serializeFeedbackHumanAction(action) {
+    return {
+        id: action.id,
+        type: action.type,
+        status: action.status,
+        requestedAction: action.requested_action,
+        createdAt: action.created_at,
+    };
+}
+
+function createFeedbackContextPreview(context) {
+    if (!context || typeof context !== 'object' || Array.isArray(context)) return {};
+
+    const preview = {};
+    if (context.url) {
+        preview.url = limitText(context.url, 2048);
+    }
+    if (context.project && typeof context.project === 'object') {
+        preview.project = {
+            id: limitText(context.project.id, 240),
+            name: limitText(context.project.name, 240),
+            color: limitText(context.project.color, 40),
+        };
+    }
+    if (context.replay && typeof context.replay === 'object') {
+        preview.replay = {
+            eventCount: Number(context.replay.eventCount) || 0,
+        };
+    }
+    if (context.viewport && typeof context.viewport === 'object') {
+        preview.viewport = {
+            width: Number(context.viewport.width) || 0,
+            height: Number(context.viewport.height) || 0,
+        };
+    }
+
+    return preview;
+}
+
+async function storeFeedbackContext(env, issueId, context, createdAt) {
+    const normalizedContext =
+        context && typeof context === 'object' && !Array.isArray(context) ? context : {};
+    const contextJson = JSON.stringify(normalizedContext);
+    const bytes = new TextEncoder().encode(contextJson);
+    if (bytes.byteLength <= MAX_FEEDBACK_CONTEXT_INLINE_BYTES) {
+        return {
+            contextJson,
+            objectKey: '',
+        };
+    }
+    if (bytes.byteLength > MAX_FEEDBACK_BYTES) {
+        throw feedbackStorageError('FEEDBACK_CONTEXT_TOO_LARGE');
+    }
+    if (!env.FEEDBACK_ARTIFACTS) {
+        throw feedbackStorageError('FEEDBACK_CONTEXT_REQUIRES_R2');
+    }
+
+    const sha256 = await hashFeedbackValue(bytes);
+    const objectKey = `feedback-context/${createdAt.slice(0, 10)}/${issueId}/${sha256}.json`;
+    try {
+        await env.FEEDBACK_ARTIFACTS.put(objectKey, bytes, {
+            httpMetadata: {
+                contentType: 'application/json',
+            },
+            customMetadata: {
+                issueId,
+                sha256,
+                kind: 'feedback-context',
+            },
+        });
+    } catch {
+        throw feedbackStorageError('FEEDBACK_CONTEXT_UPLOAD_FAILED');
+    }
+
+    return {
+        contextJson: JSON.stringify({
+            ...createFeedbackContextPreview(normalizedContext),
+            [FEEDBACK_CONTEXT_STORAGE_FIELD]: {
+                storage: 'r2',
+                objectKey,
+                sha256,
+                byteLength: bytes.byteLength,
+            },
+        }),
+        objectKey,
+    };
+}
+
+async function deleteStoredFeedbackContext(env, storedContext) {
+    if (!storedContext?.objectKey || !env.FEEDBACK_ARTIFACTS?.delete) return;
+    await Promise.allSettled([env.FEEDBACK_ARTIFACTS.delete(storedContext.objectKey)]);
+}
+
+async function hydrateFeedbackContext(env, contextJson) {
+    const storedContext = parseStoredJson(contextJson, {});
+    const storage = storedContext?.[FEEDBACK_CONTEXT_STORAGE_FIELD];
+    if (storage?.storage !== 'r2' || !storage.objectKey || !env.FEEDBACK_ARTIFACTS) {
+        return storedContext;
+    }
+    const expectedByteLength = Number(storage.byteLength);
+    if (
+        !Number.isFinite(expectedByteLength) ||
+        expectedByteLength < 0 ||
+        expectedByteLength > MAX_FEEDBACK_BYTES
+    ) {
+        console.warn('[Feedback] Stored context size metadata is invalid');
+        return storedContext;
+    }
+
+    try {
+        const object = await env.FEEDBACK_ARTIFACTS.get(storage.objectKey);
+        if (!object) return storedContext;
+        if (Number.isFinite(object.size) && object.size !== expectedByteLength) {
+            console.warn('[Feedback] Stored context object size does not match metadata');
+            return storedContext;
+        }
+
+        const fullContextJson = await object.text();
+        const bytes = new TextEncoder().encode(fullContextJson);
+        if (
+            bytes.byteLength !== expectedByteLength ||
+            (await hashFeedbackValue(bytes)) !== storage.sha256
+        ) {
+            console.warn('[Feedback] Stored context integrity check failed');
+            return storedContext;
+        }
+        return parseStoredJson(fullContextJson, storedContext);
+    } catch (error) {
+        console.warn('[Feedback] Stored context could not be restored', error);
+        return storedContext;
+    }
+}
+
+function decodeFeedbackAttachment(attachment) {
+    const dataUrl = String(attachment.dataUrl || '');
+    const commaIndex = dataUrl.indexOf(',');
+    if (!dataUrl.startsWith('data:') || commaIndex < 0) {
+        throw feedbackStorageError('INVALID_FEEDBACK_ATTACHMENT');
+    }
+
+    const metadata = dataUrl.slice(5, commaIndex);
+    const encodedBody = dataUrl.slice(commaIndex + 1);
+    const parts = metadata.split(';');
+    const dataUrlContentType = limitText(parts[0], 120);
+    const declaredContentType = limitText(attachment.type, 120);
+    if (dataUrlContentType && declaredContentType && dataUrlContentType !== declaredContentType) {
+        throw feedbackStorageError('INVALID_FEEDBACK_ATTACHMENT');
+    }
+
+    let bytes;
+    try {
+        if (parts.includes('base64')) {
+            const binary = atob(encodedBody);
+            bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+        } else {
+            bytes = new TextEncoder().encode(decodeURIComponent(encodedBody));
+        }
+    } catch {
+        throw feedbackStorageError('INVALID_FEEDBACK_ATTACHMENT');
+    }
+
+    if (bytes.byteLength > MAX_FEEDBACK_BYTES) {
+        throw feedbackStorageError('FEEDBACK_ATTACHMENT_TOO_LARGE');
+    }
+
+    return {
+        bytes,
+        contentType: dataUrlContentType || declaredContentType || 'application/octet-stream',
+    };
+}
+
+async function uploadFeedbackAttachments(env, issueId, attachments, createdAt) {
+    if (attachments.length === 0) return [];
+    if (!env.FEEDBACK_ARTIFACTS) {
+        throw feedbackStorageError('FEEDBACK_ATTACHMENTS_REQUIRE_R2');
+    }
+
+    const uploaded = [];
+    try {
+        for (const attachment of attachments) {
+            const decoded = decodeFeedbackAttachment(attachment);
+            const attachmentId = `att_${crypto.randomUUID()}`;
+            const sha256 = await hashFeedbackValue(decoded.bytes);
+            const objectKey = `feedback-attachments/${createdAt.slice(0, 10)}/${issueId}/${attachmentId}`;
+            await env.FEEDBACK_ARTIFACTS.put(objectKey, decoded.bytes, {
+                httpMetadata: {
+                    contentType: decoded.contentType,
+                },
+                customMetadata: {
+                    issueId,
+                    attachmentId,
+                    sha256,
+                },
+            });
+            uploaded.push({
+                id: attachmentId,
+                name: attachment.name,
+                contentType: decoded.contentType,
+                size: decoded.bytes.byteLength,
+                sha256,
+                objectKey,
+            });
+        }
+    } catch {
+        await deleteUploadedFeedbackAttachments(env, uploaded);
+        throw feedbackStorageError('FEEDBACK_ATTACHMENT_UPLOAD_FAILED');
+    }
+
+    return uploaded;
+}
+
+async function deleteUploadedFeedbackAttachments(env, attachments) {
+    if (!env.FEEDBACK_ARTIFACTS?.delete) return;
+
+    await Promise.allSettled(
+        attachments.map((attachment) => env.FEEDBACK_ARTIFACTS.delete(attachment.objectKey))
+    );
+}
+
+function getFeedbackPiiKeyVersion(env) {
+    return String(env.FEEDBACK_PII_KEY_VERSION || 'v1');
+}
+
+function getFeedbackPiiSecret(env, version) {
+    const currentVersion = getFeedbackPiiKeyVersion(env);
+    if (version === currentVersion && env.FEEDBACK_PII_KEY) {
+        return String(env.FEEDBACK_PII_KEY);
+    }
+
+    const keyring =
+        typeof env.FEEDBACK_PII_KEYS === 'string'
+            ? parseStoredJson(env.FEEDBACK_PII_KEYS, {})
+            : env.FEEDBACK_PII_KEYS || {};
+    return String(keyring[version] || '');
+}
+
+async function getFeedbackEncryptionKey(env, version) {
+    const secret = getFeedbackPiiSecret(env, version);
+    if (!secret) {
+        throw new Error('FEEDBACK_PII_KEY_REQUIRED');
+    }
+
+    const keyBytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(secret));
+    return crypto.subtle.importKey('raw', keyBytes, { name: 'AES-GCM' }, false, [
+        'encrypt',
+        'decrypt',
+    ]);
+}
+
+async function encryptFeedbackPrivateText(value, env) {
+    const text = String(value || '');
+    if (!text) return null;
+
+    const version = getFeedbackPiiKeyVersion(env);
+    const nonce = new Uint8Array(12);
+    crypto.getRandomValues(nonce);
+    const encrypted = await crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv: nonce },
+        await getFeedbackEncryptionKey(env, version),
+        new TextEncoder().encode(text)
+    );
+
+    return JSON.stringify({
+        version,
+        algorithm: 'A256GCM',
+        nonce: base64UrlEncode(nonce),
+        ciphertext: base64UrlEncode(new Uint8Array(encrypted)),
+    });
+}
+
+async function decryptFeedbackPrivateText(value, env) {
+    const envelope = parseStoredJson(value, null);
+    if (!envelope?.version || !envelope?.nonce || !envelope?.ciphertext) return '';
+
+    try {
+        const decrypted = await crypto.subtle.decrypt(
+            {
+                name: 'AES-GCM',
+                iv: base64UrlDecodeBytes(envelope.nonce),
+            },
+            await getFeedbackEncryptionKey(env, envelope.version),
+            base64UrlDecodeBytes(envelope.ciphertext)
+        );
+        return new TextDecoder().decode(decrypted);
+    } catch (error) {
+        if (error?.message === 'FEEDBACK_PII_KEY_REQUIRED') {
+            throw error;
+        }
+        return '';
+    }
+}
+
+function getFeedbackContactType(contact) {
+    const value = String(contact || '').trim();
+    if (!value) return null;
+    if (value.includes('@')) return 'email';
+    if (/^\+?[\d\s()-]+$/.test(value)) return 'phone';
+    return 'other';
+}
+
+function feedbackStorageError(code) {
+    const error = new Error(code);
+    error.code = code;
+    return error;
+}
+
+function createFeedbackCapability() {
+    const bytes = new Uint8Array(32);
+    crypto.getRandomValues(bytes);
+    return base64UrlEncode(bytes);
+}
+
+function getLegacyHistoryEventType(item) {
+    if (item?.changes && Object.hasOwn(item.changes, 'status')) return 'status.changed';
+    if (item?.publicNote) return 'comment.created';
+    return 'issue.updated';
+}
+
+async function buildLegacyFeedbackEvents(issue) {
+    const events = [];
+    const createdAt = issue.receivedAt || new Date().toISOString();
+    const initialBody = {
+        title: issue.title || '',
+        sourceType: issue.sourceType,
+        submittedType: issue.submittedType,
+    };
+    const initialHash = await hashFeedbackValue(
+        `${issue.key}:issue.created:${JSON.stringify(initialBody)}`
+    );
+    events.push({
+        id: `evt_legacy_${initialHash.slice(0, 32)}`,
+        sequence: 1,
+        type: 'issue.created',
+        actorType: 'user',
+        actorId: null,
+        visibility: 'public',
+        occurredAt: createdAt,
+        bodyJson: JSON.stringify(initialBody),
+        metadataJson: JSON.stringify({ legacy: true }),
+        legacyHash: initialHash,
+    });
+
+    let sequence = 2;
+    let lastPublicNote = '';
+    for (const [index, item] of issue.workflow.history.entries()) {
+        const body = {
+            changes: item.changes || {},
+            publicNote: item.publicNote || '',
+            internalNote: item.internalNote || '',
+        };
+        const legacyHash = await hashFeedbackValue(
+            `${issue.key}:workflow.history:${index}:${JSON.stringify(item)}`
+        );
+        const isPublic = Boolean(body.publicNote) || Object.hasOwn(body.changes || {}, 'status');
+        const mainBody = {
+            ...body,
+            internalNote: isPublic ? '' : body.internalNote,
+        };
+        events.push({
+            id: `evt_legacy_${legacyHash.slice(0, 32)}`,
+            sequence,
+            type: getLegacyHistoryEventType(item),
+            actorType: item.actor || 'admin',
+            actorId: null,
+            visibility: isPublic ? 'public' : 'internal',
+            occurredAt: item.at || createdAt,
+            bodyJson: JSON.stringify(mainBody),
+            metadataJson: JSON.stringify({ legacy: true, historyIndex: index }),
+            legacyHash,
+        });
+        sequence += 1;
+        if (isPublic && body.internalNote) {
+            const internalHash = await hashFeedbackValue(
+                `${issue.key}:workflow.history:${index}:internal:${body.internalNote}`
+            );
+            events.push({
+                id: `evt_legacy_${internalHash.slice(0, 32)}`,
+                sequence,
+                type: 'comment.created',
+                actorType: item.actor || 'admin',
+                actorId: null,
+                visibility: 'internal',
+                occurredAt: item.at || createdAt,
+                bodyJson: JSON.stringify({
+                    changes: {},
+                    publicNote: '',
+                    internalNote: body.internalNote,
+                }),
+                metadataJson: JSON.stringify({
+                    legacy: true,
+                    historyIndex: index,
+                    splitFromPublicEvent: true,
+                }),
+                legacyHash: internalHash,
+            });
+            sequence += 1;
+        }
+        if (body.publicNote) lastPublicNote = body.publicNote;
+    }
+
+    if (issue.workflow.publicNote && issue.workflow.publicNote !== lastPublicNote) {
+        const body = {
+            changes: {},
+            publicNote: issue.workflow.publicNote,
+            internalNote: '',
+        };
+        const legacyHash = await hashFeedbackValue(
+            `${issue.key}:workflow.publicNote:${issue.workflow.publicNote}`
+        );
+        events.push({
+            id: `evt_legacy_${legacyHash.slice(0, 32)}`,
+            sequence,
+            type: 'comment.created',
+            actorType: 'admin',
+            actorId: null,
+            visibility: 'public',
+            occurredAt: issue.workflow.updatedAt || createdAt,
+            bodyJson: JSON.stringify(body),
+            metadataJson: JSON.stringify({ legacy: true, compatibilityField: 'publicNote' }),
+            legacyHash,
+        });
+    }
+
+    return events;
+}
+
+async function buildLegacyAttachmentRows(issue) {
+    const rows = [];
+    for (const [index, attachment] of (issue.attachments || []).entries()) {
+        const attachmentHash = await hashFeedbackValue(
+            `${issue.key}:attachment:${index}:${attachment.name || ''}:${attachment.size || 0}`
+        );
+        rows.push({
+            id: `att_legacy_${attachmentHash.slice(0, 32)}`,
+            name: limitText(attachment.name, 160),
+            contentType: limitText(attachment.type, 120),
+            size: Number(attachment.size) || 0,
+            legacyAttachmentIndex: index,
+            createdAt: issue.receivedAt || new Date().toISOString(),
+        });
+    }
+    return rows;
+}
+
+async function backfillLegacyFeedbackIssue(env, issue) {
+    if (!env.FEEDBACK_DB) return;
+
+    const contactEncrypted = await encryptFeedbackPrivateText(issue.contact, env);
+    const [events, attachments] = await Promise.all([
+        buildLegacyFeedbackEvents(issue),
+        buildLegacyAttachmentRows(issue),
+    ]);
+    const createdAt = issue.receivedAt || new Date().toISOString();
+    const storedContext = await storeFeedbackContext(env, issue.key, issue.context, createdAt);
+    const workflow = normalizeWorkflow(issue);
+    const statements = [
+        env.FEEDBACK_DB.prepare(
+            `INSERT INTO feedback_issues (
+                id, version, title, description, source_type, submitted_type,
+                contact_encrypted, contact_type, attachment_count, context_json,
+                business_type, scope, automation_decision, ai_confidence,
+                ai_classified_at, status, priority, assignee, legacy_public_note,
+                legacy_internal_note, legacy_kv_key, created_at, updated_at, resolved_at
+            ) VALUES (
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            ) ON CONFLICT(id) DO NOTHING`
+        ).bind(
+            issue.key,
+            1,
+            issue.title || '',
+            issue.description || '',
+            issue.sourceType,
+            issue.submittedType,
+            contactEncrypted,
+            getFeedbackContactType(issue.contact),
+            attachments.length,
+            storedContext.contextJson,
+            issue.ai.businessType,
+            issue.ai.scope,
+            issue.ai.automationDecision,
+            issue.ai.confidence,
+            issue.ai.classifiedAt || null,
+            workflow.status,
+            workflow.priority,
+            workflow.assignee,
+            workflow.publicNote,
+            workflow.internalNote,
+            issue.key,
+            createdAt,
+            workflow.updatedAt,
+            workflow.status === 'resolved' ? workflow.updatedAt : null
+        ),
+    ];
+
+    for (const event of events) {
+        statements.push(
+            env.FEEDBACK_DB.prepare(
+                `INSERT INTO feedback_events (
+                    id, issue_id, sequence, type, actor_type, actor_id, visibility,
+                    run_id, occurred_at, body_json, metadata_json, legacy_hash
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO NOTHING`
+            ).bind(
+                event.id,
+                issue.key,
+                event.sequence,
+                event.type,
+                event.actorType,
+                event.actorId,
+                event.visibility,
+                null,
+                event.occurredAt,
+                event.bodyJson,
+                event.metadataJson,
+                event.legacyHash
+            )
+        );
+    }
+
+    for (const attachment of attachments) {
+        statements.push(
+            env.FEEDBACK_DB.prepare(
+                `INSERT INTO feedback_attachments (
+                    id, issue_id, name, content_type, size, sha256, object_key,
+                    legacy_kv_key, legacy_attachment_index, scan_status, created_at, expires_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO NOTHING`
+            ).bind(
+                attachment.id,
+                issue.key,
+                attachment.name,
+                attachment.contentType,
+                attachment.size,
+                null,
+                null,
+                issue.key,
+                attachment.legacyAttachmentIndex,
+                'legacy',
+                attachment.createdAt,
+                null
+            )
+        );
+    }
+
+    await env.FEEDBACK_DB.batch(statements);
+}
+
+async function createD1FeedbackIssue(env, feedback) {
+    if (!env.FEEDBACK_DB) {
+        throw feedbackStorageError('FEEDBACK_DB_REQUIRED');
+    }
+
+    const issueId = `feedback:${Date.now()}:${genKey(10)}`;
+    const ownerCapability = createFeedbackCapability();
+    const ownerCapabilityHash = await hashFeedbackValue(ownerCapability);
+    const createdAt = feedback.receivedAt || new Date().toISOString();
+    const ownerCapabilityExpiresAt = new Date(
+        Date.parse(createdAt) + OWNER_CAPABILITY_TTL_SECONDS * 1000
+    ).toISOString();
+    const attachmentExpiresAt = new Date(
+        Date.parse(createdAt) + FEEDBACK_TTL_SECONDS * 1000
+    ).toISOString();
+    const eventId = `evt_${crypto.randomUUID()}`;
+    const eventBody = {
+        title: feedback.title,
+        sourceType: feedback.sourceType,
+        submittedType: feedback.submittedType,
+    };
+    const contactEncrypted = await encryptFeedbackPrivateText(feedback.contact, env);
+    const storedContext = await storeFeedbackContext(env, issueId, feedback.context, createdAt);
+    let uploadedAttachments = [];
+    try {
+        uploadedAttachments = await uploadFeedbackAttachments(
+            env,
+            issueId,
+            feedback.attachments,
+            createdAt
+        );
+    } catch (error) {
+        await deleteStoredFeedbackContext(env, storedContext);
+        throw error;
+    }
+    const statements = [
+        env.FEEDBACK_DB.prepare(
+            `INSERT INTO feedback_issues (
+                id, version, title, description, source_type, submitted_type,
+                contact_encrypted, contact_type, owner_capability_hash,
+                owner_capability_expires_at, attachment_count, context_json,
+                business_type, scope, automation_decision, ai_confidence,
+                ai_classified_at, status, priority, assignee, legacy_public_note,
+                legacy_internal_note, legacy_kv_key, created_at, updated_at, resolved_at
+            ) VALUES (
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            )`
+        ).bind(
+            issueId,
+            1,
+            feedback.title,
+            feedback.description,
+            feedback.sourceType,
+            feedback.submittedType,
+            contactEncrypted,
+            getFeedbackContactType(feedback.contact),
+            ownerCapabilityHash,
+            ownerCapabilityExpiresAt,
+            uploadedAttachments.length,
+            storedContext.contextJson,
+            feedback.ai.businessType,
+            feedback.ai.scope,
+            feedback.ai.automationDecision,
+            feedback.ai.confidence,
+            feedback.ai.classifiedAt || null,
+            'open',
+            'medium',
+            '',
+            '',
+            '',
+            null,
+            createdAt,
+            createdAt,
+            null
+        ),
+        env.FEEDBACK_DB.prepare(
+            `INSERT INTO feedback_events (
+                id, issue_id, sequence, type, actor_type, actor_id, visibility,
+                run_id, occurred_at, body_json, metadata_json, legacy_hash
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(
+            eventId,
+            issueId,
+            1,
+            'issue.created',
+            'user',
+            null,
+            'public',
+            null,
+            createdAt,
+            JSON.stringify(eventBody),
+            JSON.stringify({ schemaVersion: 2 }),
+            null
+        ),
+    ];
+
+    for (const attachment of uploadedAttachments) {
+        statements.push(
+            env.FEEDBACK_DB.prepare(
+                `INSERT INTO feedback_attachments (
+                    id, issue_id, name, content_type, size, sha256, object_key,
+                    legacy_kv_key, legacy_attachment_index, scan_status, created_at, expires_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            ).bind(
+                attachment.id,
+                issueId,
+                attachment.name,
+                attachment.contentType,
+                attachment.size,
+                attachment.sha256,
+                attachment.objectKey,
+                null,
+                null,
+                'pending',
+                createdAt,
+                attachmentExpiresAt
+            )
+        );
+    }
+
+    try {
+        await env.FEEDBACK_DB.batch(statements);
+    } catch (error) {
+        await Promise.all([
+            deleteUploadedFeedbackAttachments(env, uploadedAttachments),
+            deleteStoredFeedbackContext(env, storedContext),
+        ]);
+        throw error;
+    }
+
+    return {
+        issueId,
+        ownerCapability,
+        ownerCapabilityExpiresAt,
+    };
+}
+
+function mapD1EventToLegacyHistory(event) {
+    const body = parseStoredJson(event.body_json, {});
+    if (event.type === 'issue.created') return null;
+
+    return {
+        at: event.occurred_at,
+        actor: event.actor_type || 'system',
+        changes: body.changes || {},
+        publicNote: event.visibility === 'public' ? body.publicNote || '' : '',
+        internalNote: body.internalNote || '',
+    };
+}
+
+async function readLegacyFeedbackSource(env, rows, fallbackLegacyKey = '') {
+    const legacyKey = fallbackLegacyKey || rows.find((row) => row.legacy_kv_key)?.legacy_kv_key;
+    if (!legacyKey) return null;
+
+    const store = getFeedbackStore(env);
+    if (!store) return null;
+
+    const value = await store.get(legacyKey);
+    return value ? parseStoredJson(value, null) : null;
+}
+
+async function readD1FeedbackIssue(env, key) {
+    if (!env.FEEDBACK_DB) return null;
+
+    const row = await env.FEEDBACK_DB.prepare('SELECT * FROM feedback_issues WHERE id = ?')
+        .bind(key)
+        .first();
+    if (!row) return null;
+
+    const [eventResult, attachmentResult] = await Promise.all([
+        env.FEEDBACK_DB.prepare(
+            'SELECT * FROM feedback_events WHERE issue_id = ? ORDER BY sequence'
+        )
+            .bind(key)
+            .all(),
+        env.FEEDBACK_DB.prepare(
+            `SELECT * FROM feedback_attachments
+             WHERE issue_id = ? ORDER BY legacy_attachment_index, created_at`
+        )
+            .bind(key)
+            .all(),
+    ]);
+    const eventRows = eventResult.results || [];
+    const attachmentRows = attachmentResult.results || [];
+    const legacySource = await readLegacyFeedbackSource(env, attachmentRows, row.legacy_kv_key);
+    const legacyAttachments = Array.isArray(legacySource?.attachments)
+        ? legacySource.attachments
+        : [];
+    const hydratedContext = await hydrateFeedbackContext(env, row.context_json);
+    const context =
+        hydratedContext?.[FEEDBACK_CONTEXT_STORAGE_FIELD]?.storage === 'r2' &&
+        legacySource?.context &&
+        typeof legacySource.context === 'object'
+            ? legacySource.context
+            : hydratedContext;
+    const attachments = attachmentRows.map((attachment) => {
+        const legacyAttachment = legacyAttachments[attachment.legacy_attachment_index];
+        if (legacyAttachment) return legacyAttachment;
+        return {
+            id: attachment.id,
+            name: attachment.name,
+            type: attachment.content_type,
+            size: Number(attachment.size) || 0,
+            objectKey: attachment.object_key || '',
+        };
+    });
+
+    return normalizeStoredFeedback(key, {
+        schemaVersion: 2,
+        version: Number(row.version) || 1,
+        receivedAt: row.created_at,
+        type: row.source_type,
+        sourceType: row.source_type,
+        submittedType: row.submitted_type,
+        ai: {
+            businessType: row.business_type,
+            scope: row.scope,
+            automationDecision: row.automation_decision,
+            classifiedAt: row.ai_classified_at || '',
+            confidence: row.ai_confidence || '',
+        },
+        title: row.title,
+        description: row.description,
+        contact: await decryptFeedbackPrivateText(row.contact_encrypted, env),
+        attachments,
+        context,
+        workflow: {
+            status: row.status,
+            priority: row.priority,
+            assignee: row.assignee,
+            publicNote: row.legacy_public_note,
+            internalNote: row.legacy_internal_note,
+            updatedAt: row.updated_at,
+            history: eventRows.map(mapD1EventToLegacyHistory).filter(Boolean),
+        },
+    });
+}
+
+async function addFeedbackAttachmentAccessUrls(request, env, issue) {
+    const attachments = await Promise.all(
+        (issue.attachments || []).map(async (attachment) => {
+            if (!attachment.id || !attachment.objectKey) return attachment;
+            return {
+                ...attachment,
+                url: await createFeedbackAttachmentAccessUrl(
+                    request,
+                    env,
+                    issue.key,
+                    attachment.id
+                ),
+            };
+        })
+    );
+    return {
+        ...issue,
+        attachments,
+    };
+}
+
 function getSafePagePath(rawUrl) {
     if (!rawUrl) return '';
 
@@ -579,6 +2710,13 @@ function serializePublicIssue(issue, detail = false) {
     return {
         ...base,
         description: issue.description || '',
+        attachments: (issue.attachments || []).map((attachment) => ({
+            id: attachment.id,
+            name: attachment.name,
+            type: attachment.type,
+            size: attachment.size,
+            url: attachment.url || '',
+        })),
         history: issue.workflow.history.map((item) => ({
             at: item.at,
             actor: item.actor,
@@ -618,16 +2756,234 @@ function serializeAdminIssueSummary(issue) {
 }
 
 async function readFeedbackIssue(env, key) {
+    if (env.FEEDBACK_DB) {
+        const d1Issue = await readD1FeedbackIssue(env, key);
+        if (d1Issue) return d1Issue;
+    }
+
     const store = getFeedbackStore(env);
     if (!store) return null;
 
     const value = await store.get(key);
     if (!value) return null;
 
-    return normalizeStoredFeedback(key, JSON.parse(value));
+    const issue = normalizeStoredFeedback(key, JSON.parse(value));
+    try {
+        await backfillLegacyFeedbackIssue(env, issue);
+    } catch (error) {
+        console.warn('[Feedback] Legacy D1 backfill deferred; KV remains authoritative', error);
+    }
+    return issue;
+}
+
+function mapD1IssueRowToFeedbackSummary(row) {
+    return normalizeStoredFeedback(row.id, {
+        schemaVersion: 2,
+        version: Number(row.version) || 1,
+        receivedAt: row.created_at,
+        type: row.source_type,
+        sourceType: row.source_type,
+        submittedType: row.submitted_type,
+        ai: {
+            businessType: row.business_type,
+            scope: row.scope,
+            automationDecision: row.automation_decision,
+            classifiedAt: row.ai_classified_at || '',
+            confidence: row.ai_confidence || '',
+        },
+        title: row.title,
+        description: row.description,
+        contact: '',
+        attachments: Array.from({ length: Number(row.attachment_count) || 0 }, () => ({})),
+        context: parseStoredJson(row.context_json, {}),
+        workflow: {
+            status: row.status,
+            priority: row.priority,
+            assignee: row.assignee,
+            publicNote: row.legacy_public_note,
+            internalNote: '',
+            updatedAt: row.updated_at,
+            history: [],
+        },
+    });
+}
+
+function decodeFeedbackListCursor(value) {
+    if (!value) return null;
+    try {
+        const parsed = JSON.parse(base64UrlDecode(value));
+        if (!parsed?.createdAt || !parsed?.id) return null;
+        return {
+            createdAt: String(parsed.createdAt),
+            id: String(parsed.id),
+        };
+    } catch {
+        return null;
+    }
+}
+
+function isDeferredLegacyFeedbackBackfill(error) {
+    const code = error?.code || error?.message;
+    return [
+        'FEEDBACK_PII_KEY_REQUIRED',
+        'FEEDBACK_CONTEXT_REQUIRES_R2',
+        'FEEDBACK_CONTEXT_TOO_LARGE',
+    ].includes(code);
+}
+
+async function listD1FeedbackIssues(env, options = {}) {
+    const limit = Math.min(Math.max(Number(options.limit) || 50, 1), 100);
+    const cursor = decodeFeedbackListCursor(options.cursor);
+    let statement;
+    if (options.status && cursor) {
+        statement = env.FEEDBACK_DB.prepare(
+            `SELECT * FROM feedback_issues
+             WHERE status = ?
+               AND (created_at < ? OR (created_at = ? AND id < ?))
+             ORDER BY created_at DESC, id DESC LIMIT ?`
+        ).bind(options.status, cursor.createdAt, cursor.createdAt, cursor.id, limit + 1);
+    } else if (options.status) {
+        statement = env.FEEDBACK_DB.prepare(
+            `SELECT * FROM feedback_issues
+             WHERE status = ? ORDER BY created_at DESC, id DESC LIMIT ?`
+        ).bind(options.status, limit + 1);
+    } else if (cursor) {
+        statement = env.FEEDBACK_DB.prepare(
+            `SELECT * FROM feedback_issues
+             WHERE created_at < ? OR (created_at = ? AND id < ?)
+             ORDER BY created_at DESC, id DESC LIMIT ?`
+        ).bind(cursor.createdAt, cursor.createdAt, cursor.id, limit + 1);
+    } else {
+        statement = env.FEEDBACK_DB.prepare(
+            'SELECT * FROM feedback_issues ORDER BY created_at DESC, id DESC LIMIT ?'
+        ).bind(limit + 1);
+    }
+    const result = await statement.all();
+    const rows = result.results || [];
+    const listComplete = rows.length <= limit;
+    const visibleRows = rows.slice(0, limit);
+    const lastRow = visibleRows[visibleRows.length - 1];
+
+    return {
+        issues: visibleRows.map(mapD1IssueRowToFeedbackSummary),
+        cursor:
+            !listComplete && lastRow
+                ? base64UrlEncode(
+                      JSON.stringify({
+                          createdAt: lastRow.created_at,
+                          id: lastRow.id,
+                      })
+                  )
+                : null,
+        listComplete,
+    };
+}
+
+async function backfillLegacyFeedbackList(env) {
+    const store = getFeedbackStore(env);
+    if (!store?.list || !env.FEEDBACK_DB) {
+        return { fallbackIssues: [], pending: false };
+    }
+
+    const fallbackIssues = [];
+    const migrationName = 'feedback-kv-v1';
+    const migration = await env.FEEDBACK_DB.prepare(
+        'SELECT cursor, completed FROM feedback_migration_state WHERE name = ?'
+    )
+        .bind(migrationName)
+        .first();
+    if (Number(migration?.completed) === 1) {
+        return { fallbackIssues, pending: false };
+    }
+
+    const page = await store.list({
+        prefix: 'feedback:',
+        limit: 50,
+        ...(migration?.cursor ? { cursor: migration.cursor } : {}),
+    });
+
+    for (const key of page.keys || []) {
+        const issueId = key.name;
+        const existing = await env.FEEDBACK_DB.prepare(
+            'SELECT id FROM feedback_issues WHERE id = ?'
+        )
+            .bind(issueId)
+            .first();
+        if (existing) continue;
+
+        const value = await store.get(issueId);
+        if (!value) continue;
+
+        let parsed;
+        try {
+            parsed = JSON.parse(value);
+        } catch (error) {
+            console.warn('[Feedback] Skipped unreadable legacy feedback record', error);
+            continue;
+        }
+
+        const issue = normalizeStoredFeedback(issueId, parsed);
+        try {
+            await backfillLegacyFeedbackIssue(env, issue);
+        } catch (error) {
+            if (!isDeferredLegacyFeedbackBackfill(error)) throw error;
+            fallbackIssues.push(issue);
+            console.warn('[Feedback] Legacy list backfill deferred; KV remains authoritative');
+        }
+    }
+
+    const hasDeferredBackfill = fallbackIssues.length > 0;
+    const completed = !hasDeferredBackfill && Boolean(page.list_complete || !page.cursor);
+    const nextCursor = hasDeferredBackfill ? migration?.cursor || null : page.cursor || null;
+    await env.FEEDBACK_DB.prepare(
+        `INSERT INTO feedback_migration_state (name, cursor, completed, updated_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(name) DO UPDATE SET
+             cursor = excluded.cursor,
+             completed = excluded.completed,
+             updated_at = excluded.updated_at`
+    )
+        .bind(
+            migrationName,
+            completed ? null : nextCursor,
+            completed ? 1 : 0,
+            new Date().toISOString()
+        )
+        .run();
+
+    return { fallbackIssues, pending: !completed };
 }
 
 async function listFeedbackIssues(env, options = {}) {
+    if (env.FEEDBACK_DB) {
+        const legacyMigration = await backfillLegacyFeedbackList(env);
+        const result = await listD1FeedbackIssues(env, options);
+        const fallbackIssues = options.status
+            ? legacyMigration.fallbackIssues.filter(
+                  (issue) => issue.workflow.status === options.status
+              )
+            : legacyMigration.fallbackIssues;
+        if (fallbackIssues.length === 0) {
+            return {
+                ...result,
+                legacyMigrationPending: legacyMigration.pending,
+            };
+        }
+
+        const knownIds = new Set(result.issues.map((issue) => issue.key));
+        const merged = [
+            ...result.issues,
+            ...fallbackIssues.filter((issue) => !knownIds.has(issue.key)),
+        ].sort((left, right) =>
+            String(right.receivedAt || '').localeCompare(String(left.receivedAt || ''))
+        );
+        return {
+            ...result,
+            issues: merged.slice(0, Math.min(Math.max(Number(options.limit) || 50, 1), 100)),
+            legacyMigrationPending: legacyMigration.pending,
+        };
+    }
+
     const store = getFeedbackStore(env);
     if (!store) {
         return {
@@ -665,6 +3021,10 @@ function validateWorkflowPatch(body) {
     const patch = {};
     const content = {};
     const ai = {};
+    const expectedVersion = Number(body.expectedVersion);
+    if (!Number.isInteger(expectedVersion) || expectedVersion < 1) {
+        throw new Error('INVALID_EXPECTED_VERSION');
+    }
 
     for (const field of ['type', 'title', 'description']) {
         if (Object.hasOwn(body, field)) {
@@ -740,7 +3100,7 @@ function validateWorkflowPatch(body) {
         }
     }
 
-    return { workflow: patch, content, ai };
+    return { workflow: patch, content, ai, expectedVersion };
 }
 
 function buildWorkflowHistoryItem(before, after, workflowPatch, contentChanges) {
@@ -764,16 +3124,14 @@ function buildWorkflowHistoryItem(before, after, workflowPatch, contentChanges) 
     };
 }
 
-async function updateFeedbackIssue(env, key, patch) {
-    const store = getFeedbackStore(env);
-    if (!store) return null;
-
+async function updateD1FeedbackIssue(env, key, patch) {
     const issue = await readFeedbackIssue(env, key);
     if (!issue) return null;
 
     const workflowPatch = patch.workflow || {};
     const contentPatch = patch.content || {};
     const aiPatch = patch.ai || {};
+    const expectedVersion = patch.expectedVersion;
     const contentChanges = {};
     const nextContent = {};
     for (const field of ['type', 'sourceType', 'submittedType', 'title', 'description']) {
@@ -784,11 +3142,12 @@ async function updateFeedbackIssue(env, key, patch) {
     }
 
     const beforeAi = normalizeAiClassification(issue);
-    const nextAi = {
-        ...beforeAi,
-        ...aiPatch,
-    };
-    const normalizedNextAi = normalizeAiClassification({ ai: nextAi });
+    const nextAi = normalizeAiClassification({
+        ai: {
+            ...beforeAi,
+            ...aiPatch,
+        },
+    });
     for (const field of [
         'businessType',
         'scope',
@@ -796,64 +3155,152 @@ async function updateFeedbackIssue(env, key, patch) {
         'classifiedAt',
         'confidence',
     ]) {
-        if (Object.hasOwn(aiPatch, field) && beforeAi[field] !== normalizedNextAi[field]) {
-            contentChanges[`ai.${field}`] = [beforeAi[field] || '', normalizedNextAi[field] || ''];
+        if (Object.hasOwn(aiPatch, field) && beforeAi[field] !== nextAi[field]) {
+            contentChanges[`ai.${field}`] = [beforeAi[field] || '', nextAi[field] || ''];
         }
     }
 
-    const before = normalizeWorkflow(issue);
-    const after = {
-        ...before,
+    const beforeWorkflow = normalizeWorkflow(issue);
+    const updatedAt = new Date().toISOString();
+    const afterWorkflow = {
+        ...beforeWorkflow,
         ...workflowPatch,
-        updatedAt: new Date().toISOString(),
+        updatedAt,
     };
-    const historyItem = buildWorkflowHistoryItem(before, after, workflowPatch, contentChanges);
+    const historyItem = buildWorkflowHistoryItem(
+        beforeWorkflow,
+        afterWorkflow,
+        workflowPatch,
+        contentChanges
+    );
     const nextIssue = {
         ...issue,
         ...nextContent,
-        ai: normalizedNextAi,
-        workflow: {
-            ...after,
-            history: [...before.history, historyItem].slice(-50),
+        ai: nextAi,
+        workflow: afterWorkflow,
+    };
+    const eventType =
+        historyItem.changes.status !== undefined
+            ? 'status.changed'
+            : historyItem.publicNote
+              ? 'comment.created'
+              : 'issue.updated';
+    const mainVisibility =
+        eventType === 'status.changed' || historyItem.publicNote ? 'public' : 'internal';
+    const eventId = `evt_${crypto.randomUUID()}`;
+    const nextVersion = expectedVersion + 1;
+    const resolvedAt =
+        afterWorkflow.status === 'resolved'
+            ? updatedAt
+            : afterWorkflow.status === 'closed'
+              ? issue.resolvedAt || null
+              : null;
+    const splitInternalNote = mainVisibility === 'public' && historyItem.internalNote;
+    const eventEntries = [
+        {
+            id: eventId,
+            type: eventType,
+            visibility: mainVisibility,
+            body: {
+                changes: historyItem.changes,
+                publicNote: historyItem.publicNote,
+                internalNote: splitInternalNote ? '' : historyItem.internalNote,
+            },
         },
-    };
-    delete nextIssue.key;
-
-    await store.put(key, JSON.stringify(nextIssue), {
-        expirationTtl: FEEDBACK_TTL_SECONDS,
-    });
-
-    return normalizeStoredFeedback(key, nextIssue);
-}
-
-async function pushFeedbackWebhook(env, feedbackKey, feedback) {
-    if (!env.FEEDBACK_WEBHOOK_URL) return;
-
-    const payload = {
-        key: feedbackKey,
-        type: feedback.type,
-        sourceType: feedback.sourceType,
-        submittedType: feedback.submittedType,
-        title: feedback.title,
-        description: feedback.description,
-        contact: feedback.contact,
-        receivedAt: feedback.receivedAt,
-        url: feedback.context?.url,
-        project: feedback.context?.project,
-        attachmentCount: feedback.attachments.length,
-        logCount: feedback.context?.logs?.length || 0,
-    };
-
-    const headers = { 'Content-Type': 'application/json' };
-    if (env.FEEDBACK_WEBHOOK_TOKEN) {
-        headers.Authorization = `Bearer ${env.FEEDBACK_WEBHOOK_TOKEN}`;
+    ];
+    if (splitInternalNote) {
+        eventEntries.push({
+            id: `evt_${crypto.randomUUID()}`,
+            type: 'comment.created',
+            visibility: 'internal',
+            body: {
+                changes: {},
+                publicNote: '',
+                internalNote: historyItem.internalNote,
+            },
+        });
     }
 
-    await fetch(env.FEEDBACK_WEBHOOK_URL, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(payload),
-    });
+    const statements = eventEntries.map((entry) =>
+        env.FEEDBACK_DB.prepare(
+            `INSERT INTO feedback_events (
+                id, issue_id, sequence, type, actor_type, actor_id, visibility,
+                run_id, occurred_at, body_json, metadata_json, legacy_hash
+            )
+            SELECT
+                ?, id,
+                (SELECT COALESCE(MAX(sequence), 0) + 1
+                 FROM feedback_events WHERE issue_id = feedback_issues.id),
+                ?, ?, ?, ?, ?, ?, ?, ?, ?
+            FROM feedback_issues
+            WHERE id = ? AND version = ?`
+        ).bind(
+            entry.id,
+            entry.type,
+            'admin',
+            null,
+            entry.visibility,
+            null,
+            updatedAt,
+            JSON.stringify(entry.body),
+            JSON.stringify({ expectedVersion, resultingVersion: nextVersion }),
+            null,
+            key,
+            expectedVersion
+        )
+    );
+    statements.push(
+        env.FEEDBACK_DB.prepare(
+            `UPDATE feedback_issues SET
+                title = ?, description = ?, source_type = ?, submitted_type = ?,
+                business_type = ?, scope = ?, automation_decision = ?,
+                ai_confidence = ?, ai_classified_at = ?, status = ?, priority = ?,
+                assignee = ?, legacy_public_note = ?, legacy_internal_note = ?,
+                updated_at = ?, resolved_at = ?, version = version + 1
+             WHERE id = ? AND version = ?
+               AND EXISTS (
+                   SELECT 1 FROM feedback_events
+                   WHERE id = ? AND issue_id = feedback_issues.id
+               )
+             RETURNING *`
+        ).bind(
+            nextIssue.title,
+            nextIssue.description,
+            nextIssue.sourceType,
+            nextIssue.submittedType,
+            nextAi.businessType,
+            nextAi.scope,
+            nextAi.automationDecision,
+            nextAi.confidence,
+            nextAi.classifiedAt || null,
+            afterWorkflow.status,
+            afterWorkflow.priority,
+            afterWorkflow.assignee,
+            afterWorkflow.publicNote,
+            afterWorkflow.internalNote,
+            updatedAt,
+            resolvedAt,
+            key,
+            expectedVersion,
+            eventId
+        )
+    );
+    const results = await env.FEEDBACK_DB.batch(statements);
+
+    const updatedRow = results[results.length - 1]?.results?.[0];
+    if (!updatedRow) {
+        throw feedbackStorageError('FEEDBACK_VERSION_CONFLICT');
+    }
+
+    return readD1FeedbackIssue(env, key);
+}
+
+async function updateFeedbackIssue(env, key, patch) {
+    if (env.FEEDBACK_DB) {
+        return updateD1FeedbackIssue(env, key, patch);
+    }
+
+    throw feedbackStorageError('FEEDBACK_DB_REQUIRED');
 }
 
 function getFeedbackBoardApiBase(request, env) {
@@ -866,6 +3313,29 @@ function getFeedbackBoardApiBase(request, env) {
     }
 
     return '';
+}
+
+function getFeedbackBoardContentSecurityPolicy(feedbackApiBase) {
+    let connectSource = "'self'";
+    if (feedbackApiBase) {
+        try {
+            connectSource += ` ${new URL(feedbackApiBase).origin}`;
+        } catch {
+            // Invalid API configuration is surfaced by the page's request handling.
+        }
+    }
+
+    return [
+        "default-src 'self'",
+        "script-src 'self' 'unsafe-inline'",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data: blob:",
+        `connect-src ${connectSource}`,
+        "font-src 'self'",
+        "object-src 'none'",
+        "base-uri 'none'",
+        "frame-ancestors 'none'",
+    ].join('; ');
 }
 
 function renderFeedbackBoardPage(apiBase = '') {
@@ -915,10 +3385,9 @@ function renderFeedbackBoardPage(apiBase = '') {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Feedback Issues - 反馈处理工作台</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/rrweb-player@latest/dist/style.css">
-  <script src="https://cdn.jsdelivr.net/npm/rrweb-player@latest/dist/index.js"></script>
+  <link rel="stylesheet" href="${FEEDBACK_REPLAY_STYLE_PATH}">
+  <script src="${FEEDBACK_REPLAY_SCRIPT_PATH}" defer></script>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
     :root {
       color-scheme: light;
       --bg: #f4f5f8;
@@ -1969,8 +4438,17 @@ function renderFeedbackBoardPage(apiBase = '') {
     const candidateStatusLabels = { needs_human: '待人工审批', ready_for_deploy: '待部署', merged: '已合并', abandoned: '已放弃' };
     const humanActionTypeLabels = { design_decision: '设计决策', review_required: '需要人工审核', need_reproduction: '需要补充复现', ready_for_deploy: '待部署确认', close: '关闭确认' };
     const tokenKey = 'feedbackAdminSession';
+    const ownerAccessKey = 'feedbackOwnerAccess';
     const feedbackApiBase = '${feedbackApiBase}';
-    let state = { issues: [], selectedKey: '', status: 'all', admin: readAdminSession() };
+    const inlineImageTypes = new Set(['image/avif', 'image/gif', 'image/jpeg', 'image/png', 'image/webp']);
+    let state = {
+      issues: [],
+      selectedKey: '',
+      selectedVersion: null,
+      status: 'all',
+      admin: readAdminSession(),
+      owner: readOwnerAccess(),
+    };
 
     const svgAttachment = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;margin-right:2px;"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>';
     const svgPlay = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;margin-right:2px;color:#a5b4fc;"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>';
@@ -2004,6 +4482,16 @@ function renderFeedbackBoardPage(apiBase = '') {
       return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
     }
 
+    function isInlineImageAttachment(att) {
+      const contentType = String(att.type || '').split(';')[0].trim().toLowerCase();
+      return inlineImageTypes.has(contentType);
+    }
+
+    function getReplayEventsFromPayload(payload) {
+      const events = payload?.events || payload;
+      return Array.isArray(events) ? events : [];
+    }
+
     function getReplayEventsFromDataUrl(dataUrl) {
       if (!dataUrl || !String(dataUrl).startsWith('data:')) return [];
 
@@ -2012,12 +4500,36 @@ function renderFeedbackBoardPage(apiBase = '') {
         const binary = atob(base64);
         const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
         const json = new TextDecoder().decode(bytes);
-        const payload = JSON.parse(json);
-        const events = payload.events || payload;
-        return Array.isArray(events) ? events : [];
+        return getReplayEventsFromPayload(JSON.parse(json));
       } catch {
         return [];
       }
+    }
+
+    function getTrustedReplayUrl(source) {
+      const replayUrl = new URL(source, window.location.href);
+      const allowedOrigins = new Set([window.location.origin]);
+      if (feedbackApiBase) {
+        allowedOrigins.add(new URL(feedbackApiBase).origin);
+      }
+      if (!allowedOrigins.has(replayUrl.origin)) {
+        throw new Error('Replay attachment origin is not trusted');
+      }
+      return replayUrl.href;
+    }
+
+    async function loadReplayEvents(source) {
+      const dataUrlEvents = getReplayEventsFromDataUrl(source);
+      if (dataUrlEvents.length > 0) return dataUrlEvents;
+      if (!source) return [];
+
+      const response = await fetch(getTrustedReplayUrl(source), {
+        headers: { Accept: 'application/json' },
+      });
+      if (!response.ok) {
+        throw new Error('Replay attachment could not be loaded');
+      }
+      return getReplayEventsFromPayload(await response.json());
     }
 
     function isReplayAttachment(att) {
@@ -2025,7 +4537,7 @@ function renderFeedbackBoardPage(apiBase = '') {
       const type = String(att.type || '').toLowerCase();
       if (name.startsWith('feedback-rrweb-') && name.endsWith('.json')) return true;
       if (type.includes('json') && getReplayEventsFromDataUrl(att.dataUrl).length > 0) return true;
-      if (name.includes('replay') && name.endsWith('.json') && getReplayEventsFromDataUrl(att.dataUrl).length > 0) return true;
+      if (name.includes('replay') && name.endsWith('.json')) return true;
       return false;
     }
 
@@ -2039,16 +4551,22 @@ function renderFeedbackBoardPage(apiBase = '') {
     };
 
     let activeReplayer = null;
-    window.playReplay = function(dataUrl, name) {
+    window.playReplay = async function(source, name) {
       document.getElementById('replayModalTitle').textContent = '录屏回放: ' + name;
       document.getElementById('replayPlayerTarget').innerHTML = '';
       document.getElementById('replayModal').style.display = 'flex';
 
       try {
-        const events = getReplayEventsFromDataUrl(dataUrl);
+        const events = await loadReplayEvents(source);
 
         if (!events || !events.length) {
           throw new Error('No events found in replay JSON');
+        }
+        if (
+          typeof window.rrweb?.Replayer !== 'function' &&
+          typeof window.rrwebPlayer !== 'function'
+        ) {
+          throw new Error('Replay preview is unavailable in this secure build');
         }
 
         const modalHeader = document.querySelector('#replayModal .modal-header');
@@ -2076,9 +4594,16 @@ function renderFeedbackBoardPage(apiBase = '') {
         playerWidth = Math.floor(playerWidth);
         playerHeight = Math.floor(playerHeight);
 
-        setTimeout(() => {
-          activeReplayer = new rrwebPlayer({
-            target: document.getElementById('replayPlayerTarget'),
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        const target = document.getElementById('replayPlayerTarget');
+        if (typeof window.rrweb?.Replayer === 'function') {
+          activeReplayer = new window.rrweb.Replayer(events, {
+            root: target,
+          });
+          activeReplayer.play();
+        } else {
+          activeReplayer = new window.rrwebPlayer({
+            target,
             props: {
               events: events,
               autoPlay: true,
@@ -2086,7 +4611,7 @@ function renderFeedbackBoardPage(apiBase = '') {
               height: playerHeight
             }
           });
-        }, 100);
+        }
       } catch (err) {
         document.getElementById('replayPlayerTarget').innerHTML = '<div style="color:var(--danger);padding:20px;">加载录屏失败: ' + esc(err.message) + '</div>';
       }
@@ -2115,7 +4640,32 @@ function renderFeedbackBoardPage(apiBase = '') {
         return null;
       }
     }
-    function authHeaders(extra = {}) { return state.admin ? { ...extra, Authorization: 'Bearer ' + state.admin.token } : extra; }
+    function readOwnerAccess() {
+      try {
+        const hash = new URLSearchParams(window.location.hash.slice(1));
+        const issueId = hash.get('issue') || '';
+        const capability = hash.get('capability') || '';
+        if (issueId.startsWith('feedback:') && capability) {
+          const access = { issueId, capability };
+          sessionStorage.setItem(ownerAccessKey, JSON.stringify(access));
+          history.replaceState(null, '', window.location.pathname + window.location.search);
+          return access;
+        }
+
+        const stored = JSON.parse(sessionStorage.getItem(ownerAccessKey) || 'null');
+        return stored?.issueId?.startsWith('feedback:') && stored?.capability
+          ? stored
+          : null;
+      } catch {
+        sessionStorage.removeItem(ownerAccessKey);
+        return null;
+      }
+    }
+    function authHeaders(extra = {}) {
+      if (state.admin) return { ...extra, Authorization: 'Bearer ' + state.admin.token };
+      if (state.owner) return { ...extra, Authorization: 'Bearer ' + state.owner.capability };
+      return extra;
+    }
     function esc(value) { return String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[char])); }
     function fmt(value) { return value ? new Date(value).toLocaleString() : ''; }
     function apiUrl(path) { return feedbackApiBase + path; }
@@ -2216,19 +4766,20 @@ function renderFeedbackBoardPage(apiBase = '') {
       };
     }
     function renderAttachmentCard(att, options = {}) {
-      const isImage = att.type && att.type.startsWith('image/');
+      const isImage = isInlineImageAttachment(att);
       const isReplay = isReplayAttachment(att);
+      const attachmentSource = att.dataUrl || att.url || '';
       const evidenceLabel = isReplay ? 'rrweb 录屏' : isImage ? '截图' : '附件';
       let previewOrAction = '';
       let iconHtml = '';
       if (isImage) {
-        previewOrAction = '<img class="attachment-thumb" src="' + esc(att.dataUrl) + '" data-url="' + esc(att.dataUrl) + '" alt="' + esc(att.name) + '" style="cursor:pointer;">';
-      } else if (isReplay) {
+        previewOrAction = '<img class="attachment-thumb" src="' + esc(attachmentSource) + '" data-url="' + esc(attachmentSource) + '" alt="' + esc(att.name) + '" style="cursor:pointer;">';
+      } else if (isReplay && attachmentSource) {
         iconHtml = '<div style="width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; background: var(--primary-glow); border-radius: 6px; border: 1px solid rgba(14, 165, 233, 0.3);">' + svgPlay + '</div>';
-        previewOrAction = '<button type="button" class="btn-play-replay" data-url="' + esc(att.dataUrl) + '" data-name="' + esc(att.name) + '">播放</button>';
+        previewOrAction = '<button type="button" class="btn-play-replay" data-url="' + esc(attachmentSource) + '" data-name="' + esc(att.name) + '">播放</button>';
       } else {
         iconHtml = '<div style="width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; background: rgba(156, 163, 175, 0.1); border-radius: 6px; border: 1px solid var(--line);">' + svgAttachment + '</div>';
-        previewOrAction = '<a href="' + esc(att.dataUrl) + '" download="' + esc(att.name) + '" class="btn-download-file">下载</a>';
+        previewOrAction = '<a href="' + esc(attachmentSource) + '" download="' + esc(att.name) + '" class="btn-download-file">下载</a>';
       }
 
       return '            <div class="attachment-card">' +
@@ -2248,6 +4799,15 @@ function renderFeedbackBoardPage(apiBase = '') {
       return response.json();
     }
     async function loadIssues() {
+      if (state.owner && !state.admin) {
+        state.issues = [];
+        state.selectedKey = state.owner.issueId;
+        renderFilters();
+        renderList();
+        await loadDetail(state.owner.issueId);
+        return;
+      }
+
       const query = state.status === 'all' ? '' : '?status=' + encodeURIComponent(state.status);
       document.getElementById('issueList').innerHTML = \`
         <div class="empty">
@@ -2338,6 +4898,7 @@ function renderFeedbackBoardPage(apiBase = '') {
       const button = document.getElementById('saveWorkflowBtn');
       const statusEl = document.getElementById('saveWorkflowStatus');
       const body = Object.fromEntries(new FormData(form).entries());
+      body.expectedVersion = state.selectedVersion;
 
       if (button) button.disabled = true;
       if (statusEl) {
@@ -2376,6 +4937,10 @@ function renderFeedbackBoardPage(apiBase = '') {
         return;
       }
       area.innerHTML = '<input id="adminPassword" type="password" placeholder="管理员密码" autocomplete="current-password"><button id="loginBtn" class="primary" type="button">登录</button>';
+      if (state.owner) {
+        area.innerHTML = '<span class="summary" style="color: var(--primary); font-weight: 600;">Issue owner</span>';
+        return;
+      }
       document.getElementById('loginBtn').addEventListener('click', login);
       document.getElementById('adminPassword').addEventListener('keydown', (e) => {
         if (e.key === 'Enter') login();
@@ -2479,7 +5044,7 @@ function renderFeedbackBoardPage(apiBase = '') {
     function renderCandidateEvidence(issue) {
       const attachments = Array.isArray(issue.attachments) ? issue.attachments : [];
       const replayAttachments = attachments.filter((att) => isReplayAttachment(att));
-      const imageAttachments = attachments.filter((att) => att.type && att.type.startsWith('image/'));
+      const imageAttachments = attachments.filter((att) => isInlineImageAttachment(att));
       const evidence = [...replayAttachments, ...imageAttachments].slice(0, 4);
 
       if (!evidence.length) {
@@ -2627,6 +5192,7 @@ function renderFeedbackBoardPage(apiBase = '') {
         '</div>';
     }
     function renderDetail(issue) {
+      state.selectedVersion = Number(issue.version) || 1;
       const workflow = issue.workflow || issue;
       const status = workflow.status || issue.status;
       const priority = workflow.priority || issue.priority;
@@ -2815,11 +5381,35 @@ export default {
             return new Response(null, { status: 204, headers });
         }
 
+        if (
+            request.method === 'GET' &&
+            (url.pathname === FEEDBACK_REPLAY_SCRIPT_PATH ||
+                url.pathname === FEEDBACK_REPLAY_STYLE_PATH)
+        ) {
+            const isScript = url.pathname === FEEDBACK_REPLAY_SCRIPT_PATH;
+            return new Response(isScript ? rrwebReplayBrowserScript : rrwebReplayBrowserStyles, {
+                headers: {
+                    ...headers,
+                    'Content-Type': isScript
+                        ? 'application/javascript; charset=utf-8'
+                        : 'text/css; charset=utf-8',
+                    'Cache-Control': 'public, max-age=31536000, immutable',
+                    'Cross-Origin-Resource-Policy': 'same-origin',
+                    'X-Content-Type-Options': 'nosniff',
+                },
+            });
+        }
+
         if (request.method === 'GET' && url.pathname === '/feedback') {
-            return new Response(renderFeedbackBoardPage(getFeedbackBoardApiBase(request, env)), {
+            const feedbackApiBase = getFeedbackBoardApiBase(request, env);
+            return new Response(renderFeedbackBoardPage(feedbackApiBase), {
                 headers: {
                     ...headers,
                     'Content-Type': 'text/html; charset=utf-8',
+                    'Cache-Control': 'no-store',
+                    'Referrer-Policy': 'no-referrer',
+                    'Content-Security-Policy':
+                        getFeedbackBoardContentSecurityPolicy(feedbackApiBase),
                 },
             });
         }
@@ -2835,6 +5425,31 @@ export default {
             } catch {
                 return errorResponse('Unauthorized', 401, headers);
             }
+        }
+
+        if (request.method === 'GET' && url.pathname.startsWith('/api/feedback/attachments/')) {
+            const attachmentId = decodeURIComponent(
+                url.pathname.split('/api/feedback/attachments/')[1] || ''
+            );
+            if (!attachmentId.startsWith('att_')) {
+                return errorResponse('Invalid attachment', 400, headers);
+            }
+
+            const access = await readFeedbackAttachmentWithToken(request, env, attachmentId);
+            if (!access) return errorResponse('Not found', 404, headers);
+            const responseMetadata = getFeedbackAttachmentResponseMetadata(access);
+
+            return new Response(access.object.body, {
+                headers: {
+                    ...headers,
+                    'Content-Type': responseMetadata.contentType,
+                    'Content-Disposition': `${responseMetadata.disposition}; filename*=UTF-8''${encodeURIComponent(access.attachment.name)}`,
+                    'Content-Security-Policy': "sandbox; default-src 'none'",
+                    'Cache-Control': 'private, no-store',
+                    'Cross-Origin-Resource-Policy': 'same-origin',
+                    'X-Content-Type-Options': 'nosniff',
+                },
+            });
         }
 
         if (request.method === 'POST' && url.pathname === '/api/cloud-docs') {
@@ -2917,13 +5532,69 @@ export default {
             }
         }
 
+        const feedbackRunContextMatch = url.pathname.match(
+            /^\/api\/feedback\/runs\/([^/]+)\/context$/
+        );
+        if (request.method === 'GET' && feedbackRunContextMatch) {
+            if (!env.FEEDBACK_DB) {
+                return errorResponse('Feedback storage is unavailable', 503, headers);
+            }
+
+            const runId = decodeURIComponent(feedbackRunContextMatch[1]);
+            const run = await readAuthorizedFeedbackRun(request, env, runId, 'context');
+            if (!run) return errorResponse('Unauthorized', 401, headers);
+
+            return jsonResponse(parseStoredJson(run.context_snapshot_json, {}), { headers });
+        }
+
+        const feedbackRunEventsMatch = url.pathname.match(
+            /^\/api\/feedback\/runs\/([^/]+)\/events$/
+        );
+        if (request.method === 'POST' && feedbackRunEventsMatch) {
+            if (!env.FEEDBACK_DB) {
+                return errorResponse('Feedback storage is unavailable', 503, headers);
+            }
+
+            const runId = decodeURIComponent(feedbackRunEventsMatch[1]);
+            const run = await readAuthorizedFeedbackRun(request, env, runId, 'callback');
+            if (!run) return errorResponse('Unauthorized', 401, headers);
+
+            try {
+                const event = normalizeFeedbackRunEvent(await request.json());
+                const result = await appendFeedbackRunEvent(env, run, event);
+                await projectFeedbackRunTerminalEvent(env, run, event);
+                if (!result.replayed) {
+                    await notifyFeedbackWorkflowOfTerminalEvent(env, run, event);
+                }
+                return jsonResponse(
+                    {
+                        accepted: true,
+                        eventId: event.eventId,
+                        replayed: result.replayed,
+                    },
+                    { headers }
+                );
+            } catch (error) {
+                if (error?.message === 'FEEDBACK_RUN_EVENT_CONFLICT') {
+                    return errorResponse('Event conflict', 409, headers);
+                }
+                if (error?.message === 'FEEDBACK_RUN_EVENT_TOO_LARGE') {
+                    return errorResponse('Event payload is too large', 413, headers);
+                }
+                return errorResponse('Invalid Run event', 400, headers);
+            }
+        }
+
         if (request.method === 'GET' && url.pathname === '/api/feedback/issues') {
+            if (!(await isValidAdminToken(request, env))) {
+                return errorResponse('Unauthorized', 401, headers);
+            }
+
             const status = url.searchParams.get('status') || '';
             if (status && !FEEDBACK_STATUSES.has(status)) {
                 return errorResponse('Invalid status', 400, headers);
             }
 
-            const isAdmin = await isValidAdminToken(request, env);
             const result = await listFeedbackIssues(env, {
                 status,
                 limit: url.searchParams.get('limit'),
@@ -2932,14 +5603,113 @@ export default {
 
             return jsonResponse(
                 {
-                    issues: result.issues.map((issue) =>
-                        isAdmin ? serializeAdminIssueSummary(issue) : serializePublicIssue(issue)
-                    ),
+                    issues: result.issues.map(serializeAdminIssueSummary),
                     cursor: result.cursor,
                     listComplete: result.listComplete,
+                    legacyMigrationPending: Boolean(result.legacyMigrationPending),
                 },
                 { headers }
             );
+        }
+
+        const feedbackIssueRunMatch = url.pathname.match(
+            /^\/api\/feedback\/issues\/([^/]+)\/runs$/
+        );
+        if (request.method === 'POST' && feedbackIssueRunMatch) {
+            if (!(await isValidAdminToken(request, env))) {
+                return errorResponse('Unauthorized', 401, headers);
+            }
+            if (!env.FEEDBACK_DB) {
+                return errorResponse('Feedback storage is unavailable', 503, headers);
+            }
+
+            const issueId = decodeURIComponent(feedbackIssueRunMatch[1]);
+            if (!issueId.startsWith('feedback:')) {
+                return errorResponse('Invalid key', 400, headers);
+            }
+
+            try {
+                const idempotencyKey = readFeedbackRunIdempotencyKey(request);
+                const runRequest = normalizeFeedbackRunRequest(await request.json());
+                if (runRequest.runnerType === 'local_required') {
+                    const result = await createLocalRequiredHumanAction(
+                        env,
+                        issueId,
+                        idempotencyKey
+                    );
+                    return jsonResponse(
+                        {
+                            replayed: result.replayed,
+                            dispatched: false,
+                            issueStatus: result.issueStatus,
+                            humanAction: serializeFeedbackHumanAction(result.action),
+                        },
+                        { status: result.replayed ? 200 : 202, headers }
+                    );
+                }
+
+                if (!env.FEEDBACK_WORKFLOW) {
+                    return errorResponse('Feedback workflow is unavailable', 503, headers);
+                }
+
+                const reserved = await reserveFeedbackRun(
+                    env,
+                    issueId,
+                    runRequest,
+                    idempotencyKey,
+                    url.origin
+                );
+                if (!reserved.replayed) {
+                    try {
+                        await env.FEEDBACK_WORKFLOW.create({
+                            id: reserved.run.workflow_id,
+                            params: reserved.workflowParams,
+                        });
+                    } catch (error) {
+                        const retainedInstance =
+                            typeof env.FEEDBACK_WORKFLOW.get === 'function'
+                                ? await env.FEEDBACK_WORKFLOW.get(reserved.run.workflow_id)
+                                : null;
+                        if (!retainedInstance) {
+                            console.error(
+                                '[Feedback] Workflow dispatch failed',
+                                reserved.run.workflow_id,
+                                error
+                            );
+                            return errorResponse('Feedback workflow dispatch failed', 503, headers);
+                        }
+                    }
+                }
+
+                return jsonResponse(
+                    {
+                        replayed: reserved.replayed,
+                        dispatched: true,
+                        run: serializeFeedbackRun(reserved.run),
+                    },
+                    { status: reserved.replayed ? 200 : 202, headers }
+                );
+            } catch (error) {
+                if (error?.code === 'FEEDBACK_ISSUE_NOT_FOUND') {
+                    return errorResponse('Not found', 404, headers);
+                }
+                if (
+                    error?.code === 'FEEDBACK_ACTIVE_WORK_CONFLICT' ||
+                    error?.code === 'FEEDBACK_IDEMPOTENCY_CONFLICT'
+                ) {
+                    return errorResponse('Active work conflict', 409, headers);
+                }
+                if (
+                    error?.code === 'INVALID_FEEDBACK_RUN_REQUEST' ||
+                    error?.code === 'INVALID_FEEDBACK_IDEMPOTENCY_KEY' ||
+                    error?.code === 'FEEDBACK_WORKFLOW_ID_TOO_LONG' ||
+                    error instanceof SyntaxError
+                ) {
+                    return errorResponse('Invalid Run request', 400, headers);
+                }
+                console.error('[Feedback] Run reservation failed', error);
+                return errorResponse('Feedback Run could not be reserved', 503, headers);
+            }
         }
 
         if (url.pathname.startsWith('/api/feedback/issues/')) {
@@ -2949,15 +5719,26 @@ export default {
             }
 
             if (request.method === 'GET') {
+                const isAdmin = await isValidAdminToken(request, env);
+                const isOwner =
+                    !isAdmin && (await isValidFeedbackOwnerCapability(request, env, key));
+                if (!isAdmin && !isOwner) {
+                    return errorResponse('Unauthorized', 401, headers);
+                }
+
                 const issue = await readFeedbackIssue(env, key);
                 if (!issue) return errorResponse('Not found', 404, headers);
+                const issueWithAttachmentAccess = await addFeedbackAttachmentAccessUrls(
+                    request,
+                    env,
+                    issue
+                );
 
-                const isAdmin = await isValidAdminToken(request, env);
                 return jsonResponse(
                     {
                         issue: isAdmin
-                            ? serializeAdminIssue(issue)
-                            : serializePublicIssue(issue, true),
+                            ? serializeAdminIssue(issueWithAttachmentAccess)
+                            : serializePublicIssue(issueWithAttachmentAccess, true),
                     },
                     { headers }
                 );
@@ -2974,7 +5755,13 @@ export default {
                     if (!issue) return errorResponse('Not found', 404, headers);
 
                     return jsonResponse({ issue: serializeAdminIssue(issue) }, { headers });
-                } catch {
+                } catch (error) {
+                    if (error?.code === 'FEEDBACK_VERSION_CONFLICT') {
+                        return errorResponse('Version conflict', 409, headers);
+                    }
+                    if (error?.code === 'FEEDBACK_DB_REQUIRED') {
+                        return errorResponse('Feedback storage is unavailable', 503, headers);
+                    }
                     return errorResponse('Invalid workflow update', 400, headers);
                 }
             }
@@ -2982,15 +5769,11 @@ export default {
 
         // POST /api/feedback — 收集手动反馈与自动错误
         if (request.method === 'POST' && url.pathname === '/api/feedback') {
-            try {
-                const store = getFeedbackStore(env);
-                if (!store) {
-                    return new Response('Feedback storage is not configured', {
-                        status: 500,
-                        headers,
-                    });
-                }
+            if (!env.FEEDBACK_DB) {
+                return errorResponse('Feedback storage is unavailable', 503, headers);
+            }
 
+            try {
                 const rawText = await request.text();
                 if (new TextEncoder().encode(rawText).length > MAX_FEEDBACK_BYTES) {
                     return new Response('Payload too large', { status: 413, headers });
@@ -3002,25 +5785,50 @@ export default {
                     return new Response('Missing feedback content', { status: 400, headers });
                 }
 
-                const key = `feedback:${Date.now()}:${genKey(10)}`;
-                await store.put(key, JSON.stringify(feedback), {
-                    expirationTtl: FEEDBACK_TTL_SECONDS,
-                });
+                const created = await createD1FeedbackIssue(env, feedback);
 
-                try {
-                    await pushFeedbackWebhook(env, key, feedback);
-                } catch (webhookError) {
-                    console.warn('Feedback webhook failed:', webhookError);
-                }
-
-                return Response.json(
+                return jsonResponse(
                     {
-                        key,
+                        key: created.issueId,
+                        issueId: created.issueId,
+                        ownerCapability: created.ownerCapability,
+                        ownerCapabilityExpiresAt: created.ownerCapabilityExpiresAt,
+                        ownerUrl: `${url.origin}/feedback#issue=${encodeURIComponent(
+                            created.issueId
+                        )}&capability=${encodeURIComponent(created.ownerCapability)}`,
                         stored: true,
                     },
-                    { headers }
+                    { status: 201, headers }
                 );
             } catch (e) {
+                if (e?.code === 'FEEDBACK_ATTACHMENTS_REQUIRE_R2') {
+                    return errorResponse(
+                        'Feedback attachment storage is unavailable',
+                        503,
+                        headers
+                    );
+                }
+                if (e?.code === 'INVALID_FEEDBACK_ATTACHMENT') {
+                    return errorResponse('Invalid feedback attachment', 400, headers);
+                }
+                if (e?.code === 'FEEDBACK_ATTACHMENT_TOO_LARGE') {
+                    return errorResponse('Feedback attachment is too large', 413, headers);
+                }
+                if (e?.code === 'FEEDBACK_ATTACHMENT_UPLOAD_FAILED') {
+                    return errorResponse('Feedback attachment upload failed', 503, headers);
+                }
+                if (e?.code === 'FEEDBACK_CONTEXT_REQUIRES_R2') {
+                    return errorResponse('Feedback context storage is unavailable', 503, headers);
+                }
+                if (e?.code === 'FEEDBACK_CONTEXT_UPLOAD_FAILED') {
+                    return errorResponse('Feedback context upload failed', 503, headers);
+                }
+                if (e?.code === 'FEEDBACK_CONTEXT_TOO_LARGE') {
+                    return errorResponse('Feedback context is too large', 413, headers);
+                }
+                if (e?.message === 'FEEDBACK_PII_KEY_REQUIRED') {
+                    return errorResponse('Feedback encryption is unavailable', 503, headers);
+                }
                 return new Response('Server Error: ' + e.message, { status: 500, headers });
             }
         }

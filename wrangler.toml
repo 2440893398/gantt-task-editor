@@ -1,6 +1,16 @@
 name = "gantt-share"
 main = "workers/share-worker.js"
-compatibility_date = "2024-01-01"
+compatibility_date = "2026-07-28"
+compatibility_flags = ["nodejs_compat"]
+
+[observability]
+enabled = true
+
+[vars]
+FEEDBACK_GITHUB_REPOSITORY = "2440893398/gantt-task-editor"
+FEEDBACK_GITHUB_REF = "master"
+FEEDBACK_GITHUB_WORKFLOW = "feedback-agent-codex.yml"
+FEEDBACK_GITHUB_API_VERSION = "2026-03-10"
 
 [[kv_namespaces]]
 binding = "SHARE_KV"
@@ -19,3 +29,19 @@ class_name = "CloudDocDurableObject"
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["CloudDocDurableObject"]
+
+[[d1_databases]]
+binding = "FEEDBACK_DB"
+database_name = "gantt-feedback"
+database_id = "477e9132-6280-4bf9-8dff-3479b2d7e0e9"
+migrations_dir = "src/features/feedback/migrations"
+
+[[r2_buckets]]
+binding = "FEEDBACK_ARTIFACTS"
+bucket_name = "gantt-feedback-artifacts"
+preview_bucket_name = "gantt-feedback-artifacts-dev"
+
+[[workflows]]
+name = "feedback-workflow"
+binding = "FEEDBACK_WORKFLOW"
+class_name = "FeedbackWorkflow"

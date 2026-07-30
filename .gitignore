@@ -14,7 +14,9 @@ dist-utools/
 .agents/
 .codex/skills/
 .gemini/
-.github/
+.github/*
+!.github/workflows/
+!.github/codex/
 .opencode/
 .vscode/
 *.swp
