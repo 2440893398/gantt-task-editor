@@ -65,6 +65,23 @@ const FEEDBACK_SIGNATURE_HEADER = 'X-Feedback-Signature-256';
 const FEEDBACK_HOOK_TIMEOUT_MS = 10_000;
 const FEEDBACK_RECONCILE_JOB_ID = 'feedback-reconcile';
 const MAX_FEEDBACK_COMMENT_LENGTH = 12000;
+const FEEDBACK_EVENT_SPEC_VERSION = '1.0';
+// §17.2: at most 4 attempts (1 initial + 3 retries at 1/5/15 minutes).
+const FEEDBACK_DELIVERY_MAX_ATTEMPTS = 4;
+// §17.1: only transport-level failures are retried. Auth, signature and schema
+// failures stop immediately so a rejected request never loops.
+const FEEDBACK_RETRYABLE_DELIVERY_CODES = new Set([
+    'HOOK_TIMEOUT',
+    'HOOK_UNREACHABLE',
+    'HTTP_408',
+    'HTTP_425',
+    'HTTP_429',
+    'HTTP_500',
+    'HTTP_502',
+    'HTTP_503',
+    'HTTP_504',
+]);
+const FEEDBACK_DAILY_DISPATCH_QUOTA = 20;
 const FEEDBACK_SOURCE_TYPES = new Set(['manual', 'auto_error', 'admin']);
 const FEEDBACK_BUSINESS_TYPES = new Set(['bug', 'improvement', 'requirement', 'other', 'unclear']);
 const FEEDBACK_SCOPES = new Set(['small', 'medium', 'large', 'unclear']);
@@ -389,6 +406,52 @@ export class FeedbackWorkflow extends WorkflowEntrypoint {
         }
 
         const instanceId = String(event.instanceId || `${issueId}:${generation}`);
+        const started = await this.recordStart(step, { issueId, generation, instanceId, event });
+
+        // §17.2: Webhook/Dispatch retries at 1/5/15 minutes, max 4 attempts.
+        // Workflow steps own the backoff so no high-frequency cron is needed
+        // (§4, §19.4) and the wait costs no Runner time.
+        const delivered = await this.deliverEvent(step, {
+            issueId,
+            deliveryId: String(event.payload?.deliveryId || ''),
+        });
+
+        return { ...started, delivery: delivered };
+    }
+
+    async deliverEvent(step, { issueId, deliveryId }) {
+        if (!deliveryId) return null;
+
+        try {
+            return await step.do(
+                'deliver issue event',
+                {
+                    retries: {
+                        limit: FEEDBACK_DELIVERY_MAX_ATTEMPTS - 1,
+                        delay: '1 minute',
+                        backoff: 'exponential',
+                    },
+                    timeout: '2 minutes',
+                },
+                async () => {
+                    const result = await attemptFeedbackDelivery(this.env, deliveryId);
+                    // Throwing is what asks the Workflow for another attempt;
+                    // permanent failures return instead so they stop here.
+                    if (!result.ok && result.retryable) {
+                        throw new Error(result.errorCode || 'FEEDBACK_DELIVERY_RETRYABLE');
+                    }
+                    return result;
+                }
+            );
+        } catch (error) {
+            // §17.2: retries exhausted, park it in the DLQ for manual replay.
+            return await step.do('record delivery dead letter', async () =>
+                markFeedbackDeliveryDeadLettered(this.env, deliveryId, String(error?.message || ''))
+            );
+        }
+    }
+
+    async recordStart(step, { issueId, generation, instanceId, event }) {
         return await step.do('record workflow start', async () => {
             const database = this.env.FEEDBACK_DB;
             const startedAt = new Date().toISOString();
@@ -1474,6 +1537,7 @@ async function createD1FeedbackIssue(env, feedback) {
 
     return {
         issueId,
+        eventId,
         ownerCapability,
         ownerCapabilityExpiresAt,
     };
@@ -2551,19 +2615,330 @@ async function postFeedbackHook(env, hookUrl, payload) {
 }
 
 /**
- * Records the delivery intent for an event. Actual dispatch/retry is Phase 1;
- * until then rows stay `pending` so the automation page reports the真实 state
- * instead of implying a delivery that never happened.
+ * §12.1 event envelope. The full Issue body is deliberately not copied in —
+ * the Workflow reads a consistent snapshot by `issue.id + version`.
  */
-async function enqueueFeedbackDelivery(env, { eventId, eventType, issueId }) {
+function buildFeedbackEventEnvelope({ event, issue, delivery, attempt }) {
+    return {
+        specVersion: FEEDBACK_EVENT_SPEC_VERSION,
+        eventId: event.id,
+        eventType: event.type,
+        occurredAt: event.occurredAt,
+        issue: {
+            id: issue.id,
+            version: issue.version,
+            status: issue.status,
+        },
+        actor: {
+            type: event.actorType,
+            id: event.actorId || null,
+        },
+        trigger: {
+            mention: event.mention || null,
+            requestedPolicy: null,
+        },
+        delivery: {
+            deliveryId: delivery.id,
+            attempt,
+            idempotencyKey: delivery.idempotency_key,
+        },
+    };
+}
+
+/**
+ * Sends one delivery attempt and records the outcome. Retry scheduling belongs
+ * to the Workflow (§17.2) — this only reports whether another attempt is worth
+ * making, so auth and schema failures stop immediately (§17.1).
+ */
+async function attemptFeedbackDelivery(env, deliveryId) {
+    if (!env.FEEDBACK_DB) {
+        throw feedbackStorageError('FEEDBACK_DB_REQUIRED');
+    }
+
+    const row = await env.FEEDBACK_DB.prepare(
+        `SELECT d.*, e.type AS event_type, e.actor_type, e.actor_id, e.occurred_at,
+                e.body_json, e.issue_id, i.version AS issue_version, i.status AS issue_status
+         FROM feedback_deliveries d
+         JOIN feedback_events e ON e.id = d.event_id
+         JOIN feedback_issues i ON i.id = e.issue_id
+         WHERE d.id = ?`
+    )
+        .bind(deliveryId)
+        .first();
+    if (!row) return { ok: false, retryable: false, errorCode: 'DELIVERY_NOT_FOUND' };
+    if (row.status === 'succeeded') {
+        return { ok: true, retryable: false, deliveryId, alreadyDelivered: true };
+    }
+
+    const attempt = (Number(row.attempt_count) || 0) + 1;
+    const body = parseStoredJson(row.body_json, {});
+    const envelope = buildFeedbackEventEnvelope({
+        event: {
+            id: row.event_id,
+            type: row.event_type,
+            occurredAt: row.occurred_at,
+            actorType: row.actor_type,
+            actorId: row.actor_id,
+            mention: body.mention || '',
+        },
+        issue: {
+            id: row.issue_id,
+            version: Number(row.issue_version) || 1,
+            status: row.issue_status,
+        },
+        delivery: row,
+        attempt,
+    });
+
+    const result = await postFeedbackHook(env, row.destination, {
+        ...envelope,
+        type: row.event_type,
+        deliveryId,
+    });
+    const now = new Date().toISOString();
+    const retryable = !result.ok && FEEDBACK_RETRYABLE_DELIVERY_CODES.has(result.errorCode);
+    const exhausted = attempt >= FEEDBACK_DELIVERY_MAX_ATTEMPTS;
+    const status = result.ok
+        ? 'succeeded'
+        : retryable && !exhausted
+          ? 'pending'
+          : retryable
+            ? 'dead_letter'
+            : 'failed';
+
+    await env.FEEDBACK_DB.prepare(
+        `UPDATE feedback_deliveries
+         SET status = ?, attempt_count = ?, response_status = ?, last_error = ?,
+             next_attempt_at = ?, updated_at = ?
+         WHERE id = ?`
+    )
+        .bind(
+            status,
+            attempt,
+            result.responseStatus || null,
+            result.ok ? null : result.errorCode,
+            status === 'pending' ? now : null,
+            now,
+            deliveryId
+        )
+        .run();
+
+    return {
+        ok: result.ok,
+        retryable: retryable && !exhausted,
+        deliveryId,
+        attempt,
+        status,
+        responseStatus: result.responseStatus,
+        latencyMs: result.latencyMs,
+        errorCode: result.errorCode,
+    };
+}
+
+async function markFeedbackDeliveryDeadLettered(env, deliveryId, lastError) {
+    if (!env.FEEDBACK_DB) return null;
+
+    const now = new Date().toISOString();
+    await env.FEEDBACK_DB.prepare(
+        `UPDATE feedback_deliveries
+         SET status = 'dead_letter', next_attempt_at = NULL, last_error = ?, updated_at = ?
+         WHERE id = ? AND status != 'succeeded'`
+    )
+        .bind(limitText(lastError, 500) || 'RETRIES_EXHAUSTED', now, deliveryId)
+        .run();
+
+    return { deliveryId, status: 'dead_letter' };
+}
+
+/**
+ * §18.2/§12.2: automatic dispatch is capped per Issue per day. Exceeding the
+ * quota records `automation.suppressed` and creates no Workflow, Run or Job.
+ */
+async function checkFeedbackDispatchQuota(env, issueId) {
+    const usageDate = new Date().toISOString().slice(0, 10);
+    const row = await env.FEEDBACK_DB.prepare(
+        `SELECT run_count FROM feedback_usage_daily
+         WHERE usage_date = ? AND scope_type = 'issue' AND scope_id = ?`
+    )
+        .bind(usageDate, issueId)
+        .first();
+
+    const used = Number(row?.run_count) || 0;
+    return {
+        allowed: used < FEEDBACK_DAILY_DISPATCH_QUOTA,
+        used,
+        limit: FEEDBACK_DAILY_DISPATCH_QUOTA,
+        usageDate,
+    };
+}
+
+async function recordFeedbackDispatchUsage(env, issueId, usageDate) {
+    await env.FEEDBACK_DB.prepare(
+        `INSERT INTO feedback_usage_daily (usage_date, scope_type, scope_id, run_count, estimated_cost)
+         VALUES (?, 'issue', ?, 1, 0)
+         ON CONFLICT(usage_date, scope_type, scope_id)
+         DO UPDATE SET run_count = run_count + 1`
+    )
+        .bind(usageDate, issueId)
+        .run();
+}
+
+async function appendFeedbackSystemEvent(env, issueId, { type, visibility, body }) {
+    const eventId = `evt_${crypto.randomUUID()}`;
+    await env.FEEDBACK_DB.prepare(
+        `INSERT INTO feedback_events (
+            id, issue_id, sequence, type, actor_type, actor_id, visibility,
+            run_id, occurred_at, body_json, metadata_json, legacy_hash
+        )
+        SELECT
+            ?, id,
+            (SELECT COALESCE(MAX(sequence), 0) + 1
+             FROM feedback_events WHERE issue_id = feedback_issues.id),
+            ?, 'system', NULL, ?, NULL, ?, ?, '{}', NULL
+        FROM feedback_issues
+        WHERE id = ?`
+    )
+        .bind(
+            eventId,
+            type,
+            visibility,
+            new Date().toISOString(),
+            JSON.stringify(body || {}),
+            issueId
+        )
+        .run();
+
+    return eventId;
+}
+
+/**
+ * §13.1 steps 3–4 and §13.4: at most one non-terminal Workflow per Issue.
+ * A reply that answers the current wait resumes `issueId:generation` via
+ * `sendEvent`; anything else compare-and-set bumps the generation and creates
+ * a fresh instance. `eventId` is never used as the instance ID.
+ */
+async function ensureFeedbackWorkflowForEvent(env, issueId, { deliveryId, eventId, eventType }) {
+    if (!env.FEEDBACK_WORKFLOW || !env.FEEDBACK_DB) return null;
+
+    const active = await env.FEEDBACK_DB.prepare(
+        `SELECT instance_id, generation, status FROM feedback_workflows
+         WHERE issue_id = ? AND status IN ('queued', 'running', 'waiting')`
+    )
+        .bind(issueId)
+        .first();
+
+    if (active) {
+        try {
+            const instance = await env.FEEDBACK_WORKFLOW.get(active.instance_id);
+            await instance.sendEvent({
+                type: eventType,
+                payload: { issueId, eventId, deliveryId },
+            });
+            return {
+                instanceId: active.instance_id,
+                generation: Number(active.generation),
+                resumed: true,
+            };
+        } catch (error) {
+            console.warn('[Feedback] Could not resume Workflow instance', {
+                issueId,
+                instanceId: active.instance_id,
+                error: String(error?.message || error),
+            });
+            return { instanceId: active.instance_id, resumed: false, error: 'RESUME_FAILED' };
+        }
+    }
+
+    const issue = await env.FEEDBACK_DB.prepare(
+        'SELECT version, workflow_generation FROM feedback_issues WHERE id = ?'
+    )
+        .bind(issueId)
+        .first();
+    if (!issue) return null;
+
+    const generation = (Number(issue.workflow_generation) || 0) + 1;
+    const instanceId = `${issueId}:${generation}`;
+    const claimed = await env.FEEDBACK_DB.prepare(
+        `UPDATE feedback_issues
+         SET workflow_generation = ?, active_workflow_id = ?
+         WHERE id = ? AND workflow_generation = ?
+         RETURNING id`
+    )
+        .bind(generation, instanceId, issueId, Number(issue.workflow_generation) || 0)
+        .first();
+    if (!claimed) return { resumed: false, error: 'GENERATION_CONFLICT' };
+
+    try {
+        await env.FEEDBACK_WORKFLOW.create({
+            id: instanceId,
+            params: {
+                issueId,
+                generation,
+                eventId,
+                deliveryId,
+                eventType,
+                contextVersion: Number(issue.version) || 1,
+            },
+        });
+    } catch (error) {
+        // §13.4: a reserved/duplicate custom ID must be reconciled against the
+        // D1 mapping, never silently replaced or blind-sent to.
+        const mapping = await env.FEEDBACK_DB.prepare(
+            'SELECT instance_id FROM feedback_workflows WHERE issue_id = ? AND generation = ?'
+        )
+            .bind(issueId, generation)
+            .first();
+        if (!mapping || mapping.instance_id !== instanceId) {
+            await appendFeedbackSystemEvent(env, issueId, {
+                type: 'security.blocked',
+                visibility: 'internal',
+                body: {
+                    reason: 'WORKFLOW_INSTANCE_MISMATCH',
+                    instanceId,
+                    error: String(error?.message || error),
+                },
+            });
+            return { instanceId, resumed: false, error: 'WORKFLOW_INSTANCE_MISMATCH' };
+        }
+    }
+
+    return { instanceId, generation, resumed: false };
+}
+
+/**
+ * Records a delivery for an event and starts (or resumes) the Workflow that
+ * owns its retries. Returns a suppression result instead of dispatching when
+ * the event is not subscribed or the Issue is over quota (§12.2).
+ */
+async function dispatchFeedbackEvent(env, { eventId, eventType, issueId }) {
     if (!env.FEEDBACK_DB) return null;
 
     const stored = await readFeedbackSettings(env, 'automation');
     const settings = stored.settings;
-    if (!settings.hookUrl || !settings.subscribedEvents.includes(eventType)) return null;
+    if (!settings.hookUrl || !settings.subscribedEvents.includes(eventType)) {
+        return { suppressed: true, reason: 'NOT_SUBSCRIBED' };
+    }
+
+    const quota = await checkFeedbackDispatchQuota(env, issueId);
+    if (!quota.allowed) {
+        await appendFeedbackSystemEvent(env, issueId, {
+            type: 'automation.suppressed',
+            visibility: 'admin',
+            body: {
+                reason: 'DAILY_QUOTA_EXCEEDED',
+                eventId,
+                eventType,
+                used: quota.used,
+                limit: quota.limit,
+            },
+        });
+        return { suppressed: true, reason: 'DAILY_QUOTA_EXCEEDED', quota };
+    }
 
     const now = new Date().toISOString();
-    const idempotencyKey = `${eventId}:${settings.hookUrl}`;
+    // §13.1 step 2: the idempotency key is per event + destination, so a
+    // replay of the same event never creates a second delivery or Run.
+    const idempotencyKey = `${issueId}:event:${eventId}`;
     const deliveryId = `dly_${crypto.randomUUID()}`;
     const inserted = await env.FEEDBACK_DB.prepare(
         `INSERT INTO feedback_deliveries (
@@ -2577,8 +2952,40 @@ async function enqueueFeedbackDelivery(env, { eventId, eventType, issueId }) {
         .bind(deliveryId, eventId, settings.hookUrl, idempotencyKey, null, now, now, now)
         .first();
 
-    if (!inserted) return null;
-    return { deliveryId, issueId, eventType, destination: settings.hookUrl };
+    if (!inserted) {
+        const existing = await env.FEEDBACK_DB.prepare(
+            'SELECT id, status FROM feedback_deliveries WHERE idempotency_key = ?'
+        )
+            .bind(idempotencyKey)
+            .first();
+        return {
+            deliveryId: existing?.id || null,
+            duplicate: true,
+            status: existing?.status || 'unknown',
+        };
+    }
+
+    await recordFeedbackDispatchUsage(env, issueId, quota.usageDate);
+    const workflow = await ensureFeedbackWorkflowForEvent(env, issueId, {
+        deliveryId,
+        eventId,
+        eventType,
+    });
+    if (workflow?.instanceId) {
+        await env.FEEDBACK_DB.prepare(
+            'UPDATE feedback_deliveries SET workflow_instance_id = ? WHERE id = ?'
+        )
+            .bind(workflow.instanceId, deliveryId)
+            .run();
+    }
+
+    return {
+        deliveryId,
+        issueId,
+        eventType,
+        destination: settings.hookUrl,
+        workflow,
+    };
 }
 
 function serializeTimelineEvent(row) {
@@ -2804,7 +3211,7 @@ async function appendFeedbackComment(env, issueId, { actorType, body, mode, expe
             .run();
     }
 
-    const delivery = await enqueueFeedbackDelivery(env, {
+    const delivery = await dispatchFeedbackEvent(env, {
         eventId: commentEventId,
         eventType: 'comment.created',
         issueId,
@@ -2874,7 +3281,7 @@ async function reopenFeedbackIssue(env, issueId, { actorType, expectedVersion })
         throw feedbackStorageError('FEEDBACK_VERSION_CONFLICT');
     }
 
-    const delivery = await enqueueFeedbackDelivery(env, {
+    const delivery = await dispatchFeedbackEvent(env, {
         eventId,
         eventType: 'issue.reopened',
         issueId,
@@ -5174,7 +5581,7 @@ function renderFeedbackBoardPage(apiBase = '') {
 }
 
 export default {
-    async fetch(request, env) {
+    async fetch(request, env, ctx) {
         const url = new URL(request.url);
         const headers = corsHeaders(request.headers.get('Origin'));
 
@@ -5454,6 +5861,32 @@ export default {
 
             try {
                 return jsonResponse({ health: await readAutomationHealth(env) }, { headers });
+            } catch (error) {
+                return feedbackErrorResponse(error, headers);
+            }
+        }
+
+        // §17.2: a manual DLQ replay reuses the original delivery row, so the
+        // same eventId/idempotencyKey can never produce a second Run.
+        if (
+            request.method === 'POST' &&
+            url.pathname.startsWith('/api/feedback/deliveries/') &&
+            url.pathname.endsWith('/replay')
+        ) {
+            if (!(await isValidAdminToken(request, env))) {
+                return errorResponse('Unauthorized', 401, headers);
+            }
+
+            const deliveryId = decodeURIComponent(
+                url.pathname.slice('/api/feedback/deliveries/'.length, -'/replay'.length)
+            );
+            try {
+                const result = await attemptFeedbackDelivery(env, deliveryId);
+                if (result.errorCode === 'DELIVERY_NOT_FOUND') {
+                    return errorResponse('Not found', 404, headers);
+                }
+
+                return jsonResponse({ result }, { headers });
             } catch (error) {
                 return feedbackErrorResponse(error, headers);
             }
@@ -5880,6 +6313,20 @@ export default {
                 }
 
                 const created = await createD1FeedbackIssue(env, feedback);
+                // §12.2/§17.3: the submitter must not wait on delivery, and the
+                // Hook contract only promises a 10s response on its own side.
+                const dispatch = dispatchFeedbackEvent(env, {
+                    eventId: created.eventId,
+                    eventType: 'issue.created',
+                    issueId: created.issueId,
+                }).catch((error) => {
+                    console.warn('[Feedback] issue.created dispatch failed', error);
+                });
+                if (ctx?.waitUntil) {
+                    ctx.waitUntil(dispatch);
+                } else {
+                    await dispatch;
+                }
 
                 return jsonResponse(
                     {

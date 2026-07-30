@@ -30,10 +30,30 @@ account currently has R2 disabled.
 - `tests/e2e/workbench/feedback-workbench.spec.js` (18 tests) runs against the local
   Worker per §19.6; `SCN-FWB-015` moved to `active`.
 
-**Not yet built (Phase 1/2):** event dispatch to the Hook (deliveries are recorded as
-`pending`), Workflow run creation, Callback/Context run-scoped tokens, Candidate/Design/
-Release endpoints, artifact timeline entries, and the real Codex/Claude Action smoke
-(`/runners/test` returns `ACTION_SMOKE_NOT_CONFIGURED` rather than a fabricated pass).
+**Status (2026-07-30) — Phase 1 event dispatch landed.**
+
+- `dispatchFeedbackEvent` replaces the placeholder enqueue: it builds the §12.1 envelope,
+  writes an idempotent delivery keyed on `issueId:event:eventId`, records daily usage, and
+  starts or resumes the Workflow that owns the retries.
+- Workflow instance identity follows §13.1/§13.4: one non-terminal instance per Issue,
+  `sendEvent` resume while it lives, compare-and-set `generation + 1` once it is terminal,
+  and a `security.blocked` event when a custom instance ID does not match the D1 mapping.
+  The event ID is never the instance ID.
+- Retries live in `FeedbackWorkflow.deliverEvent` as a `step.do` with exponential backoff
+  (§17.2: 4 attempts from 1 minute), so no high-frequency cron exists (§4, §19.4). Only
+  transport failures retry; auth/schema failures fail immediately (§17.1). Exhaustion parks
+  the delivery in the DLQ.
+- `POST /api/feedback/deliveries/:id/replay` (admin) reuses the original delivery row, and
+  the automation page shows a 重放 action on stuck deliveries.
+- §12.2/§18.2 quota: dispatch past `FEEDBACK_DAILY_DISPATCH_QUOTA` per Issue per day writes
+  an admin-visible `automation.suppressed` event and creates no Workflow, delivery or Run.
+- `issue.created` dispatches through `ctx.waitUntil`, so submitters never wait on the Hook.
+
+**Still not built:** GitHub `workflow_dispatch` (no Run is created yet), Callback/Context
+run-scoped tokens, Candidate/Design/Release endpoints, artifact timeline entries, and the
+real Codex/Claude Action smoke — `/runners/test` returns `ACTION_SMOKE_NOT_CONFIGURED`
+rather than a fabricated pass. The daily `feedback-reconcile` sweep is reported by
+`automation/health` but has no scheduled handler yet.
 
 ---
 

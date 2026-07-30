@@ -991,6 +991,12 @@
         $('deliveryList').innerHTML = deliveries.length
             ? deliveries
                   .map(function (delivery) {
+                      // §17.2: a stuck delivery is only actionable if the admin
+                      // can replay it, and a replay reuses the same delivery id.
+                      var canReplay =
+                          delivery.status === 'dead_letter' ||
+                          delivery.status === 'failed' ||
+                          delivery.status === 'pending';
                       return (
                           '<div class="delivery"><div class="delivery-main">' +
                           '<span class="delivery-icon">' +
@@ -1001,9 +1007,15 @@
                           escapeHtml(delivery.id.slice(0, 12)) +
                           '</strong><span>' +
                           escapeHtml(deliveryStatusText(delivery)) +
-                          '</span></div></div><span class="delivery-time">' +
+                          '</span></div></div><span class="inline" style="gap:8px">' +
+                          (canReplay
+                              ? '<button class="button" type="button" data-replay-delivery="' +
+                                escapeHtml(delivery.id) +
+                                '">重放</button>'
+                              : '') +
+                          '<span class="delivery-time">' +
                           escapeHtml(relativeTime(delivery.createdAt)) +
-                          '</span></div>'
+                          '</span></span></div>'
                       );
                   })
                   .join('')
@@ -1044,11 +1056,21 @@
     }
 
     function deliveryStatusText(delivery) {
+        var attempts = Math.max(delivery.attemptCount, 1);
         if (delivery.status === 'succeeded') {
-            return delivery.responseStatus + ' · 第 ' + Math.max(delivery.attemptCount, 1) + ' 次尝试';
+            return delivery.responseStatus + ' · 第 ' + attempts + ' 次尝试';
         }
-        if (delivery.status === 'pending') return '待投递 · 已入队';
-        if (delivery.status === 'dead_letter') return '进入 DLQ · ' + (delivery.lastError || '重试耗尽');
+        if (delivery.status === 'pending') {
+            return delivery.attemptCount
+                ? '重试中 · 已尝试 ' + attempts + ' 次 · ' + (delivery.lastError || '')
+                : '待投递 · 已入队';
+        }
+        if (delivery.status === 'dead_letter') {
+            return '进入 DLQ · ' + (delivery.lastError || '重试耗尽');
+        }
+        if (delivery.status === 'failed') {
+            return '不可重试 · ' + (delivery.lastError || '未知错误');
+        }
         return delivery.status;
     }
 
@@ -1403,6 +1425,32 @@
             state.runners.defaultProvider = defaultProviderButton.dataset.defaultProvider;
             renderRunners();
             markDirty('runners');
+            return;
+        }
+
+        var replayButton = event.target.closest('[data-replay-delivery]');
+        if (replayButton) {
+            replayButton.disabled = true;
+            replayButton.textContent = '重放中…';
+            request(
+                '/api/feedback/deliveries/' +
+                    encodeURIComponent(replayButton.dataset.replayDelivery) +
+                    '/replay',
+                { method: 'POST', body: {} }
+            )
+                .then(function (payload) {
+                    toastTimer(
+                        payload.result.ok
+                            ? '重放成功：' + payload.result.responseStatus
+                            : '重放未成功：' + (payload.result.errorCode || '未知错误')
+                    );
+                    return loadAutomation();
+                })
+                .catch(function (error) {
+                    replayButton.disabled = false;
+                    replayButton.textContent = '重放';
+                    handleAuthError(error);
+                });
             return;
         }
 

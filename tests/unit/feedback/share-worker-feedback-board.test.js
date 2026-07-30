@@ -106,8 +106,14 @@ class MemoryD1 {
             feedback_settings: new Map(),
             feedback_human_actions: new Map(),
             feedback_deliveries: new Map(),
+            feedback_workflows: new Map(),
+            feedback_usage_daily: new Map(),
         };
         this.queries = [];
+
+        for (const row of seed.feedback_workflows || []) {
+            this.tables.feedback_workflows.set(row.instance_id, { ...row });
+        }
 
         for (const row of seed.feedback_settings || []) {
             this.tables.feedback_settings.set(row.name, { ...row });
@@ -425,7 +431,146 @@ class MemoryD1 {
             return ok([{ id: actionId }]);
         }
 
+        // --- feedback_usage_daily ---
+        if (normalized.includes('from feedback_usage_daily')) {
+            const row = this.tables.feedback_usage_daily.get(`${values[0]}:issue:${values[1]}`);
+            return ok(row ? [{ ...row }] : []);
+        }
+        if (normalized.startsWith('insert into feedback_usage_daily')) {
+            const [usageDate, scopeId] = values;
+            const key = `${usageDate}:issue:${scopeId}`;
+            const current = this.tables.feedback_usage_daily.get(key);
+            this.tables.feedback_usage_daily.set(key, {
+                usage_date: usageDate,
+                scope_type: 'issue',
+                scope_id: scopeId,
+                run_count: (current?.run_count || 0) + 1,
+                estimated_cost: 0,
+            });
+            return ok([], 1);
+        }
+
+        // --- feedback_workflows ---
+        if (normalized.includes('from feedback_workflows where issue_id = ?')) {
+            const byGeneration = normalized.includes('generation = ?');
+            const rows = Array.from(this.tables.feedback_workflows.values()).filter((row) => {
+                if (row.issue_id !== values[0]) return false;
+                if (byGeneration) return row.generation === values[1];
+                return ['queued', 'running', 'waiting'].includes(row.status);
+            });
+            return ok(rows.map((row) => ({ ...row })));
+        }
+        if (normalized.startsWith('insert into feedback_workflows')) {
+            const [
+                issueId,
+                generation,
+                instanceId,
+                status,
+                activeRunId,
+                contextVersion,
+                startedAt,
+            ] = values;
+            const duplicate = Array.from(this.tables.feedback_workflows.values()).some(
+                (row) => row.issue_id === issueId && row.generation === generation
+            );
+            if (duplicate) return ok([], 0);
+            this.tables.feedback_workflows.set(instanceId, {
+                issue_id: issueId,
+                generation,
+                instance_id: instanceId,
+                status,
+                active_run_id: activeRunId,
+                context_version: contextVersion,
+                started_at: startedAt,
+                waiting_until: null,
+                finished_at: null,
+                terminal_reason: null,
+            });
+            return ok([], 1);
+        }
+        if (normalized.startsWith('update feedback_issues set workflow_generation = ?')) {
+            const [generation, instanceId, issueId, expectedGeneration] = values;
+            const current = this.tables.feedback_issues.get(issueId);
+            if (!current || (current.workflow_generation || 0) !== expectedGeneration) {
+                return ok([], 0);
+            }
+            this.tables.feedback_issues.set(issueId, {
+                ...current,
+                workflow_generation: generation,
+                active_workflow_id: instanceId,
+            });
+            return ok([{ id: issueId }]);
+        }
+
         // --- feedback_deliveries ---
+        if (
+            normalized.startsWith('select d.*') &&
+            normalized.includes('from feedback_deliveries d')
+        ) {
+            const delivery = this.tables.feedback_deliveries.get(values[0]);
+            if (!delivery) return ok([]);
+            const event = this.tables.feedback_events.get(delivery.event_id);
+            const issue = event ? this.tables.feedback_issues.get(event.issue_id) : null;
+            if (!event || !issue) return ok([]);
+            return ok([
+                {
+                    ...delivery,
+                    event_type: event.type,
+                    actor_type: event.actor_type,
+                    actor_id: event.actor_id,
+                    occurred_at: event.occurred_at,
+                    body_json: event.body_json,
+                    issue_id: event.issue_id,
+                    issue_version: issue.version,
+                    issue_status: issue.status,
+                },
+            ]);
+        }
+        if (normalized.includes('from feedback_deliveries where idempotency_key = ?')) {
+            const row = Array.from(this.tables.feedback_deliveries.values()).find(
+                (item) => item.idempotency_key === values[0]
+            );
+            return ok(row ? [{ ...row }] : []);
+        }
+        if (normalized.startsWith('update feedback_deliveries')) {
+            const isDeadLetter = normalized.includes("status = 'dead_letter'");
+            const isWorkflowLink = normalized.includes('set workflow_instance_id = ?');
+            const deliveryId = values[values.length - 1];
+            const current = this.tables.feedback_deliveries.get(deliveryId);
+            if (!current) return ok([], 0);
+
+            if (isWorkflowLink) {
+                this.tables.feedback_deliveries.set(deliveryId, {
+                    ...current,
+                    workflow_instance_id: values[0],
+                });
+                return ok([], 1);
+            }
+            if (isDeadLetter) {
+                if (current.status === 'succeeded') return ok([], 0);
+                this.tables.feedback_deliveries.set(deliveryId, {
+                    ...current,
+                    status: 'dead_letter',
+                    next_attempt_at: null,
+                    last_error: values[0],
+                    updated_at: values[1],
+                });
+                return ok([], 1);
+            }
+
+            const [status, attemptCount, responseStatus, lastError, nextAttemptAt, updatedAt] =
+                values;
+            this.tables.feedback_deliveries.set(deliveryId, {
+                ...current,
+                status,
+                attempt_count: attemptCount,
+                response_status: responseStatus,
+                last_error: lastError,
+                next_attempt_at: nextAttemptAt,
+                updated_at: updatedAt,
+            });
+            return ok([], 1);
+        }
         if (normalized.startsWith('insert into feedback_deliveries')) {
             const [
                 id,
@@ -680,6 +825,8 @@ function createD1IssueRow(overrides = {}) {
         legacy_public_note: '',
         legacy_internal_note: '',
         legacy_kv_key: null,
+        workflow_generation: 0,
+        active_workflow_id: null,
         created_at: '2026-07-28T08:00:00.000Z',
         updated_at: '2026-07-28T08:00:00.000Z',
         resolved_at: null,
@@ -4003,5 +4150,428 @@ describe('feedback workbench V2 routes', () => {
         expect(ownerEvents.events.map((event) => event.id)).toEqual(['evt_public']);
         expect(JSON.stringify(ownerEvents)).not.toContain('internal build log');
         expect(adminEvents.events.map((event) => event.id)).toEqual(['evt_public', 'evt_internal']);
+    });
+});
+
+describe('feedback workbench V2 event dispatch', () => {
+    async function adminHeaders(env) {
+        const session = await json(
+            await request(
+                '/api/feedback/admin/session',
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password: 'admin-pass' }),
+                },
+                env
+            )
+        );
+
+        return { Authorization: `Bearer ${session.token}`, 'Content-Type': 'application/json' };
+    }
+
+    /** Captures create/get/sendEvent so instance identity can be asserted. */
+    function createWorkflowStub() {
+        const stub = {
+            created: [],
+            sentEvents: [],
+            getCalls: [],
+            failCreate: null,
+            async create(options) {
+                if (stub.failCreate) throw new Error(stub.failCreate);
+                stub.created.push(options);
+                return { id: options.id };
+            },
+            async get(id) {
+                stub.getCalls.push(id);
+                return {
+                    async sendEvent(event) {
+                        stub.sentEvents.push({ id, event });
+                    },
+                };
+            },
+        };
+        return stub;
+    }
+
+    async function createDispatchEnv({
+        hookUrl = 'https://agent.example.com/hooks/feedback',
+        issue,
+    } = {}) {
+        const env = createV2Env(
+            {},
+            { feedback_issues: [issue || createD1IssueRow({ status: 'open' })] }
+        );
+        env.FEEDBACK_WEBHOOK_SECRET = 'signing-key';
+        env.FEEDBACK_WORKFLOW = createWorkflowStub();
+        const headers = await adminHeaders(env);
+        await request(
+            '/api/feedback/automation/settings',
+            {
+                method: 'PATCH',
+                headers,
+                body: JSON.stringify({ expectedVersion: 0, settings: { hookUrl } }),
+            },
+            env
+        );
+        return { env, headers };
+    }
+
+    async function postComment(env, headers, expectedVersion, body = '触发一次投递') {
+        return json(
+            await request(
+                `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/comments`,
+                {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({ body, mode: 'record', expectedVersion }),
+                },
+                env
+            )
+        );
+    }
+
+    it('[SCN-FWB-002] creates exactly one issueId:generation Workflow per event', async () => {
+        const { env, headers } = await createDispatchEnv();
+
+        const first = await postComment(env, headers, 1);
+        expect(first.delivery.workflow.instanceId).toBe(`${feedbackKey}:1`);
+        expect(first.delivery.workflow.resumed).toBe(false);
+        expect(env.FEEDBACK_WORKFLOW.created).toHaveLength(1);
+        expect(env.FEEDBACK_WORKFLOW.created[0].id).toBe(`${feedbackKey}:1`);
+        // §13.4: the event ID is never the instance ID.
+        expect(env.FEEDBACK_WORKFLOW.created[0].id).not.toContain('evt_');
+        expect(env.FEEDBACK_WORKFLOW.created[0].params.generation).toBe(1);
+        expect(env.FEEDBACK_WORKFLOW.created[0].params.deliveryId).toBe(first.delivery.deliveryId);
+    });
+
+    it('[SCN-FWB-007] resumes the same workflowId while an instance is non-terminal', async () => {
+        const { env, headers } = await createDispatchEnv();
+        await postComment(env, headers, 1);
+        env.FEEDBACK_DB.tables.feedback_workflows.set(`${feedbackKey}:1`, {
+            issue_id: feedbackKey,
+            generation: 1,
+            instance_id: `${feedbackKey}:1`,
+            status: 'waiting',
+            active_run_id: null,
+            context_version: 1,
+            started_at: '2026-07-28T09:00:00.000Z',
+            waiting_until: null,
+            finished_at: null,
+            terminal_reason: null,
+        });
+
+        const second = await postComment(env, headers, 2, '补充说明');
+
+        expect(second.delivery.workflow.resumed).toBe(true);
+        expect(second.delivery.workflow.instanceId).toBe(`${feedbackKey}:1`);
+        // No second instance: the reply resumed the existing generation.
+        expect(env.FEEDBACK_WORKFLOW.created).toHaveLength(1);
+        expect(env.FEEDBACK_WORKFLOW.sentEvents).toHaveLength(1);
+        expect(env.FEEDBACK_WORKFLOW.sentEvents[0].id).toBe(`${feedbackKey}:1`);
+        expect(env.FEEDBACK_WORKFLOW.sentEvents[0].event.type).toBe('comment.created');
+    });
+
+    it('[SCN-FWB-007] uses generation + 1 once the previous instance is terminal', async () => {
+        const { env, headers } = await createDispatchEnv();
+        await postComment(env, headers, 1);
+        env.FEEDBACK_DB.tables.feedback_workflows.set(`${feedbackKey}:1`, {
+            issue_id: feedbackKey,
+            generation: 1,
+            instance_id: `${feedbackKey}:1`,
+            status: 'terminated',
+            terminal_reason: 'human_timeout',
+        });
+
+        const second = await postComment(env, headers, 2, '超时后回访');
+
+        expect(second.delivery.workflow.instanceId).toBe(`${feedbackKey}:2`);
+        expect(second.delivery.workflow.resumed).toBe(false);
+        expect(env.FEEDBACK_WORKFLOW.sentEvents).toHaveLength(0);
+        expect(env.FEEDBACK_WORKFLOW.created.map((c) => c.id)).toEqual([
+            `${feedbackKey}:1`,
+            `${feedbackKey}:2`,
+        ]);
+    });
+
+    it('[SCN-FWB-003] records security.blocked when a custom instance ID does not match D1', async () => {
+        const { env, headers } = await createDispatchEnv();
+        env.FEEDBACK_WORKFLOW.failCreate = 'instance already exists';
+
+        const result = await postComment(env, headers, 1);
+
+        expect(result.delivery.workflow.error).toBe('WORKFLOW_INSTANCE_MISMATCH');
+        const blocked = Array.from(env.FEEDBACK_DB.tables.feedback_events.values()).filter(
+            (event) => event.type === 'security.blocked'
+        );
+        expect(blocked).toHaveLength(1);
+        expect(blocked[0].visibility).toBe('internal');
+        expect(JSON.parse(blocked[0].body_json).reason).toBe('WORKFLOW_INSTANCE_MISMATCH');
+    });
+
+    it('[SCN-FWB-012] suppresses dispatch past the daily quota without creating a Workflow', async () => {
+        const { env, headers } = await createDispatchEnv();
+        const usageDate = new Date().toISOString().slice(0, 10);
+        env.FEEDBACK_DB.tables.feedback_usage_daily.set(`${usageDate}:issue:${feedbackKey}`, {
+            usage_date: usageDate,
+            scope_type: 'issue',
+            scope_id: feedbackKey,
+            run_count: 20,
+            estimated_cost: 0,
+        });
+
+        const result = await postComment(env, headers, 1);
+
+        expect(result.delivery.suppressed).toBe(true);
+        expect(result.delivery.reason).toBe('DAILY_QUOTA_EXCEEDED');
+        expect(env.FEEDBACK_WORKFLOW.created).toHaveLength(0);
+        expect(env.FEEDBACK_DB.tables.feedback_deliveries.size).toBe(0);
+        const suppressed = Array.from(env.FEEDBACK_DB.tables.feedback_events.values()).filter(
+            (event) => event.type === 'automation.suppressed'
+        );
+        expect(suppressed).toHaveLength(1);
+        // §10.2: quota noise is admin-only, not public timeline content.
+        expect(suppressed[0].visibility).toBe('admin');
+    });
+
+    it('[SCN-FWB-010] delivers the §12.1 envelope with a valid signature', async () => {
+        const { env, headers } = await createDispatchEnv();
+        const created = await postComment(env, headers, 1, '@codex-agent 请处理');
+        const calls = [];
+        const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, options) => {
+            calls.push({ url, options });
+            return new Response('', { status: 202 });
+        });
+
+        try {
+            const replayed = await json(
+                await request(
+                    `/api/feedback/deliveries/${created.delivery.deliveryId}/replay`,
+                    { method: 'POST', headers },
+                    env
+                )
+            );
+
+            expect(replayed.result.ok).toBe(true);
+            expect(replayed.result.status).toBe('succeeded');
+            expect(calls).toHaveLength(1);
+
+            const envelope = JSON.parse(calls[0].options.body);
+            expect(envelope.specVersion).toBe('1.0');
+            expect(envelope.eventType).toBe('comment.created');
+            expect(envelope.issue).toEqual({
+                id: feedbackKey,
+                version: expect.any(Number),
+                status: expect.any(String),
+            });
+            expect(envelope.actor.type).toBe('admin');
+            expect(envelope.trigger.mention).toBe('@codex-agent');
+            expect(envelope.delivery.deliveryId).toBe(created.delivery.deliveryId);
+            expect(envelope.delivery.idempotencyKey).toContain(':event:evt_');
+            expect(envelope.delivery.attempt).toBe(1);
+            // §18.2: no secrets, contact or attachment bodies ride along.
+            const raw = calls[0].options.body;
+            expect(raw).not.toContain('signing-key');
+            expect(raw).not.toContain('admin-pass');
+            expect(calls[0].options.headers['X-Feedback-Signature-256']).toMatch(
+                /^sha256=[0-9a-f]{64}$/
+            );
+            expect(calls[0].options.headers['X-Feedback-Delivery']).toBe(
+                created.delivery.deliveryId
+            );
+        } finally {
+            fetchSpy.mockRestore();
+        }
+    });
+
+    it('[SCN-FWB-013] retries transport failures but not auth or schema failures', async () => {
+        const { env, headers } = await createDispatchEnv();
+        const created = await postComment(env, headers, 1);
+        const deliveryId = created.delivery.deliveryId;
+
+        const fetchSpy = vi.spyOn(globalThis, 'fetch');
+        try {
+            fetchSpy.mockResolvedValueOnce(new Response('', { status: 503 }));
+            const retryable = await json(
+                await request(
+                    `/api/feedback/deliveries/${deliveryId}/replay`,
+                    { method: 'POST', headers },
+                    env
+                )
+            );
+            expect(retryable.result.retryable).toBe(true);
+            expect(retryable.result.status).toBe('pending');
+            expect(retryable.result.attempt).toBe(1);
+
+            fetchSpy.mockResolvedValueOnce(new Response('', { status: 401 }));
+            const permanent = await json(
+                await request(
+                    `/api/feedback/deliveries/${deliveryId}/replay`,
+                    { method: 'POST', headers },
+                    env
+                )
+            );
+            // §17.1: an auth failure is never retried; it fails the delivery.
+            expect(permanent.result.retryable).toBe(false);
+            expect(permanent.result.status).toBe('failed');
+            expect(permanent.result.errorCode).toBe('HTTP_401');
+        } finally {
+            fetchSpy.mockRestore();
+        }
+    });
+
+    it('[SCN-FWB-013] stops retrying after four attempts and parks the delivery in the DLQ', async () => {
+        const { env, headers } = await createDispatchEnv();
+        const created = await postComment(env, headers, 1);
+        const deliveryId = created.delivery.deliveryId;
+
+        const fetchSpy = vi
+            .spyOn(globalThis, 'fetch')
+            .mockResolvedValue(new Response('', { status: 503 }));
+        try {
+            const statuses = [];
+            for (let attempt = 0; attempt < 4; attempt += 1) {
+                const result = await json(
+                    await request(
+                        `/api/feedback/deliveries/${deliveryId}/replay`,
+                        { method: 'POST', headers },
+                        env
+                    )
+                );
+                statuses.push(result.result.status);
+            }
+
+            expect(statuses).toEqual(['pending', 'pending', 'pending', 'dead_letter']);
+            expect(env.FEEDBACK_DB.tables.feedback_deliveries.get(deliveryId).attempt_count).toBe(
+                4
+            );
+            expect(fetchSpy).toHaveBeenCalledTimes(4);
+
+            const health = await json(
+                await request('/api/feedback/automation/health', { headers }, env)
+            );
+            expect(health.health.deadLetterCount).toBe(1);
+            expect(health.health.reconcile.stuckCount).toBe(1);
+        } finally {
+            fetchSpy.mockRestore();
+        }
+    });
+
+    it('[SCN-FWB-003] replaying a delivered event does not resend or duplicate it', async () => {
+        const { env, headers } = await createDispatchEnv();
+        const created = await postComment(env, headers, 1);
+        const deliveryId = created.delivery.deliveryId;
+
+        const fetchSpy = vi
+            .spyOn(globalThis, 'fetch')
+            .mockResolvedValue(new Response('', { status: 202 }));
+        try {
+            await request(
+                `/api/feedback/deliveries/${deliveryId}/replay`,
+                { method: 'POST', headers },
+                env
+            );
+            expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+            const again = await json(
+                await request(
+                    `/api/feedback/deliveries/${deliveryId}/replay`,
+                    { method: 'POST', headers },
+                    env
+                )
+            );
+
+            expect(again.result.alreadyDelivered).toBe(true);
+            expect(fetchSpy).toHaveBeenCalledTimes(1);
+            expect(env.FEEDBACK_DB.tables.feedback_deliveries.size).toBe(1);
+            expect(env.FEEDBACK_WORKFLOW.created).toHaveLength(1);
+        } finally {
+            fetchSpy.mockRestore();
+        }
+    });
+
+    it('[SCN-FWB-017] refuses a delivery replay without an admin session', async () => {
+        const { env, headers } = await createDispatchEnv();
+        const created = await postComment(env, headers, 1);
+
+        const response = await request(
+            `/api/feedback/deliveries/${created.delivery.deliveryId}/replay`,
+            { method: 'POST' },
+            env
+        );
+
+        expect(response.status).toBe(401);
+        expect(
+            env.FEEDBACK_DB.tables.feedback_deliveries.get(created.delivery.deliveryId).status
+        ).toBe('pending');
+    });
+
+    it('[SCN-FWB-002] does not dispatch an event that is not subscribed', async () => {
+        const { env, headers } = await createDispatchEnv();
+        const current = await json(
+            await request('/api/feedback/automation/settings', { headers }, env)
+        );
+        await request(
+            '/api/feedback/automation/settings',
+            {
+                method: 'PATCH',
+                headers,
+                body: JSON.stringify({
+                    expectedVersion: current.settings.version,
+                    settings: { subscribedEvents: ['issue.created'] },
+                }),
+            },
+            env
+        );
+
+        const result = await postComment(env, headers, 1);
+
+        expect(result.delivery.suppressed).toBe(true);
+        expect(result.delivery.reason).toBe('NOT_SUBSCRIBED');
+        expect(env.FEEDBACK_DB.tables.feedback_deliveries.size).toBe(0);
+        expect(env.FEEDBACK_WORKFLOW.created).toHaveLength(0);
+    });
+
+    it('[SCN-FWB-002] dispatches issue.created without blocking the submitter', async () => {
+        const env = createV2Env();
+        env.FEEDBACK_WORKFLOW = createWorkflowStub();
+        const headers = await adminHeaders(env);
+        await request(
+            '/api/feedback/automation/settings',
+            {
+                method: 'PATCH',
+                headers,
+                body: JSON.stringify({
+                    expectedVersion: 0,
+                    settings: { hookUrl: 'https://agent.example.com/hooks/feedback' },
+                }),
+            },
+            env
+        );
+
+        const pending = [];
+        const response = await worker.fetch(
+            new Request('https://worker.test/api/feedback', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ title: '新反馈', description: '内容' }),
+            }),
+            env,
+            { waitUntil: (promise) => pending.push(promise) }
+        );
+        const created = await json(response);
+
+        expect(response.status).toBe(201);
+        // §17.3: dispatch is handed to waitUntil, so the 201 does not wait on
+        // the Hook round trip. (Asserting the row is still absent here would
+        // only be testing microtask ordering against an in-memory D1.)
+        expect(pending).toHaveLength(1);
+        expect(created.ownerCapability).toBeTruthy();
+
+        await Promise.all(pending);
+
+        expect(env.FEEDBACK_DB.tables.feedback_deliveries.size).toBe(1);
+        expect(env.FEEDBACK_WORKFLOW.created).toHaveLength(1);
+        expect(env.FEEDBACK_WORKFLOW.created[0].id).toBe(`${created.issueId}:1`);
     });
 });
