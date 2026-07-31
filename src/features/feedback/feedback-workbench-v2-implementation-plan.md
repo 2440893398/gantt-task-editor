@@ -124,6 +124,14 @@ can now reach `resolved`.**
   GitHub cannot run a workflow that is not in the repository. Everything else under
   `.github/` stays untracked.
 
+**Local pipeline run (2026-08-01).** Driving one Issue end to end against a local Worker
+found three defects no unit test could have caught, all now fixed: Cloudflare rejects `:`
+in a Workflow instance ID so no instance was ever created; orchestration was gated on an
+external Hook being configured, so an Actions-only project would never get a Run; and Run
+creation sat behind Hook delivery retries, parking the Agent behind up to ~21 minutes of
+backoff. Re-running the pipeline now produces `feedback-<id>-g1`, a Run at the routed
+policy, and an honest `GITHUB_DISPATCH_NOT_CONFIGURED`.
+
 **Still not built:** Design revisions (§16.4) are not modelled, `auto_deliver` (§7.4)
 always routes through Candidate review, and `/runners/test` still returns
 `ACTION_SMOKE_NOT_CONFIGURED`. Nothing has run against a real repository: that needs
