@@ -387,6 +387,44 @@ class MemoryD1 {
         throw new Error(`Unsupported in-memory D1 query: ${normalized}`);
     }
 
+    /**
+     * Maps a normalized `SET a = ?, b = 'x', c = CASE …` clause onto column
+     * values, so a statement that mixes placeholders with literals cannot be
+     * silently read at the wrong offsets.
+     */
+    parseSetClause(clause, values) {
+        const assignments = clause
+            .replace(/coalesce\(\?[^)]*\)/g, 'coalesce(?)')
+            .replace(/case when.*?end/g, 'case(?)')
+            .split(',')
+            .map((part) => part.trim());
+        const columns = {};
+        let conditionalFinishedAt;
+        let cursor = 0;
+
+        for (const assignment of assignments) {
+            const [column, expression] = assignment.split('=').map((part) => part.trim());
+            if (expression === '?') {
+                columns[column] = values[cursor++];
+            } else if (expression === 'null') {
+                columns[column] = null;
+            } else if (expression.startsWith('coalesce(?')) {
+                if (values[cursor] != null) columns[column] = values[cursor];
+                cursor += 1;
+            } else if (expression.startsWith('case(?')) {
+                // `CASE WHEN ? = 'x' THEN ? ELSE <column> END` binds two values.
+                cursor += 1;
+                conditionalFinishedAt = values[cursor++];
+            } else if (expression === 'version + 1') {
+                columns.version = '@increment';
+            } else if (expression.startsWith("'")) {
+                columns[column] = expression.replace(/^'|'$/g, '');
+            }
+        }
+
+        return { columns, conditionalFinishedAt, cursor };
+    }
+
     /** Workbench V2 statements (settings, human actions, deliveries, comments). */
     executeWorkbenchQuery(normalized, values) {
         const ok = (results = [], changes = results.length) => ({
@@ -727,28 +765,26 @@ class MemoryD1 {
             );
             return ok(rows.map((row) => ({ ...row })));
         }
-        if (normalized.startsWith('update feedback_runs')) {
+        const runUpdate = normalized.match(/^update feedback_runs set (.+?) where id = \?$/);
+        if (runUpdate) {
             const runId = values[values.length - 1];
             const current = this.tables.feedback_runs.get(runId);
             if (!current) return ok([], 0);
-            if (normalized.includes("status = 'cancelled'")) {
-                this.tables.feedback_runs.set(runId, {
-                    ...current,
-                    status: 'cancelled',
-                    finished_at: values[0],
-                });
-                return ok([], 1);
+
+            const patch = this.parseSetClause(runUpdate[1], values);
+            const next = { ...current };
+            for (const [column, value] of Object.entries(patch.columns)) {
+                next[column] = value;
             }
-            const [status, providerSessionId, , finishedAt, errorCode] = values;
-            this.tables.feedback_runs.set(runId, {
-                ...current,
-                status,
-                provider_session_id: providerSessionId ?? current.provider_session_id,
-                finished_at: ['succeeded', 'failed', 'cancelled', 'timed_out'].includes(status)
-                    ? finishedAt
-                    : current.finished_at,
-                error_code: errorCode ?? current.error_code,
-            });
+            // finished_at is guarded by a CASE on the new status in both callers.
+            if (patch.conditionalFinishedAt !== undefined) {
+                next.finished_at = ['succeeded', 'failed', 'cancelled', 'timed_out'].includes(
+                    next.status
+                )
+                    ? patch.conditionalFinishedAt
+                    : current.finished_at;
+            }
+            this.tables.feedback_runs.set(runId, next);
             return ok([], 1);
         }
 
@@ -767,7 +803,7 @@ class MemoryD1 {
             // splitting the SET list on commas.
             const assignments = issueUpdate[1]
                 .replace(/coalesce\(\?[^)]*\)/g, 'coalesce(?)')
-                .replace(/case when[^,]*end/g, 'case(?)')
+                .replace(/case when.*?end/g, 'case(?)')
                 .split(',')
                 .map((part) => part.trim());
             const tail = issueUpdate[2];
@@ -4737,7 +4773,20 @@ describe('feedback workbench V2 Run and Callback', () => {
                 ],
             }
         );
-        const result = await runWorkflow(env, { issueId: feedbackKey });
+        // Dispatch is configured and stubbed so these tests exercise Callback
+        // semantics, not the un-dispatched path (covered by its own suite).
+        env.FEEDBACK_CALLBACK_ORIGIN = 'https://worker.test';
+        env.FEEDBACK_GITHUB_REPOSITORY = 'acme/gantt-task-editor';
+        env.FEEDBACK_GITHUB_TOKEN = 'ghp_test';
+        const fetchSpy = vi
+            .spyOn(globalThis, 'fetch')
+            .mockResolvedValue(new Response(null, { status: 204 }));
+        let result;
+        try {
+            result = await runWorkflow(env, { issueId: feedbackKey });
+        } finally {
+            fetchSpy.mockRestore();
+        }
         const run = Array.from(env.FEEDBACK_DB.tables.feedback_runs.values())[0];
         return { env, run, workflowResult: result };
     }
@@ -4814,7 +4863,7 @@ describe('feedback workbench V2 Run and Callback', () => {
         const { env, run } = await createRunEnv();
         expect(run.provider).toBe('codex');
         expect(run.runner_type).toBe('github_hosted');
-        expect(run.status).toBe('created');
+        expect(run.status).toBe('dispatched');
         expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).last_run_id).toBe(run.id);
     });
 
@@ -4842,11 +4891,12 @@ describe('feedback workbench V2 Run and Callback', () => {
         expect(second.run.blocked).toBe(true);
         expect(second.run.reason).toBe('WRITE_RUN_ALREADY_ACTIVE');
         expect(env.FEEDBACK_DB.tables.feedback_runs.size).toBe(1);
-        const suppressed = Array.from(env.FEEDBACK_DB.tables.feedback_events.values()).filter(
-            (event) => event.type === 'automation.suppressed'
-        );
-        expect(suppressed).toHaveLength(1);
-        expect(suppressed[0].visibility).toBe('admin');
+        const reasons = Array.from(env.FEEDBACK_DB.tables.feedback_events.values())
+            .filter((event) => event.type === 'automation.suppressed')
+            .map((event) => JSON.parse(event.body_json).reason);
+        // The first Run could not be dispatched (no GitHub config here) and the
+        // second was refused by the one-write-Run rule; both are admin-visible.
+        expect(reasons).toEqual(['GITHUB_DISPATCH_NOT_CONFIGURED', 'WRITE_RUN_ALREADY_ACTIVE']);
     });
 
     it('[SCN-FWB-017] rejects a Callback without the matching run-scoped token', async () => {
@@ -4930,7 +4980,19 @@ describe('feedback workbench V2 Run and Callback', () => {
             await postCallback(
                 env,
                 run.id,
-                { eventId: 'cb_3', type: 'run.completed', payload: { summary: '实现完成' } },
+                {
+                    eventId: 'cb_3',
+                    type: 'run.completed',
+                    payload: {
+                        summary: '实现完成',
+                        diffManifest: {
+                            baseCommit: 'abc123',
+                            changeCommit: 'def456',
+                            diffManifestSha256: 'hash',
+                            changedFiles: ['src/features/gantt/domain/link-ops.js'],
+                        },
+                    },
+                },
                 token
             )
         );
@@ -5156,5 +5218,315 @@ describe('feedback workbench V2 Run and Callback', () => {
 
         expect(response.status).toBe(400);
         expect(env.FEEDBACK_DB.tables.feedback_events.size).toBe(0);
+    });
+});
+
+describe('feedback workbench V2 GitHub dispatch', () => {
+    async function runWorkflow(env, { issueId, generation = 1 }) {
+        const step = {
+            async do(name, configOrCallback, maybeCallback) {
+                const callback =
+                    typeof configOrCallback === 'function' ? configOrCallback : maybeCallback;
+                return callback();
+            },
+        };
+        return new FeedbackWorkflow({}, env).run(
+            {
+                instanceId: `${issueId}:${generation}`,
+                payload: { issueId, generation, contextVersion: 1 },
+            },
+            step
+        );
+    }
+
+    function createDispatchEnv(overrides = {}) {
+        const env = createV2Env(
+            {},
+            {
+                feedback_issues: [
+                    createD1IssueRow({ status: 'queued', business_type: 'bug', scope: 'small' }),
+                ],
+            }
+        );
+        env.FEEDBACK_CALLBACK_ORIGIN = 'https://gantt-share.example.workers.dev';
+        env.FEEDBACK_GITHUB_REPOSITORY = 'acme/gantt-task-editor';
+        env.FEEDBACK_GITHUB_TOKEN = 'ghp_dispatch_token';
+        env.FEEDBACK_GITHUB_REF = 'master';
+        return Object.assign(env, overrides);
+    }
+
+    async function runToken(runId, aud) {
+        const payload = Buffer.from(
+            JSON.stringify({ aud, runId, provider: 'codex', exp: Date.now() + 60_000 }),
+            'utf8'
+        )
+            .toString('base64')
+            .replace(/\+/g, '-')
+            .replace(/\//g, '_')
+            .replace(/=+$/, '');
+        const key = await crypto.subtle.importKey(
+            'raw',
+            new TextEncoder().encode('unit-test-secret'),
+            { name: 'HMAC', hash: 'SHA-256' },
+            false,
+            ['sign']
+        );
+        const signature = Buffer.from(
+            new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload)))
+        )
+            .toString('base64')
+            .replace(/\+/g, '-')
+            .replace(/\//g, '_')
+            .replace(/=+$/, '');
+        return `${payload}.${signature}`;
+    }
+
+    it('[SCN-FWB-005] dispatches the provider workflow with a minimal payload', async () => {
+        const env = createDispatchEnv();
+        const calls = [];
+        const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, options) => {
+            calls.push({ url, options });
+            return new Response(null, { status: 204 });
+        });
+
+        try {
+            const result = await runWorkflow(env, { issueId: feedbackKey });
+
+            expect(result.run.dispatched).toBe(true);
+            expect(calls).toHaveLength(1);
+            expect(calls[0].url).toBe(
+                'https://api.github.com/repos/acme/gantt-task-editor/actions/workflows/feedback-agent-codex.yml/dispatches'
+            );
+            expect(calls[0].options.headers.Authorization).toBe('Bearer ghp_dispatch_token');
+
+            const body = JSON.parse(calls[0].options.body);
+            expect(body.ref).toBe('master');
+            const payload = JSON.parse(body.inputs.payload);
+            expect(payload.runId).toBe(result.run.runId);
+            expect(payload.policy).toBe('implement_and_verify');
+            expect(payload.provider).toBe('codex');
+            // §14.4 step 2: the profile follows the policy, not the model.
+            expect(payload.permissionProfile).toBe('feedback-workspace');
+            expect(payload.contextUrl).toBe(
+                `https://gantt-share.example.workers.dev/api/feedback/runs/${payload.runId}/context`
+            );
+            expect(payload.callbackUrl).toBe(
+                `https://gantt-share.example.workers.dev/api/feedback/runs/${payload.runId}/events`
+            );
+
+            // §13.2/§18.2: no Agent key, admin password or feedback body travels.
+            const raw = calls[0].options.body;
+            expect(raw).not.toContain('admin-pass');
+            expect(raw).not.toContain('unit-test-pii-key');
+            expect(raw).not.toContain('D1 issue description');
+            expect(env.FEEDBACK_DB.tables.feedback_runs.get(payload.runId).status).toBe(
+                'dispatched'
+            );
+        } finally {
+            fetchSpy.mockRestore();
+        }
+    });
+
+    it('[SCN-FWB-005] sends a read-only profile for an analyze policy', async () => {
+        const env = createDispatchEnv();
+        env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).scope = 'large';
+        const calls = [];
+        const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, options) => {
+            calls.push({ url, options });
+            return new Response(null, { status: 204 });
+        });
+
+        try {
+            await runWorkflow(env, { issueId: feedbackKey });
+            const payload = JSON.parse(JSON.parse(calls[0].options.body).inputs.payload);
+
+            expect(payload.policy).toBe('analyze');
+            expect(payload.permissionProfile).toBe('feedback-readonly');
+        } finally {
+            fetchSpy.mockRestore();
+        }
+    });
+
+    it('[SCN-FWB-009] leaves the Run visibly un-started when dispatch is unconfigured', async () => {
+        const env = createDispatchEnv();
+        delete env.FEEDBACK_GITHUB_TOKEN;
+        const fetchSpy = vi.spyOn(globalThis, 'fetch');
+
+        try {
+            const result = await runWorkflow(env, { issueId: feedbackKey });
+
+            expect(result.run.dispatched).toBe(false);
+            expect(fetchSpy).not.toHaveBeenCalled();
+            const run = env.FEEDBACK_DB.tables.feedback_runs.get(result.run.runId);
+            // §17.1/§7.3: an un-dispatched Run stays non-terminal so an admin
+            // can retry it and the write-Run lock is not released early.
+            expect(run.status).toBe('created');
+            expect(run.error_code).toBe('GITHUB_DISPATCH_NOT_CONFIGURED');
+            const suppressed = Array.from(env.FEEDBACK_DB.tables.feedback_events.values()).filter(
+                (event) => event.type === 'automation.suppressed'
+            );
+            expect(suppressed).toHaveLength(1);
+            expect(JSON.parse(suppressed[0].body_json).reason).toBe(
+                'GITHUB_DISPATCH_NOT_CONFIGURED'
+            );
+        } finally {
+            fetchSpy.mockRestore();
+        }
+    });
+
+    it('[SCN-FWB-013] marks a GitHub 5xx as retryable without claiming success', async () => {
+        const env = createDispatchEnv();
+        const fetchSpy = vi
+            .spyOn(globalThis, 'fetch')
+            .mockResolvedValue(new Response('', { status: 503 }));
+
+        try {
+            const result = await runWorkflow(env, { issueId: feedbackKey });
+            const run = env.FEEDBACK_DB.tables.feedback_runs.get(result.run.runId);
+
+            expect(result.run.dispatched).toBe(false);
+            expect(run.status).toBe('created');
+            expect(run.error_code).toBe('GITHUB_HTTP_503');
+        } finally {
+            fetchSpy.mockRestore();
+        }
+    });
+
+    it('[SCN-FWB-012] re-checks the diff manifest before projecting run.completed', async () => {
+        const env = createDispatchEnv();
+        const fetchSpy = vi
+            .spyOn(globalThis, 'fetch')
+            .mockResolvedValue(new Response(null, { status: 204 }));
+        let runId;
+        try {
+            runId = (await runWorkflow(env, { issueId: feedbackKey })).run.runId;
+        } finally {
+            fetchSpy.mockRestore();
+        }
+
+        // A Runner claiming success while having rewritten a golden answer must
+        // not be believed just because it says run.completed.
+        const response = await request(
+            `/api/feedback/runs/${encodeURIComponent(runId)}/events`,
+            {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${await runToken(runId, 'callback')}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    eventId: 'cb_done',
+                    type: 'run.completed',
+                    payload: {
+                        summary: '已完成',
+                        diffManifest: {
+                            baseCommit: 'abc123',
+                            changeCommit: 'def456',
+                            diffManifestSha256: 'hash',
+                            changedFiles: [
+                                'src/features/gantt/domain/scheduler.js',
+                                'tests/e2e/agent-journeys/expected/import-project-plan.json',
+                            ],
+                        },
+                    },
+                }),
+            },
+            env
+        );
+        const body = await json(response);
+
+        expect(body.gate.allowed).toBe(false);
+        expect(body.gate.violations[0].code).toBe('HARD_DENY_PATH');
+        // §14.4 rule 5: the claim is downgraded to a failure, not recorded as done.
+        expect(body.runStatus).toBe('failed');
+        expect(env.FEEDBACK_DB.tables.feedback_runs.get(runId).error_code).toBe(
+            'security_policy_violation'
+        );
+        expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).not.toBe('resolved');
+
+        const events = Array.from(env.FEEDBACK_DB.tables.feedback_events.values());
+        expect(events.some((event) => event.type === 'run.completed')).toBe(false);
+        expect(events.some((event) => event.type === 'run.failed')).toBe(true);
+    });
+
+    it('[SCN-FWB-012] rejects a write Run that reports no diff manifest', async () => {
+        const env = createDispatchEnv();
+        const fetchSpy = vi
+            .spyOn(globalThis, 'fetch')
+            .mockResolvedValue(new Response(null, { status: 204 }));
+        let runId;
+        try {
+            runId = (await runWorkflow(env, { issueId: feedbackKey })).run.runId;
+        } finally {
+            fetchSpy.mockRestore();
+        }
+
+        const body = await json(
+            await request(
+                `/api/feedback/runs/${encodeURIComponent(runId)}/events`,
+                {
+                    method: 'POST',
+                    headers: {
+                        Authorization: `Bearer ${await runToken(runId, 'callback')}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        eventId: 'cb_done',
+                        type: 'run.completed',
+                        payload: { summary: '完成了但没有清单' },
+                    }),
+                },
+                env
+            )
+        );
+
+        expect(body.gate.allowed).toBe(false);
+        expect(body.gate.violations[0].code).toBe('DIFF_MANIFEST_MISSING');
+        expect(body.runStatus).toBe('failed');
+    });
+
+    it('[SCN-FWB-005] accepts a clean manifest and projects the Run as succeeded', async () => {
+        const env = createDispatchEnv();
+        const fetchSpy = vi
+            .spyOn(globalThis, 'fetch')
+            .mockResolvedValue(new Response(null, { status: 204 }));
+        let runId;
+        try {
+            runId = (await runWorkflow(env, { issueId: feedbackKey })).run.runId;
+        } finally {
+            fetchSpy.mockRestore();
+        }
+
+        const body = await json(
+            await request(
+                `/api/feedback/runs/${encodeURIComponent(runId)}/events`,
+                {
+                    method: 'POST',
+                    headers: {
+                        Authorization: `Bearer ${await runToken(runId, 'callback')}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        eventId: 'cb_done',
+                        type: 'run.completed',
+                        payload: {
+                            summary: '修复完成，回归通过',
+                            diffManifest: {
+                                baseCommit: 'abc123',
+                                changeCommit: 'def456',
+                                diffManifestSha256: 'hash',
+                                changedFiles: ['src/features/gantt/domain/link-ops.js'],
+                            },
+                        },
+                    }),
+                },
+                env
+            )
+        );
+
+        expect(body.gate.allowed).toBe(true);
+        expect(body.runStatus).toBe('succeeded');
+        // §9.2: even a clean write Run stops at needs_human, never resolved.
+        expect(body.issueStatus).toBe('needs_human');
     });
 });

@@ -73,11 +73,37 @@ account currently has R2 disabled.
 - `POST /api/feedback/runs/:runId/cancel` (admin) cancels the Run and returns the Issue to
   `open` (§9.2).
 
-**Still not built:** GitHub `workflow_dispatch` — the Run and its tokens exist but nothing
-starts an Action yet, so Callbacks only arrive from tests. Candidate/Design/Release
-endpoints and the delivery closure are absent, `/runners/test` still returns
-`ACTION_SMOKE_NOT_CONFIGURED`, and the daily `feedback-reconcile` sweep is reported by
-`automation/health` but has no scheduled handler.
+**Status (2026-07-31) — GitHub dispatch and the mechanical diff gate landed.**
+
+- `src/features/feedback/diff-gate.js` holds the single §14.4 rule table, used by both
+  enforcement points: `scripts/feedback-diff-gate.mjs` in the Runner (before tests run) and
+  `verifyRunCompletionManifest` in the Worker (before `run.completed` is projected). One
+  table means the two gates cannot drift.
+- Three tiers per §14.4 rule 4: hard deny (golden JSON, `.git`, credentials), admin
+  approval (`.github/workflows`, `scripts`, `wrangler.*`, `AGENTS.md`, `CLAUDE.md`,
+  `.agents`, `.codex`) and contract-aware (`tests/scenarios/**`, append-only `CHANGES.md`,
+  allowed only for a trusted Run that cites an SCN-ID). A signed admin scope can release
+  approval-level paths but never the hard-deny list.
+- The gate also refuses verification weakening — `test.skip/only/todo`, removed `expect`
+  lines and weakened deep comparisons — and any file written by a read-only policy.
+- `dispatchFeedbackRunToGitHub` posts `workflow_dispatch` with the §13.2 minimal payload.
+  Run tokens travel as separate inputs, and no Agent key, admin password or feedback body
+  is included.
+- A Run that could not be dispatched stays non-terminal so §17.1 retry stays possible and
+  the one-write-Run lock is not released while nothing is running; the reason is recorded
+  as an admin-visible `automation.suppressed`.
+- `.github/workflows/feedback-agent-{codex,claude}.yml` implement §13.3: payload
+  validation, pinned `baseCommit` checkout with `persist-credentials: false`, context fetch
+  with the Context token, prompt with the reporter text fenced as untrusted data, the diff
+  gate before tests, Playwright evidence upload, and an `if: always()` callback.
+
+**Still not built:** Candidate/Design/Release endpoints and the delivery closure, so an
+approved Candidate cannot yet be integrated or deployed and no Issue can reach `resolved`.
+`/runners/test` still returns `ACTION_SMOKE_NOT_CONFIGURED`, and the daily
+`feedback-reconcile` sweep is reported by `automation/health` but has no scheduled handler.
+The Actions templates have not been executed against a real repository — that needs
+`FEEDBACK_GITHUB_REPOSITORY`/`FEEDBACK_GITHUB_TOKEN`/`FEEDBACK_CALLBACK_ORIGIN` plus the
+provider secrets, and SCN-FWB-005/016 stay `todo` until that smoke run happens.
 
 ---
 

@@ -8,6 +8,7 @@ import { WorkflowEntrypoint } from 'cloudflare:workers';
 import rrwebReplayBrowserScript from '../src/features/feedback/vendor/rrweb-replay-2.0.0-alpha.20.umd.min.txt';
 import rrwebReplayBrowserStyles from '../src/features/feedback/vendor/rrweb-replay-2.0.0-alpha.20.style.min.txt';
 import { renderFeedbackWorkbenchPage } from './feedback-workbench-ui.js';
+import { evaluateDiffGate } from '../src/features/feedback/diff-gate.js';
 
 const TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
 const FEEDBACK_TTL_SECONDS = 180 * 24 * 60 * 60; // 180 days
@@ -116,6 +117,18 @@ const FEEDBACK_CALLBACK_EVENT_TYPES = new Set([
     'run.cancelled',
 ]);
 const FEEDBACK_RUN_TOKEN_TTL_SECONDS = 4 * 60 * 60;
+// §13.3/§14.4 step 2: read-only policies get a profile without workspace write.
+const FEEDBACK_PERMISSION_PROFILES = {
+    analyze: 'feedback-readonly',
+    review: 'feedback-readonly',
+    implement: 'feedback-workspace',
+    implement_and_verify: 'feedback-workspace',
+    local_required: 'feedback-local',
+};
+const FEEDBACK_PROVIDER_WORKFLOW_FILES = {
+    codex: 'feedback-agent-codex.yml',
+    claude: 'feedback-agent-claude.yml',
+};
 const FEEDBACK_HUMAN_ACTION_TYPES = new Set([
     'need_reproduction',
     'confirm_design',
@@ -476,15 +489,30 @@ export class FeedbackWorkflow extends WorkflowEntrypoint {
                     body: { reason: run.reason, policy: run.policy || null },
                 })
             );
+            return { ...started, delivery: delivered, run };
         }
 
-        // A blocked result also carries the conflicting runId, so branch on
-        // `blocked` first or the refusal reads as a successful dispatch.
-        return {
-            ...started,
-            delivery: delivered,
-            run: run?.blocked ? run : run?.runId ? { runId: run.runId } : run,
-        };
+        if (run?.runId) {
+            // §13.1 step 8. Dispatch failure is recorded on the Run rather than
+            // thrown, so the workbench shows an un-started Run instead of a
+            // Run that looks alive but has no Job behind it.
+            const dispatch = await step.do('dispatch run', async () =>
+                dispatchFeedbackRunToGitHub(this.env, {
+                    payload: run.dispatchPayload,
+                    provider: run.provider,
+                })
+            );
+            await step.do('record dispatch result', async () =>
+                recordFeedbackDispatchResult(this.env, run.runId, dispatch)
+            );
+            return {
+                ...started,
+                delivery: delivered,
+                run: { runId: run.runId, dispatched: dispatch.dispatched },
+            };
+        }
+
+        return { ...started, delivery: delivered, run };
     }
 
     async deliverEvent(step, { issueId, deliveryId }) {
@@ -3116,6 +3144,7 @@ async function createFeedbackRun(env, { issueId, workflowId, provider }) {
         createFeedbackRunToken(env, { runId, audience: 'callback', provider: resolvedProvider }),
     ]);
 
+    const origin = String(env.FEEDBACK_CALLBACK_ORIGIN || '').replace(/\/+$/, '');
     return {
         runId,
         issueId,
@@ -3125,7 +3154,146 @@ async function createFeedbackRun(env, { issueId, workflowId, provider }) {
         runnerType: 'github_hosted',
         contextToken,
         callbackToken,
+        // §13.2: tokens travel as separate Action inputs, not inside the
+        // payload document that ends up in Job logs.
+        dispatchPayload: {
+            issueId,
+            issueVersion: Number(issue.version) || 1,
+            workflowId,
+            runId,
+            policy,
+            provider: resolvedProvider,
+            permissionProfile: FEEDBACK_PERMISSION_PROFILES[policy] || 'feedback-readonly',
+            contextUrl: `${origin}/api/feedback/runs/${encodeURIComponent(runId)}/context`,
+            callbackUrl: `${origin}/api/feedback/runs/${encodeURIComponent(runId)}/events`,
+            contextToken: contextToken.token,
+            callbackToken: callbackToken.token,
+            baseCommit: '',
+        },
     };
+}
+
+/**
+ * Projects the dispatch outcome onto the Run.
+ *
+ * A Run that could not be handed to GitHub stays in the non-terminal `created`
+ * state when the cause is retryable or a missing configuration: §17.1 wants
+ * those retryable by an admin, and a terminal Run would also release the
+ * one-write-Run-per-Issue lock (§7.3) while nothing is actually running. Only a
+ * permanent rejection is terminal.
+ */
+async function recordFeedbackDispatchResult(env, runId, dispatch) {
+    const permanentFailure =
+        !dispatch.dispatched &&
+        dispatch.errorCode !== 'GITHUB_DISPATCH_NOT_CONFIGURED' &&
+        !dispatch.retryable;
+    const status = dispatch.dispatched ? 'dispatched' : permanentFailure ? 'failed' : 'created';
+    await env.FEEDBACK_DB.prepare(
+        `UPDATE feedback_runs
+         SET status = ?, error_code = ?,
+             finished_at = CASE WHEN ? = 'failed' THEN ? ELSE finished_at END
+         WHERE id = ?`
+    )
+        .bind(
+            status,
+            dispatch.dispatched ? null : dispatch.errorCode,
+            status,
+            new Date().toISOString(),
+            runId
+        )
+        .run();
+
+    if (!dispatch.dispatched) {
+        const run = await env.FEEDBACK_DB.prepare('SELECT issue_id FROM feedback_runs WHERE id = ?')
+            .bind(runId)
+            .first();
+        if (run) {
+            await appendFeedbackSystemEvent(env, run.issue_id, {
+                type: 'automation.suppressed',
+                visibility: 'admin',
+                body: { reason: dispatch.errorCode, runId, retryable: Boolean(dispatch.retryable) },
+            });
+        }
+    }
+
+    return { runId, status, errorCode: dispatch.errorCode || null };
+}
+
+/**
+ * §13.1 step 8: hands the Run to GitHub Actions. Returns a structured reason
+ * instead of throwing when dispatch is not configured, so the Run is visibly
+ * un-started rather than silently assumed to be running.
+ */
+async function dispatchFeedbackRunToGitHub(env, { payload, provider }) {
+    const repository = String(env.FEEDBACK_GITHUB_REPOSITORY || '');
+    const token = String(env.FEEDBACK_GITHUB_TOKEN || '');
+    const workflowFile = FEEDBACK_PROVIDER_WORKFLOW_FILES[provider];
+    if (!repository || !token || !workflowFile) {
+        return { dispatched: false, errorCode: 'GITHUB_DISPATCH_NOT_CONFIGURED' };
+    }
+
+    const ref = String(env.FEEDBACK_GITHUB_REF || 'master');
+    const url = `https://api.github.com/repos/${repository}/actions/workflows/${workflowFile}/dispatches`;
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                Accept: 'application/vnd.github+json',
+                Authorization: `Bearer ${token}`,
+                'X-GitHub-Api-Version': '2022-11-28',
+                'Content-Type': 'application/json',
+                'User-Agent': 'gantt-feedback-workbench',
+            },
+            // workflow_dispatch inputs are strings; the payload travels as one
+            // JSON document so the template does not need per-field plumbing.
+            body: JSON.stringify({ ref, inputs: { payload: JSON.stringify(payload) } }),
+            signal: AbortSignal.timeout(FEEDBACK_HOOK_TIMEOUT_MS),
+        });
+        if (!response.ok) {
+            return {
+                dispatched: false,
+                errorCode: `GITHUB_HTTP_${response.status}`,
+                retryable: response.status === 429 || response.status >= 500,
+            };
+        }
+        return { dispatched: true, ref, workflowFile };
+    } catch (error) {
+        return {
+            dispatched: false,
+            errorCode: error?.name === 'TimeoutError' ? 'GITHUB_TIMEOUT' : 'GITHUB_UNREACHABLE',
+            retryable: true,
+        };
+    }
+}
+
+/**
+ * §14.4 step 3, second enforcement point. The Runner already ran the same rule
+ * table, but a compromised or buggy Runner could lie, so `run.completed` is
+ * re-checked here before anything is projected as success.
+ */
+function verifyRunCompletionManifest({ policy, payload }) {
+    const manifest = payload.diffManifest || payload;
+    const changedFiles = Array.isArray(manifest.changedFiles) ? manifest.changedFiles : [];
+    const writeAllowed = FEEDBACK_WRITE_POLICIES.has(policy);
+
+    if (writeAllowed) {
+        // §15.3: a write Run must identify exactly what it produced.
+        if (!manifest.baseCommit || !manifest.changeCommit || !manifest.diffManifestSha256) {
+            return {
+                allowed: false,
+                errorCode: 'security_policy_violation',
+                violations: [{ code: 'DIFF_MANIFEST_MISSING' }],
+            };
+        }
+    }
+
+    return evaluateDiffGate({
+        changedFiles,
+        approvedPaths: Array.isArray(payload.approvedPaths) ? payload.approvedPaths : [],
+        contractRunApproved: payload.contractRunApproved === true,
+        scnId: limitText(payload.scnId, 40),
+        writeAllowed,
+    });
 }
 
 /**
@@ -3352,6 +3520,22 @@ async function appendFeedbackCallbackEvent(env, runId, body) {
         throw feedbackStorageError('FEEDBACK_RUN_ALREADY_TERMINAL');
     }
 
+    // §14.4/§15.3: a `run.completed` claim is verified against the same rule
+    // table the Runner used before it is allowed to project success.
+    let gate = null;
+    if (callback.type === 'run.completed') {
+        gate = verifyRunCompletionManifest({ policy: run.policy, payload: callback.payload });
+        if (!gate.allowed) {
+            callback.type = 'run.failed';
+            callback.payload = {
+                ...callback.payload,
+                errorCode: gate.errorCode,
+                summary: '交付被质量门禁阻断：变更触及未批准路径或削弱了验证。',
+                violations: gate.violations,
+            };
+        }
+    }
+
     const projection = projectRunEventToIssue({
         type: callback.type,
         policy: run.policy,
@@ -3462,6 +3646,7 @@ async function appendFeedbackCallbackEvent(env, runId, body) {
         runStatus: projection.runStatus || run.status,
         issueStatus: projection.issueStatus,
         humanActionId,
+        gate: gate ? { allowed: gate.allowed, violations: gate.violations } : null,
     };
 }
 
