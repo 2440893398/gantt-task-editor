@@ -88,6 +88,8 @@
         issue: null,
         events: [],
         humanAction: null,
+        candidates: [],
+        releases: [],
         automation: null,
         automationDirty: false,
         runners: null,
@@ -846,7 +848,9 @@
         return Promise.all([
             request('/api/feedback/issues/' + encodeURIComponent(key)),
             request('/api/feedback/issues/' + encodeURIComponent(key) + '/events'),
-            request('/api/feedback/issues/' + encodeURIComponent(key) + '/human-actions')
+            request('/api/feedback/issues/' + encodeURIComponent(key) + '/human-actions'),
+            request('/api/feedback/issues/' + encodeURIComponent(key) + '/candidates'),
+            request('/api/feedback/issues/' + encodeURIComponent(key) + '/releases')
         ])
             .then(function (results) {
                 var issue = results[0].issue || {};
@@ -874,6 +878,8 @@
                     (results[2].humanActions || []).filter(function (action) {
                         return action.status === 'active';
                     })[0] || null;
+                state.candidates = results[3].candidates || [];
+                state.releases = results[4].releases || [];
                 renderIssueDetail();
             })
             .catch(handleAuthError);
@@ -883,9 +889,140 @@
         renderHeading();
         renderTimeline();
         renderProperties();
+        renderCandidate();
+        renderRelease();
         renderNextAction();
         renderOwnerNotice();
         renderComposer();
+    }
+
+    var CANDIDATE_STATUS_LABELS = {
+        created: '已创建',
+        implementing: '实现中',
+        verified: '已验证，待审核',
+        awaiting_review: '待审核',
+        approved: '已批准',
+        integrating: '集成中',
+        integrated: '已集成',
+        failed: '失败',
+        abandoned: '已被替代'
+    };
+    var RELEASE_STATUS_LABELS = {
+        created: '已创建',
+        integrating: '集成中',
+        merged: '已合并',
+        deploying: '部署中',
+        smoke_testing: '生产验证中',
+        succeeded: '交付完成',
+        failed: '交付失败',
+        cancelled: '已取消'
+    };
+    var RELEASE_STAGE_LABELS = {
+        'integration.merged': '合并到默认分支',
+        'integration.verification_completed': '集成后验证',
+        'deployment.completed': '部署完成',
+        'smoke.completed': '生产 smoke'
+    };
+
+    /* §19.2: review leads with product effect and changed surface; branch and
+       commit live under a collapsed 技术详情. */
+    function renderCandidate() {
+        var card = $('candidateCard');
+        var candidate = (state.candidates || []).filter(function (item) {
+            return item.status !== 'abandoned';
+        })[0];
+        if (!candidate) {
+            setHidden(card, true);
+            return;
+        }
+
+        setHidden(card, false);
+        $('candidateBadge').textContent =
+            CANDIDATE_STATUS_LABELS[candidate.status] || candidate.status;
+        $('candidateBadge').className =
+            'badge ' + (candidate.status === 'integrated' ? 'green' : candidate.status === 'failed' ? 'red' : 'blue');
+
+        var files = candidate.changedFiles || [];
+        var verification = candidate.verification || {};
+        var verificationRows = Object.keys(verification)
+            .map(function (name) {
+                return statusLine(name, String(verification[name]));
+            })
+            .join('');
+
+        $('candidateBody').innerHTML =
+            (candidate.reviewFocus
+                ? '<p class="help">' + escapeHtml(candidate.reviewFocus) + '</p>'
+                : '') +
+            statusLine('改动范围', files.length + ' 个文件') +
+            (files.length
+                ? '<div class="evidence-grid">' +
+                  files
+                      .slice(0, 8)
+                      .map(function (file) {
+                          return '<div class="evidence-item"><strong>' + escapeHtml(file) + '</strong></div>';
+                      })
+                      .join('') +
+                  (files.length > 8
+                      ? '<div class="evidence-item"><span>其余 ' + (files.length - 8) + ' 个文件</span></div>'
+                      : '') +
+                  '</div>'
+                : '') +
+            (verificationRows || '<p class="help">尚无验证结果。</p>') +
+            (candidate.technical
+                ? '<details class="advanced-details"><summary><span>技术详情</span></summary>' +
+                  '<div class="advanced-details-body">' +
+                  statusLine('仓库', candidate.technical.repository) +
+                  statusLine('基线', String(candidate.technical.baseCommit).slice(0, 12)) +
+                  statusLine('变更', String(candidate.technical.changeCommit).slice(0, 12)) +
+                  statusLine('候选 ID', candidate.id) +
+                  '</div></details>'
+                : '');
+    }
+
+    /* §19.2: while delivering, show the exact candidate, the integration commit,
+       the deployment target and the smoke progress — never a premature "已解决". */
+    function renderRelease() {
+        var card = $('releaseCard');
+        var release = (state.releases || [])[0];
+        if (!release) {
+            setHidden(card, true);
+            return;
+        }
+
+        setHidden(card, false);
+        $('releaseBadge').textContent = RELEASE_STATUS_LABELS[release.status] || release.status;
+        $('releaseBadge').className =
+            'badge ' +
+            (release.status === 'succeeded' ? 'green' : release.status === 'failed' ? 'red' : 'blue');
+
+        var stages = (release.stages || [])
+            .map(function (item) {
+                return (
+                    '<div class="status-line"><span>' +
+                    escapeHtml(RELEASE_STAGE_LABELS[item.stage] || item.stage) +
+                    '</span><span class="status-value">' +
+                    (item.done ? ICON_CHECK + ' 已完成' : '待完成') +
+                    '</span></div>'
+                );
+            })
+            .join('');
+
+        $('releaseBody').innerHTML =
+            stages +
+            statusLine('候选实现', release.candidateId) +
+            statusLine('集成提交', release.integrationCommit ? release.integrationCommit.slice(0, 12) : '尚未合并') +
+            statusLine(
+                '部署',
+                release.deploymentRequired ? release.deploymentTarget || '待定' : '本次无需部署'
+            ) +
+            (release.errorCode
+                ? '<div class="cost-note">交付失败：' + escapeHtml(release.errorCode) + '</div>'
+                : release.remainingStages && release.remainingStages.length
+                  ? '<div class="cost-note">还需完成 ' +
+                    release.remainingStages.length +
+                    ' 个阶段后才会标记为已解决。</div>'
+                  : '');
     }
 
     /* ------------------------------------------------------------ automation */

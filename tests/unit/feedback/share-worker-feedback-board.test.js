@@ -1238,6 +1238,8 @@ function ownerWorkbenchRoutes({ status = 'open', events, humanActions = [] } = {
             ],
         },
         [`${detailPath}/human-actions`]: { humanActions },
+        [`${detailPath}/candidates`]: { candidates: [] },
+        [`${detailPath}/releases`]: { releases: [] },
     };
 }
 

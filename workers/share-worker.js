@@ -3854,6 +3854,40 @@ function serializeFeedbackCandidate(row, { includeTechnical }) {
 }
 
 /**
+ * §19.2: `ready_for_deploy`/`testing` must show the exact candidateId,
+ * integration commit, deployment target and smoke progress — so the stage the
+ * Release is actually at is visible instead of a premature "已解决".
+ */
+function serializeFeedbackRelease(row) {
+    const stages = parseStoredJson(row.verification_json, {});
+    const reported = Object.keys(stages);
+    const required = [...FEEDBACK_RELEASE_REQUIRED_STAGES];
+    if (Number(row.deployment_required) === 1) required.push(...FEEDBACK_RELEASE_DEPLOY_STAGES);
+
+    return {
+        id: row.id,
+        issueId: row.issue_id,
+        candidateId: row.candidate_id,
+        status: row.status,
+        repository: row.repository,
+        integrationCommit: row.integration_commit || '',
+        deploymentRequired: Number(row.deployment_required) === 1,
+        deploymentTarget: row.deployment_target || '',
+        deployedCommit: row.deployed_commit || '',
+        smokeUrls: parseStoredJson(row.smoke_urls_json, []),
+        smokeResult: parseStoredJson(row.smoke_result_json, {}),
+        stages: required.map((stage) => ({ stage, done: Boolean(stages[stage]) })),
+        remainingStages: required.filter((stage) => !stages[stage]),
+        reportedStages: reported,
+        startedAt: row.started_at,
+        mergedAt: row.merged_at || '',
+        deployedAt: row.deployed_at || '',
+        finishedAt: row.finished_at || '',
+        errorCode: row.error_code || '',
+    };
+}
+
+/**
  * §21.4/§14.6 step 1: approving a Candidate creates the Release and takes the
  * repository-level delivery lock, so two Issues cannot rewrite the default
  * branch at the same time. The Release token is only minted here, after the
@@ -4881,7 +4915,14 @@ function matchesFeedbackQueueFilter(issue, filter) {
     return true;
 }
 
-const FEEDBACK_ISSUE_SUB_ROUTES = new Set(['events', 'comments', 'reopen', 'human-actions']);
+const FEEDBACK_ISSUE_SUB_ROUTES = new Set([
+    'events',
+    'comments',
+    'reopen',
+    'human-actions',
+    'candidates',
+    'releases',
+]);
 
 function parseFeedbackIssueSubRoute(pathname) {
     const prefix = '/api/feedback/issues/';
@@ -7744,6 +7785,36 @@ export default {
                 if (request.method === 'GET' && segment === 'human-actions') {
                     return jsonResponse(
                         { humanActions: await listHumanActions(env, key) },
+                        { headers }
+                    );
+                }
+
+                if (request.method === 'GET' && segment === 'candidates') {
+                    const rows = await env.FEEDBACK_DB.prepare(
+                        'SELECT * FROM feedback_candidates WHERE issue_id = ? ORDER BY created_at DESC'
+                    )
+                        .bind(key)
+                        .all();
+                    return jsonResponse(
+                        {
+                            candidates: (rows.results || []).map((row) =>
+                                // §19.2: owners see product effect and evidence;
+                                // branch/commit detail is admin-only.
+                                serializeFeedbackCandidate(row, { includeTechnical: isAdmin })
+                            ),
+                        },
+                        { headers }
+                    );
+                }
+
+                if (request.method === 'GET' && segment === 'releases') {
+                    const rows = await env.FEEDBACK_DB.prepare(
+                        'SELECT * FROM feedback_releases WHERE issue_id = ? ORDER BY started_at DESC'
+                    )
+                        .bind(key)
+                        .all();
+                    return jsonResponse(
+                        { releases: (rows.results || []).map(serializeFeedbackRelease) },
                         { headers }
                     );
                 }

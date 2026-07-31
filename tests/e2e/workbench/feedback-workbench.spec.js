@@ -394,3 +394,20 @@ test.describe('[SCN-FWB-015][SCN-FWB-016] 响应式与可访问性', () => {
         await expect(page.locator('#propertyCard')).toBeVisible();
     });
 });
+
+test.describe('[SCN-FWB-011] 交付进度', () => {
+    test('[SCN-FWB-011] 没有候选实现时不展示交付面板', async ({ page, request }) => {
+        const created = await createIssue(request, { title: '交付进度端到端验证' });
+
+        await page.goto(
+            `/feedback#issue=${encodeURIComponent(created.issueId)}&capability=${encodeURIComponent(
+                created.ownerCapability
+            )}`
+        );
+        await expect(page.locator('#propertyCard')).toBeVisible();
+
+        // With no Candidate yet, neither delivery panel should be showing.
+        await expect(page.locator('#candidateCard')).toBeHidden();
+        await expect(page.locator('#releaseCard')).toBeHidden();
+    });
+});

@@ -281,6 +281,22 @@ function issueAside() {
                     </div>
                 </section>
 
+                <section class="side-card" id="candidateCard" hidden>
+                    <div class="side-card-head">
+                        <h3>候选实现</h3>
+                        <span class="badge" id="candidateBadge"></span>
+                    </div>
+                    <div class="side-card-body" id="candidateBody"></div>
+                </section>
+
+                <section class="side-card" id="releaseCard" hidden>
+                    <div class="side-card-head">
+                        <h3>交付进度</h3>
+                        <span class="badge" id="releaseBadge"></span>
+                    </div>
+                    <div class="side-card-body" id="releaseBody"></div>
+                </section>
+
                 <section class="side-card" id="propertyCard" hidden>
                     <div class="side-card-head"><h3>Issue 属性</h3></div>
                     <div class="side-card-body property-list" id="propertyList"></div>
