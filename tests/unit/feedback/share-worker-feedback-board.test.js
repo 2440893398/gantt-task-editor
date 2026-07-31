@@ -1030,6 +1030,11 @@ class MemoryD1 {
 
 const feedbackKey = 'feedback:1780194478721:ftnhxdnhdo';
 
+/** Mirrors buildFeedbackWorkflowInstanceId: Cloudflare rejects ':' in an id. */
+function workflowInstanceId(issueId, generation) {
+    return `${String(issueId).replace(/[^a-zA-Z0-9_-]/g, '-')}-g${generation}`;
+}
+
 function createIssue(overrides = {}) {
     return {
         schemaVersion: 1,
@@ -4518,10 +4523,10 @@ describe('feedback workbench V2 event dispatch', () => {
         const { env, headers } = await createDispatchEnv();
 
         const first = await postComment(env, headers, 1);
-        expect(first.delivery.workflow.instanceId).toBe(`${feedbackKey}:1`);
+        expect(first.delivery.workflow.instanceId).toBe(workflowInstanceId(feedbackKey, 1));
         expect(first.delivery.workflow.resumed).toBe(false);
         expect(env.FEEDBACK_WORKFLOW.created).toHaveLength(1);
-        expect(env.FEEDBACK_WORKFLOW.created[0].id).toBe(`${feedbackKey}:1`);
+        expect(env.FEEDBACK_WORKFLOW.created[0].id).toBe(workflowInstanceId(feedbackKey, 1));
         // §13.4: the event ID is never the instance ID.
         expect(env.FEEDBACK_WORKFLOW.created[0].id).not.toContain('evt_');
         expect(env.FEEDBACK_WORKFLOW.created[0].params.generation).toBe(1);
@@ -4531,10 +4536,10 @@ describe('feedback workbench V2 event dispatch', () => {
     it('[SCN-FWB-007] resumes the same workflowId while an instance is non-terminal', async () => {
         const { env, headers } = await createDispatchEnv();
         await postComment(env, headers, 1);
-        env.FEEDBACK_DB.tables.feedback_workflows.set(`${feedbackKey}:1`, {
+        env.FEEDBACK_DB.tables.feedback_workflows.set(workflowInstanceId(feedbackKey, 1), {
             issue_id: feedbackKey,
             generation: 1,
-            instance_id: `${feedbackKey}:1`,
+            instance_id: workflowInstanceId(feedbackKey, 1),
             status: 'waiting',
             active_run_id: null,
             context_version: 1,
@@ -4547,33 +4552,33 @@ describe('feedback workbench V2 event dispatch', () => {
         const second = await postComment(env, headers, 2, '补充说明');
 
         expect(second.delivery.workflow.resumed).toBe(true);
-        expect(second.delivery.workflow.instanceId).toBe(`${feedbackKey}:1`);
+        expect(second.delivery.workflow.instanceId).toBe(workflowInstanceId(feedbackKey, 1));
         // No second instance: the reply resumed the existing generation.
         expect(env.FEEDBACK_WORKFLOW.created).toHaveLength(1);
         expect(env.FEEDBACK_WORKFLOW.sentEvents).toHaveLength(1);
-        expect(env.FEEDBACK_WORKFLOW.sentEvents[0].id).toBe(`${feedbackKey}:1`);
+        expect(env.FEEDBACK_WORKFLOW.sentEvents[0].id).toBe(workflowInstanceId(feedbackKey, 1));
         expect(env.FEEDBACK_WORKFLOW.sentEvents[0].event.type).toBe('comment.created');
     });
 
     it('[SCN-FWB-007] uses generation + 1 once the previous instance is terminal', async () => {
         const { env, headers } = await createDispatchEnv();
         await postComment(env, headers, 1);
-        env.FEEDBACK_DB.tables.feedback_workflows.set(`${feedbackKey}:1`, {
+        env.FEEDBACK_DB.tables.feedback_workflows.set(workflowInstanceId(feedbackKey, 1), {
             issue_id: feedbackKey,
             generation: 1,
-            instance_id: `${feedbackKey}:1`,
+            instance_id: workflowInstanceId(feedbackKey, 1),
             status: 'terminated',
             terminal_reason: 'human_timeout',
         });
 
         const second = await postComment(env, headers, 2, '超时后回访');
 
-        expect(second.delivery.workflow.instanceId).toBe(`${feedbackKey}:2`);
+        expect(second.delivery.workflow.instanceId).toBe(workflowInstanceId(feedbackKey, 2));
         expect(second.delivery.workflow.resumed).toBe(false);
         expect(env.FEEDBACK_WORKFLOW.sentEvents).toHaveLength(0);
         expect(env.FEEDBACK_WORKFLOW.created.map((c) => c.id)).toEqual([
-            `${feedbackKey}:1`,
-            `${feedbackKey}:2`,
+            workflowInstanceId(feedbackKey, 1),
+            workflowInstanceId(feedbackKey, 2),
         ]);
     });
 
@@ -4789,7 +4794,7 @@ describe('feedback workbench V2 event dispatch', () => {
         ).toBe('pending');
     });
 
-    it('[SCN-FWB-002] does not dispatch an event that is not subscribed', async () => {
+    it('[SCN-FWB-002] skips Hook delivery but still orchestrates an unsubscribed event', async () => {
         const { env, headers } = await createDispatchEnv();
         const current = await json(
             await request('/api/feedback/automation/settings', { headers }, env)
@@ -4809,10 +4814,13 @@ describe('feedback workbench V2 event dispatch', () => {
 
         const result = await postComment(env, headers, 1);
 
-        expect(result.delivery.suppressed).toBe(true);
-        expect(result.delivery.reason).toBe('NOT_SUBSCRIBED');
+        // The external Hook is only one consumer: an unsubscribed event skips
+        // the delivery but must still start orchestration, or a project using
+        // GitHub Actions without an agent service would never get a Run.
+        expect(result.delivery.hookDelivery).toBe(false);
+        expect(result.delivery.deliveryId).toBeNull();
         expect(env.FEEDBACK_DB.tables.feedback_deliveries.size).toBe(0);
-        expect(env.FEEDBACK_WORKFLOW.created).toHaveLength(0);
+        expect(env.FEEDBACK_WORKFLOW.created).toHaveLength(1);
     });
 
     it('[SCN-FWB-002] dispatches issue.created without blocking the submitter', async () => {
@@ -4855,7 +4863,7 @@ describe('feedback workbench V2 event dispatch', () => {
 
         expect(env.FEEDBACK_DB.tables.feedback_deliveries.size).toBe(1);
         expect(env.FEEDBACK_WORKFLOW.created).toHaveLength(1);
-        expect(env.FEEDBACK_WORKFLOW.created[0].id).toBe(`${created.issueId}:1`);
+        expect(env.FEEDBACK_WORKFLOW.created[0].id).toBe(workflowInstanceId(created.issueId, 1));
     });
 });
 
@@ -5736,7 +5744,7 @@ describe('feedback workbench V2 Candidate and Release', () => {
         try {
             await new FeedbackWorkflow({}, env).run(
                 {
-                    instanceId: `${feedbackKey}:1`,
+                    instanceId: workflowInstanceId(feedbackKey, 1),
                     payload: { issueId: feedbackKey, generation: 1, contextVersion: 1 },
                 },
                 step
@@ -6242,14 +6250,14 @@ describe('feedback workbench V2 reconcile sweep', () => {
                 feedback_issues: [
                     createD1IssueRow({
                         status: 'needs_human',
-                        active_workflow_id: `${feedbackKey}:1`,
+                        active_workflow_id: workflowInstanceId(feedbackKey, 1),
                     }),
                 ],
                 feedback_workflows: [
                     {
                         issue_id: feedbackKey,
                         generation: 1,
-                        instance_id: `${feedbackKey}:1`,
+                        instance_id: workflowInstanceId(feedbackKey, 1),
                         status: 'waiting',
                         started_at: '2026-07-01T00:00:00.000Z',
                         terminal_reason: null,
@@ -6261,7 +6269,9 @@ describe('feedback workbench V2 reconcile sweep', () => {
         const summary = await runScheduled(env, Date.parse('2026-07-31T03:00:00.000Z'));
 
         expect(summary.expiredWaits).toBe(1);
-        const workflow = env.FEEDBACK_DB.tables.feedback_workflows.get(`${feedbackKey}:1`);
+        const workflow = env.FEEDBACK_DB.tables.feedback_workflows.get(
+            workflowInstanceId(feedbackKey, 1)
+        );
         expect(workflow.status).toBe('terminated');
         expect(workflow.terminal_reason).toBe('human_timeout');
         const issue = env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey);
@@ -6279,7 +6289,7 @@ describe('feedback workbench V2 reconcile sweep', () => {
                     {
                         issue_id: feedbackKey,
                         generation: 1,
-                        instance_id: `${feedbackKey}:1`,
+                        instance_id: workflowInstanceId(feedbackKey, 1),
                         status: 'waiting',
                         started_at: '2026-07-30T00:00:00.000Z',
                         terminal_reason: null,
@@ -6291,9 +6301,9 @@ describe('feedback workbench V2 reconcile sweep', () => {
         const summary = await runScheduled(env, Date.parse('2026-07-31T03:00:00.000Z'));
 
         expect(summary.expiredWaits).toBe(0);
-        expect(env.FEEDBACK_DB.tables.feedback_workflows.get(`${feedbackKey}:1`).status).toBe(
-            'waiting'
-        );
+        expect(
+            env.FEEDBACK_DB.tables.feedback_workflows.get(workflowInstanceId(feedbackKey, 1)).status
+        ).toBe('waiting');
     });
 
     it('[SCN-FWB-014] drops artifact rows whose retention has passed', async () => {

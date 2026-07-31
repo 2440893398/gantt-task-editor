@@ -501,19 +501,18 @@ export class FeedbackWorkflow extends WorkflowEntrypoint {
             throw new Error('INVALID_FEEDBACK_WORKFLOW_EVENT');
         }
 
-        const instanceId = String(event.instanceId || `${issueId}:${generation}`);
+        const instanceId = String(
+            event.instanceId || buildFeedbackWorkflowInstanceId(issueId, generation)
+        );
         const started = await this.recordStart(step, { issueId, generation, instanceId, event });
-
-        // §17.2: Webhook/Dispatch retries at 1/5/15 minutes, max 4 attempts.
-        // Workflow steps own the backoff so no high-frequency cron is needed
-        // (§4, §19.4) and the wait costs no Runner time.
-        const delivered = await this.deliverEvent(step, {
-            issueId,
-            deliveryId: String(event.payload?.deliveryId || ''),
-        });
 
         // §13.1 steps 6–7. The Run and its scoped tokens are created here so a
         // resumed generation reuses the same Workflow but gets a fresh Run.
+        //
+        // Deliberately ahead of the Hook delivery: the Hook is a notification
+        // side-channel, while the Run is the actual work. Delivering first would
+        // park the Agent behind up to ~21 minutes of delivery backoff (§17.2)
+        // whenever the subscriber is down.
         const run = await step.do('create run', async () =>
             createFeedbackRun(this.env, {
                 issueId,
@@ -531,7 +530,7 @@ export class FeedbackWorkflow extends WorkflowEntrypoint {
                     body: { reason: run.reason, policy: run.policy || null },
                 })
             );
-            return { ...started, delivery: delivered, run };
+            return { ...started, delivery: await this.deliverConfiguredEvent(step, event), run };
         }
 
         if (run?.runId) {
@@ -549,15 +548,27 @@ export class FeedbackWorkflow extends WorkflowEntrypoint {
             );
             return {
                 ...started,
-                delivery: delivered,
+                delivery: await this.deliverConfiguredEvent(step, event),
                 run: { runId: run.runId, dispatched: dispatch.dispatched },
             };
         }
 
-        return { ...started, delivery: delivered, run };
+        return { ...started, delivery: await this.deliverConfiguredEvent(step, event), run };
     }
 
-    async deliverEvent(step, { issueId, deliveryId }) {
+    /**
+     * §17.2: Webhook/Dispatch retries at 1/5/15 minutes, max 4 attempts.
+     * Workflow steps own the backoff so no high-frequency cron is needed
+     * (§4, §19.4) and the wait costs no Runner time. Returns null when no Hook
+     * subscribed to this event.
+     */
+    async deliverConfiguredEvent(step, event) {
+        return this.deliverEvent(step, {
+            deliveryId: String(event.payload?.deliveryId || ''),
+        });
+    }
+
+    async deliverEvent(step, { deliveryId }) {
         if (!deliveryId) return null;
 
         try {
@@ -2995,7 +3006,7 @@ async function ensureFeedbackWorkflowForEvent(env, issueId, { deliveryId, eventI
     if (!issue) return null;
 
     const generation = (Number(issue.workflow_generation) || 0) + 1;
-    const instanceId = `${issueId}:${generation}`;
+    const instanceId = buildFeedbackWorkflowInstanceId(issueId, generation);
     const claimed = await env.FEEDBACK_DB.prepare(
         `UPDATE feedback_issues
          SET workflow_generation = ?, active_workflow_id = ?
@@ -3063,6 +3074,17 @@ function resolveFeedbackPolicy({ businessType, scope, automationDecision }) {
     // The matrix must never yield a policy the dispatcher cannot route; falling
     // back to the read-only default is safer than dispatching an unknown one.
     return FEEDBACK_POLICIES.has(policy) ? policy : 'analyze';
+}
+
+/**
+ * §13.4 describes the Workflow instance as `issueId:generation`, but that is
+ * conceptual notation: Cloudflare rejects `:` in an instance ID ("Workflow
+ * instance has invalid id"). This derives the same one-per-generation identity
+ * in an accepted character set. The D1 mapping stores whatever this returns, so
+ * the conflict check in §13.4 still compares like for like.
+ */
+function buildFeedbackWorkflowInstanceId(issueId, generation) {
+    return `${String(issueId).replace(/[^a-zA-Z0-9_-]/g, '-')}-g${generation}`;
 }
 
 function getFeedbackRunTokenSecret(env) {
@@ -3402,9 +3424,11 @@ async function dispatchFeedbackEvent(env, { eventId, eventType, issueId }) {
 
     const stored = await readFeedbackSettings(env, 'automation');
     const settings = stored.settings;
-    if (!settings.hookUrl || !settings.subscribedEvents.includes(eventType)) {
-        return { suppressed: true, reason: 'NOT_SUBSCRIBED' };
-    }
+    // The external Hook is only one consumer of an event. Orchestration must
+    // still start, or a project that runs GitHub Actions without any external
+    // agent service would never get a Run (§6, §13.1).
+    const deliverToHook =
+        Boolean(settings.hookUrl) && settings.subscribedEvents.includes(eventType);
 
     const quota = await checkFeedbackDispatchQuota(env, issueId);
     if (!quota.allowed) {
@@ -3423,42 +3447,46 @@ async function dispatchFeedbackEvent(env, { eventId, eventType, issueId }) {
     }
 
     const now = new Date().toISOString();
-    // §13.1 step 2: the idempotency key is per event + destination, so a
-    // replay of the same event never creates a second delivery or Run.
+    // §13.1 step 2: the idempotency key is per event, so a replay of the same
+    // event never creates a second delivery or Run.
     const idempotencyKey = `${issueId}:event:${eventId}`;
     const deliveryId = `dly_${crypto.randomUUID()}`;
-    const inserted = await env.FEEDBACK_DB.prepare(
-        `INSERT INTO feedback_deliveries (
-            id, event_id, destination, idempotency_key, workflow_instance_id,
-            status, attempt_count, next_attempt_at, response_status, last_error,
-            created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, 'pending', 0, ?, NULL, NULL, ?, ?)
-        ON CONFLICT(idempotency_key) DO NOTHING
-        RETURNING id`
-    )
-        .bind(deliveryId, eventId, settings.hookUrl, idempotencyKey, null, now, now, now)
-        .first();
-
-    if (!inserted) {
-        const existing = await env.FEEDBACK_DB.prepare(
-            'SELECT id, status FROM feedback_deliveries WHERE idempotency_key = ?'
+    if (deliverToHook) {
+        const inserted = await env.FEEDBACK_DB.prepare(
+            `INSERT INTO feedback_deliveries (
+                id, event_id, destination, idempotency_key, workflow_instance_id,
+                status, attempt_count, next_attempt_at, response_status, last_error,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, 'pending', 0, ?, NULL, NULL, ?, ?)
+            ON CONFLICT(idempotency_key) DO NOTHING
+            RETURNING id`
         )
-            .bind(idempotencyKey)
+            .bind(deliveryId, eventId, settings.hookUrl, idempotencyKey, null, now, now, now)
             .first();
-        return {
-            deliveryId: existing?.id || null,
-            duplicate: true,
-            status: existing?.status || 'unknown',
-        };
+
+        if (!inserted) {
+            // The event was already dispatched; returning the existing delivery
+            // keeps a replay from producing a second Workflow or Run.
+            const existing = await env.FEEDBACK_DB.prepare(
+                'SELECT id, status FROM feedback_deliveries WHERE idempotency_key = ?'
+            )
+                .bind(idempotencyKey)
+                .first();
+            return {
+                deliveryId: existing?.id || null,
+                duplicate: true,
+                status: existing?.status || 'unknown',
+            };
+        }
     }
 
     await recordFeedbackDispatchUsage(env, issueId, quota.usageDate);
     const workflow = await ensureFeedbackWorkflowForEvent(env, issueId, {
-        deliveryId,
+        deliveryId: deliverToHook ? deliveryId : null,
         eventId,
         eventType,
     });
-    if (workflow?.instanceId) {
+    if (deliverToHook && workflow?.instanceId) {
         await env.FEEDBACK_DB.prepare(
             'UPDATE feedback_deliveries SET workflow_instance_id = ? WHERE id = ?'
         )
@@ -3467,10 +3495,11 @@ async function dispatchFeedbackEvent(env, { eventId, eventType, issueId }) {
     }
 
     return {
-        deliveryId,
+        deliveryId: deliverToHook ? deliveryId : null,
+        hookDelivery: deliverToHook,
         issueId,
         eventType,
-        destination: settings.hookUrl,
+        destination: deliverToHook ? settings.hookUrl : null,
         workflow,
     };
 }
