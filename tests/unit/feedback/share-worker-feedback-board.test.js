@@ -110,6 +110,8 @@ class MemoryD1 {
             feedback_usage_daily: new Map(),
             feedback_runs: new Map(),
             feedback_artifacts: new Map(),
+            feedback_candidates: new Map(),
+            feedback_releases: new Map(),
         };
         this.queries = [];
 
@@ -387,6 +389,30 @@ class MemoryD1 {
         throw new Error(`Unsupported in-memory D1 query: ${normalized}`);
     }
 
+    /** Maps a normalized INSERT's column list and VALUES tuple onto a row. */
+    parseInsertRow(normalized, values) {
+        const match = normalized.match(/^insert into [a-z_]+\s*\(([^)]+)\)\s*values\s*\((.+?)\)/);
+        if (!match) throw new Error(`Unparsable insert: ${normalized}`);
+
+        const columns = match[1].split(',').map((column) => column.trim());
+        const tokens = match[2].split(',').map((token) => token.trim());
+        const row = {};
+        let cursor = 0;
+        columns.forEach((column, index) => {
+            const token = tokens[index];
+            if (token === '?') {
+                row[column] = values[cursor++];
+            } else if (token === 'null' || token === undefined) {
+                row[column] = null;
+            } else if (/^-?\d+$/.test(token)) {
+                row[column] = Number(token);
+            } else {
+                row[column] = token.replace(/^'|'$/g, '');
+            }
+        });
+        return row;
+    }
+
     /**
      * Maps a normalized `SET a = ?, b = 'x', c = CASE …` clause onto column
      * values, so a statement that mixes placeholders with literals cannot be
@@ -520,14 +546,15 @@ class MemoryD1 {
             });
             return ok(rows.map((row) => ({ ...row })));
         }
-        if (normalized.startsWith('update feedback_workflows')) {
+        const workflowUpdate = normalized.match(
+            /^update feedback_workflows set (.+?) where instance_id = \?$/
+        );
+        if (workflowUpdate) {
             const instanceId = values[values.length - 1];
             const current = this.tables.feedback_workflows.get(instanceId);
             if (!current) return ok([], 0);
-            this.tables.feedback_workflows.set(instanceId, {
-                ...current,
-                active_run_id: values[0],
-            });
+            const patch = this.parseSetClause(workflowUpdate[1], values);
+            this.tables.feedback_workflows.set(instanceId, { ...current, ...patch.columns });
             return ok([], 1);
         }
         if (normalized.startsWith('insert into feedback_workflows')) {
@@ -785,6 +812,101 @@ class MemoryD1 {
                     : current.finished_at;
             }
             this.tables.feedback_runs.set(runId, next);
+            return ok([], 1);
+        }
+
+        // --- reconcile sweep ---
+        if (normalized.startsWith('select w.instance_id')) {
+            const rows = Array.from(this.tables.feedback_workflows.values()).filter((row) => {
+                const issue = this.tables.feedback_issues.get(row.issue_id);
+                return (
+                    ['queued', 'running', 'waiting'].includes(row.status) &&
+                    issue?.status === 'needs_human' &&
+                    String(row.started_at) < values[0]
+                );
+            });
+            return ok(
+                rows.map((row) => ({ instance_id: row.instance_id, issue_id: row.issue_id }))
+            );
+        }
+        if (normalized.startsWith('delete from feedback_artifacts')) {
+            const removed = [];
+            for (const [id, row] of this.tables.feedback_artifacts) {
+                if (row.expires_at && String(row.expires_at) < values[0]) removed.push(id);
+            }
+            for (const id of removed) this.tables.feedback_artifacts.delete(id);
+            return ok(removed.map((id) => ({ id })));
+        }
+        if (normalized.startsWith('select count(*) as total from feedback_deliveries')) {
+            const status = normalized.match(/status = '([a-z_]+)'/)?.[1];
+            const total = Array.from(this.tables.feedback_deliveries.values()).filter(
+                (row) => !status || row.status === status
+            ).length;
+            return ok([{ total }]);
+        }
+
+        // --- feedback_candidates / feedback_releases ---
+        if (normalized.includes('from feedback_candidates where id = ?')) {
+            const row = this.tables.feedback_candidates.get(values[0]);
+            return ok(row ? [{ ...row }] : []);
+        }
+        if (normalized.includes('from feedback_candidates where issue_id = ?')) {
+            const rows = Array.from(this.tables.feedback_candidates.values())
+                .filter(
+                    (row) =>
+                        row.issue_id === values[0] &&
+                        !['abandoned', 'integrated'].includes(row.status)
+                )
+                .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+            return ok(rows.slice(0, 1).map((row) => ({ ...row })));
+        }
+        if (normalized.startsWith('insert into feedback_candidates')) {
+            const row = this.parseInsertRow(normalized, values);
+            const duplicate = Array.from(this.tables.feedback_candidates.values()).some(
+                (item) =>
+                    item.issue_id === row.issue_id &&
+                    item.repository === row.repository &&
+                    item.base_commit === row.base_commit &&
+                    item.change_commit === row.change_commit
+            );
+            if (duplicate) return ok([]);
+            this.tables.feedback_candidates.set(row.id, row);
+            return ok([{ id: row.id }]);
+        }
+        if (normalized.startsWith('update feedback_candidates')) {
+            const candidateId = values[values.length - 1];
+            const current = this.tables.feedback_candidates.get(candidateId);
+            if (!current) return ok([], 0);
+            const match = normalized.match(/^update feedback_candidates set (.+?) where id = \?$/);
+            const patch = this.parseSetClause(match[1], values);
+            this.tables.feedback_candidates.set(candidateId, { ...current, ...patch.columns });
+            return ok([], 1);
+        }
+        if (normalized.includes('from feedback_releases where id = ?')) {
+            const row = this.tables.feedback_releases.get(values[0]);
+            return ok(row ? [{ ...row }] : []);
+        }
+        if (normalized.includes('from feedback_releases where repository = ?')) {
+            const rows = Array.from(this.tables.feedback_releases.values()).filter(
+                (row) =>
+                    row.repository === values[0] &&
+                    row.remote_default_branch === values[1] &&
+                    ['integrating', 'merged', 'deploying', 'smoke_testing'].includes(row.status)
+            );
+            return ok(rows.map((row) => ({ ...row })));
+        }
+        if (normalized.startsWith('insert into feedback_releases')) {
+            const row = this.parseInsertRow(normalized, values);
+            this.tables.feedback_releases.set(row.id, row);
+            return ok([{ id: row.id }], 1);
+        }
+        if (normalized.startsWith('update feedback_releases')) {
+            const releaseId = values[values.length - 1];
+            const current = this.tables.feedback_releases.get(releaseId);
+            if (!current) return ok([], 0);
+            const match = normalized.match(/^update feedback_releases set (.+?) where id = \?$/);
+            const patch = this.parseSetClause(match[1], values);
+            this.tables.feedback_releases.set(releaseId, { ...current, ...patch.columns });
             return ok([], 1);
         }
 
@@ -4095,6 +4217,18 @@ describe('feedback workbench V2 routes', () => {
                 ],
             }
         );
+        // §9.3: approval binds to a real, still-live Candidate.
+        env.FEEDBACK_DB.tables.feedback_candidates.set('cnd_expected', {
+            id: 'cnd_expected',
+            issue_id: feedbackKey,
+            repository: 'acme/gantt-task-editor',
+            base_commit: 'abc123',
+            change_commit: 'def456',
+            changed_files_json: JSON.stringify(['src/features/gantt/domain/link-ops.js']),
+            verification_json: '{}',
+            status: 'awaiting_review',
+            created_at: '2026-07-30T09:00:00.000Z',
+        });
         const headers = await adminHeaders(env);
 
         const missing = await request(
@@ -5528,5 +5662,670 @@ describe('feedback workbench V2 GitHub dispatch', () => {
         expect(body.runStatus).toBe('succeeded');
         // §9.2: even a clean write Run stops at needs_human, never resolved.
         expect(body.issueStatus).toBe('needs_human');
+    });
+});
+
+describe('feedback workbench V2 Candidate and Release', () => {
+    async function adminHeaders(env) {
+        const session = await json(
+            await request(
+                '/api/feedback/admin/session',
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password: 'admin-pass' }),
+                },
+                env
+            )
+        );
+        return { Authorization: `Bearer ${session.token}`, 'Content-Type': 'application/json' };
+    }
+
+    async function scopedToken(claims) {
+        const payload = Buffer.from(JSON.stringify({ exp: Date.now() + 60_000, ...claims }), 'utf8')
+            .toString('base64')
+            .replace(/\+/g, '-')
+            .replace(/\//g, '_')
+            .replace(/=+$/, '');
+        const key = await crypto.subtle.importKey(
+            'raw',
+            new TextEncoder().encode('unit-test-secret'),
+            { name: 'HMAC', hash: 'SHA-256' },
+            false,
+            ['sign']
+        );
+        const signature = Buffer.from(
+            new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload)))
+        )
+            .toString('base64')
+            .replace(/\+/g, '-')
+            .replace(/\//g, '_')
+            .replace(/=+$/, '');
+        return `${payload}.${signature}`;
+    }
+
+    /** Drives a write Run to a verified Candidate through the real callback path. */
+    async function createCandidateEnv({
+        changedFiles = ['src/features/gantt/domain/link-ops.js'],
+    } = {}) {
+        const env = createV2Env(
+            {},
+            {
+                feedback_issues: [
+                    createD1IssueRow({ status: 'queued', business_type: 'bug', scope: 'small' }),
+                ],
+            }
+        );
+        env.FEEDBACK_CALLBACK_ORIGIN = 'https://worker.test';
+        env.FEEDBACK_GITHUB_REPOSITORY = 'acme/gantt-task-editor';
+        env.FEEDBACK_GITHUB_TOKEN = 'ghp_test';
+        env.FEEDBACK_GITHUB_REF = 'master';
+
+        const step = {
+            async do(name, configOrCallback, maybeCallback) {
+                const callback =
+                    typeof configOrCallback === 'function' ? configOrCallback : maybeCallback;
+                return callback();
+            },
+        };
+        const fetchSpy = vi
+            .spyOn(globalThis, 'fetch')
+            .mockResolvedValue(new Response(null, { status: 204 }));
+        try {
+            await new FeedbackWorkflow({}, env).run(
+                {
+                    instanceId: `${feedbackKey}:1`,
+                    payload: { issueId: feedbackKey, generation: 1, contextVersion: 1 },
+                },
+                step
+            );
+        } finally {
+            fetchSpy.mockRestore();
+        }
+
+        const run = Array.from(env.FEEDBACK_DB.tables.feedback_runs.values())[0];
+        const completed = await json(
+            await request(
+                `/api/feedback/runs/${encodeURIComponent(run.id)}/events`,
+                {
+                    method: 'POST',
+                    headers: {
+                        Authorization: `Bearer ${await scopedToken({ aud: 'callback', runId: run.id })}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        eventId: 'cb_done',
+                        type: 'run.completed',
+                        payload: {
+                            summary: '修复完成',
+                            verification: { targetedTests: 'passed', playwright: 'passed' },
+                            diffManifest: {
+                                repository: 'acme/gantt-task-editor',
+                                baseCommit: 'base111',
+                                changeCommit: 'change222',
+                                diffManifestSha256: 'sha-abc',
+                                changedFiles,
+                            },
+                        },
+                    }),
+                },
+                env
+            )
+        );
+
+        return { env, run, candidateId: completed.candidateId, headers: await adminHeaders(env) };
+    }
+
+    async function approveCandidate(env, headers, candidateId) {
+        const action = Array.from(env.FEEDBACK_DB.tables.feedback_human_actions.values()).find(
+            (item) => item.status === 'active'
+        );
+        const actionId = action?.id || 'hac_seeded';
+        if (!action) {
+            env.FEEDBACK_DB.tables.feedback_human_actions.set(actionId, {
+                id: actionId,
+                issue_id: feedbackKey,
+                run_id: null,
+                candidate_id: candidateId,
+                type: 'review_candidate',
+                requested_action: '请审核候选实现',
+                evidence_json: '[]',
+                allowed_return_states_json: JSON.stringify(['ready_for_deploy', 'queued']),
+                status: 'active',
+                created_at: '2026-07-31T09:00:00.000Z',
+            });
+        }
+        return json(
+            await request(
+                `/api/feedback/human-actions/${actionId}/respond`,
+                {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({ decision: 'ready_for_deploy', candidateId }),
+                },
+                env
+            )
+        );
+    }
+
+    it('[SCN-FWB-005] registers a Candidate with a recoverable identity', async () => {
+        const { env, run, candidateId } = await createCandidateEnv();
+        const candidate = env.FEEDBACK_DB.tables.feedback_candidates.get(candidateId);
+
+        expect(candidateId).toBeTruthy();
+        expect(candidate.status).toBe('verified');
+        expect(candidate.run_id).toBe(run.id);
+        expect(candidate.repository).toBe('acme/gantt-task-editor');
+        expect(candidate.base_commit).toBe('base111');
+        expect(candidate.change_commit).toBe('change222');
+        expect(candidate.diff_manifest_sha256).toBe('sha-abc');
+        // §9.3: identity is repository + commits, never a Runner worktree path.
+        expect(candidate.candidate_worktree).toBeFalsy();
+        expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).active_candidate_id).toBe(
+            candidateId
+        );
+    });
+
+    it('[SCN-FWB-021] a superseding Candidate abandons its parent explicitly', async () => {
+        const { env, run, candidateId } = await createCandidateEnv();
+
+        // A second Run on the same Issue produces a follow-up Candidate.
+        env.FEEDBACK_DB.tables.feedback_runs.set('run_second', {
+            ...run,
+            id: 'run_second',
+            status: 'dispatched',
+        });
+        const second = await json(
+            await request(
+                '/api/feedback/runs/run_second/events',
+                {
+                    method: 'POST',
+                    headers: {
+                        Authorization: `Bearer ${await scopedToken({ aud: 'callback', runId: 'run_second' })}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        eventId: 'cb_done_2',
+                        type: 'run.completed',
+                        payload: {
+                            diffManifest: {
+                                repository: 'acme/gantt-task-editor',
+                                baseCommit: 'base111',
+                                changeCommit: 'change333',
+                                diffManifestSha256: 'sha-def',
+                                changedFiles: ['src/features/gantt/domain/link-ops.js'],
+                            },
+                        },
+                    }),
+                },
+                env
+            )
+        );
+
+        const child = env.FEEDBACK_DB.tables.feedback_candidates.get(second.candidateId);
+        expect(child.parent_candidate_id).toBe(candidateId);
+        expect(env.FEEDBACK_DB.tables.feedback_candidates.get(candidateId).status).toBe(
+            'abandoned'
+        );
+    });
+
+    it('[SCN-FWB-021] refuses to deliver a Candidate that was never approved', async () => {
+        const { env, candidateId, headers } = await createCandidateEnv();
+
+        const response = await request(
+            `/api/feedback/candidates/${candidateId}/deliver`,
+            { method: 'POST', headers },
+            env
+        );
+
+        expect(response.status).toBe(409);
+        expect(env.FEEDBACK_DB.tables.feedback_releases.size).toBe(0);
+    });
+
+    it('[SCN-FWB-011] approval moves the Issue to ready_for_deploy, delivery to testing', async () => {
+        const { env, candidateId, headers } = await createCandidateEnv();
+
+        const approved = await approveCandidate(env, headers, candidateId);
+        expect(approved.issue.workflow.status).toBe('ready_for_deploy');
+        expect(env.FEEDBACK_DB.tables.feedback_candidates.get(candidateId).status).toBe('approved');
+
+        const release = await json(
+            await request(
+                `/api/feedback/candidates/${candidateId}/deliver`,
+                { method: 'POST', headers },
+                env
+            )
+        );
+
+        expect(release.releaseId).toBeTruthy();
+        expect(release.releaseToken.token).toBeTruthy();
+        // §19.2: approval must not read as "已解决"; it moves to testing.
+        expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe('testing');
+        expect(env.FEEDBACK_DB.tables.feedback_candidates.get(candidateId).status).toBe(
+            'integrating'
+        );
+    });
+
+    it('[SCN-FWB-023] holds the repository delivery lock while a Release is active', async () => {
+        const { env, candidateId, headers } = await createCandidateEnv();
+        await approveCandidate(env, headers, candidateId);
+        await request(
+            `/api/feedback/candidates/${candidateId}/deliver`,
+            { method: 'POST', headers },
+            env
+        );
+
+        // A second Candidate on the same repository/branch must queue, not race.
+        env.FEEDBACK_DB.tables.feedback_candidates.set('cnd_other', {
+            id: 'cnd_other',
+            issue_id: feedbackKey,
+            repository: 'acme/gantt-task-editor',
+            base_commit: 'base999',
+            change_commit: 'change999',
+            changed_files_json: '[]',
+            verification_json: '{}',
+            status: 'approved',
+            created_at: '2026-07-31T10:00:00.000Z',
+        });
+        env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status = 'ready_for_deploy';
+
+        const blocked = await request(
+            '/api/feedback/candidates/cnd_other/deliver',
+            { method: 'POST', headers },
+            env
+        );
+
+        expect(blocked.status).toBe(409);
+        expect(env.FEEDBACK_DB.tables.feedback_releases.size).toBe(1);
+    });
+
+    it('[SCN-FWB-024] resolves only after every required stage reports', async () => {
+        const { env, candidateId, headers } = await createCandidateEnv({
+            changedFiles: ['workers/share-worker.js'],
+        });
+        await approveCandidate(env, headers, candidateId);
+        const release = await json(
+            await request(
+                `/api/feedback/candidates/${candidateId}/deliver`,
+                { method: 'POST', headers },
+                env
+            )
+        );
+        const token = release.releaseToken.token;
+        expect(release.deploymentRequired).toBe(true);
+        expect(release.deploymentTarget).toBe('worker');
+
+        const send = (eventId, type, payload = {}) =>
+            request(
+                `/api/feedback/releases/${release.releaseId}/events`,
+                {
+                    method: 'POST',
+                    headers: {
+                        Authorization: `Bearer ${token}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ eventId, type, payload }),
+                },
+                env
+            );
+
+        // Completing before the stages report must be refused.
+        const premature = await send('e0', 'release.completed', { integrationCommit: 'merge777' });
+        expect(premature.status).toBe(409);
+        expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe('testing');
+
+        await send('e1', 'integration.started');
+        await send('e2', 'integration.merged', { integrationCommit: 'merge777' });
+        await send('e3', 'integration.verification_completed', { passed: true });
+
+        // A Worker-surface Release still needs deployment and smoke.
+        const stillEarly = await send('e4', 'release.completed', { integrationCommit: 'merge777' });
+        expect(stillEarly.status).toBe(409);
+
+        await send('e5', 'deployment.completed', {
+            deploymentId: 'dep_1',
+            deployedCommit: 'merge777',
+        });
+        await send('e6', 'smoke.completed', { passed: true, urls: ['/feedback'] });
+
+        const completed = await json(
+            await send('e7', 'release.completed', {
+                integrationCommit: 'merge777',
+                summary: '已合并、部署并通过生产 smoke。',
+            })
+        );
+
+        expect(completed.releaseStatus).toBe('succeeded');
+        expect(completed.issueStatus).toBe('resolved');
+        const issue = env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey);
+        expect(issue.status).toBe('resolved');
+        expect(issue.resolved_at).toBeTruthy();
+        expect(env.FEEDBACK_DB.tables.feedback_candidates.get(candidateId).status).toBe(
+            'integrated'
+        );
+    });
+
+    it('[SCN-FWB-024] refuses a deploy whose commit is not the merged commit', async () => {
+        const { env, candidateId, headers } = await createCandidateEnv({
+            changedFiles: ['workers/share-worker.js'],
+        });
+        await approveCandidate(env, headers, candidateId);
+        const release = await json(
+            await request(
+                `/api/feedback/candidates/${candidateId}/deliver`,
+                { method: 'POST', headers },
+                env
+            )
+        );
+        const token = release.releaseToken.token;
+        const send = (eventId, type, payload = {}) =>
+            request(
+                `/api/feedback/releases/${release.releaseId}/events`,
+                {
+                    method: 'POST',
+                    headers: {
+                        Authorization: `Bearer ${token}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ eventId, type, payload }),
+                },
+                env
+            );
+
+        await send('e1', 'integration.merged', { integrationCommit: 'merge777' });
+
+        const mismatch = await send('e2', 'deployment.completed', {
+            deployedCommit: 'someother',
+        });
+
+        // §14.7: deploying anything other than the merged commit is a hard stop.
+        expect(mismatch.status).toBe(409);
+        expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).not.toBe('resolved');
+    });
+
+    it('[SCN-FWB-024] a failed smoke leaves the Issue unresolved', async () => {
+        const { env, candidateId, headers } = await createCandidateEnv({
+            changedFiles: ['workers/share-worker.js'],
+        });
+        await approveCandidate(env, headers, candidateId);
+        const release = await json(
+            await request(
+                `/api/feedback/candidates/${candidateId}/deliver`,
+                { method: 'POST', headers },
+                env
+            )
+        );
+        const token = release.releaseToken.token;
+        const send = (eventId, type, payload = {}) =>
+            request(
+                `/api/feedback/releases/${release.releaseId}/events`,
+                {
+                    method: 'POST',
+                    headers: {
+                        Authorization: `Bearer ${token}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ eventId, type, payload }),
+                },
+                env
+            );
+
+        await send('e1', 'integration.merged', { integrationCommit: 'merge777' });
+        await send('e2', 'integration.verification_completed', { passed: true });
+        await send('e3', 'deployment.completed', { deployedCommit: 'merge777' });
+        await send('e4', 'smoke.completed', { passed: false, urls: ['/feedback'] });
+
+        const blocked = await send('e5', 'release.completed', { integrationCommit: 'merge777' });
+        expect(blocked.status).toBe(409);
+
+        const failed = await json(
+            await send('e6', 'release.failed', { errorCode: 'smoke_failed' })
+        );
+        expect(failed.issueStatus).toBe('test_failed');
+        expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe('test_failed');
+    });
+
+    it('[SCN-FWB-024] a docs-only change needs no deployment', async () => {
+        const { env, candidateId, headers } = await createCandidateEnv({
+            changedFiles: ['doc/design/notes.md', 'tests/unit/example.test.js'],
+        });
+        await approveCandidate(env, headers, candidateId);
+        const release = await json(
+            await request(
+                `/api/feedback/candidates/${candidateId}/deliver`,
+                { method: 'POST', headers },
+                env
+            )
+        );
+        const token = release.releaseToken.token;
+        const send = (eventId, type, payload = {}) =>
+            request(
+                `/api/feedback/releases/${release.releaseId}/events`,
+                {
+                    method: 'POST',
+                    headers: {
+                        Authorization: `Bearer ${token}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ eventId, type, payload }),
+                },
+                env
+            );
+
+        expect(release.deploymentRequired).toBe(false);
+        await send('e1', 'integration.merged', { integrationCommit: 'merge888' });
+        await send('e2', 'integration.verification_completed', { passed: true });
+        const completed = await json(
+            await send('e3', 'release.completed', { integrationCommit: 'merge888' })
+        );
+
+        expect(completed.issueStatus).toBe('resolved');
+    });
+
+    it('[SCN-FWB-017] a Release event needs its own release-scoped token', async () => {
+        const { env, candidateId, headers } = await createCandidateEnv();
+        await approveCandidate(env, headers, candidateId);
+        const release = await json(
+            await request(
+                `/api/feedback/candidates/${candidateId}/deliver`,
+                { method: 'POST', headers },
+                env
+            )
+        );
+
+        const asAdmin = await request(
+            `/api/feedback/releases/${release.releaseId}/events`,
+            {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({ eventId: 'e1', type: 'integration.merged' }),
+            },
+            env
+        );
+        const wrongAudience = await request(
+            `/api/feedback/releases/${release.releaseId}/events`,
+            {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${await scopedToken({ aud: 'callback', runId: 'run_x' })}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ eventId: 'e1', type: 'integration.merged' }),
+            },
+            env
+        );
+
+        // §18.1: Release, Callback and admin credentials are not interchangeable.
+        expect(asAdmin.status).toBe(401);
+        expect(wrongAudience.status).toBe(401);
+    });
+
+    it('[SCN-FWB-003] a repeated Release event is idempotent', async () => {
+        const { env, candidateId, headers } = await createCandidateEnv();
+        await approveCandidate(env, headers, candidateId);
+        const release = await json(
+            await request(
+                `/api/feedback/candidates/${candidateId}/deliver`,
+                { method: 'POST', headers },
+                env
+            )
+        );
+        const send = () =>
+            request(
+                `/api/feedback/releases/${release.releaseId}/events`,
+                {
+                    method: 'POST',
+                    headers: {
+                        Authorization: `Bearer ${release.releaseToken.token}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        eventId: 'e1',
+                        type: 'integration.merged',
+                        payload: { integrationCommit: 'merge777' },
+                    }),
+                },
+                env
+            );
+
+        const first = await send();
+        const second = await send();
+
+        expect(first.status).toBe(201);
+        expect(second.status).toBe(200);
+        expect((await json(second)).duplicate).toBe(true);
+    });
+});
+
+describe('feedback workbench V2 reconcile sweep', () => {
+    async function adminHeaders(env) {
+        const session = await json(
+            await request(
+                '/api/feedback/admin/session',
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password: 'admin-pass' }),
+                },
+                env
+            )
+        );
+        return { Authorization: `Bearer ${session.token}`, 'Content-Type': 'application/json' };
+    }
+
+    function runScheduled(env, scheduledTime = Date.now()) {
+        return worker.scheduled({ scheduledTime, cron: '0 3 * * *' }, env, {
+            waitUntil: () => {},
+        });
+    }
+
+    it('[SCN-FWB-002] does nothing and creates no Run when nothing is stuck', async () => {
+        const env = createV2Env({}, { feedback_issues: [createD1IssueRow({ status: 'open' })] });
+
+        const summary = await runScheduled(env);
+
+        expect(summary.jobId).toBe('feedback-reconcile');
+        expect(summary.runCount).toBe(0);
+        expect(summary.expiredWaits).toBe(0);
+        expect(summary.clearedWorkflowMappings).toBe(0);
+        // A healthy Issue is never touched by the sweep.
+        expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe('open');
+        expect(env.FEEDBACK_DB.tables.feedback_runs.size).toBe(0);
+    });
+
+    it('[SCN-FWB-019] expires a 7-day wait without closing the Issue', async () => {
+        const env = createV2Env(
+            {},
+            {
+                feedback_issues: [
+                    createD1IssueRow({
+                        status: 'needs_human',
+                        active_workflow_id: `${feedbackKey}:1`,
+                    }),
+                ],
+                feedback_workflows: [
+                    {
+                        issue_id: feedbackKey,
+                        generation: 1,
+                        instance_id: `${feedbackKey}:1`,
+                        status: 'waiting',
+                        started_at: '2026-07-01T00:00:00.000Z',
+                        terminal_reason: null,
+                    },
+                ],
+            }
+        );
+
+        const summary = await runScheduled(env, Date.parse('2026-07-31T03:00:00.000Z'));
+
+        expect(summary.expiredWaits).toBe(1);
+        const workflow = env.FEEDBACK_DB.tables.feedback_workflows.get(`${feedbackKey}:1`);
+        expect(workflow.status).toBe('terminated');
+        expect(workflow.terminal_reason).toBe('human_timeout');
+        const issue = env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey);
+        // §17.3: the Issue stays open and waiting; it is never auto-closed.
+        expect(issue.status).toBe('needs_human');
+        expect(issue.active_workflow_id).toBeNull();
+    });
+
+    it('[SCN-FWB-019] leaves a wait that is still inside the window alone', async () => {
+        const env = createV2Env(
+            {},
+            {
+                feedback_issues: [createD1IssueRow({ status: 'needs_human' })],
+                feedback_workflows: [
+                    {
+                        issue_id: feedbackKey,
+                        generation: 1,
+                        instance_id: `${feedbackKey}:1`,
+                        status: 'waiting',
+                        started_at: '2026-07-30T00:00:00.000Z',
+                        terminal_reason: null,
+                    },
+                ],
+            }
+        );
+
+        const summary = await runScheduled(env, Date.parse('2026-07-31T03:00:00.000Z'));
+
+        expect(summary.expiredWaits).toBe(0);
+        expect(env.FEEDBACK_DB.tables.feedback_workflows.get(`${feedbackKey}:1`).status).toBe(
+            'waiting'
+        );
+    });
+
+    it('[SCN-FWB-014] drops artifact rows whose retention has passed', async () => {
+        const env = createV2Env({}, { feedback_issues: [createD1IssueRow()] });
+        env.FEEDBACK_DB.tables.feedback_artifacts.set('art_old', {
+            id: 'art_old',
+            issue_id: feedbackKey,
+            expires_at: '2026-01-01T00:00:00.000Z',
+        });
+        env.FEEDBACK_DB.tables.feedback_artifacts.set('art_live', {
+            id: 'art_live',
+            issue_id: feedbackKey,
+            expires_at: '2099-01-01T00:00:00.000Z',
+        });
+
+        const summary = await runScheduled(env, Date.parse('2026-07-31T03:00:00.000Z'));
+
+        expect(summary.expiredArtifacts).toBe(1);
+        expect(env.FEEDBACK_DB.tables.feedback_artifacts.has('art_old')).toBe(false);
+        expect(env.FEEDBACK_DB.tables.feedback_artifacts.has('art_live')).toBe(true);
+    });
+
+    it('[SCN-FWB-002] reports the sweep schedule separately from Agent polling', async () => {
+        const env = createV2Env({}, { feedback_issues: [createD1IssueRow()] });
+        const headers = await adminHeaders(env);
+
+        const payload = await json(
+            await request('/api/feedback/automation/health', { headers }, env)
+        );
+
+        expect(payload.health.reconcile.jobId).toBe('feedback-reconcile');
+        expect(payload.health.reconcile.schedule).toBe('0 3 * * *');
+        expect(payload.health.reconcile.runCount).toBe(0);
+        // The daily sweep exists, but nothing polls for Agent work.
+        expect(payload.health.pollingCronConfigured).toBe(false);
     });
 });

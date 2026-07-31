@@ -14,7 +14,13 @@ dist-utools/
 .agents/
 .codex/skills/
 .gemini/
-.github/
+# `.github/` stays untracked except for the feedback Agent Runner workflows:
+# the workbench dispatches to them by filename, and GitHub cannot run a
+# workflow that is not in the repository. Nothing else under .github is exposed.
+.github/*
+!.github/workflows/
+.github/workflows/*
+!.github/workflows/feedback-agent-*.yml
 .opencode/
 .vscode/
 *.swp

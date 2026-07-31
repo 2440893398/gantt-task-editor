@@ -97,13 +97,40 @@ account currently has R2 disabled.
   with the Context token, prompt with the reporter text fenced as untrusted data, the diff
   gate before tests, Playwright evidence upload, and an `if: always()` callback.
 
-**Still not built:** Candidate/Design/Release endpoints and the delivery closure, so an
-approved Candidate cannot yet be integrated or deployed and no Issue can reach `resolved`.
-`/runners/test` still returns `ACTION_SMOKE_NOT_CONFIGURED`, and the daily
-`feedback-reconcile` sweep is reported by `automation/health` but has no scheduled handler.
-The Actions templates have not been executed against a real repository — that needs
-`FEEDBACK_GITHUB_REPOSITORY`/`FEEDBACK_GITHUB_TOKEN`/`FEEDBACK_CALLBACK_ORIGIN` plus the
-provider secrets, and SCN-FWB-005/016 stay `todo` until that smoke run happens.
+**Status (2026-08-01) — Candidate/Release closure and the reconcile sweep landed. An Issue
+can now reach `resolved`.**
+
+- A clean `run.completed` from a write policy registers a Candidate (§14.5). Identity is
+  repository + `baseCommit` + `changeCommit` + signed manifest; the Runner worktree path is
+  never stored (§9.3). A follow-up Candidate points at `parentCandidateId` and abandons it
+  explicitly rather than letting creation time decide.
+- Approving a HumanAction with `ready_for_deploy` flips the exact named Candidate to
+  `approved`; a superseded, integrated or unknown Candidate is refused.
+- `POST /candidates/:id/deliver` takes the repository-level delivery lock (§14.6 step 1),
+  creates the Release, moves the Issue to `testing` — never straight to `resolved` — and
+  mints the release-scoped token.
+- `deploymentRequired` follows the changed surface (§14.7): Worker paths need a Worker
+  deploy plus smoke, frontend paths need Pages, tests/docs-only needs neither.
+- `POST /releases/:id/events` accepts the nine §15.4 types under a `release`-audience token
+  only. `release.completed` is refused unless `integrationCommit` is present, every
+  required stage has reported, smoke passed, and `deployedCommit` matches the merged
+  commit. Only then does the Issue become `resolved` and the Candidate `integrated`.
+- The daily `feedback-reconcile` sweep now has a real `scheduled()` handler and a single
+  `[triggers] crons = ["0 3 * * *"]`. It only touches stuck work: it expires 7-day waits
+  (terminating the instance and clearing `active_workflow_id` while the Issue stays
+  `needs_human`, §17.3) and drops artifact rows past retention. With nothing stuck it does
+  no work and reports zero Runs, which is what keeps SCN-FWB-002 true.
+- `.gitignore` gained a narrow exception so the two Agent Runner workflows are versioned —
+  GitHub cannot run a workflow that is not in the repository. Everything else under
+  `.github/` stays untracked.
+
+**Still not built:** Design revisions (§16.4) are not modelled, `auto_deliver` (§7.4)
+always routes through Candidate review, and `/runners/test` still returns
+`ACTION_SMOKE_NOT_CONFIGURED`. Nothing has run against a real repository: that needs
+`FEEDBACK_GITHUB_REPOSITORY`, `FEEDBACK_GITHUB_TOKEN`, `FEEDBACK_CALLBACK_ORIGIN`, the
+provider secrets and a remote D1 migration. SCN-FWB-005/016 stay `todo` until that smoke
+run happens, and the workbench UI does not yet render Candidate review or Release progress
+panels — the data is served, the timeline just shows the events.
 
 ---
 

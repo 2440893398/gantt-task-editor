@@ -65,6 +65,11 @@ const FEEDBACK_DEFAULT_RESPONSES_ENDPOINT = 'https://api.openai.com/v1/responses
 const FEEDBACK_SIGNATURE_HEADER = 'X-Feedback-Signature-256';
 const FEEDBACK_HOOK_TIMEOUT_MS = 10_000;
 const FEEDBACK_RECONCILE_JOB_ID = 'feedback-reconcile';
+// §17.3: `needs_human` waits up to 7 days, then the instance terminates while
+// the Issue stays open.
+const FEEDBACK_HUMAN_WAIT_TIMEOUT_SECONDS = 7 * 24 * 60 * 60;
+// Must match `[triggers] crons` in wrangler.toml.
+const FEEDBACK_RECONCILE_CRON = '0 3 * * *';
 const MAX_FEEDBACK_COMMENT_LENGTH = 12000;
 const FEEDBACK_EVENT_SPEC_VERSION = '1.0';
 // §17.2: at most 4 attempts (1 initial + 3 retries at 1/5/15 minutes).
@@ -129,6 +134,43 @@ const FEEDBACK_PROVIDER_WORKFLOW_FILES = {
     codex: 'feedback-agent-codex.yml',
     claude: 'feedback-agent-claude.yml',
 };
+// §9.3 Candidate and Release states.
+const FEEDBACK_CANDIDATE_STATUSES = new Set([
+    'created',
+    'implementing',
+    'verified',
+    'awaiting_review',
+    'approved',
+    'integrating',
+    'integrated',
+    'failed',
+    'abandoned',
+]);
+const FEEDBACK_RELEASE_ACTIVE_STATUSES = new Set([
+    'integrating',
+    'merged',
+    'deploying',
+    'smoke_testing',
+]);
+// §15.4 Release event contract.
+const FEEDBACK_RELEASE_EVENT_TYPES = new Set([
+    'integration.started',
+    'integration.rebased',
+    'integration.merged',
+    'integration.verification_completed',
+    'deployment.started',
+    'deployment.completed',
+    'smoke.completed',
+    'release.completed',
+    'release.failed',
+]);
+// §14.7: a Release may only complete once every stage its surface requires has
+// actually reported. This is what stops a premature `resolved`.
+const FEEDBACK_RELEASE_REQUIRED_STAGES = [
+    'integration.merged',
+    'integration.verification_completed',
+];
+const FEEDBACK_RELEASE_DEPLOY_STAGES = ['deployment.completed', 'smoke.completed'];
 const FEEDBACK_HUMAN_ACTION_TYPES = new Set([
     'need_reproduction',
     'confirm_design',
@@ -3633,6 +3675,22 @@ async function appendFeedbackCallbackEvent(env, runId, body) {
             payload: callback.payload,
         });
     }
+    // §14.5: a write Run that produced a clean change set registers a
+    // Candidate; without one there is nothing an approval could point at.
+    let candidate = null;
+    if (
+        callback.type === 'run.completed' &&
+        gate?.allowed &&
+        FEEDBACK_WRITE_POLICIES.has(run.policy)
+    ) {
+        candidate = await registerFeedbackCandidate(env, {
+            issueId: run.issue_id,
+            runId,
+            workflowId: null,
+            manifest: callback.payload.diffManifest || callback.payload,
+            verification: callback.payload.verification || {},
+        });
+    }
     if (callback.type === 'artifact.created' && callback.payload.artifact) {
         await recordFeedbackArtifact(env, {
             issueId: run.issue_id,
@@ -3646,6 +3704,7 @@ async function appendFeedbackCallbackEvent(env, runId, body) {
         runStatus: projection.runStatus || run.status,
         issueStatus: projection.issueStatus,
         humanActionId,
+        candidateId: candidate?.candidateId || null,
         gate: gate ? { allowed: gate.allowed, violations: gate.violations } : null,
     };
 }
@@ -3688,6 +3747,486 @@ async function createFeedbackHumanAction(env, { issueId, runId, payload }) {
         .bind(actionId, issueId)
         .run();
     return actionId;
+}
+
+/**
+ * §14.5: every write Run that produced reviewable changes registers a
+ * Candidate. Identity is repository + commits + signed manifest — never a
+ * Runner worktree path, which disappears with the Runner (§9.3).
+ */
+async function registerFeedbackCandidate(
+    env,
+    { issueId, runId, workflowId, manifest, verification }
+) {
+    const repository =
+        limitText(manifest.repository, 200) || String(env.FEEDBACK_GITHUB_REPOSITORY || '');
+    if (!repository || !manifest.baseCommit || !manifest.changeCommit) return null;
+
+    const candidateId = `cnd_${crypto.randomUUID()}`;
+    const now = new Date().toISOString();
+    // §14.5: a newer Candidate must point at the one it replaces rather than
+    // letting creation time decide which is current.
+    const parent = await env.FEEDBACK_DB.prepare(
+        `SELECT id FROM feedback_candidates
+         WHERE issue_id = ? AND status NOT IN ('abandoned', 'integrated')
+         ORDER BY created_at DESC LIMIT 1`
+    )
+        .bind(issueId)
+        .first();
+
+    const inserted = await env.FEEDBACK_DB.prepare(
+        `INSERT INTO feedback_candidates (
+            id, issue_id, workflow_id, run_id, parent_candidate_id, repository,
+            base_ref, base_commit, candidate_ref, change_commit, changed_files_json,
+            diff_manifest_sha256, patch_artifact_id, verification_json,
+            evidence_artifact_ids_json, review_focus, candidate_worktree, status,
+            created_at, verified_at, approved_at, integrated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, '[]', ?, NULL,
+                  'verified', ?, ?, NULL, NULL)
+        ON CONFLICT(issue_id, repository, base_commit, change_commit) DO NOTHING
+        RETURNING id`
+    )
+        .bind(
+            candidateId,
+            issueId,
+            workflowId,
+            runId,
+            parent?.id || null,
+            repository,
+            limitText(manifest.baseRef, 200) || 'master',
+            manifest.baseCommit,
+            limitText(manifest.candidateRef, 200) || `feedback/${runId}`,
+            manifest.changeCommit,
+            JSON.stringify(Array.isArray(manifest.changedFiles) ? manifest.changedFiles : []),
+            limitText(manifest.diffManifestSha256, 100),
+            JSON.stringify(verification || {}),
+            limitText(manifest.reviewFocus, 500),
+            now,
+            now
+        )
+        .first();
+    if (!inserted) return null;
+
+    if (parent?.id) {
+        await env.FEEDBACK_DB.prepare(
+            "UPDATE feedback_candidates SET status = 'abandoned' WHERE id = ?"
+        )
+            .bind(parent.id)
+            .run();
+    }
+    await env.FEEDBACK_DB.prepare('UPDATE feedback_issues SET active_candidate_id = ? WHERE id = ?')
+        .bind(candidateId, issueId)
+        .run();
+
+    return { candidateId, parentCandidateId: parent?.id || null, repository };
+}
+
+function serializeFeedbackCandidate(row, { includeTechnical }) {
+    const base = {
+        id: row.id,
+        issueId: row.issue_id,
+        runId: row.run_id || '',
+        parentCandidateId: row.parent_candidate_id || '',
+        status: row.status,
+        // §19.2: review leads with product effect and changed surface; branch
+        // and commit belong under technical detail.
+        changedFiles: parseStoredJson(row.changed_files_json, []),
+        verification: parseStoredJson(row.verification_json, {}),
+        reviewFocus: row.review_focus || '',
+        createdAt: row.created_at,
+        verifiedAt: row.verified_at || '',
+        approvedAt: row.approved_at || '',
+        integratedAt: row.integrated_at || '',
+    };
+    if (!includeTechnical) return base;
+
+    return {
+        ...base,
+        technical: {
+            repository: row.repository,
+            baseRef: row.base_ref,
+            baseCommit: row.base_commit,
+            candidateRef: row.candidate_ref,
+            changeCommit: row.change_commit,
+            diffManifestSha256: row.diff_manifest_sha256,
+        },
+    };
+}
+
+/**
+ * §21.4/§14.6 step 1: approving a Candidate creates the Release and takes the
+ * repository-level delivery lock, so two Issues cannot rewrite the default
+ * branch at the same time. The Release token is only minted here, after the
+ * exact candidateId has been verified as approved.
+ */
+async function deliverFeedbackCandidate(env, candidateId, { actorType }) {
+    if (!env.FEEDBACK_DB) {
+        throw feedbackStorageError('FEEDBACK_DB_REQUIRED');
+    }
+
+    const candidate = await env.FEEDBACK_DB.prepare(
+        'SELECT * FROM feedback_candidates WHERE id = ?'
+    )
+        .bind(candidateId)
+        .first();
+    if (!candidate) return null;
+    if (candidate.status === 'abandoned') {
+        throw feedbackStorageError('FEEDBACK_CANDIDATE_ABANDONED');
+    }
+    if (candidate.status !== 'approved') {
+        throw feedbackStorageError('FEEDBACK_CANDIDATE_NOT_APPROVED');
+    }
+
+    const issue = await env.FEEDBACK_DB.prepare('SELECT status FROM feedback_issues WHERE id = ?')
+        .bind(candidate.issue_id)
+        .first();
+    if (issue?.status !== 'ready_for_deploy') {
+        throw feedbackStorageError('FEEDBACK_ISSUE_NOT_READY_FOR_DEPLOY');
+    }
+
+    const remoteDefaultBranch = String(env.FEEDBACK_GITHUB_REF || 'master');
+    const active = await env.FEEDBACK_DB.prepare(
+        `SELECT id FROM feedback_releases
+         WHERE repository = ? AND remote_default_branch = ?
+           AND status IN ('integrating', 'merged', 'deploying', 'smoke_testing')`
+    )
+        .bind(candidate.repository, remoteDefaultBranch)
+        .first();
+    if (active) {
+        // §14.6 step 6: Candidates are serialized by the lock, not rejected.
+        throw feedbackStorageError('FEEDBACK_DELIVERY_LOCK_HELD');
+    }
+
+    const releaseId = `rel_${crypto.randomUUID()}`;
+    const now = new Date().toISOString();
+    const changedFiles = parseStoredJson(candidate.changed_files_json, []);
+    const deployment = resolveFeedbackDeploymentRequirement(changedFiles);
+
+    await env.FEEDBACK_DB.batch([
+        env.FEEDBACK_DB.prepare(
+            `INSERT INTO feedback_releases (
+                id, issue_id, candidate_id, workflow_id, repository, status,
+                integration_strategy, integration_commit, remote_default_branch,
+                deployment_required, deployment_target, deployment_id, deployed_commit,
+                verification_json, artifact_hashes_json, smoke_urls_json, smoke_result_json,
+                started_at, merged_at, deployed_at, finished_at, error_code
+            ) VALUES (?, ?, ?, ?, ?, 'integrating', 'rebase', NULL, ?, ?, ?, NULL, NULL,
+                      '{}', '{}', ?, '{}', ?, NULL, NULL, NULL, NULL)`
+        ).bind(
+            releaseId,
+            candidate.issue_id,
+            candidateId,
+            candidate.workflow_id,
+            candidate.repository,
+            remoteDefaultBranch,
+            deployment.required ? 1 : 0,
+            deployment.target,
+            JSON.stringify(deployment.smokeUrls),
+            now
+        ),
+        env.FEEDBACK_DB.prepare(
+            "UPDATE feedback_candidates SET status = 'integrating' WHERE id = ?"
+        ).bind(candidateId),
+        env.FEEDBACK_DB.prepare(
+            `UPDATE feedback_issues
+             SET status = 'testing', active_release_id = ?, updated_at = ?, version = version + 1
+             WHERE id = ?`
+        ).bind(releaseId, now, candidate.issue_id),
+    ]);
+
+    await appendFeedbackSystemEvent(env, candidate.issue_id, {
+        type: 'status.changed',
+        visibility: 'public',
+        body: {
+            changes: { status: ['ready_for_deploy', 'testing'] },
+            candidateId,
+            releaseId,
+            actorType,
+        },
+    });
+
+    const releaseToken = await createFeedbackReleaseToken(env, releaseId);
+    return {
+        releaseId,
+        candidateId,
+        issueId: candidate.issue_id,
+        deploymentRequired: deployment.required,
+        deploymentTarget: deployment.target,
+        releaseToken,
+    };
+}
+
+/**
+ * §14.7: what has to be deployed follows the changed surface, so a docs-only
+ * fix is not forced through a Worker deploy it does not need.
+ */
+function resolveFeedbackDeploymentRequirement(changedFiles) {
+    const files = changedFiles.map((file) => String(file || ''));
+    const touchesWorker = files.some(
+        (file) => file.startsWith('workers/') || file.startsWith('wrangler.')
+    );
+    const touchesFrontend = files.some(
+        (file) =>
+            file.startsWith('src/') || file.startsWith('index.html') || file.startsWith('vite.')
+    );
+    const onlyTestsOrDocs = files.every(
+        (file) => file.startsWith('tests/') || file.startsWith('doc/') || file.endsWith('.md')
+    );
+
+    if (onlyTestsOrDocs && files.length) {
+        return { required: false, target: null, smokeUrls: [], reason: 'tests_or_docs_only' };
+    }
+    if (touchesWorker) {
+        return {
+            required: true,
+            target: 'worker',
+            smokeUrls: ['/feedback', '/api/feedback/issues'],
+            reason: 'worker_surface_changed',
+        };
+    }
+    if (touchesFrontend) {
+        return {
+            required: true,
+            target: 'pages',
+            smokeUrls: ['/'],
+            reason: 'frontend_surface_changed',
+        };
+    }
+    return { required: false, target: null, smokeUrls: [], reason: 'no_deployable_surface' };
+}
+
+async function createFeedbackReleaseToken(env, releaseId) {
+    const expiresAt = Date.now() + FEEDBACK_RUN_TOKEN_TTL_SECONDS * 1000;
+    const payload = base64UrlEncode(JSON.stringify({ aud: 'release', releaseId, exp: expiresAt }));
+    const signature = await signValue(payload, getFeedbackRunTokenSecret(env));
+
+    return { token: `${payload}.${signature}`, expiresAt: new Date(expiresAt).toISOString() };
+}
+
+async function verifyFeedbackReleaseToken(request, env, releaseId) {
+    const token = getBearerToken(request);
+    if (!token) return null;
+
+    const [payload, signature] = token.split('.');
+    if (!payload || !signature) return null;
+    const expected = await signValue(payload, getFeedbackRunTokenSecret(env));
+    if (!feedbackHashesMatch(expected, signature)) return null;
+
+    try {
+        const parsed = JSON.parse(base64UrlDecode(payload));
+        if (parsed.aud !== 'release' || parsed.releaseId !== releaseId) return null;
+        if (!(Number(parsed.exp) > Date.now())) return null;
+        return parsed;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * §15.4: appends a Release event. Only a `release.completed` whose commits are
+ * consistent and whose required stages have all reported can resolve the Issue
+ * (§14.7) — a Run succeeding is never enough.
+ */
+async function appendFeedbackReleaseEvent(env, releaseId, body) {
+    if (!env.FEEDBACK_DB) {
+        throw feedbackStorageError('FEEDBACK_DB_REQUIRED');
+    }
+
+    const type = String(body?.type || '');
+    if (!FEEDBACK_RELEASE_EVENT_TYPES.has(type)) {
+        throw feedbackStorageError('FEEDBACK_RELEASE_TYPE_UNSUPPORTED');
+    }
+    const eventId = limitText(body.eventId, 120);
+    if (!eventId) throw feedbackStorageError('FEEDBACK_CALLBACK_EVENT_ID_REQUIRED');
+
+    const release = await env.FEEDBACK_DB.prepare('SELECT * FROM feedback_releases WHERE id = ?')
+        .bind(releaseId)
+        .first();
+    if (!release) return null;
+    if (!FEEDBACK_RELEASE_ACTIVE_STATUSES.has(release.status)) {
+        throw feedbackStorageError('FEEDBACK_RELEASE_ALREADY_TERMINAL');
+    }
+
+    const payload = body.payload && typeof body.payload === 'object' ? body.payload : {};
+    if (payload.candidateId && payload.candidateId !== release.candidate_id) {
+        throw feedbackStorageError('FEEDBACK_CANDIDATE_ID_MISMATCH');
+    }
+
+    const timelineId = `evt_rel_${releaseId}_${eventId}`;
+    const existing = await env.FEEDBACK_DB.prepare('SELECT id FROM feedback_events WHERE id = ?')
+        .bind(timelineId)
+        .first();
+    if (existing) return { duplicate: true, eventId: timelineId, status: release.status };
+
+    const stages = parseStoredJson(release.verification_json, {});
+    stages[type] = { at: new Date().toISOString(), ...payload };
+    const integrationCommit = payload.integrationCommit || release.integration_commit || null;
+
+    if (type === 'release.completed') {
+        const check = verifyFeedbackReleaseCompletion({
+            release,
+            stages,
+            payload,
+            integrationCommit,
+        });
+        if (!check.allowed) {
+            throw feedbackStorageError(check.errorCode);
+        }
+    }
+    if (
+        payload.deployedCommit &&
+        integrationCommit &&
+        payload.deployedCommit !== integrationCommit
+    ) {
+        // §14.7: deploying anything other than the merged commit is a hard stop.
+        throw feedbackStorageError('FEEDBACK_DEPLOYED_COMMIT_MISMATCH');
+    }
+
+    const nextStatus = resolveFeedbackReleaseStatus(type, release.status);
+    const now = new Date().toISOString();
+    const statements = [
+        env.FEEDBACK_DB.prepare(
+            `UPDATE feedback_releases
+             SET status = ?, verification_json = ?, integration_commit = COALESCE(?, integration_commit),
+                 deployed_commit = COALESCE(?, deployed_commit),
+                 deployment_id = COALESCE(?, deployment_id),
+                 smoke_result_json = ?,
+                 merged_at = COALESCE(?, merged_at), deployed_at = COALESCE(?, deployed_at),
+                 finished_at = COALESCE(?, finished_at), error_code = COALESCE(?, error_code)
+             WHERE id = ?`
+        ).bind(
+            nextStatus,
+            JSON.stringify(stages),
+            integrationCommit,
+            payload.deployedCommit || null,
+            payload.deploymentId || null,
+            JSON.stringify(stages['smoke.completed'] || {}),
+            type === 'integration.merged' ? now : null,
+            type === 'deployment.completed' ? now : null,
+            type === 'release.completed' || type === 'release.failed' ? now : null,
+            type === 'release.failed' ? limitText(payload.errorCode, 80) || 'release_failed' : null,
+            releaseId
+        ),
+    ];
+
+    // §14.7: the resolution summary is public; command output stays internal.
+    statements.push(
+        env.FEEDBACK_DB.prepare(
+            `INSERT INTO feedback_events (
+                id, issue_id, sequence, type, actor_type, actor_id, visibility,
+                run_id, occurred_at, body_json, metadata_json, legacy_hash
+            )
+            SELECT
+                ?, id,
+                (SELECT COALESCE(MAX(sequence), 0) + 1
+                 FROM feedback_events WHERE issue_id = feedback_issues.id),
+                ?, 'system', NULL, ?, NULL, ?, ?, '{}', NULL
+            FROM feedback_issues
+            WHERE id = ?`
+        ).bind(
+            timelineId,
+            type,
+            type === 'release.completed' || type === 'release.failed' ? 'public' : 'internal',
+            now,
+            JSON.stringify({
+                releaseId,
+                candidateId: release.candidate_id,
+                integrationCommit,
+                deployedCommit: payload.deployedCommit || null,
+                text: limitText(payload.summary, 4000),
+            }),
+            release.issue_id
+        )
+    );
+
+    if (type === 'release.completed') {
+        statements.push(
+            env.FEEDBACK_DB.prepare(
+                "UPDATE feedback_candidates SET status = 'integrated', integrated_at = ? WHERE id = ?"
+            ).bind(now, release.candidate_id)
+        );
+        statements.push(
+            env.FEEDBACK_DB.prepare(
+                `UPDATE feedback_issues
+                 SET status = 'resolved', resolved_at = ?, updated_at = ?, version = version + 1
+                 WHERE id = ?`
+            ).bind(now, now, release.issue_id)
+        );
+    }
+    if (type === 'release.failed') {
+        statements.push(
+            env.FEEDBACK_DB.prepare(
+                `UPDATE feedback_issues
+                 SET status = ?, updated_at = ?, version = version + 1
+                 WHERE id = ?`
+            ).bind(
+                payload.errorCode === 'blocked_external' ? 'needs_human' : 'test_failed',
+                now,
+                release.issue_id
+            )
+        );
+    }
+
+    await env.FEEDBACK_DB.batch(statements);
+
+    return {
+        eventId: timelineId,
+        releaseStatus: nextStatus,
+        issueStatus:
+            type === 'release.completed'
+                ? 'resolved'
+                : type === 'release.failed'
+                  ? payload.errorCode === 'blocked_external'
+                      ? 'needs_human'
+                      : 'test_failed'
+                  : null,
+    };
+}
+
+function resolveFeedbackReleaseStatus(type, current) {
+    const map = {
+        'integration.started': 'integrating',
+        'integration.rebased': 'integrating',
+        'integration.merged': 'merged',
+        'integration.verification_completed': 'merged',
+        'deployment.started': 'deploying',
+        'deployment.completed': 'deploying',
+        'smoke.completed': 'smoke_testing',
+        'release.completed': 'succeeded',
+        'release.failed': 'failed',
+    };
+    return map[type] || current;
+}
+
+/** §14.7: every stage the changed surface requires must have reported. */
+function verifyFeedbackReleaseCompletion({ release, stages, payload, integrationCommit }) {
+    if (!integrationCommit) {
+        return { allowed: false, errorCode: 'FEEDBACK_RELEASE_MISSING_INTEGRATION_COMMIT' };
+    }
+    for (const stage of FEEDBACK_RELEASE_REQUIRED_STAGES) {
+        if (!stages[stage]) {
+            return { allowed: false, errorCode: 'FEEDBACK_RELEASE_STAGE_MISSING' };
+        }
+    }
+    if (Number(release.deployment_required) === 1) {
+        for (const stage of FEEDBACK_RELEASE_DEPLOY_STAGES) {
+            if (!stages[stage]) {
+                return { allowed: false, errorCode: 'FEEDBACK_RELEASE_STAGE_MISSING' };
+            }
+        }
+        if (stages['smoke.completed']?.passed === false) {
+            return { allowed: false, errorCode: 'FEEDBACK_RELEASE_SMOKE_FAILED' };
+        }
+        const deployedCommit = stages['deployment.completed']?.deployedCommit;
+        if (deployedCommit && deployedCommit !== integrationCommit) {
+            return { allowed: false, errorCode: 'FEEDBACK_DEPLOYED_COMMIT_MISMATCH' };
+        }
+    }
+    if (payload.passed === false) {
+        return { allowed: false, errorCode: 'FEEDBACK_RELEASE_SMOKE_FAILED' };
+    }
+
+    return { allowed: true };
 }
 
 /** §18.2/§14: artifacts default to private and are never public by default. */
@@ -4042,12 +4581,29 @@ async function respondToHumanAction(env, actionId, { actorType, decision, candid
     if (!action.allowedReturnStates.includes(decision)) {
         throw feedbackStorageError('FEEDBACK_HUMAN_ACTION_STATE_NOT_ALLOWED');
     }
+    let approvedCandidate = null;
     if (decision === 'ready_for_deploy') {
         if (!candidateId) {
             throw feedbackStorageError('FEEDBACK_CANDIDATE_ID_REQUIRED');
         }
         if (action.candidateId && action.candidateId !== candidateId) {
             throw feedbackStorageError('FEEDBACK_CANDIDATE_ID_MISMATCH');
+        }
+        // §9.3: approval binds to a specific, still-live Candidate. A superseded
+        // one must not be revivable by approving an old HumanAction.
+        approvedCandidate = await env.FEEDBACK_DB.prepare(
+            'SELECT id, status FROM feedback_candidates WHERE id = ?'
+        )
+            .bind(candidateId)
+            .first();
+        if (!approvedCandidate) {
+            throw feedbackStorageError('FEEDBACK_CANDIDATE_ID_MISMATCH');
+        }
+        if (!FEEDBACK_CANDIDATE_STATUSES.has(approvedCandidate.status)) {
+            throw feedbackStorageError('FEEDBACK_CANDIDATE_ID_MISMATCH');
+        }
+        if (['abandoned', 'integrated', 'failed'].includes(approvedCandidate.status)) {
+            throw feedbackStorageError('FEEDBACK_CANDIDATE_ABANDONED');
         }
     }
 
@@ -4112,10 +4668,19 @@ async function respondToHumanAction(env, actionId, { actorType, decision, candid
         throw feedbackStorageError('FEEDBACK_HUMAN_ACTION_RESOLVED');
     }
 
+    if (approvedCandidate) {
+        await env.FEEDBACK_DB.prepare(
+            "UPDATE feedback_candidates SET status = 'approved', approved_at = ? WHERE id = ?"
+        )
+            .bind(occurredAt, candidateId)
+            .run();
+    }
+
     return {
         issue: await readD1FeedbackIssue(env, action.issueId),
         action: { ...action, status: 'resolved', resolvedAt: occurredAt },
         eventId,
+        approvedCandidateId: approvedCandidate ? candidateId : null,
     };
 }
 
@@ -4152,6 +4717,74 @@ async function cancelFeedbackRun(env, runId) {
     });
 
     return { runId, status: 'cancelled', issueId: run.issue_id, issueStatus: 'open' };
+}
+
+/**
+ * Daily `feedback-reconcile` sweep (§13.4, §17.2, §17.3).
+ *
+ * Deliberately narrow: it only touches things that are already stuck. It must
+ * never scan healthy Issues or create Agent Runs, which is what keeps
+ * SCN-FWB-002's "no periodic Agent polling" true — with nothing stuck it does
+ * no work and reports zero Runs.
+ */
+async function runFeedbackReconcile(env, now = new Date()) {
+    const summary = {
+        jobId: FEEDBACK_RECONCILE_JOB_ID,
+        ranAt: now.toISOString(),
+        expiredWaits: 0,
+        clearedWorkflowMappings: 0,
+        expiredArtifacts: 0,
+        deadLetterCount: 0,
+        runCount: 0,
+    };
+    if (!env.FEEDBACK_DB) return summary;
+
+    const waitDeadline = new Date(
+        now.getTime() - FEEDBACK_HUMAN_WAIT_TIMEOUT_SECONDS * 1000
+    ).toISOString();
+
+    // §17.3: a wait that ran past 7 days terminates the instance and clears the
+    // active Workflow, but the Issue stays `needs_human` and is never closed.
+    const expired = await env.FEEDBACK_DB.prepare(
+        `SELECT w.instance_id, w.issue_id FROM feedback_workflows w
+         JOIN feedback_issues i ON i.id = w.issue_id
+         WHERE w.status IN ('queued', 'running', 'waiting')
+           AND i.status = 'needs_human'
+           AND w.started_at < ?`
+    )
+        .bind(waitDeadline)
+        .all();
+
+    for (const row of expired.results || []) {
+        await env.FEEDBACK_DB.batch([
+            env.FEEDBACK_DB.prepare(
+                `UPDATE feedback_workflows
+                 SET status = 'terminated', finished_at = ?, terminal_reason = 'human_timeout'
+                 WHERE instance_id = ?`
+            ).bind(summary.ranAt, row.instance_id),
+            env.FEEDBACK_DB.prepare(
+                'UPDATE feedback_issues SET active_workflow_id = NULL WHERE id = ?'
+            ).bind(row.issue_id),
+        ]);
+        summary.expiredWaits += 1;
+        summary.clearedWorkflowMappings += 1;
+    }
+
+    // §18.2: artifacts past their retention are unreachable; drop the rows so
+    // the timeline stops offering links that can no longer be signed.
+    const artifacts = await env.FEEDBACK_DB.prepare(
+        'DELETE FROM feedback_artifacts WHERE expires_at IS NOT NULL AND expires_at < ? RETURNING id'
+    )
+        .bind(summary.ranAt)
+        .all();
+    summary.expiredArtifacts = (artifacts.results || []).length;
+
+    const dead = await env.FEEDBACK_DB.prepare(
+        "SELECT COUNT(*) AS total FROM feedback_deliveries WHERE status = 'dead_letter'"
+    ).first();
+    summary.deadLetterCount = Number(dead?.total) || 0;
+
+    return summary;
 }
 
 async function readAutomationHealth(env) {
@@ -4209,10 +4842,14 @@ async function readAutomationHealth(env) {
         reconcile: {
             jobId: FEEDBACK_RECONCILE_JOB_ID,
             enabled: stored.settings.dailyReconcileEnabled,
+            // The Worker's one scheduled trigger. It is reported explicitly so
+            // the daily sweep is never mistaken for Agent polling (§19.4).
+            schedule: FEEDBACK_RECONCILE_CRON,
             stuckCount: byStatus.dead_letter || 0,
             runCount: 0,
         },
-        // §4/§19.4: V2 is event-driven; no high-frequency polling trigger exists.
+        // §4/§19.4: Issue processing is event-driven. The only cron is the
+        // daily reconcile above; no trigger polls for Agent work.
         pollingCronConfigured: false,
     };
 }
@@ -4276,6 +4913,16 @@ const FEEDBACK_ERROR_RESPONSES = {
     FEEDBACK_CALLBACK_EVENT_ID_REQUIRED: [400, 'eventId is required'],
     FEEDBACK_RUN_ALREADY_TERMINAL: [409, 'Run is already in a terminal state'],
     FEEDBACK_RUN_STATUS_INVALID: [500, 'Run projection produced an invalid status'],
+    FEEDBACK_CANDIDATE_NOT_APPROVED: [409, 'Candidate has not been approved'],
+    FEEDBACK_CANDIDATE_ABANDONED: [409, 'Candidate has been superseded'],
+    FEEDBACK_ISSUE_NOT_READY_FOR_DEPLOY: [409, 'Issue is not ready for delivery'],
+    FEEDBACK_DELIVERY_LOCK_HELD: [409, 'Another release is integrating on this branch'],
+    FEEDBACK_RELEASE_TYPE_UNSUPPORTED: [400, 'Unsupported release event type'],
+    FEEDBACK_RELEASE_ALREADY_TERMINAL: [409, 'Release is already in a terminal state'],
+    FEEDBACK_RELEASE_STAGE_MISSING: [409, 'A required release stage has not reported'],
+    FEEDBACK_RELEASE_SMOKE_FAILED: [409, 'Production smoke did not pass'],
+    FEEDBACK_RELEASE_MISSING_INTEGRATION_COMMIT: [409, 'integrationCommit is required'],
+    FEEDBACK_DEPLOYED_COMMIT_MISMATCH: [409, 'deployedCommit does not match integrationCommit'],
 };
 
 function feedbackErrorResponse(error, headers) {
@@ -6874,6 +7521,90 @@ export default {
             }
         }
 
+        // --- Workbench V2 Candidates and Releases --------------------------
+        if (url.pathname.startsWith('/api/feedback/candidates/')) {
+            const rest = url.pathname.slice('/api/feedback/candidates/'.length);
+            const isDeliver = rest.endsWith('/deliver');
+            const candidateId = decodeURIComponent(
+                isDeliver ? rest.slice(0, -'/deliver'.length) : rest
+            );
+            if (!candidateId) return errorResponse('Invalid candidate', 400, headers);
+
+            try {
+                if (request.method === 'POST' && isDeliver) {
+                    // §21.3: delivery is admin-only; an owner approval reaches
+                    // it through the HumanAction response instead.
+                    if (!(await isValidAdminToken(request, env))) {
+                        return errorResponse('Unauthorized', 401, headers);
+                    }
+
+                    const result = await deliverFeedbackCandidate(env, candidateId, {
+                        actorType: 'admin',
+                    });
+                    if (!result) return errorResponse('Not found', 404, headers);
+                    return jsonResponse(result, { status: 201, headers });
+                }
+
+                if (request.method === 'GET' && !isDeliver) {
+                    const row = await env.FEEDBACK_DB?.prepare(
+                        'SELECT * FROM feedback_candidates WHERE id = ?'
+                    )
+                        .bind(candidateId)
+                        .first();
+                    if (!row) return errorResponse('Not found', 404, headers);
+
+                    const isAdmin = await isValidAdminToken(request, env);
+                    const isOwner =
+                        !isAdmin &&
+                        (await isValidFeedbackOwnerCapability(request, env, row.issue_id));
+                    if (!isAdmin && !isOwner) {
+                        return errorResponse('Unauthorized', 401, headers);
+                    }
+
+                    return jsonResponse(
+                        {
+                            candidate: serializeFeedbackCandidate(row, {
+                                includeTechnical: isAdmin,
+                            }),
+                        },
+                        { headers }
+                    );
+                }
+            } catch (error) {
+                return feedbackErrorResponse(error, headers);
+            }
+
+            return errorResponse('Not Found', 404, headers);
+        }
+
+        if (url.pathname.startsWith('/api/feedback/releases/')) {
+            const rest = url.pathname.slice('/api/feedback/releases/'.length);
+            const separator = rest.lastIndexOf('/');
+            const releaseId = separator > 0 ? decodeURIComponent(rest.slice(0, separator)) : '';
+            const segment = separator > 0 ? rest.slice(separator + 1) : '';
+
+            if (releaseId && segment === 'events' && request.method === 'POST') {
+                // §21.3: only the matching Release token — not admin, not owner.
+                if (!(await verifyFeedbackReleaseToken(request, env, releaseId))) {
+                    return errorResponse('Unauthorized', 401, headers);
+                }
+
+                try {
+                    const result = await appendFeedbackReleaseEvent(
+                        env,
+                        releaseId,
+                        await request.json()
+                    );
+                    if (!result) return errorResponse('Not found', 404, headers);
+                    return jsonResponse(result, { status: result.duplicate ? 200 : 201, headers });
+                } catch (error) {
+                    return feedbackErrorResponse(error, headers);
+                }
+            }
+
+            return errorResponse('Not Found', 404, headers);
+        }
+
         // --- Workbench V2 Run context and Callback -------------------------
         if (url.pathname.startsWith('/api/feedback/runs/')) {
             const rest = url.pathname.slice('/api/feedback/runs/'.length);
@@ -7220,5 +7951,24 @@ export default {
         }
 
         return new Response('Not Found', { status: 404, headers });
+    },
+
+    /**
+     * The only scheduled trigger in this Worker. It runs once a day and only
+     * touches stuck work (§13.4, §17.2) — it is not, and must not become, an
+     * Agent polling loop.
+     */
+    async scheduled(event, env, ctx) {
+        const sweep = runFeedbackReconcile(env, new Date(event.scheduledTime || Date.now())).then(
+            (summary) => {
+                console.log('[Feedback] reconcile', summary);
+                return summary;
+            },
+            (error) => {
+                console.warn('[Feedback] reconcile failed', error);
+            }
+        );
+        if (ctx?.waitUntil) ctx.waitUntil(sweep);
+        return sweep;
     },
 };
