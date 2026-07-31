@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { TextDecoder } from 'node:util';
-import worker from '../../../workers/share-worker.js';
+import worker, { FeedbackWorkflow } from '../../../workers/share-worker.js';
 
 class MemoryKV {
     constructor(seed = {}) {
@@ -108,6 +108,8 @@ class MemoryD1 {
             feedback_deliveries: new Map(),
             feedback_workflows: new Map(),
             feedback_usage_daily: new Map(),
+            feedback_runs: new Map(),
+            feedback_artifacts: new Map(),
         };
         this.queries = [];
 
@@ -346,18 +348,38 @@ class MemoryD1 {
             return { success: true, results: [], meta: { changes: 1 } };
         }
 
-        const insert = normalized.match(/^insert into ([a-z_]+)\s*\(([^)]+)\)/);
+        const insert = normalized.match(
+            /^insert into ([a-z_]+)\s*\(([^)]+)\)\s*values\s*\((.+?)\)/
+        );
         if (insert) {
-            const [, tableName, rawColumns] = insert;
+            const [, tableName, rawColumns, rawValues] = insert;
             const columns = rawColumns.split(',').map((column) => column.trim());
-            const row = Object.fromEntries(columns.map((column, index) => [column, values[index]]));
+            // The VALUES tuple mixes placeholders with literals, so map each
+            // column to its own slot instead of assuming a 1:1 zip.
+            const tokens = rawValues.split(',').map((token) => token.trim());
+            const row = {};
+            let cursor = 0;
+            columns.forEach((column, index) => {
+                const token = tokens[index];
+                if (token === '?') {
+                    row[column] = values[cursor];
+                    cursor += 1;
+                } else if (token === 'null' || token === undefined) {
+                    row[column] = null;
+                } else if (/^-?\d+$/.test(token)) {
+                    row[column] = Number(token);
+                } else {
+                    row[column] = token.replace(/^'|'$/g, '');
+                }
+            });
+
             const table = this.tables[tableName];
             const id = row.id;
 
             if (!table) throw new Error(`Unsupported in-memory D1 table: ${tableName}`);
             if (!table.has(id)) {
                 table.set(id, row);
-                return { success: true, results: [], meta: { changes: 1 } };
+                return { success: true, results: [{ id }], meta: { changes: 1 } };
             }
             return { success: true, results: [], meta: { changes: 0 } };
         }
@@ -459,6 +481,16 @@ class MemoryD1 {
                 return ['queued', 'running', 'waiting'].includes(row.status);
             });
             return ok(rows.map((row) => ({ ...row })));
+        }
+        if (normalized.startsWith('update feedback_workflows')) {
+            const instanceId = values[values.length - 1];
+            const current = this.tables.feedback_workflows.get(instanceId);
+            if (!current) return ok([], 0);
+            this.tables.feedback_workflows.set(instanceId, {
+                ...current,
+                active_run_id: values[0],
+            });
+            return ok([], 1);
         }
         if (normalized.startsWith('insert into feedback_workflows')) {
             const [
@@ -659,50 +691,129 @@ class MemoryD1 {
             return ok([], 1);
         }
 
-        // --- status-only issue updates (comment / reopen / human action) ---
-        if (normalized.startsWith('update feedback_issues set status = ?')) {
-            const guardedByVersion = normalized.includes('version = ?');
-            const [status] = values;
-            const issueId = guardedByVersion ? values[3] : values[values.length - 1];
-            const expectedVersion = guardedByVersion ? values[4] : undefined;
-            const eventId = guardedByVersion ? values[5] : null;
+        // --- feedback_runs ---
+        if (normalized.startsWith('select r.id as run_id')) {
+            const run = this.tables.feedback_runs.get(values[0]);
+            const issue = run ? this.tables.feedback_issues.get(run.issue_id) : null;
+            if (!run || !issue) return ok([]);
+            return ok([
+                {
+                    run_id: run.id,
+                    policy: run.policy,
+                    provider: run.provider,
+                    runner_type: run.runner_type,
+                    run_status: run.status,
+                    base_commit: run.base_commit,
+                    issue_id: issue.id,
+                    version: issue.version,
+                    title: issue.title,
+                    description: issue.description,
+                    business_type: issue.business_type,
+                    scope: issue.scope,
+                    issue_status: issue.status,
+                },
+            ]);
+        }
+        if (normalized.includes('from feedback_runs where id = ?')) {
+            const row = this.tables.feedback_runs.get(values[0]);
+            return ok(row ? [{ ...row }] : []);
+        }
+        if (normalized.includes('from feedback_runs where issue_id = ?')) {
+            const rows = Array.from(this.tables.feedback_runs.values()).filter(
+                (row) =>
+                    row.issue_id === values[0] &&
+                    !['succeeded', 'failed', 'cancelled', 'timed_out'].includes(row.status) &&
+                    ['implement', 'implement_and_verify', 'local_required'].includes(row.policy)
+            );
+            return ok(rows.map((row) => ({ ...row })));
+        }
+        if (normalized.startsWith('update feedback_runs')) {
+            const runId = values[values.length - 1];
+            const current = this.tables.feedback_runs.get(runId);
+            if (!current) return ok([], 0);
+            if (normalized.includes("status = 'cancelled'")) {
+                this.tables.feedback_runs.set(runId, {
+                    ...current,
+                    status: 'cancelled',
+                    finished_at: values[0],
+                });
+                return ok([], 1);
+            }
+            const [status, providerSessionId, , finishedAt, errorCode] = values;
+            this.tables.feedback_runs.set(runId, {
+                ...current,
+                status,
+                provider_session_id: providerSessionId ?? current.provider_session_id,
+                finished_at: ['succeeded', 'failed', 'cancelled', 'timed_out'].includes(status)
+                    ? finishedAt
+                    : current.finished_at,
+                error_code: errorCode ?? current.error_code,
+            });
+            return ok([], 1);
+        }
+
+        if (normalized === 'select id from feedback_events where id = ?') {
+            const row = this.tables.feedback_events.get(values[0]);
+            return ok(row ? [{ id: row.id }] : []);
+        }
+
+        // --- feedback_issues updates (parsed from the SET clause so new
+        //     statements cannot collide with each other) ---
+        const issueUpdate = normalized.match(
+            /^update feedback_issues set (.+?) where id = \?(.*)$/
+        );
+        if (issueUpdate && !normalized.includes('workflow_generation = ?')) {
+            // COALESCE/CASE arguments contain commas, so collapse them before
+            // splitting the SET list on commas.
+            const assignments = issueUpdate[1]
+                .replace(/coalesce\(\?[^)]*\)/g, 'coalesce(?)')
+                .replace(/case when[^,]*end/g, 'case(?)')
+                .split(',')
+                .map((part) => part.trim());
+            const tail = issueUpdate[2];
+            const patch = {};
+            let cursor = 0;
+
+            for (const assignment of assignments) {
+                const [column, expression] = assignment.split('=').map((part) => part.trim());
+                if (expression === '?') {
+                    patch[column] = values[cursor];
+                    cursor += 1;
+                } else if (expression === 'null') {
+                    patch[column] = null;
+                } else if (expression.startsWith('coalesce(?')) {
+                    if (values[cursor] != null) patch[column] = values[cursor];
+                    cursor += 1;
+                } else if (expression === 'version + 1') {
+                    patch.version = '@increment';
+                } else if (expression.startsWith("'")) {
+                    patch[column] = expression.replace(/^'|'$/g, '');
+                } else if (expression.startsWith('case')) {
+                    // resolved_at CASE keeps its current value in every branch.
+                    cursor += (expression.match(/\?/g) || []).length;
+                }
+            }
+
+            const issueId = values[cursor];
+            cursor += 1;
+            const expectedVersion = tail.includes('version = ?') ? values[cursor++] : undefined;
+            const guardEventId = tail.includes('from feedback_events') ? values[cursor] : null;
             const current = this.tables.feedback_issues.get(issueId);
-            const event = eventId ? this.tables.feedback_events.get(eventId) : null;
+            const guardEvent = guardEventId ? this.tables.feedback_events.get(guardEventId) : null;
             if (
                 !current ||
                 (expectedVersion !== undefined && current.version !== expectedVersion) ||
-                (eventId && event?.issue_id !== issueId)
+                (guardEventId && guardEvent?.issue_id !== issueId)
             ) {
                 return ok([], 0);
             }
 
-            const next = {
-                ...current,
-                status,
-                updated_at: guardedByVersion ? values[1] : values[values.length - 2],
-                version: current.version + 1,
-            };
-            if (!guardedByVersion) {
-                next.active_human_action_id = null;
-                if (values[1]) next.active_candidate_id = values[1];
+            const next = { ...current };
+            for (const [column, value] of Object.entries(patch)) {
+                if (column === 'version') continue;
+                next[column] = value;
             }
-            this.tables.feedback_issues.set(issueId, next);
-            return ok([{ id: issueId }]);
-        }
-        if (normalized.startsWith("update feedback_issues set status = 'open'")) {
-            const [updatedAt, issueId, expectedVersion, eventId] = values;
-            const current = this.tables.feedback_issues.get(issueId);
-            const event = this.tables.feedback_events.get(eventId);
-            if (!current || current.version !== expectedVersion || event?.issue_id !== issueId) {
-                return ok([], 0);
-            }
-            const next = {
-                ...current,
-                status: 'open',
-                resolved_at: null,
-                updated_at: updatedAt,
-                version: current.version + 1,
-            };
+            if (patch.version === '@increment') next.version = current.version + 1;
             this.tables.feedback_issues.set(issueId, next);
             return ok([{ id: issueId }]);
         }
@@ -4573,5 +4684,477 @@ describe('feedback workbench V2 event dispatch', () => {
         expect(env.FEEDBACK_DB.tables.feedback_deliveries.size).toBe(1);
         expect(env.FEEDBACK_WORKFLOW.created).toHaveLength(1);
         expect(env.FEEDBACK_WORKFLOW.created[0].id).toBe(`${created.issueId}:1`);
+    });
+});
+
+describe('feedback workbench V2 Run and Callback', () => {
+    async function adminHeaders(env) {
+        const session = await json(
+            await request(
+                '/api/feedback/admin/session',
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password: 'admin-pass' }),
+                },
+                env
+            )
+        );
+
+        return { Authorization: `Bearer ${session.token}`, 'Content-Type': 'application/json' };
+    }
+
+    /** Runs the real Workflow body against a minimal durable-step stub. */
+    async function runWorkflow(env, { issueId, generation = 1, deliveryId = null, provider = '' }) {
+        const step = {
+            async do(name, configOrCallback, maybeCallback) {
+                const callback =
+                    typeof configOrCallback === 'function' ? configOrCallback : maybeCallback;
+                return callback();
+            },
+        };
+        const workflow = new FeedbackWorkflow({}, env);
+        return workflow.run(
+            {
+                instanceId: `${issueId}:${generation}`,
+                payload: { issueId, generation, deliveryId, provider, contextVersion: 1 },
+            },
+            step
+        );
+    }
+
+    async function createRunEnv(issueOverrides = {}) {
+        const env = createV2Env(
+            {},
+            {
+                feedback_issues: [
+                    createD1IssueRow({
+                        status: 'queued',
+                        business_type: 'bug',
+                        scope: 'small',
+                        ...issueOverrides,
+                    }),
+                ],
+            }
+        );
+        const result = await runWorkflow(env, { issueId: feedbackKey });
+        const run = Array.from(env.FEEDBACK_DB.tables.feedback_runs.values())[0];
+        return { env, run, workflowResult: result };
+    }
+
+    async function callbackTokenFor(env, runId) {
+        // Mint via the same route the Workflow hands to the Runner: read it back
+        // off the created Run by replaying token creation with the Worker secret.
+        const payload = Buffer.from(
+            JSON.stringify({
+                aud: 'callback',
+                runId,
+                provider: 'codex',
+                exp: Date.now() + 60_000,
+            }),
+            'utf8'
+        )
+            .toString('base64')
+            .replace(/\+/g, '-')
+            .replace(/\//g, '_')
+            .replace(/=+$/, '');
+        const key = await crypto.subtle.importKey(
+            'raw',
+            new TextEncoder().encode('unit-test-secret'),
+            { name: 'HMAC', hash: 'SHA-256' },
+            false,
+            ['sign']
+        );
+        const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload));
+        const encoded = Buffer.from(new Uint8Array(signature))
+            .toString('base64')
+            .replace(/\+/g, '-')
+            .replace(/\//g, '_')
+            .replace(/=+$/, '');
+        return `${payload}.${encoded}`;
+    }
+
+    async function postCallback(env, runId, body, token) {
+        return request(
+            `/api/feedback/runs/${encodeURIComponent(runId)}/events`,
+            {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${token || (await callbackTokenFor(env, runId))}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(body),
+            },
+            env
+        );
+    }
+
+    it('[SCN-FWB-008] routes policy deterministically from classification, not model output', async () => {
+        const cases = [
+            [{ business_type: 'bug', scope: 'small' }, 'implement_and_verify'],
+            [{ business_type: 'bug', scope: 'large' }, 'analyze'],
+            [{ business_type: 'bug', scope: 'unclear' }, 'analyze'],
+            [{ business_type: 'improvement', scope: 'small' }, 'implement_and_verify'],
+            [{ business_type: 'improvement', scope: 'medium' }, 'analyze'],
+            [{ business_type: 'requirement', scope: 'small' }, 'analyze'],
+            [{ business_type: 'unclear', scope: 'small' }, 'analyze'],
+            [
+                { business_type: 'bug', scope: 'small', automation_decision: 'review_required' },
+                'review',
+            ],
+        ];
+
+        for (const [classification, expected] of cases) {
+            const { run } = await createRunEnv(classification);
+            expect(run.policy, JSON.stringify(classification)).toBe(expected);
+        }
+    });
+
+    it('[SCN-FWB-008] uses the configured default provider when no mention selects one', async () => {
+        const { env, run } = await createRunEnv();
+        expect(run.provider).toBe('codex');
+        expect(run.runner_type).toBe('github_hosted');
+        expect(run.status).toBe('created');
+        expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).last_run_id).toBe(run.id);
+    });
+
+    it('[SCN-FWB-009] does not dispatch local_required and records the suppression', async () => {
+        const env = createV2Env(
+            {},
+            {
+                feedback_issues: [
+                    createD1IssueRow({
+                        status: 'queued',
+                        automation_decision: 'developer_fix_required',
+                    }),
+                ],
+            }
+        );
+        // Force the local-only route the way an admin classification would.
+        env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).business_type = 'bug';
+        env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).scope = 'small';
+        const first = await runWorkflow(env, { issueId: feedbackKey });
+        expect(first.run.runId).toBeTruthy();
+
+        // §7.3: a second write-capable Run for the same Issue is refused.
+        const second = await runWorkflow(env, { issueId: feedbackKey, generation: 2 });
+
+        expect(second.run.blocked).toBe(true);
+        expect(second.run.reason).toBe('WRITE_RUN_ALREADY_ACTIVE');
+        expect(env.FEEDBACK_DB.tables.feedback_runs.size).toBe(1);
+        const suppressed = Array.from(env.FEEDBACK_DB.tables.feedback_events.values()).filter(
+            (event) => event.type === 'automation.suppressed'
+        );
+        expect(suppressed).toHaveLength(1);
+        expect(suppressed[0].visibility).toBe('admin');
+    });
+
+    it('[SCN-FWB-017] rejects a Callback without the matching run-scoped token', async () => {
+        const { env, run } = await createRunEnv();
+        const adminSession = await adminHeaders(env);
+        const contextToken = await callbackTokenFor(env, run.id);
+
+        const anonymous = await postCallback(
+            env,
+            run.id,
+            { eventId: 'cb_1', type: 'run.started' },
+            'nope'
+        );
+        const asAdmin = await request(
+            `/api/feedback/runs/${encodeURIComponent(run.id)}/events`,
+            {
+                method: 'POST',
+                headers: adminSession,
+                body: JSON.stringify({ eventId: 'cb_1', type: 'run.started' }),
+            },
+            env
+        );
+        const crossRun = await postCallback(
+            env,
+            run.id,
+            { eventId: 'cb_1', type: 'run.started' },
+            await callbackTokenFor(env, 'run_other')
+        );
+
+        expect(anonymous.status).toBe(401);
+        // §21.3: an admin session is not a Callback token.
+        expect(asAdmin.status).toBe(401);
+        expect(crossRun.status).toBe(401);
+        expect(env.FEEDBACK_DB.tables.feedback_events.size).toBe(0);
+
+        const accepted = await postCallback(
+            env,
+            run.id,
+            { eventId: 'cb_1', type: 'run.started' },
+            contextToken
+        );
+        expect(accepted.status).toBe(201);
+    });
+
+    it('[SCN-FWB-017] refuses a Context read with a Callback token', async () => {
+        const { env, run } = await createRunEnv();
+
+        const withCallbackToken = await request(
+            `/api/feedback/runs/${encodeURIComponent(run.id)}/context`,
+            { headers: { Authorization: `Bearer ${await callbackTokenFor(env, run.id)}` } },
+            env
+        );
+
+        // §18.1: Context and Callback audiences must not be interchangeable.
+        expect(withCallbackToken.status).toBe(401);
+    });
+
+    it('[SCN-FWB-010] normalizes both providers onto one Callback contract', async () => {
+        const { env, run } = await createRunEnv();
+        const token = await callbackTokenFor(env, run.id);
+
+        await postCallback(
+            env,
+            run.id,
+            { eventId: 'cb_1', type: 'run.started', provider: 'codex' },
+            token
+        );
+        await postCallback(
+            env,
+            run.id,
+            {
+                eventId: 'cb_2',
+                type: 'agent.message',
+                provider: 'codex',
+                providerRawStatus: 'in_progress',
+                payload: { summary: '已完成现状分析' },
+            },
+            token
+        );
+        const completed = await json(
+            await postCallback(
+                env,
+                run.id,
+                { eventId: 'cb_3', type: 'run.completed', payload: { summary: '实现完成' } },
+                token
+            )
+        );
+
+        expect(completed.runStatus).toBe('succeeded');
+        // §9.2: a successful Run never resolves the Issue on its own.
+        expect(completed.issueStatus).toBe('needs_human');
+        expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe('needs_human');
+
+        const events = Array.from(env.FEEDBACK_DB.tables.feedback_events.values());
+        expect(events.map((event) => event.type)).toEqual([
+            'run.started',
+            'agent.message',
+            'run.completed',
+        ]);
+        expect(events.every((event) => event.actor_type === 'agent')).toBe(true);
+        expect(events.every((event) => event.run_id === run.id)).toBe(true);
+        // §15.3: the provider's raw status is metadata, never the UI status.
+        expect(JSON.parse(events[1].metadata_json).providerRawStatus).toBe('in_progress');
+        expect(events[0].visibility).toBe('internal');
+        expect(events[1].visibility).toBe('public');
+    });
+
+    it('[SCN-FWB-003] returns 200 for a repeated Callback without appending twice', async () => {
+        const { env, run } = await createRunEnv();
+        const token = await callbackTokenFor(env, run.id);
+        const body = { eventId: 'cb_dup', type: 'agent.message', payload: { summary: '一次' } };
+
+        const first = await postCallback(env, run.id, body, token);
+        const second = await postCallback(env, run.id, body, token);
+        const secondBody = await json(second);
+
+        expect(first.status).toBe(201);
+        expect(second.status).toBe(200);
+        expect(secondBody.duplicate).toBe(true);
+        expect(env.FEEDBACK_DB.tables.feedback_events.size).toBe(1);
+    });
+
+    it('[SCN-FWB-020] agent.waiting_human creates a structured HumanAction', async () => {
+        const { env, run } = await createRunEnv();
+        const token = await callbackTokenFor(env, run.id);
+
+        await postCallback(
+            env,
+            run.id,
+            {
+                eventId: 'cb_wait',
+                type: 'agent.waiting_human',
+                payload: {
+                    actionType: 'need_reproduction',
+                    requestedAction: '请提供导入的 Excel 样例',
+                    evidence: [{ label: '已检查', summary: '导入解析路径无异常' }],
+                    allowedReturnStates: ['queued', 'closed'],
+                },
+            },
+            token
+        );
+
+        const action = Array.from(env.FEEDBACK_DB.tables.feedback_human_actions.values())[0];
+        expect(action.status).toBe('active');
+        expect(action.type).toBe('need_reproduction');
+        expect(action.requested_action).toBe('请提供导入的 Excel 样例');
+        expect(JSON.parse(action.allowed_return_states_json)).toEqual(['queued', 'closed']);
+        expect(JSON.parse(action.evidence_json)).toHaveLength(1);
+        expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe('needs_human');
+        expect(env.FEEDBACK_DB.tables.feedback_runs.get(run.id).status).toBe('waiting_human');
+    });
+
+    it('[SCN-FWB-006] a failed verification lands in test_failed, not resolved', async () => {
+        const { env, run } = await createRunEnv();
+        const token = await callbackTokenFor(env, run.id);
+
+        const failed = await json(
+            await postCallback(
+                env,
+                run.id,
+                {
+                    eventId: 'cb_fail',
+                    type: 'run.failed',
+                    payload: { errorCode: 'verification_failed', summary: 'Playwright 回归失败' },
+                },
+                token
+            )
+        );
+
+        expect(failed.runStatus).toBe('failed');
+        expect(failed.issueStatus).toBe('test_failed');
+        expect(env.FEEDBACK_DB.tables.feedback_runs.get(run.id).error_code).toBe(
+            'verification_failed'
+        );
+    });
+
+    it('[SCN-FWB-014] records artifacts as private with a run reference', async () => {
+        const { env, run } = await createRunEnv();
+        const token = await callbackTokenFor(env, run.id);
+
+        await postCallback(
+            env,
+            run.id,
+            {
+                eventId: 'cb_artifact',
+                type: 'artifact.created',
+                payload: {
+                    artifact: {
+                        type: 'playwright_trace',
+                        name: 'trace.zip',
+                        objectKey: 'runs/run_1/trace.zip',
+                        sha256: 'abc',
+                        size: 2048,
+                    },
+                },
+            },
+            token
+        );
+
+        const artifact = Array.from(env.FEEDBACK_DB.tables.feedback_artifacts.values())[0];
+        expect(artifact.visibility).toBe('private');
+        expect(artifact.run_id).toBe(run.id);
+        expect(artifact.type).toBe('playwright_trace');
+        expect(artifact.expires_at).toBeTruthy();
+    });
+
+    it('[SCN-FWB-012] gives the Runner a minimal context without PII', async () => {
+        const env = createV2Env(
+            {},
+            {
+                feedback_issues: [
+                    createD1IssueRow({
+                        status: 'queued',
+                        contact_encrypted: 'v1:encrypted-contact',
+                        contact_type: 'email',
+                        legacy_internal_note: '内部排查记录',
+                    }),
+                ],
+            }
+        );
+        await runWorkflow(env, { issueId: feedbackKey });
+        const run = Array.from(env.FEEDBACK_DB.tables.feedback_runs.values())[0];
+        const contextToken = (await callbackTokenFor(env, run.id)).replace('callback', 'callback');
+
+        // Mint a real context token by asking the Worker through the same signer.
+        const payload = Buffer.from(
+            JSON.stringify({
+                aud: 'context',
+                runId: run.id,
+                provider: 'codex',
+                exp: Date.now() + 60_000,
+            }),
+            'utf8'
+        )
+            .toString('base64')
+            .replace(/\+/g, '-')
+            .replace(/\//g, '_')
+            .replace(/=+$/, '');
+        const key = await crypto.subtle.importKey(
+            'raw',
+            new TextEncoder().encode('unit-test-secret'),
+            { name: 'HMAC', hash: 'SHA-256' },
+            false,
+            ['sign']
+        );
+        const signature = Buffer.from(
+            new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload)))
+        )
+            .toString('base64')
+            .replace(/\+/g, '-')
+            .replace(/\//g, '_')
+            .replace(/=+$/, '');
+
+        const response = await request(
+            `/api/feedback/runs/${encodeURIComponent(run.id)}/context`,
+            { headers: { Authorization: `Bearer ${payload}.${signature}` } },
+            env
+        );
+        const body = await json(response);
+        const raw = JSON.stringify(body);
+
+        expect(response.status).toBe(200);
+        expect(body.context.runId).toBe(run.id);
+        expect(body.context.policy).toBe('implement_and_verify');
+        // §18.2: contact and admin notes never reach the Runner.
+        expect(raw).not.toContain('encrypted-contact');
+        expect(raw).not.toContain('内部排查记录');
+        // §18.2: reporter text is labelled as untrusted so prompts can separate it.
+        expect(body.context.issue.description).toHaveProperty('untrustedUserContent');
+        expect(contextToken).toBeTruthy();
+    });
+
+    it('[SCN-FWB-011] admin cancel stops the Run and returns the Issue to open', async () => {
+        const { env, run } = await createRunEnv();
+        const headers = await adminHeaders(env);
+
+        const cancelled = await json(
+            await request(
+                `/api/feedback/runs/${encodeURIComponent(run.id)}/cancel`,
+                { method: 'POST', headers },
+                env
+            )
+        );
+
+        expect(cancelled.status).toBe('cancelled');
+        expect(cancelled.issueStatus).toBe('open');
+        expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe('open');
+
+        // A Callback arriving after cancellation must not revive the Run.
+        const late = await postCallback(env, run.id, {
+            eventId: 'cb_late',
+            type: 'run.completed',
+            payload: {},
+        });
+        expect(late.status).toBe(409);
+        expect(env.FEEDBACK_DB.tables.feedback_runs.get(run.id).status).toBe('cancelled');
+    });
+
+    it('[SCN-FWB-010] rejects a Callback type outside the normalized contract', async () => {
+        const { env, run } = await createRunEnv();
+
+        const response = await postCallback(env, run.id, {
+            eventId: 'cb_bad',
+            type: 'codex.thinking',
+            payload: {},
+        });
+
+        expect(response.status).toBe(400);
+        expect(env.FEEDBACK_DB.tables.feedback_events.size).toBe(0);
     });
 });

@@ -49,11 +49,35 @@ account currently has R2 disabled.
   an admin-visible `automation.suppressed` event and creates no Workflow, delivery or Run.
 - `issue.created` dispatches through `ctx.waitUntil`, so submitters never wait on the Hook.
 
-**Still not built:** GitHub `workflow_dispatch` (no Run is created yet), Callback/Context
-run-scoped tokens, Candidate/Design/Release endpoints, artifact timeline entries, and the
-real Codex/Claude Action smoke — `/runners/test` returns `ACTION_SMOKE_NOT_CONFIGURED`
-rather than a fabricated pass. The daily `feedback-reconcile` sweep is reported by
-`automation/health` but has no scheduled handler yet.
+**Status (2026-07-31) — Run creation and the Callback API landed.**
+
+- `resolveFeedbackPolicy` implements the §7.2 matrix in code; per §7.3 neither the request
+  body nor the Agent output can pick a policy.
+- The Workflow creates a Run after delivering the event and mints two run-scoped tokens
+  with distinct `aud` (`context`, `callback`), so neither can be replayed as the other and
+  an admin session is rejected at both endpoints (§18.1, §21.3).
+- `GET /api/feedback/runs/:runId/context` returns the minimal snapshot: no `contact`, no
+  internal notes, and the reporter's text wrapped as `untrustedUserContent` for prompt
+  data separation (§18.2).
+- `POST /api/feedback/runs/:runId/events` accepts only the eight §15.2 types, is idempotent
+  on `runId + eventId` (a repeat returns 200), keeps `providerRawStatus` as metadata that
+  never drives the UI (§15.3), and refuses events for a terminal Run.
+- Run→Issue projection follows §9.2: `run.completed` lands on `needs_human`, never
+  `resolved`; a `verification_failed` failure lands on `test_failed`; infrastructure
+  failures leave the Issue where it is.
+- `agent.waiting_human` creates a structured HumanAction (type, requestedAction, evidence,
+  allowedReturnStates) so the UI never parses a free-text note (§19.2).
+- `artifact.created` records a private artifact bound to the Run (§18.2).
+- One write-capable Run per Issue (§7.3); a second attempt is refused with an
+  admin-visible `automation.suppressed`. `local_required` never auto-dispatches.
+- `POST /api/feedback/runs/:runId/cancel` (admin) cancels the Run and returns the Issue to
+  `open` (§9.2).
+
+**Still not built:** GitHub `workflow_dispatch` — the Run and its tokens exist but nothing
+starts an Action yet, so Callbacks only arrive from tests. Candidate/Design/Release
+endpoints and the delivery closure are absent, `/runners/test` still returns
+`ACTION_SMOKE_NOT_CONFIGURED`, and the daily `feedback-reconcile` sweep is reported by
+`automation/health` but has no scheduled handler.
 
 ---
 
