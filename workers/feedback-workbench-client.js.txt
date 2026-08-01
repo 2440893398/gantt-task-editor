@@ -88,6 +88,7 @@
         issue: null,
         events: [],
         humanAction: null,
+        designs: [],
         candidates: [],
         releases: [],
         automation: null,
@@ -655,7 +656,9 @@
         var isTerminal = TERMINAL_STATUSES.indexOf(issue.status) !== -1;
 
         if (action) {
-            $('nextActionBadge').textContent = '等待你';
+            var ownerCanRespond = action.type === 'need_reproduction';
+            var canRespond = state.actor === 'admin' || ownerCanRespond;
+            $('nextActionBadge').textContent = canRespond ? '等待你' : '等待管理员';
             $('nextActionBadge').className = 'badge orange';
             var evidence = (action.evidence || [])
                 .map(function (item) {
@@ -681,6 +684,41 @@
                       evidence +
                       '</div></details>'
                     : '');
+            // §21.3: owner capabilities can answer reproduction questions,
+            // but approval and protected-path decisions are administrator-only.
+            if (!canRespond) {
+                $('nextActionCopy').innerHTML +=
+                    '<p class="help" style="margin-top:12px">此步骤需要管理员确认；你仍可查看方案和处理进展。</p>';
+                $('nextActionButtons').innerHTML = '';
+                return;
+            }
+            if (action.type === 'design_decision' && action.designId) {
+                $('nextActionCopy').innerHTML +=
+                    '<label class="help" for="designDecisionNote" style="display:block;margin-top:12px">修订或拒绝时请说明原因</label>' +
+                    '<textarea id="designDecisionNote" aria-label="方案决定说明" style="width:100%;min-height:88px;margin-top:6px" placeholder="批准可留空；要求修订或拒绝时填写具体意见"></textarea>';
+                var allowed = action.allowedReturnStates || [];
+                $('nextActionButtons').innerHTML =
+                    (allowed.indexOf('queued') !== -1
+                        ? '<button class="button blue" type="button" data-human-action="' +
+                          escapeHtml(action.id) +
+                          '" data-decision="queued" data-design="' +
+                          escapeHtml(action.designId) +
+                          '" data-design-decision="approve">批准此方案</button>' +
+                          '<button class="button" type="button" data-human-action="' +
+                          escapeHtml(action.id) +
+                          '" data-decision="queued" data-design="' +
+                          escapeHtml(action.designId) +
+                          '" data-design-decision="revise">要求修订</button>'
+                        : '') +
+                    (allowed.indexOf('closed') !== -1
+                        ? '<button class="button danger" type="button" data-human-action="' +
+                          escapeHtml(action.id) +
+                          '" data-decision="closed" data-design="' +
+                          escapeHtml(action.designId) +
+                          '" data-design-decision="reject">拒绝并关闭</button>'
+                        : '');
+                return;
+            }
             $('nextActionButtons').innerHTML = (action.allowedReturnStates || [])
                 .map(function (nextState, index) {
                     var tone = nextState === 'closed' ? 'danger' : index === 0 ? 'blue' : '';
@@ -849,6 +887,7 @@
             request('/api/feedback/issues/' + encodeURIComponent(key)),
             request('/api/feedback/issues/' + encodeURIComponent(key) + '/events'),
             request('/api/feedback/issues/' + encodeURIComponent(key) + '/human-actions'),
+            request('/api/feedback/issues/' + encodeURIComponent(key) + '/designs'),
             request('/api/feedback/issues/' + encodeURIComponent(key) + '/candidates'),
             request('/api/feedback/issues/' + encodeURIComponent(key) + '/releases')
         ])
@@ -878,8 +917,9 @@
                     (results[2].humanActions || []).filter(function (action) {
                         return action.status === 'active';
                     })[0] || null;
-                state.candidates = results[3].candidates || [];
-                state.releases = results[4].releases || [];
+                state.designs = results[3].designs || [];
+                state.candidates = results[4].candidates || [];
+                state.releases = results[5].releases || [];
                 renderIssueDetail();
             })
             .catch(handleAuthError);
@@ -889,6 +929,7 @@
         renderHeading();
         renderTimeline();
         renderProperties();
+        renderDesign();
         renderCandidate();
         renderRelease();
         renderNextAction();
@@ -907,6 +948,12 @@
         failed: '失败',
         abandoned: '已被替代'
     };
+    var DESIGN_STATUS_LABELS = {
+        awaiting_decision: '等待确认',
+        approved: '已批准',
+        revision_requested: '需要修订',
+        rejected: '已拒绝'
+    };
     var RELEASE_STATUS_LABELS = {
         created: '已创建',
         integrating: '集成中',
@@ -923,6 +970,71 @@
         'deployment.completed': '部署完成',
         'smoke.completed': '生产 smoke'
     };
+
+    /* §16.4/§19.2: Design data is rendered from the versioned resource, not
+       parsed from an internal note. Acceptance criteria stay first-class. */
+    function renderDesign() {
+        var card = $('designCard');
+        var design = (state.designs || [])[0];
+        if (!design) {
+            setHidden(card, true);
+            return;
+        }
+
+        setHidden(card, false);
+        $('designBadge').textContent = DESIGN_STATUS_LABELS[design.status] || design.status;
+        $('designBadge').className =
+            'badge ' +
+            (design.status === 'approved'
+                ? 'green'
+                : design.status === 'rejected'
+                  ? 'red'
+                  : 'orange');
+
+        function list(items) {
+            return (items || []).length
+                ? '<ul>' +
+                      items
+                          .map(function (item) {
+                              return '<li>' + escapeHtml(item) + '</li>';
+                          })
+                          .join('') +
+                      '</ul>'
+                : '<p class="help">暂无</p>';
+        }
+
+        $('designBody').innerHTML =
+            '<p><strong>方案 v' +
+            escapeHtml(design.revision) +
+            '</strong></p>' +
+            (design.problem ? '<p class="help">' + escapeHtml(design.problem) + '</p>' : '') +
+            '<div class="evidence-item"><span>建议变更</span><strong>' +
+            escapeHtml(design.proposedChange || '暂无') +
+            '</strong></div>' +
+            (design.userValue
+                ? '<div class="evidence-item"><span>用户价值</span><strong>' +
+                  escapeHtml(design.userValue) +
+                  '</strong></div>'
+                : '') +
+            '<div class="help" style="margin-top:12px">验收标准</div>' +
+            list(design.acceptanceCriteria) +
+            '<details class="advanced-details"><summary><span>风险与实施详情</span></summary>' +
+            '<div class="advanced-details-body">' +
+            (design.currentBehavior ? statusLine('当前行为', design.currentBehavior) : '') +
+            (design.affectedAreas && design.affectedAreas.length
+                ? statusLine('影响范围', design.affectedAreas.join('、'))
+                : '') +
+            '<div class="help">风险</div>' +
+            list(design.risks) +
+            (design.implementationOutline
+                ? statusLine('实现思路', design.implementationOutline)
+                : '') +
+            (design.verificationPlan && design.verificationPlan.length
+                ? statusLine('验证计划', design.verificationPlan.join('、'))
+                : '') +
+            (design.decision ? statusLine('待决定', design.decision) : '') +
+            '</div></details>';
+    }
 
     /* §19.2: review leads with product effect and changed surface; branch and
        commit live under a collapsed 技术详情. */
@@ -1788,14 +1900,38 @@
             payload.candidateId = button.dataset.candidate;
         }
 
+        if (button.dataset.designDecision) {
+            if (!button.dataset.design) {
+                toastTimer('缺少方案版本标识，无法提交决定');
+                return;
+            }
+            var noteInput = $('designDecisionNote');
+            var note = noteInput ? noteInput.value.trim() : '';
+            if (button.dataset.designDecision !== 'approve' && !note) {
+                toastTimer('要求修订或拒绝时请填写具体原因');
+                if (noteInput) noteInput.focus();
+                return;
+            }
+            payload.designDecision = button.dataset.designDecision;
+            payload.designId = button.dataset.design;
+            payload.note = note;
+        }
         state.submitting = true;
         button.disabled = true;
         request('/api/feedback/human-actions/' + encodeURIComponent(button.dataset.humanAction) + '/respond', {
             method: 'POST',
             body: payload
         })
-            .then(function () {
-                toastTimer('已提交决定：' + humanActionLabel(decision));
+            .then(function (result) {
+                if (result && result.resumeState === 'pending') {
+                    toastTimer('方案决定已记录；Workflow 恢复待重试');
+                } else {
+                    toastTimer(
+                        button.dataset.designDecision
+                            ? '方案决定已提交'
+                            : '已提交决定：' + humanActionLabel(decision)
+                    );
+                }
                 return Promise.all([selectIssue(state.issue.key), loadIssues()]);
             })
             .catch(handleAuthError)

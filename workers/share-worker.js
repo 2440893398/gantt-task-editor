@@ -68,6 +68,24 @@ const FEEDBACK_RECONCILE_JOB_ID = 'feedback-reconcile';
 // §17.3: `needs_human` waits up to 7 days, then the instance terminates while
 // the Issue stays open.
 const FEEDBACK_HUMAN_WAIT_TIMEOUT_SECONDS = 7 * 24 * 60 * 60;
+// Cloudflare Workflow event types only accept letters, digits, dashes and
+// underscores. The business event type stays inside the payload.
+const FEEDBACK_WORKFLOW_RESUME_EVENT_TYPE = 'feedback-resume';
+const FEEDBACK_WORKFLOW_RUN_RESULT_EVENT_TYPE = 'feedback-run-result';
+const FEEDBACK_RUN_TIMEOUTS = Object.freeze({
+    analyze: '30 minutes',
+    implement: '45 minutes',
+    implement_and_verify: '60 minutes',
+    review: '30 minutes',
+    local_required: '120 minutes',
+});
+const FEEDBACK_RUN_TIMEOUT_MINUTES = Object.freeze({
+    analyze: 30,
+    implement: 45,
+    implement_and_verify: 60,
+    review: 30,
+    local_required: 120,
+});
 // Must match `[triggers] crons` in wrangler.toml.
 const FEEDBACK_RECONCILE_CRON = '0 3 * * *';
 const MAX_FEEDBACK_COMMENT_LENGTH = 12000;
@@ -173,11 +191,23 @@ const FEEDBACK_RELEASE_REQUIRED_STAGES = [
 const FEEDBACK_RELEASE_DEPLOY_STAGES = ['deployment.completed', 'smoke.completed'];
 const FEEDBACK_HUMAN_ACTION_TYPES = new Set([
     'need_reproduction',
+    'design_decision',
+    'review_required',
+    'developer_fix_required',
     'confirm_design',
     'review_candidate',
     'blocked_external',
     'confirm_policy',
 ]);
+const FEEDBACK_HUMAN_ACTION_RETURN_STATES = Object.freeze({
+    need_reproduction: ['queued', 'closed'],
+    design_decision: ['queued', 'closed'],
+    review_required: ['ready_for_deploy', 'queued', 'closed'],
+    developer_fix_required: ['queued', 'closed'],
+    blocked_external: ['queued', 'closed'],
+    confirm_policy: ['queued', 'closed'],
+});
+const FEEDBACK_DESIGN_DECISIONS = new Set(['approve', 'revise', 'reject']);
 const FEEDBACK_SOURCE_TYPES = new Set(['manual', 'auto_error', 'admin']);
 const FEEDBACK_BUSINESS_TYPES = new Set(['bug', 'improvement', 'requirement', 'other', 'unclear']);
 const FEEDBACK_SCOPES = new Set(['small', 'medium', 'large', 'unclear']);
@@ -493,6 +523,12 @@ export class CloudDocDurableObject {
     }
 }
 
+function isFeedbackWorkflowTimeout(error) {
+    return String(error?.message || error)
+        .toLowerCase()
+        .includes('timeout');
+}
+
 export class FeedbackWorkflow extends WorkflowEntrypoint {
     async run(event, step) {
         const issueId = String(event.payload?.issueId || '');
@@ -513,47 +549,148 @@ export class FeedbackWorkflow extends WorkflowEntrypoint {
         // side-channel, while the Run is the actual work. Delivering first would
         // park the Agent behind up to ~21 minutes of delivery backoff (§17.2)
         // whenever the subscriber is down.
-        const run = await step.do('create run', async () =>
-            createFeedbackRun(this.env, {
+        let triggerEvent = event;
+        let cycle = 1;
+        let latestResult = { ...started, delivery: null, run: null };
+
+        // §6.1/§13.4: one business Workflow owns successive short-lived Runs.
+        // It hibernates between Runs, so waiting for a person consumes no Runner.
+        while (true) {
+            const stepSuffix = ` ${cycle}`;
+            const run = await step.do(
+                `create run${stepSuffix}`,
+                { sensitive: 'output' },
+                async () =>
+                    createFeedbackRun(this.env, {
+                        issueId,
+                        workflowId: instanceId,
+                        provider: String(triggerEvent.payload?.provider || ''),
+                    })
+            );
+
+            if (run?.blocked) {
+                // §7.3/§9.2: a blocked Run is a human decision, not a silent drop.
+                await step.do(`record blocked run${stepSuffix}`, async () =>
+                    appendFeedbackSystemEvent(this.env, issueId, {
+                        type: 'automation.suppressed',
+                        visibility: 'admin',
+                        body: { reason: run.reason, policy: run.policy || null },
+                    })
+                );
+                latestResult = {
+                    ...started,
+                    delivery: await this.deliverConfiguredEvent(step, triggerEvent, stepSuffix),
+                    run,
+                };
+            } else if (run?.runId) {
+                // §13.1 step 8. Dispatch failure is recorded on the Run rather than
+                // thrown, so the workbench shows an un-started Run instead of a
+                // Run that looks alive but has no Job behind it.
+                const dispatch = await step.do(`dispatch run${stepSuffix}`, async () =>
+                    dispatchFeedbackRunToGitHub(this.env, {
+                        payload: run.dispatchPayload,
+                        provider: run.provider,
+                    })
+                );
+                await step.do(`record dispatch result${stepSuffix}`, async () =>
+                    recordFeedbackDispatchResult(this.env, run.runId, dispatch)
+                );
+                latestResult = {
+                    ...started,
+                    delivery: await this.deliverConfiguredEvent(step, triggerEvent, stepSuffix),
+                    run: { runId: run.runId, dispatched: dispatch.dispatched },
+                };
+            } else {
+                latestResult = {
+                    ...started,
+                    delivery: await this.deliverConfiguredEvent(step, triggerEvent, stepSuffix),
+                    run,
+                };
+            }
+
+            if (run?.blocked || !run?.runId) {
+                await this.recordTerminal(step, {
+                    issueId,
+                    instanceId,
+                    reason: run?.reason || 'run_not_created',
+                    stepSuffix,
+                });
+                return { ...latestResult, workflowStatus: 'terminated' };
+            }
+
+            await this.recordRunWaiting(step, {
                 issueId,
-                workflowId: instanceId,
-                provider: String(event.payload?.provider || ''),
-            })
-        );
+                instanceId,
+                runId: run.runId,
+                policy: run.policy,
+                stepSuffix,
+            });
 
-        if (run?.blocked) {
-            // §7.3/§9.2: a blocked Run is a human decision, not a silent drop.
-            await step.do('record blocked run', async () =>
-                appendFeedbackSystemEvent(this.env, issueId, {
-                    type: 'automation.suppressed',
-                    visibility: 'admin',
-                    body: { reason: run.reason, policy: run.policy || null },
-                })
-            );
-            return { ...started, delivery: await this.deliverConfiguredEvent(step, event), run };
+            let runResult;
+            try {
+                runResult = await step.waitForEvent(`wait for run result${stepSuffix}`, {
+                    type: FEEDBACK_WORKFLOW_RUN_RESULT_EVENT_TYPE,
+                    timeout: FEEDBACK_RUN_TIMEOUTS[run.policy] || FEEDBACK_RUN_TIMEOUTS.analyze,
+                });
+            } catch (error) {
+                if (!isFeedbackWorkflowTimeout(error)) throw error;
+                await this.recordRunTimeout(step, {
+                    issueId,
+                    instanceId,
+                    runId: run.runId,
+                    stepSuffix,
+                });
+                return { ...latestResult, workflowStatus: 'terminated' };
+            }
+
+            if (String(runResult?.payload?.runId || '') !== run.runId) {
+                throw new Error('FEEDBACK_WORKFLOW_RUN_RESULT_MISMATCH');
+            }
+            const callbackType = String(runResult?.payload?.callbackType || '');
+            if (callbackType !== 'agent.waiting_human') {
+                if (!['run.completed', 'run.failed', 'run.cancelled'].includes(callbackType)) {
+                    throw new Error('FEEDBACK_WORKFLOW_RUN_RESULT_INVALID');
+                }
+                const workflowStatus =
+                    callbackType === 'run.completed' ? 'succeeded' : 'terminated';
+                await this.recordTerminal(step, {
+                    issueId,
+                    instanceId,
+                    reason: callbackType,
+                    status: workflowStatus,
+                    stepSuffix,
+                });
+                return { ...latestResult, workflowStatus };
+            }
+
+            await this.recordHumanWaiting(step, {
+                issueId,
+                instanceId,
+                runId: run.runId,
+                stepSuffix,
+            });
+            try {
+                const resumed = await step.waitForEvent(`wait for human response${stepSuffix}`, {
+                    type: FEEDBACK_WORKFLOW_RESUME_EVENT_TYPE,
+                    timeout: '7 days',
+                });
+                await this.recordResume(step, { instanceId, stepSuffix });
+                triggerEvent = {
+                    ...resumed,
+                    payload: {
+                        ...(resumed?.payload || {}),
+                        issueId,
+                        generation,
+                        contextVersion: Number(event.payload?.contextVersion) || 1,
+                    },
+                };
+                cycle += 1;
+            } catch (error) {
+                if (!isFeedbackWorkflowTimeout(error)) throw error;
+                await this.recordHumanTimeout(step, { issueId, instanceId, stepSuffix });
+                return { ...latestResult, workflowStatus: 'terminated' };
+            }
         }
-
-        if (run?.runId) {
-            // §13.1 step 8. Dispatch failure is recorded on the Run rather than
-            // thrown, so the workbench shows an un-started Run instead of a
-            // Run that looks alive but has no Job behind it.
-            const dispatch = await step.do('dispatch run', async () =>
-                dispatchFeedbackRunToGitHub(this.env, {
-                    payload: run.dispatchPayload,
-                    provider: run.provider,
-                })
-            );
-            await step.do('record dispatch result', async () =>
-                recordFeedbackDispatchResult(this.env, run.runId, dispatch)
-            );
-            return {
-                ...started,
-                delivery: await this.deliverConfiguredEvent(step, event),
-                run: { runId: run.runId, dispatched: dispatch.dispatched },
-            };
-        }
-
-        return { ...started, delivery: await this.deliverConfiguredEvent(step, event), run };
     }
 
     /**
@@ -562,18 +699,19 @@ export class FeedbackWorkflow extends WorkflowEntrypoint {
      * (§4, §19.4) and the wait costs no Runner time. Returns null when no Hook
      * subscribed to this event.
      */
-    async deliverConfiguredEvent(step, event) {
+    async deliverConfiguredEvent(step, event, stepSuffix = '') {
         return this.deliverEvent(step, {
             deliveryId: String(event.payload?.deliveryId || ''),
+            stepSuffix,
         });
     }
 
-    async deliverEvent(step, { deliveryId }) {
+    async deliverEvent(step, { deliveryId, stepSuffix = '' }) {
         if (!deliveryId) return null;
 
         try {
             return await step.do(
-                'deliver issue event',
+                `deliver issue event${stepSuffix}`,
                 {
                     retries: {
                         limit: FEEDBACK_DELIVERY_MAX_ATTEMPTS - 1,
@@ -594,10 +732,146 @@ export class FeedbackWorkflow extends WorkflowEntrypoint {
             );
         } catch (error) {
             // §17.2: retries exhausted, park it in the DLQ for manual replay.
-            return await step.do('record delivery dead letter', async () =>
+            return await step.do(`record delivery dead letter${stepSuffix}`, async () =>
                 markFeedbackDeliveryDeadLettered(this.env, deliveryId, String(error?.message || ''))
             );
         }
+    }
+
+    async recordRunWaiting(step, { issueId, instanceId, runId, policy, stepSuffix }) {
+        return step.do(`record run wait${stepSuffix}`, async () => {
+            const database = this.env.FEEDBACK_DB;
+            const waitingUntil = new Date(
+                Date.now() +
+                    (FEEDBACK_RUN_TIMEOUT_MINUTES[policy] || FEEDBACK_RUN_TIMEOUT_MINUTES.analyze) *
+                        60 *
+                        1000
+            ).toISOString();
+            await database
+                .prepare(
+                    `UPDATE feedback_workflows
+                 SET status = 'running', active_run_id = ?,
+                     waiting_until = ?
+                 WHERE instance_id = ?`
+                )
+                .bind(runId, waitingUntil, instanceId)
+                .run();
+            return { issueId, instanceId, waitingUntil };
+        });
+    }
+
+    async recordHumanWaiting(step, { issueId, instanceId, runId, stepSuffix }) {
+        return step.do(`record human wait${stepSuffix}`, async () => {
+            const database = this.env.FEEDBACK_DB;
+            const waitingUntil = new Date(
+                Date.now() + FEEDBACK_HUMAN_WAIT_TIMEOUT_SECONDS * 1000
+            ).toISOString();
+            await database
+                .prepare(
+                    `UPDATE feedback_workflows
+                 SET status = 'waiting', active_run_id = ?, waiting_until = ?
+                 WHERE instance_id = ?`
+                )
+                .bind(runId, waitingUntil, instanceId)
+                .run();
+            return { issueId, instanceId, waitingUntil };
+        });
+    }
+
+    async recordResume(step, { instanceId, stepSuffix }) {
+        return step.do(`record workflow resume${stepSuffix}`, async () => {
+            const database = this.env.FEEDBACK_DB;
+            await database
+                .prepare(
+                    `UPDATE feedback_workflows
+                     SET status = 'running', waiting_until = NULL
+                     WHERE instance_id = ?`
+                )
+                .bind(instanceId)
+                .run();
+            return { instanceId, status: 'running' };
+        });
+    }
+
+    async recordTerminal(step, { issueId, instanceId, reason, status = 'terminated', stepSuffix }) {
+        return step.do(`record workflow terminal${stepSuffix}`, async () => {
+            const database = this.env.FEEDBACK_DB;
+            const finishedAt = new Date().toISOString();
+            await database.batch([
+                database
+                    .prepare(
+                        `UPDATE feedback_workflows
+                     SET status = ?, active_run_id = NULL, waiting_until = NULL,
+                         finished_at = ?, terminal_reason = ?
+                     WHERE instance_id = ?`
+                    )
+                    .bind(status, finishedAt, reason, instanceId),
+                database
+                    .prepare(
+                        `UPDATE feedback_issues SET active_workflow_id = NULL
+                     WHERE id = ? AND active_workflow_id = ?`
+                    )
+                    .bind(issueId, instanceId),
+            ]);
+            return { issueId, instanceId, status, finishedAt, reason };
+        });
+    }
+
+    async recordRunTimeout(step, { issueId, instanceId, runId, stepSuffix }) {
+        return step.do(`record run timeout${stepSuffix}`, async () => {
+            const database = this.env.FEEDBACK_DB;
+            const finishedAt = new Date().toISOString();
+            await database.batch([
+                database
+                    .prepare(
+                        `UPDATE feedback_runs
+                     SET status = 'timed_out', finished_at = ?, error_code = 'run_timeout'
+                     WHERE id = ?
+                       AND status NOT IN ('succeeded', 'failed', 'cancelled', 'timed_out')`
+                    )
+                    .bind(finishedAt, runId),
+                database
+                    .prepare(
+                        `UPDATE feedback_workflows
+                     SET status = 'terminated', active_run_id = NULL, waiting_until = NULL,
+                         finished_at = ?, terminal_reason = 'run_timeout'
+                     WHERE instance_id = ?`
+                    )
+                    .bind(finishedAt, instanceId),
+                database
+                    .prepare(
+                        `UPDATE feedback_issues SET active_workflow_id = NULL
+                     WHERE id = ? AND active_workflow_id = ?`
+                    )
+                    .bind(issueId, instanceId),
+            ]);
+            return { issueId, instanceId, runId, status: 'terminated', finishedAt };
+        });
+    }
+
+    async recordHumanTimeout(step, { issueId, instanceId, stepSuffix }) {
+        return step.do(`record human timeout${stepSuffix}`, async () => {
+            const database = this.env.FEEDBACK_DB;
+            const finishedAt = new Date().toISOString();
+            await database.batch([
+                database
+                    .prepare(
+                        `UPDATE feedback_workflows
+                     SET status = 'terminated', active_run_id = NULL,
+                         waiting_until = NULL, finished_at = ?,
+                         terminal_reason = 'human_timeout'
+                     WHERE instance_id = ?`
+                    )
+                    .bind(finishedAt, instanceId),
+                database
+                    .prepare(
+                        `UPDATE feedback_issues SET active_workflow_id = NULL
+                     WHERE id = ? AND active_workflow_id = ?`
+                    )
+                    .bind(issueId, instanceId),
+            ]);
+            return { issueId, instanceId, status: 'terminated', finishedAt };
+        });
     }
 
     async recordStart(step, { issueId, generation, instanceId, event }) {
@@ -2274,7 +2548,14 @@ function buildWorkflowHistoryItem(before, after, workflowPatch, contentChanges) 
 
 async function updateD1FeedbackIssue(env, key, patch) {
     const issue = await readFeedbackIssue(env, key);
-    if (!issue) return null;
+    const issueState = issue
+        ? await env.FEEDBACK_DB.prepare(
+              'SELECT active_workflow_id FROM feedback_issues WHERE id = ?'
+          )
+              .bind(key)
+              .first()
+        : null;
+    if (!issue || !issueState) return null;
 
     const workflowPatch = patch.workflow || {};
     const contentPatch = patch.content || {};
@@ -2343,6 +2624,10 @@ async function updateD1FeedbackIssue(env, key, patch) {
             : afterWorkflow.status === 'closed'
               ? issue.resolvedAt || null
               : null;
+    const isTerminalTransition =
+        FEEDBACK_TERMINAL_STATUSES.has(afterWorkflow.status) &&
+        !FEEDBACK_TERMINAL_STATUSES.has(beforeWorkflow.status);
+    const activeWorkflowId = isTerminalTransition ? issueState.active_workflow_id || '' : '';
     const splitInternalNote = mainVisibility === 'public' && historyItem.internalNote;
     // §21.4: a status change and a public note are two separate timeline facts.
     // Folding the note into `status.changed` hides the admin's message, so it
@@ -2414,6 +2699,12 @@ async function updateD1FeedbackIssue(env, key, patch) {
             expectedVersion
         )
     );
+    const workflowTerminationStatement = prepareFeedbackTerminalWorkflowStatement(env, {
+        instanceId: activeWorkflowId,
+        occurredAt: updatedAt,
+        reason: afterWorkflow.status === 'resolved' ? 'issue_resolved' : 'issue_closed',
+    });
+    if (workflowTerminationStatement) statements.push(workflowTerminationStatement);
     statements.push(
         env.FEEDBACK_DB.prepare(
             `UPDATE feedback_issues SET
@@ -2421,6 +2712,7 @@ async function updateD1FeedbackIssue(env, key, patch) {
                 business_type = ?, scope = ?, automation_decision = ?,
                 ai_confidence = ?, ai_classified_at = ?, status = ?, priority = ?,
                 assignee = ?, legacy_public_note = ?, legacy_internal_note = ?,
+                active_workflow_id = CASE WHEN ? THEN NULL ELSE active_workflow_id END,
                 updated_at = ?, resolved_at = ?, version = version + 1
              WHERE id = ? AND version = ?
                AND EXISTS (
@@ -2443,6 +2735,7 @@ async function updateD1FeedbackIssue(env, key, patch) {
             afterWorkflow.assignee,
             afterWorkflow.publicNote,
             afterWorkflow.internalNote,
+            isTerminalTransition ? 1 : 0,
             updatedAt,
             resolvedAt,
             key,
@@ -2455,6 +2748,10 @@ async function updateD1FeedbackIssue(env, key, patch) {
     const updatedRow = results[results.length - 1]?.results?.[0];
     if (!updatedRow) {
         throw feedbackStorageError('FEEDBACK_VERSION_CONFLICT');
+    }
+
+    if (activeWorkflowId) {
+        await terminateFeedbackWorkflowInstance(env, activeWorkflowId);
     }
 
     return readD1FeedbackIssue(env, key);
@@ -2977,11 +3274,19 @@ async function ensureFeedbackWorkflowForEvent(env, issueId, { deliveryId, eventI
         .first();
 
     if (active) {
+        if (active.status !== 'waiting') {
+            return {
+                instanceId: active.instance_id,
+                generation: Number(active.generation),
+                resumed: false,
+                error: 'WORKFLOW_NOT_WAITING',
+            };
+        }
         try {
             const instance = await env.FEEDBACK_WORKFLOW.get(active.instance_id);
             await instance.sendEvent({
-                type: eventType,
-                payload: { issueId, eventId, deliveryId },
+                type: FEEDBACK_WORKFLOW_RESUME_EVENT_TYPE,
+                payload: { issueId, eventId, deliveryId, eventType },
             });
             return {
                 instanceId: active.instance_id,
@@ -3058,12 +3363,21 @@ async function ensureFeedbackWorkflowForEvent(env, issueId, { deliveryId, eventI
  * §7.2 decision matrix. Routing is code, not model output (§7.3) — the Agent
  * may suggest a different policy but only through `agent.waiting_human`.
  */
-function resolveFeedbackPolicy({ businessType, scope, automationDecision }) {
+function resolveFeedbackPolicy({ businessType, scope, automationDecision, approvedDesign }) {
     const policy = (() => {
         if (automationDecision === 'review_required') return 'review';
         if (automationDecision === 'need_reproduction') return 'analyze';
+        // §16.4: an explicit gate, a requirement, a large scope, or a
+        // non-small improvement cannot become write-capable until the exact
+        // current Design revision is approved.
+        const requiresDesign =
+            automationDecision === 'design_required' ||
+            businessType === 'requirement' ||
+            scope === 'large' ||
+            (businessType === 'improvement' && scope !== 'small');
+        if (requiresDesign) return approvedDesign ? 'implement_and_verify' : 'analyze';
         if (businessType === 'bug') {
-            return scope === 'large' || scope === 'unclear' ? 'analyze' : 'implement_and_verify';
+            return scope === 'unclear' ? 'analyze' : 'implement_and_verify';
         }
         if (businessType === 'improvement') {
             return scope === 'small' ? 'implement_and_verify' : 'analyze';
@@ -3137,17 +3451,28 @@ async function createFeedbackRun(env, { issueId, workflowId, provider }) {
     }
 
     const issue = await env.FEEDBACK_DB.prepare(
-        `SELECT business_type, scope, automation_decision, status, last_run_id
+        `SELECT version, business_type, scope, automation_decision, status, last_run_id,
+                current_design_id
          FROM feedback_issues WHERE id = ?`
     )
         .bind(issueId)
         .first();
     if (!issue) return null;
 
+    const design = issue.current_design_id
+        ? await env.FEEDBACK_DB.prepare(
+              `SELECT * FROM feedback_designs
+               WHERE id = ? AND issue_id = ? AND status = 'approved'`
+          )
+              .bind(issue.current_design_id, issueId)
+              .first()
+        : null;
+
     const policy = resolveFeedbackPolicy({
         businessType: issue.business_type,
         scope: issue.scope,
         automationDecision: issue.automation_decision,
+        approvedDesign: Boolean(design),
     });
     const runnerSettings = (await readFeedbackSettings(env, 'runners')).settings;
     const resolvedProvider = FEEDBACK_PROVIDERS.has(provider)
@@ -3178,16 +3503,17 @@ async function createFeedbackRun(env, { issueId, workflowId, provider }) {
     const now = new Date().toISOString();
     await env.FEEDBACK_DB.prepare(
         `INSERT INTO feedback_runs (
-            id, issue_id, workflow_id, candidate_id, policy, delivery_mode, provider,
+            id, issue_id, workflow_id, candidate_id, design_id, policy, delivery_mode, provider,
             runner_type, runner_label, status, attempt, base_commit, change_commit,
             provider_session_id, started_at, finished_at, error_code
-        ) VALUES (?, ?, ?, NULL, ?, ?, ?, 'github_hosted', NULL, 'created', 1,
+        ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, 'github_hosted', NULL, 'created', 1,
                   NULL, NULL, NULL, ?, NULL, NULL)`
     )
         .bind(
             runId,
             issueId,
             workflowId,
+            design?.id || null,
             policy,
             FEEDBACK_WRITE_POLICIES.has(policy) ? 'candidate_review' : 'record_only',
             resolvedProvider,
@@ -3214,6 +3540,7 @@ async function createFeedbackRun(env, { issueId, workflowId, provider }) {
         issueId,
         workflowId,
         policy,
+        designId: design?.id || null,
         provider: resolvedProvider,
         runnerType: 'github_hosted',
         contextToken,
@@ -3367,7 +3694,7 @@ function verifyRunCompletionManifest({ policy, payload }) {
 async function readFeedbackRunContext(env, runId) {
     const row = await env.FEEDBACK_DB.prepare(
         `SELECT r.id AS run_id, r.policy, r.provider, r.runner_type, r.status AS run_status,
-                r.base_commit, i.id AS issue_id, i.version, i.title, i.description,
+                r.base_commit, r.design_id, i.id AS issue_id, i.version, i.title, i.description,
                 i.business_type, i.scope, i.status AS issue_status
          FROM feedback_runs r
          JOIN feedback_issues i ON i.id = r.issue_id
@@ -3383,6 +3710,11 @@ async function readFeedbackRunContext(env, runId) {
     )
         .bind(row.issue_id)
         .all();
+    const design = row.design_id
+        ? await env.FEEDBACK_DB.prepare('SELECT * FROM feedback_designs WHERE id = ?')
+              .bind(row.design_id)
+              .first()
+        : null;
 
     return {
         runId: row.run_id,
@@ -3391,6 +3723,7 @@ async function readFeedbackRunContext(env, runId) {
         runnerType: row.runner_type,
         runStatus: row.run_status,
         baseCommit: row.base_commit || null,
+        design: design ? serializeFeedbackDesign(design) : null,
         issue: {
             id: row.issue_id,
             version: Number(row.version) || 1,
@@ -3419,7 +3752,10 @@ async function readFeedbackRunContext(env, runId) {
  * owns its retries. Returns a suppression result instead of dispatching when
  * the event is not subscribed or the Issue is over quota (§12.2).
  */
-async function dispatchFeedbackEvent(env, { eventId, eventType, issueId }) {
+async function dispatchFeedbackEvent(
+    env,
+    { eventId, eventType, issueId, bypassQuota = false, orchestrate = true }
+) {
     if (!env.FEEDBACK_DB) return null;
 
     const stored = await readFeedbackSettings(env, 'automation');
@@ -3430,8 +3766,8 @@ async function dispatchFeedbackEvent(env, { eventId, eventType, issueId }) {
     const deliverToHook =
         Boolean(settings.hookUrl) && settings.subscribedEvents.includes(eventType);
 
-    const quota = await checkFeedbackDispatchQuota(env, issueId);
-    if (!quota.allowed) {
+    const quota = bypassQuota ? null : await checkFeedbackDispatchQuota(env, issueId);
+    if (quota && !quota.allowed) {
         await appendFeedbackSystemEvent(env, issueId, {
             type: 'automation.suppressed',
             visibility: 'admin',
@@ -3480,12 +3816,14 @@ async function dispatchFeedbackEvent(env, { eventId, eventType, issueId }) {
         }
     }
 
-    await recordFeedbackDispatchUsage(env, issueId, quota.usageDate);
-    const workflow = await ensureFeedbackWorkflowForEvent(env, issueId, {
-        deliveryId: deliverToHook ? deliveryId : null,
-        eventId,
-        eventType,
-    });
+    if (quota) await recordFeedbackDispatchUsage(env, issueId, quota.usageDate);
+    const workflow = orchestrate
+        ? await ensureFeedbackWorkflowForEvent(env, issueId, {
+              deliveryId: deliverToHook ? deliveryId : null,
+              eventId,
+              eventType,
+          })
+        : null;
     if (deliverToHook && workflow?.instanceId) {
         await env.FEEDBACK_DB.prepare(
             'UPDATE feedback_deliveries SET workflow_instance_id = ? WHERE id = ?'
@@ -3574,7 +3912,8 @@ async function appendFeedbackCallbackEvent(env, runId, body) {
 
     const callback = normalizeCallbackEvent(body);
     const run = await env.FEEDBACK_DB.prepare(
-        'SELECT id, issue_id, policy, provider, status FROM feedback_runs WHERE id = ?'
+        `SELECT id, issue_id, workflow_id, policy, provider, status
+         FROM feedback_runs WHERE id = ?`
     )
         .bind(runId)
         .first();
@@ -3585,11 +3924,28 @@ async function appendFeedbackCallbackEvent(env, runId, body) {
         .bind(eventId)
         .first();
     if (existing) {
-        return { duplicate: true, eventId, runStatus: run.status };
+        return {
+            duplicate: true,
+            eventId,
+            runStatus: run.status,
+            workflowNotification: await notifyFeedbackWorkflowRunResult(env, run, {
+                eventId,
+                callbackType: callback.type,
+            }),
+        };
     }
     if (FEEDBACK_RUN_TERMINAL_STATUSES.has(run.status)) {
         throw feedbackStorageError('FEEDBACK_RUN_ALREADY_TERMINAL');
     }
+
+    const normalizedActionType =
+        callback.type === 'agent.waiting_human'
+            ? normalizeFeedbackHumanActionType(callback.payload.actionType)
+            : '';
+    const pendingDesign =
+        normalizedActionType === 'design_decision'
+            ? normalizeFeedbackDesignPayload(callback.payload.design)
+            : null;
 
     // §14.4/§15.3: a `run.completed` claim is verified against the same rule
     // table the Runner used before it is allowed to project success.
@@ -3627,6 +3983,27 @@ async function appendFeedbackCallbackEvent(env, runId, body) {
         callback.type === 'run.failed'
             ? 'public'
             : 'internal';
+
+    // A waiting callback is only durable when the thing a person can answer is
+    // durable too. Prepare Design/HumanAction statements up front so D1.batch
+    // can roll the Event and projections back if any of them fails.
+    let preparedDesign = null;
+    let preparedAction = null;
+    if (callback.type === 'agent.waiting_human') {
+        if (pendingDesign) {
+            preparedDesign = await prepareFeedbackDesign(env, {
+                issueId: run.issue_id,
+                runId,
+                value: pendingDesign,
+            });
+        }
+        preparedAction = prepareFeedbackHumanAction(env, {
+            issueId: run.issue_id,
+            runId,
+            payload: callback.payload,
+            designId: preparedDesign?.designId || null,
+        });
+    }
 
     const statements = [
         env.FEEDBACK_DB.prepare(
@@ -3692,18 +4069,22 @@ async function appendFeedbackCallbackEvent(env, runId, body) {
         );
     }
 
-    await env.FEEDBACK_DB.batch(statements);
+    if (preparedDesign) statements.push(...preparedDesign.statements);
+    if (preparedAction) statements.push(...preparedAction.statements);
 
-    // §19.2/§20: a wait must be answerable, so it gets a structured HumanAction
-    // rather than a free-text note the UI would have to parse.
-    let humanActionId = null;
-    if (callback.type === 'agent.waiting_human') {
-        humanActionId = await createFeedbackHumanAction(env, {
-            issueId: run.issue_id,
-            runId,
-            payload: callback.payload,
-        });
+    try {
+        await env.FEEDBACK_DB.batch(statements);
+    } catch (error) {
+        const message = String(error?.message || error);
+        if (
+            message.includes('feedback_human_actions_one_active_issue_idx') ||
+            message.includes('active feedback_human_actions')
+        ) {
+            throw feedbackStorageError('FEEDBACK_HUMAN_ACTION_ALREADY_ACTIVE');
+        }
+        throw feedbackStorageError('FEEDBACK_CALLBACK_PERSIST_FAILED');
     }
+
     // §14.5: a write Run that produced a clean change set registers a
     // Candidate; without one there is nothing an approval could point at.
     let candidate = null;
@@ -3728,54 +4109,110 @@ async function appendFeedbackCallbackEvent(env, runId, body) {
         });
     }
 
+    const workflowNotification = await notifyFeedbackWorkflowRunResult(env, run, {
+        eventId,
+        callbackType: callback.type,
+    });
+
     return {
         eventId,
         runStatus: projection.runStatus || run.status,
         issueStatus: projection.issueStatus,
-        humanActionId,
+        humanActionId: preparedAction?.actionId || null,
+        designId: preparedDesign?.designId || null,
         candidateId: candidate?.candidateId || null,
         gate: gate ? { allowed: gate.allowed, violations: gate.violations } : null,
+        workflowNotification,
     };
 }
 
-async function createFeedbackHumanAction(env, { issueId, runId, payload }) {
-    const type = FEEDBACK_HUMAN_ACTION_TYPES.has(payload.actionType)
-        ? payload.actionType
-        : 'need_reproduction';
-    const allowed = Array.isArray(payload.allowedReturnStates)
-        ? payload.allowedReturnStates.filter((state) => FEEDBACK_STATUSES.has(state))
-        : ['queued', 'closed'];
+async function notifyFeedbackWorkflowRunResult(env, run, { eventId, callbackType }) {
+    if (
+        !['agent.waiting_human', 'run.completed', 'run.failed', 'run.cancelled'].includes(
+            callbackType
+        )
+    ) {
+        return null;
+    }
+    const instanceId = String(run.workflow_id || '');
+    if (!instanceId) {
+        return { instanceId: '', sent: false, error: 'WORKFLOW_INSTANCE_NOT_BOUND' };
+    }
+    if (!env.FEEDBACK_WORKFLOW) {
+        return { instanceId, sent: false, error: 'WORKFLOW_BINDING_NOT_CONFIGURED' };
+    }
+
+    const issue = await env.FEEDBACK_DB.prepare(
+        'SELECT active_workflow_id, last_run_id FROM feedback_issues WHERE id = ?'
+    )
+        .bind(run.issue_id)
+        .first();
+    if (issue?.active_workflow_id !== instanceId || issue?.last_run_id !== run.id) {
+        return { instanceId, sent: false, error: 'WORKFLOW_RUN_NOT_ACTIVE' };
+    }
+
+    try {
+        const instance = await env.FEEDBACK_WORKFLOW.get(instanceId);
+        await instance.sendEvent({
+            type: FEEDBACK_WORKFLOW_RUN_RESULT_EVENT_TYPE,
+            payload: {
+                issueId: run.issue_id,
+                runId: run.id,
+                eventId,
+                callbackType,
+            },
+        });
+        return { instanceId, sent: true };
+    } catch (error) {
+        return {
+            instanceId,
+            sent: false,
+            error: 'WORKFLOW_RUN_RESULT_SEND_FAILED',
+            detail: limitText(error?.message, 500),
+        };
+    }
+}
+
+function normalizeFeedbackHumanActionType(value) {
+    const type = String(value || '');
+    if (type === 'confirm_design') return 'design_decision';
+    if (type === 'review_candidate') return 'review_required';
+    return FEEDBACK_HUMAN_ACTION_TYPES.has(type) ? type : 'need_reproduction';
+}
+
+function prepareFeedbackHumanAction(env, { issueId, runId, payload, designId = null }) {
+    const type = normalizeFeedbackHumanActionType(payload.actionType);
+    const allowed = FEEDBACK_HUMAN_ACTION_RETURN_STATES[type] || ['queued', 'closed'];
     const actionId = `hac_${crypto.randomUUID()}`;
 
-    const inserted = await env.FEEDBACK_DB.prepare(
+    const statement = env.FEEDBACK_DB.prepare(
         `INSERT INTO feedback_human_actions (
             id, issue_id, workflow_id, run_id, candidate_id, design_id, type,
             requested_action, evidence_json, allowed_return_states_json, status,
             resolution_json, created_at, resolved_at
-        ) VALUES (?, ?, NULL, ?, ?, NULL, ?, ?, ?, ?, 'active', NULL, ?, NULL)
-        RETURNING id`
-    )
-        .bind(
-            actionId,
-            issueId,
-            runId,
-            payload.candidateId || null,
-            type,
-            limitText(payload.requestedAction || payload.question, 2000) || '需要你补充信息',
-            JSON.stringify(Array.isArray(payload.evidence) ? payload.evidence : []),
-            JSON.stringify(allowed.length ? allowed : ['queued', 'closed']),
-            new Date().toISOString()
-        )
-        .first()
-        .catch(() => null);
-    if (!inserted) return null;
+        ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, 'active', NULL, ?, NULL)`
+    ).bind(
+        actionId,
+        issueId,
+        runId,
+        payload.candidateId || null,
+        designId,
+        type,
+        limitText(payload.requestedAction || payload.question, 2000) || '需要你补充信息',
+        JSON.stringify(Array.isArray(payload.evidence) ? payload.evidence : []),
+        JSON.stringify(allowed),
+        new Date().toISOString()
+    );
 
-    await env.FEEDBACK_DB.prepare(
-        'UPDATE feedback_issues SET active_human_action_id = ? WHERE id = ?'
-    )
-        .bind(actionId, issueId)
-        .run();
-    return actionId;
+    return {
+        actionId,
+        statements: [
+            statement,
+            env.FEEDBACK_DB.prepare(
+                'UPDATE feedback_issues SET active_human_action_id = ? WHERE id = ?'
+            ).bind(actionId, issueId),
+        ],
+    };
 }
 
 /**
@@ -4147,6 +4584,15 @@ async function appendFeedbackReleaseEvent(env, releaseId, body) {
 
     const nextStatus = resolveFeedbackReleaseStatus(type, release.status);
     const now = new Date().toISOString();
+    const issueState =
+        type === 'release.completed'
+            ? await env.FEEDBACK_DB.prepare(
+                  'SELECT active_workflow_id FROM feedback_issues WHERE id = ?'
+              )
+                  .bind(release.issue_id)
+                  .first()
+            : null;
+    const activeWorkflowId = issueState?.active_workflow_id || '';
     const statements = [
         env.FEEDBACK_DB.prepare(
             `UPDATE feedback_releases
@@ -4209,9 +4655,17 @@ async function appendFeedbackReleaseEvent(env, releaseId, body) {
             ).bind(now, release.candidate_id)
         );
         statements.push(
+            prepareFeedbackTerminalWorkflowStatement(env, {
+                instanceId: activeWorkflowId,
+                occurredAt: now,
+                reason: 'issue_resolved',
+            })
+        );
+        statements.push(
             env.FEEDBACK_DB.prepare(
                 `UPDATE feedback_issues
-                 SET status = 'resolved', resolved_at = ?, updated_at = ?, version = version + 1
+                 SET status = 'resolved', active_workflow_id = NULL,
+                     resolved_at = ?, updated_at = ?, version = version + 1
                  WHERE id = ?`
             ).bind(now, now, release.issue_id)
         );
@@ -4230,7 +4684,10 @@ async function appendFeedbackReleaseEvent(env, releaseId, body) {
         );
     }
 
-    await env.FEEDBACK_DB.batch(statements);
+    await env.FEEDBACK_DB.batch(statements.filter(Boolean));
+    const workflowTermination = activeWorkflowId
+        ? await terminateFeedbackWorkflowInstance(env, activeWorkflowId)
+        : null;
 
     return {
         eventId: timelineId,
@@ -4243,6 +4700,7 @@ async function appendFeedbackReleaseEvent(env, releaseId, body) {
                       ? 'needs_human'
                       : 'test_failed'
                   : null,
+        workflowTermination,
     };
 }
 
@@ -4403,6 +4861,139 @@ async function listHumanActions(env, issueId) {
     return (result.results || []).map(serializeHumanAction);
 }
 
+function normalizeFeedbackDesignPayload(value) {
+    const design = value && typeof value === 'object' ? value : null;
+    const acceptanceCriteria = Array.isArray(design?.acceptanceCriteria)
+        ? design.acceptanceCriteria.map((item) => limitText(item, 1000)).filter(Boolean)
+        : [];
+    if (!design || !limitText(design.problem, 4000) || !acceptanceCriteria.length) {
+        throw feedbackStorageError('FEEDBACK_DESIGN_INVALID');
+    }
+
+    const stringList = (items, limit = 1000) =>
+        (Array.isArray(items) ? items : []).map((item) => limitText(item, limit)).filter(Boolean);
+
+    return {
+        problem: limitText(design.problem, 4000),
+        currentBehavior: limitText(design.currentBehavior, 4000),
+        proposedChange: limitText(design.proposedChange, 8000),
+        userValue: limitText(design.userValue, 4000),
+        affectedAreas: stringList(design.affectedAreas),
+        acceptanceCriteria,
+        risks: stringList(design.risks),
+        implementationOutline: limitText(design.implementationOutline, 8000),
+        verificationPlan: stringList(design.verificationPlan),
+        decision: limitText(design.decision, 4000),
+    };
+}
+
+function serializeFeedbackDesign(row, { includeTechnical = true } = {}) {
+    const design = {
+        id: row.id,
+        issueId: row.issue_id,
+        revision: Number(row.revision) || 1,
+        status: row.status,
+        problem: row.problem || '',
+        currentBehavior: row.current_behavior || '',
+        proposedChange: row.proposed_change || '',
+        userValue: row.user_value || '',
+        affectedAreas: parseStoredJson(row.affected_areas_json, []),
+        acceptanceCriteria: parseStoredJson(row.acceptance_criteria_json, []),
+        risks: parseStoredJson(row.risks_json, []),
+        decision: row.decision || '',
+        createdAt: row.created_at,
+        decidedAt: row.decided_at || '',
+    };
+
+    if (!includeTechnical) return design;
+    return {
+        ...design,
+        createdByRunId: row.created_by_run_id || '',
+        implementationOutline: row.implementation_outline || '',
+        verificationPlan: parseStoredJson(row.verification_plan_json, []),
+    };
+}
+
+async function listFeedbackDesigns(env, issueId, { includeTechnical = true } = {}) {
+    if (!env.FEEDBACK_DB) return [];
+
+    const result = await env.FEEDBACK_DB.prepare(
+        'SELECT * FROM feedback_designs WHERE issue_id = ? ORDER BY revision DESC'
+    )
+        .bind(issueId)
+        .all();
+    return (result.results || []).map((row) => serializeFeedbackDesign(row, { includeTechnical }));
+}
+
+/** §16.4: prepare an immutable numbered revision tied to its Run. */
+async function prepareFeedbackDesign(env, { issueId, runId, value }) {
+    const design = normalizeFeedbackDesignPayload(value);
+    const latest = await env.FEEDBACK_DB.prepare(
+        'SELECT COALESCE(MAX(revision), 0) AS revision FROM feedback_designs WHERE issue_id = ?'
+    )
+        .bind(issueId)
+        .first();
+    const revision = (Number(latest?.revision) || 0) + 1;
+    const designId = `dsn_${crypto.randomUUID()}`;
+    const occurredAt = new Date().toISOString();
+    const eventId = `evt_${crypto.randomUUID()}`;
+
+    const statements = [
+        env.FEEDBACK_DB.prepare(
+            `INSERT INTO feedback_designs (
+                id, issue_id, revision, status, created_by_run_id, problem,
+                current_behavior, proposed_change, user_value, affected_areas_json,
+                acceptance_criteria_json, risks_json, implementation_outline,
+                verification_plan_json, decision, created_at, decided_at
+            ) VALUES (?, ?, ?, 'awaiting_decision', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`
+        ).bind(
+            designId,
+            issueId,
+            revision,
+            runId,
+            design.problem,
+            design.currentBehavior,
+            design.proposedChange,
+            design.userValue,
+            JSON.stringify(design.affectedAreas),
+            JSON.stringify(design.acceptanceCriteria),
+            JSON.stringify(design.risks),
+            design.implementationOutline,
+            JSON.stringify(design.verificationPlan),
+            design.decision,
+            occurredAt
+        ),
+        env.FEEDBACK_DB.prepare(
+            `INSERT INTO feedback_events (
+                id, issue_id, sequence, type, actor_type, actor_id, visibility,
+                run_id, occurred_at, body_json, metadata_json, legacy_hash
+            )
+            SELECT ?, id,
+                (SELECT COALESCE(MAX(sequence), 0) + 1
+                 FROM feedback_events WHERE issue_id = feedback_issues.id),
+                'design.created', 'agent', NULL, 'admin', ?, ?, ?, '{}', NULL
+            FROM feedback_issues WHERE id = ?`
+        ).bind(
+            eventId,
+            runId,
+            occurredAt,
+            JSON.stringify({
+                designId,
+                revision,
+                text: `已生成方案 v${revision}，等待确认。`,
+            }),
+            issueId
+        ),
+        env.FEEDBACK_DB.prepare(
+            `UPDATE feedback_issues
+             SET current_design_id = ?, updated_at = ?, version = version + 1
+             WHERE id = ?`
+        ).bind(designId, occurredAt, issueId),
+    ];
+
+    return { designId, revision, statements };
+}
+
 function parseFeedbackMention(text) {
     const normalized = String(text || '').toLowerCase();
     for (const [mention, provider] of Object.entries(FEEDBACK_MENTION_ROUTES)) {
@@ -4449,6 +5040,16 @@ async function appendFeedbackComment(env, issueId, { actorType, body, mode, expe
 
     const nextStatus =
         effectiveMode === 'close' ? 'closed' : effectiveMode === 'resume' ? 'queued' : status;
+    const isTerminalTransition =
+        FEEDBACK_TERMINAL_STATUSES.has(nextStatus) && !FEEDBACK_TERMINAL_STATUSES.has(status);
+    const issueState = isTerminalTransition
+        ? await env.FEEDBACK_DB.prepare(
+              'SELECT active_workflow_id FROM feedback_issues WHERE id = ?'
+          )
+              .bind(issueId)
+              .first()
+        : null;
+    const activeWorkflowId = issueState?.active_workflow_id || '';
     const provider = mentionProvider || runnerSettings.defaultProvider;
     const occurredAt = new Date().toISOString();
     const commentEventId = `evt_${crypto.randomUUID()}`;
@@ -4511,10 +5112,18 @@ async function appendFeedbackComment(env, issueId, { actorType, body, mode, expe
         );
     }
 
+    const workflowTerminationStatement = prepareFeedbackTerminalWorkflowStatement(env, {
+        instanceId: activeWorkflowId,
+        occurredAt,
+        reason: nextStatus === 'resolved' ? 'issue_resolved' : 'issue_closed',
+    });
+    if (workflowTerminationStatement) statements.push(workflowTerminationStatement);
     statements.push(
         env.FEEDBACK_DB.prepare(
             `UPDATE feedback_issues
-             SET status = ?, updated_at = ?, version = version + 1,
+             SET status = ?,
+                 active_workflow_id = CASE WHEN ? THEN NULL ELSE active_workflow_id END,
+                 updated_at = ?, version = version + 1,
                  resolved_at = CASE WHEN ? = 'closed' THEN resolved_at ELSE resolved_at END
              WHERE id = ? AND version = ?
                AND EXISTS (
@@ -4522,13 +5131,25 @@ async function appendFeedbackComment(env, issueId, { actorType, body, mode, expe
                    WHERE id = ? AND issue_id = feedback_issues.id
                )
              RETURNING id`
-        ).bind(nextStatus, occurredAt, nextStatus, issueId, expectedVersion, commentEventId)
+        ).bind(
+            nextStatus,
+            isTerminalTransition ? 1 : 0,
+            occurredAt,
+            nextStatus,
+            issueId,
+            expectedVersion,
+            commentEventId
+        )
     );
 
     const results = await env.FEEDBACK_DB.batch(statements);
     if (!results[results.length - 1]?.results?.[0]) {
         throw feedbackStorageError('FEEDBACK_VERSION_CONFLICT');
     }
+
+    const workflowTermination = activeWorkflowId
+        ? await terminateFeedbackWorkflowInstance(env, activeWorkflowId)
+        : null;
 
     if (effectiveMode === 'resume' && isOwner && activeHumanAction) {
         await env.FEEDBACK_DB.prepare(
@@ -4548,6 +5169,8 @@ async function appendFeedbackComment(env, issueId, { actorType, body, mode, expe
         eventId: commentEventId,
         eventType: 'comment.created',
         issueId,
+        bypassQuota: effectiveMode === 'resume',
+        orchestrate: effectiveMode === 'resume',
     });
 
     return {
@@ -4557,6 +5180,7 @@ async function appendFeedbackComment(env, issueId, { actorType, body, mode, expe
         provider: effectiveMode === 'resume' ? provider : '',
         mention,
         requestedMode: mode,
+        workflowTermination,
         delivery,
     };
 }
@@ -4623,11 +5247,59 @@ async function reopenFeedbackIssue(env, issueId, { actorType, expectedVersion })
     return { issue: await readD1FeedbackIssue(env, issueId), eventId, delivery };
 }
 
+/** §13.4: persist the terminal side of the Issue/Workflow lifecycle atomically. */
+function prepareFeedbackTerminalWorkflowStatement(
+    env,
+    { instanceId, occurredAt, reason, actionGuard = null }
+) {
+    if (!instanceId) return null;
+
+    const guard = actionGuard
+        ? ` AND EXISTS (
+                SELECT 1 FROM feedback_human_actions
+                WHERE id = ? AND resolution_json = ?
+            )`
+        : '';
+    const statement = env.FEEDBACK_DB.prepare(
+        `UPDATE feedback_workflows
+         SET status = 'terminated', active_run_id = NULL, waiting_until = NULL,
+             finished_at = ?, terminal_reason = ?
+         WHERE instance_id = ? AND status IN ('queued', 'running', 'waiting')${guard}`
+    );
+    const values = [occurredAt, reason, instanceId];
+    if (actionGuard) values.push(actionGuard.actionId, actionGuard.resolutionJson);
+    return statement.bind(...values);
+}
+
+async function terminateFeedbackWorkflowInstance(env, instanceId) {
+    if (!instanceId) {
+        return { instanceId: '', terminated: false, error: 'WORKFLOW_INSTANCE_NOT_ACTIVE' };
+    }
+    if (!env.FEEDBACK_WORKFLOW) {
+        return { instanceId, terminated: false, error: 'WORKFLOW_BINDING_NOT_CONFIGURED' };
+    }
+
+    try {
+        const instance = await env.FEEDBACK_WORKFLOW.get(instanceId);
+        await instance.terminate();
+        return { instanceId, terminated: true };
+    } catch {
+        // The D1 lifecycle is already terminal and the mapping is cleared. The
+        // 7-day wait will still self-terminate if the control-plane call is
+        // unavailable, and this result keeps that failure visible to callers.
+        return { instanceId, terminated: false, error: 'WORKFLOW_TERMINATION_FAILED' };
+    }
+}
+
 /**
  * §21.4: a HumanAction may only return a state it declared, and approving a
  * candidate has to name the exact candidateId — it can never be a bare PATCH.
  */
-async function respondToHumanAction(env, actionId, { actorType, decision, candidateId, note }) {
+async function respondToHumanAction(
+    env,
+    actionId,
+    { actorType, decision, candidateId, designId, designDecision, note }
+) {
     if (!env.FEEDBACK_DB) {
         throw feedbackStorageError('FEEDBACK_DB_REQUIRED');
     }
@@ -4670,28 +5342,144 @@ async function respondToHumanAction(env, actionId, { actorType, decision, candid
         }
     }
 
-    const issue = await readFeedbackIssue(env, action.issueId);
-    if (!issue) return null;
+    let decidedDesign = null;
+    let designStatus = '';
+    if (action.type === 'design_decision' || action.type === 'confirm_design') {
+        if (!designId) throw feedbackStorageError('FEEDBACK_DESIGN_ID_REQUIRED');
+        if (action.designId && action.designId !== designId) {
+            throw feedbackStorageError('FEEDBACK_DESIGN_ID_MISMATCH');
+        }
+        if (!FEEDBACK_DESIGN_DECISIONS.has(designDecision)) {
+            throw feedbackStorageError('FEEDBACK_DESIGN_DECISION_INVALID');
+        }
+
+        const expectedState = designDecision === 'reject' ? 'closed' : 'queued';
+        if (decision !== expectedState) {
+            throw feedbackStorageError('FEEDBACK_HUMAN_ACTION_STATE_NOT_ALLOWED');
+        }
+
+        decidedDesign = await env.FEEDBACK_DB.prepare(
+            'SELECT * FROM feedback_designs WHERE id = ? AND issue_id = ?'
+        )
+            .bind(designId, action.issueId)
+            .first();
+        if (!decidedDesign || decidedDesign.status !== 'awaiting_decision') {
+            throw feedbackStorageError('FEEDBACK_DESIGN_ID_MISMATCH');
+        }
+        designStatus =
+            designDecision === 'approve'
+                ? 'approved'
+                : designDecision === 'revise'
+                  ? 'revision_requested'
+                  : 'rejected';
+    }
+
+    const [issue, issueState] = await Promise.all([
+        readFeedbackIssue(env, action.issueId),
+        env.FEEDBACK_DB.prepare(
+            'SELECT active_workflow_id, last_run_id FROM feedback_issues WHERE id = ?'
+        )
+            .bind(action.issueId)
+            .first(),
+    ]);
+    if (!issue || !issueState) return null;
 
     const occurredAt = new Date().toISOString();
     const eventId = `evt_${crypto.randomUUID()}`;
+    const responseId = `har_${crypto.randomUUID()}`;
     const previousStatus = issue.workflow.status;
-    const results = await env.FEEDBACK_DB.batch([
+    const designEventType = designStatus ? `design.${designStatus}` : '';
+    const resolutionJson = JSON.stringify({
+        responseId,
+        decision,
+        candidateId: candidateId || '',
+        designId: designId || '',
+        designDecision: designDecision || '',
+        note: limitText(note, 2000),
+        actorType,
+    });
+    const statements = [
         env.FEEDBACK_DB.prepare(
             `UPDATE feedback_human_actions
              SET status = 'resolved', resolved_at = ?, resolution_json = ?
              WHERE id = ? AND status = 'active'
+               AND EXISTS (
+                   SELECT 1 FROM feedback_issues
+                   WHERE id = feedback_human_actions.issue_id
+                     AND status = 'needs_human'
+                     AND active_human_action_id = feedback_human_actions.id
+                     AND (? = '' OR current_design_id = ?)
+               )
+               AND (
+                   ? = '' OR EXISTS (
+                       SELECT 1 FROM feedback_designs
+                       WHERE id = ?
+                         AND issue_id = feedback_human_actions.issue_id
+                         AND status = 'awaiting_decision'
+                   )
+               )
              RETURNING id`
         ).bind(
             occurredAt,
-            JSON.stringify({
-                decision,
-                candidateId: candidateId || '',
-                note: limitText(note, 2000),
-                actorType,
-            }),
-            actionId
+            resolutionJson,
+            actionId,
+            designId || '',
+            designId || '',
+            designId || '',
+            designId || ''
         ),
+    ];
+
+    if (decidedDesign) {
+        statements.push(
+            env.FEEDBACK_DB.prepare(
+                `UPDATE feedback_designs SET status = ?, decided_at = ?
+                 WHERE id = ? AND status = 'awaiting_decision'
+                   AND EXISTS (
+                       SELECT 1 FROM feedback_human_actions
+                       WHERE id = ? AND resolution_json = ?
+                   )`
+            ).bind(designStatus, occurredAt, designId, actionId, resolutionJson),
+            env.FEEDBACK_DB.prepare(
+                `INSERT INTO feedback_events (
+                    id, issue_id, sequence, type, actor_type, actor_id, visibility,
+                    run_id, occurred_at, body_json, metadata_json, legacy_hash
+                )
+                SELECT ?, id,
+                    (SELECT COALESCE(MAX(sequence), 0) + 1
+                     FROM feedback_events WHERE issue_id = feedback_issues.id),
+                    ?, ?, NULL, 'admin', ?, ?, ?, '{}', NULL
+                FROM feedback_issues WHERE id = ?
+                  AND EXISTS (
+                      SELECT 1 FROM feedback_human_actions
+                      WHERE id = ? AND resolution_json = ?
+                  )`
+            ).bind(
+                `evt_${crypto.randomUUID()}`,
+                designEventType,
+                actorType,
+                action.runId || null,
+                occurredAt,
+                JSON.stringify({
+                    designId,
+                    revision: Number(decidedDesign.revision) || 1,
+                    decision: designDecision,
+                    status: designStatus,
+                    text:
+                        designDecision === 'approve'
+                            ? `方案 v${decidedDesign.revision} 已批准。`
+                            : designDecision === 'revise'
+                              ? `方案 v${decidedDesign.revision} 需要修订。`
+                              : `方案 v${decidedDesign.revision} 已拒绝。`,
+                }),
+                action.issueId,
+                actionId,
+                resolutionJson
+            )
+        );
+    }
+
+    statements.push(
         env.FEEDBACK_DB.prepare(
             `INSERT INTO feedback_events (
                 id, issue_id, sequence, type, actor_type, actor_id, visibility,
@@ -4703,7 +5491,11 @@ async function respondToHumanAction(env, actionId, { actorType, decision, candid
                  FROM feedback_events WHERE issue_id = feedback_issues.id),
                 'status.changed', ?, NULL, 'public', ?, ?, ?, '{}', NULL
             FROM feedback_issues
-            WHERE id = ?`
+            WHERE id = ?
+              AND EXISTS (
+                  SELECT 1 FROM feedback_human_actions
+                  WHERE id = ? AND resolution_json = ?
+              )`
         ).bind(
             eventId,
             actorType,
@@ -4715,17 +5507,70 @@ async function respondToHumanAction(env, actionId, { actorType, decision, candid
                 humanActionId: actionId,
                 candidateId: candidateId || '',
             }),
-            action.issueId
-        ),
+            action.issueId,
+            actionId,
+            resolutionJson
+        )
+    );
+
+    const isDesignRejection = designStatus === 'rejected';
+    const isTerminalDecision = FEEDBACK_TERMINAL_STATUSES.has(decision);
+    const terminalReason = isDesignRejection
+        ? 'design_rejected'
+        : decision === 'resolved'
+          ? 'issue_resolved'
+          : 'issue_closed';
+    const activeRunId = action.runId || issueState.last_run_id || '';
+    const activeWorkflowId = issueState.active_workflow_id || '';
+    if (isTerminalDecision && activeRunId) {
+        statements.push(
+            env.FEEDBACK_DB.prepare(
+                `UPDATE feedback_runs
+                 SET status = 'cancelled', finished_at = ?, error_code = ?
+                 WHERE id = ?
+                   AND status NOT IN ('succeeded', 'failed', 'cancelled', 'timed_out')
+                   AND EXISTS (
+                       SELECT 1 FROM feedback_human_actions
+                       WHERE id = ? AND resolution_json = ?
+                   )`
+            ).bind(occurredAt, terminalReason, activeRunId, actionId, resolutionJson)
+        );
+    }
+    const workflowTerminationStatement = prepareFeedbackTerminalWorkflowStatement(env, {
+        instanceId: isTerminalDecision ? activeWorkflowId : '',
+        occurredAt,
+        reason: terminalReason,
+        actionGuard: { actionId, resolutionJson },
+    });
+    if (workflowTerminationStatement) statements.push(workflowTerminationStatement);
+
+    statements.push(
         env.FEEDBACK_DB.prepare(
             `UPDATE feedback_issues
              SET status = ?, active_human_action_id = NULL,
                  active_candidate_id = COALESCE(?, active_candidate_id),
+                 current_design_id = COALESCE(?, current_design_id),
+                 active_workflow_id = CASE WHEN ? THEN NULL ELSE active_workflow_id END,
                  updated_at = ?, version = version + 1
              WHERE id = ?
+               AND EXISTS (
+                   SELECT 1 FROM feedback_human_actions
+                   WHERE id = ? AND resolution_json = ?
+               )
              RETURNING id`
-        ).bind(decision, candidateId || null, occurredAt, action.issueId),
-    ]);
+        ).bind(
+            decision,
+            candidateId || null,
+            decidedDesign?.id || null,
+            isTerminalDecision ? 1 : 0,
+            occurredAt,
+            action.issueId,
+            actionId,
+            resolutionJson
+        )
+    );
+
+    const results = await env.FEEDBACK_DB.batch(statements);
 
     if (!results[0]?.results?.[0]) {
         throw feedbackStorageError('FEEDBACK_HUMAN_ACTION_RESOLVED');
@@ -4739,11 +5584,41 @@ async function respondToHumanAction(env, actionId, { actorType, decision, candid
             .run();
     }
 
+    const workflowTermination = isTerminalDecision
+        ? await terminateFeedbackWorkflowInstance(env, activeWorkflowId)
+        : null;
+
+    // §16.4: approving or requesting a revision resumes the waiting Workflow
+    // immediately. The status event is the durable trigger; no polling or
+    // synthetic success response stands in for the actual resume attempt.
+    const delivery =
+        decision === 'queued'
+            ? await dispatchFeedbackEvent(env, {
+                  eventId,
+                  eventType: 'status.changed',
+                  issueId: action.issueId,
+                  bypassQuota: true,
+              })
+            : null;
+    const resumeState =
+        decision !== 'queued'
+            ? 'not_applicable'
+            : delivery?.workflow && !delivery.workflow.error
+              ? delivery.workflow.resumed
+                  ? 'resumed'
+                  : 'started'
+              : 'pending';
+
     return {
         issue: await readD1FeedbackIssue(env, action.issueId),
         action: { ...action, status: 'resolved', resolvedAt: occurredAt },
         eventId,
         approvedCandidateId: approvedCandidate ? candidateId : null,
+        decidedDesignId: decidedDesign ? designId : null,
+        designStatus,
+        workflowTermination,
+        delivery,
+        resumeState,
     };
 }
 
@@ -4794,6 +5669,8 @@ async function runFeedbackReconcile(env, now = new Date()) {
     const summary = {
         jobId: FEEDBACK_RECONCILE_JOB_ID,
         ranAt: now.toISOString(),
+        resumedWorkflows: 0,
+        resumeFailures: 0,
         expiredWaits: 0,
         clearedWorkflowMappings: 0,
         expiredArtifacts: 0,
@@ -4801,6 +5678,34 @@ async function runFeedbackReconcile(env, now = new Date()) {
         runCount: 0,
     };
     if (!env.FEEDBACK_DB) return summary;
+
+    // A HumanAction response is durable before the control-plane send. If
+    // that send failed, the projection is `queued` while its Workflow is
+    // still waiting; retry exactly that mismatch without creating a Run here.
+    const pendingResumes = await env.FEEDBACK_DB.prepare(
+        `SELECT w.instance_id, w.issue_id FROM feedback_workflows w
+         JOIN feedback_issues i ON i.id = w.issue_id
+         WHERE w.status = 'waiting'
+           AND i.status = 'queued'
+           AND i.active_workflow_id = w.instance_id`
+    ).all();
+    for (const row of pendingResumes.results || []) {
+        try {
+            if (!env.FEEDBACK_WORKFLOW) throw new Error('WORKFLOW_BINDING_NOT_CONFIGURED');
+            const instance = await env.FEEDBACK_WORKFLOW.get(row.instance_id);
+            await instance.sendEvent({
+                type: FEEDBACK_WORKFLOW_RESUME_EVENT_TYPE,
+                payload: {
+                    issueId: row.issue_id,
+                    eventId: `reconcile:${row.instance_id}`,
+                    eventType: 'status.changed',
+                },
+            });
+            summary.resumedWorkflows += 1;
+        } catch {
+            summary.resumeFailures += 1;
+        }
+    }
 
     const waitDeadline = new Date(
         now.getTime() - FEEDBACK_HUMAN_WAIT_TIMEOUT_SECONDS * 1000
@@ -4949,6 +5854,7 @@ const FEEDBACK_ISSUE_SUB_ROUTES = new Set([
     'comments',
     'reopen',
     'human-actions',
+    'designs',
     'candidates',
     'releases',
 ]);
@@ -4979,6 +5885,12 @@ const FEEDBACK_ERROR_RESPONSES = {
     FEEDBACK_HUMAN_ACTION_STATE_NOT_ALLOWED: [400, 'Return state is not allowed'],
     FEEDBACK_CANDIDATE_ID_REQUIRED: [400, 'candidateId is required'],
     FEEDBACK_CANDIDATE_ID_MISMATCH: [409, 'candidateId does not match the reviewed candidate'],
+    FEEDBACK_DESIGN_INVALID: [400, 'A structured Design with acceptance criteria is required'],
+    FEEDBACK_DESIGN_ID_REQUIRED: [400, 'designId is required'],
+    FEEDBACK_DESIGN_ID_MISMATCH: [409, 'designId does not match the reviewed revision'],
+    FEEDBACK_DESIGN_DECISION_INVALID: [400, 'Design decision is invalid'],
+    FEEDBACK_HUMAN_ACTION_ALREADY_ACTIVE: [409, 'Another human action is already active'],
+    FEEDBACK_CALLBACK_PERSIST_FAILED: [500, 'Callback persistence failed; retry the event'],
     FEEDBACK_CALLBACK_TYPE_UNSUPPORTED: [400, 'Unsupported callback event type'],
     FEEDBACK_CALLBACK_EVENT_ID_REQUIRED: [400, 'eventId is required'],
     FEEDBACK_RUN_ALREADY_TERMINAL: [409, 'Run is already in a terminal state'],
@@ -7749,7 +8661,7 @@ export default {
             try {
                 const body = await request.json();
                 const action = await env.FEEDBACK_DB?.prepare(
-                    'SELECT issue_id FROM feedback_human_actions WHERE id = ?'
+                    'SELECT issue_id, type FROM feedback_human_actions WHERE id = ?'
                 )
                     .bind(actionId)
                     .first();
@@ -7762,11 +8674,22 @@ export default {
                 if (!isAdmin && !isOwner) {
                     return errorResponse('Unauthorized', 401, headers);
                 }
+                // §21.3: an owner capability can answer the current
+                // reproduction question, but it cannot approve Design,
+                // Candidate, protected-path or other privileged actions.
+                if (
+                    !isAdmin &&
+                    normalizeFeedbackHumanActionType(action.type) !== 'need_reproduction'
+                ) {
+                    return errorResponse('Forbidden', 403, headers);
+                }
 
                 const result = await respondToHumanAction(env, actionId, {
                     actorType: isAdmin ? 'admin' : 'user',
                     decision: String(body.decision || ''),
                     candidateId: body.candidateId ? String(body.candidateId) : '',
+                    designId: body.designId ? String(body.designId) : '',
+                    designDecision: body.designDecision ? String(body.designDecision) : '',
                     note: body.note,
                 });
                 if (!result) return errorResponse('Not found', 404, headers);
@@ -7774,6 +8697,9 @@ export default {
                 return jsonResponse(
                     {
                         action: result.action,
+                        delivery: result.delivery,
+                        resumeState: result.resumeState,
+                        workflowTermination: result.workflowTermination,
                         issue: isAdmin
                             ? serializeAdminIssue(result.issue)
                             : serializePublicIssue(result.issue, true),
@@ -7814,6 +8740,17 @@ export default {
                 if (request.method === 'GET' && segment === 'human-actions') {
                     return jsonResponse(
                         { humanActions: await listHumanActions(env, key) },
+                        { headers }
+                    );
+                }
+
+                if (request.method === 'GET' && segment === 'designs') {
+                    return jsonResponse(
+                        {
+                            designs: await listFeedbackDesigns(env, key, {
+                                includeTechnical: isAdmin,
+                            }),
+                        },
                         { headers }
                     );
                 }
@@ -7866,6 +8803,7 @@ export default {
                             provider: result.provider,
                             mention: result.mention,
                             delivery: result.delivery,
+                            workflowTermination: result.workflowTermination,
                             issue: isAdmin
                                 ? serializeAdminIssue(result.issue)
                                 : serializePublicIssue(result.issue, true),

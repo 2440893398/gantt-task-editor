@@ -96,6 +96,17 @@ describe('[SCN-FWB-018] feedback V2 Worker infrastructure', () => {
         expect(migrationState).toContain('create table feedback_migration_state');
         expect(migrationState).toContain('cursor text');
         expect(migrationState).toContain('completed integer');
+
+        const designRevisionMigrationPath =
+            'src/features/feedback/migrations/0004_feedback_design_run_binding.sql';
+        expect(
+            existsSync(resolve(projectRoot, designRevisionMigrationPath)),
+            `${designRevisionMigrationPath} must exist`
+        ).toBe(true);
+        const designRevisionMigration = readProjectFile(designRevisionMigrationPath).toLowerCase();
+        expect(designRevisionMigration).toContain('alter table feedback_runs add column design_id');
+        expect(designRevisionMigration).toContain('references feedback_designs(id)');
+        expect(designRevisionMigration).toContain('feedback_runs_design_idx');
     });
 
     it('exports a deterministic Workflow entrypoint that persists through its D1 binding', () => {

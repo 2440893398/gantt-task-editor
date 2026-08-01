@@ -110,6 +110,7 @@ class MemoryD1 {
             feedback_usage_daily: new Map(),
             feedback_runs: new Map(),
             feedback_artifacts: new Map(),
+            feedback_designs: new Map(),
             feedback_candidates: new Map(),
             feedback_releases: new Map(),
         };
@@ -127,6 +128,9 @@ class MemoryD1 {
         }
         for (const row of seed.feedback_deliveries || []) {
             this.tables.feedback_deliveries.set(row.id, { ...row });
+        }
+        for (const row of seed.feedback_designs || []) {
+            this.tables.feedback_designs.set(row.id, { ...row });
         }
 
         for (const row of seed.feedback_issues || []) {
@@ -379,6 +383,23 @@ class MemoryD1 {
             const id = row.id;
 
             if (!table) throw new Error(`Unsupported in-memory D1 table: ${tableName}`);
+            if (
+                tableName === 'feedback_human_actions' &&
+                row.status === 'active' &&
+                Array.from(table.values()).some(
+                    (item) => item.issue_id === row.issue_id && item.status === 'active'
+                )
+            ) {
+                throw new Error('UNIQUE constraint failed: active feedback_human_actions');
+            }
+            if (
+                tableName === 'feedback_designs' &&
+                Array.from(table.values()).some(
+                    (item) => item.issue_id === row.issue_id && item.revision === row.revision
+                )
+            ) {
+                throw new Error('UNIQUE constraint failed: feedback_designs revision');
+            }
             if (!table.has(id)) {
                 table.set(id, row);
                 return { success: true, results: [{ id }], meta: { changes: 1 } };
@@ -491,11 +512,17 @@ class MemoryD1 {
         }
 
         // --- feedback_human_actions ---
-        if (normalized.includes('from feedback_human_actions where id = ?')) {
+        if (
+            normalized.startsWith('select') &&
+            normalized.includes('from feedback_human_actions where id = ?')
+        ) {
             const row = this.tables.feedback_human_actions.get(values[0]);
             return ok(row ? [{ ...row }] : []);
         }
-        if (normalized.includes('from feedback_human_actions where issue_id = ?')) {
+        if (
+            normalized.startsWith('select') &&
+            normalized.includes('from feedback_human_actions where issue_id = ?')
+        ) {
             const activeOnly = normalized.includes("status = 'active'");
             const rows = Array.from(this.tables.feedback_human_actions.values())
                 .filter((row) => row.issue_id === values[0])
@@ -504,9 +531,38 @@ class MemoryD1 {
             return ok(rows.map((row) => ({ ...row })));
         }
         if (normalized.startsWith('update feedback_human_actions')) {
-            const [resolvedAt, resolutionJson, actionId] = values;
+            const [
+                resolvedAt,
+                resolutionJson,
+                actionId,
+                guardedDesignId,
+                expectedCurrentDesignId,
+                guardedDesignStatusId,
+                expectedDesignId,
+            ] = values;
             const current = this.tables.feedback_human_actions.get(actionId);
             if (!current || current.status !== 'active') return ok([]);
+            if (normalized.includes('from feedback_issues')) {
+                const issue = this.tables.feedback_issues.get(current.issue_id);
+                if (
+                    !issue ||
+                    issue.status !== 'needs_human' ||
+                    issue.active_human_action_id !== actionId ||
+                    (guardedDesignId && issue.current_design_id !== expectedCurrentDesignId)
+                ) {
+                    return ok([]);
+                }
+            }
+            if (guardedDesignStatusId) {
+                const design = this.tables.feedback_designs.get(expectedDesignId);
+                if (
+                    !design ||
+                    design.issue_id !== current.issue_id ||
+                    design.status !== 'awaiting_decision'
+                ) {
+                    return ok([]);
+                }
+            }
             const next = {
                 ...current,
                 status: 'resolved',
@@ -547,13 +603,25 @@ class MemoryD1 {
             return ok(rows.map((row) => ({ ...row })));
         }
         const workflowUpdate = normalized.match(
-            /^update feedback_workflows set (.+?) where instance_id = \?$/
+            /^update feedback_workflows set (.+?) where instance_id = \?(.*)$/
         );
         if (workflowUpdate) {
-            const instanceId = values[values.length - 1];
+            const patch = this.parseSetClause(workflowUpdate[1], values);
+            let cursor = patch.cursor;
+            const instanceId = values[cursor++];
             const current = this.tables.feedback_workflows.get(instanceId);
             if (!current) return ok([], 0);
-            const patch = this.parseSetClause(workflowUpdate[1], values);
+            const tail = workflowUpdate[2];
+            if (
+                tail.includes("status in ('queued', 'running', 'waiting')") &&
+                !['queued', 'running', 'waiting'].includes(current.status)
+            ) {
+                return ok([], 0);
+            }
+            if (tail.includes('from feedback_human_actions')) {
+                const action = this.tables.feedback_human_actions.get(values[cursor++]);
+                if (!action || action.resolution_json !== values[cursor]) return ok([], 0);
+            }
             this.tables.feedback_workflows.set(instanceId, { ...current, ...patch.columns });
             return ok([], 1);
         }
@@ -732,11 +800,14 @@ class MemoryD1 {
         // --- append-only event inserts with literal event types ---
         const eventInsert = this.parseEventSelectInsert(normalized, values);
         if (eventInsert) {
-            const { row, issueId, expectedVersion, sequenceOffset } = eventInsert;
+            const { row, issueId, expectedVersion, sequenceOffset, actionId, resolutionJson } =
+                eventInsert;
             const issue = this.tables.feedback_issues.get(issueId);
+            const action = actionId ? this.tables.feedback_human_actions.get(actionId) : null;
             if (
                 !issue ||
                 (expectedVersion !== undefined && issue.version !== expectedVersion) ||
+                (actionId && action?.resolution_json !== resolutionJson) ||
                 this.tables.feedback_events.has(row.id)
             ) {
                 return ok([], 0);
@@ -769,6 +840,7 @@ class MemoryD1 {
                     runner_type: run.runner_type,
                     run_status: run.status,
                     base_commit: run.base_commit,
+                    design_id: run.design_id,
                     issue_id: issue.id,
                     version: issue.version,
                     title: issue.title,
@@ -792,13 +864,24 @@ class MemoryD1 {
             );
             return ok(rows.map((row) => ({ ...row })));
         }
-        const runUpdate = normalized.match(/^update feedback_runs set (.+?) where id = \?$/);
+        const runUpdate = normalized.match(/^update feedback_runs set (.+?) where id = \?(.*)$/);
         if (runUpdate) {
-            const runId = values[values.length - 1];
+            const patch = this.parseSetClause(runUpdate[1], values);
+            let cursor = patch.cursor;
+            const runId = values[cursor++];
             const current = this.tables.feedback_runs.get(runId);
             if (!current) return ok([], 0);
-
-            const patch = this.parseSetClause(runUpdate[1], values);
+            const tail = runUpdate[2];
+            if (
+                tail.includes("status not in ('succeeded', 'failed', 'cancelled', 'timed_out')") &&
+                ['succeeded', 'failed', 'cancelled', 'timed_out'].includes(current.status)
+            ) {
+                return ok([], 0);
+            }
+            if (tail.includes('from feedback_human_actions')) {
+                const action = this.tables.feedback_human_actions.get(values[cursor++]);
+                if (!action || action.resolution_json !== values[cursor]) return ok([], 0);
+            }
             const next = { ...current };
             for (const [column, value] of Object.entries(patch.columns)) {
                 next[column] = value;
@@ -817,6 +900,19 @@ class MemoryD1 {
 
         // --- reconcile sweep ---
         if (normalized.startsWith('select w.instance_id')) {
+            if (normalized.includes("i.status = 'queued'")) {
+                const rows = Array.from(this.tables.feedback_workflows.values()).filter((row) => {
+                    const issue = this.tables.feedback_issues.get(row.issue_id);
+                    return (
+                        row.status === 'waiting' &&
+                        issue?.status === 'queued' &&
+                        issue.active_workflow_id === row.instance_id
+                    );
+                });
+                return ok(
+                    rows.map((row) => ({ instance_id: row.instance_id, issue_id: row.issue_id }))
+                );
+            }
             const rows = Array.from(this.tables.feedback_workflows.values()).filter((row) => {
                 const issue = this.tables.feedback_issues.get(row.issue_id);
                 return (
@@ -843,6 +939,46 @@ class MemoryD1 {
                 (row) => !status || row.status === status
             ).length;
             return ok([{ total }]);
+        }
+
+        // --- feedback_designs ---
+        if (normalized.includes('max(revision)') && normalized.includes('from feedback_designs')) {
+            const revision = Math.max(
+                0,
+                ...Array.from(this.tables.feedback_designs.values())
+                    .filter((row) => row.issue_id === values[0])
+                    .map((row) => Number(row.revision) || 0)
+            );
+            return ok([{ revision }]);
+        }
+        if (normalized.includes('from feedback_designs where id = ?')) {
+            const row = this.tables.feedback_designs.get(values[0]);
+            const matchesIssue =
+                !normalized.includes('issue_id = ?') || row?.issue_id === values[1];
+            const matchesStatus =
+                !normalized.includes("status = 'approved'") || row?.status === 'approved';
+            return ok(row && matchesIssue && matchesStatus ? [{ ...row }] : []);
+        }
+        if (normalized.includes('from feedback_designs where issue_id = ?')) {
+            const rows = Array.from(this.tables.feedback_designs.values())
+                .filter((row) => row.issue_id === values[0])
+                .sort((a, b) => Number(b.revision) - Number(a.revision));
+            return ok(rows.map((row) => ({ ...row })));
+        }
+        if (normalized.startsWith('update feedback_designs')) {
+            const [status, decidedAt, designId, actionId, resolutionJson] = values;
+            const current = this.tables.feedback_designs.get(designId);
+            if (!current || current.status !== 'awaiting_decision') return ok([], 0);
+            if (normalized.includes('from feedback_human_actions')) {
+                const action = this.tables.feedback_human_actions.get(actionId);
+                if (!action || action.resolution_json !== resolutionJson) return ok([], 0);
+            }
+            this.tables.feedback_designs.set(designId, {
+                ...current,
+                status,
+                decided_at: decidedAt,
+            });
+            return ok([], 1);
         }
 
         // --- feedback_candidates / feedback_releases ---
@@ -947,21 +1083,31 @@ class MemoryD1 {
                 } else if (expression.startsWith("'")) {
                     patch[column] = expression.replace(/^'|'$/g, '');
                 } else if (expression.startsWith('case')) {
-                    // resolved_at CASE keeps its current value in every branch.
-                    cursor += (expression.match(/\?/g) || []).length;
+                    const placeholderCount = (expression.match(/\?/g) || []).length;
+                    const condition = placeholderCount ? values[cursor] : 0;
+                    cursor += placeholderCount;
+                    if (column === 'active_workflow_id' && condition) patch[column] = null;
                 }
             }
 
             const issueId = values[cursor];
             cursor += 1;
             const expectedVersion = tail.includes('version = ?') ? values[cursor++] : undefined;
-            const guardEventId = tail.includes('from feedback_events') ? values[cursor] : null;
+            const guardEventId = tail.includes('from feedback_events') ? values[cursor++] : null;
+            const guardActionId = tail.includes('from feedback_human_actions')
+                ? values[cursor++]
+                : null;
+            const guardResolutionJson = guardActionId ? values[cursor] : null;
             const current = this.tables.feedback_issues.get(issueId);
             const guardEvent = guardEventId ? this.tables.feedback_events.get(guardEventId) : null;
+            const guardAction = guardActionId
+                ? this.tables.feedback_human_actions.get(guardActionId)
+                : null;
             if (
                 !current ||
                 (expectedVersion !== undefined && current.version !== expectedVersion) ||
-                (guardEventId && guardEvent?.issue_id !== issueId)
+                (guardEventId && guardEvent?.issue_id !== issueId) ||
+                (guardActionId && guardAction?.resolution_json !== guardResolutionJson)
             ) {
                 return ok([], 0);
             }
@@ -985,7 +1131,7 @@ class MemoryD1 {
      */
     parseEventSelectInsert(normalized, values) {
         const match = normalized.match(
-            /^insert into feedback_events \(([^)]+)\) select (.+) from feedback_issues where id = \?(?: and version = \?)?$/
+            /^insert into feedback_events \(([^)]+)\) select (.+?) from feedback_issues where id = \?(.*)$/
         );
         if (!match) return null;
 
@@ -1018,12 +1164,18 @@ class MemoryD1 {
             }
         });
 
-        const hasVersionGuard = normalized.endsWith('and version = ?');
+        const tail = match[3];
+        let valueCursor = cursor + 1;
+        const hasVersionGuard = tail.includes('version = ?');
+        const expectedVersion = hasVersionGuard ? values[valueCursor++] : undefined;
+        const hasActionGuard = tail.includes('from feedback_human_actions');
         return {
             row,
             issueId: values[cursor],
-            expectedVersion: hasVersionGuard ? values[cursor + 1] : undefined,
+            expectedVersion,
             sequenceOffset,
+            actionId: hasActionGuard ? values[valueCursor++] : undefined,
+            resolutionJson: hasActionGuard ? values[valueCursor] : undefined,
         };
     }
 }
@@ -1104,6 +1256,29 @@ function createD1IssueRow(overrides = {}) {
         created_at: '2026-07-28T08:00:00.000Z',
         updated_at: '2026-07-28T08:00:00.000Z',
         resolved_at: null,
+        ...overrides,
+    };
+}
+
+function createDesignRow(overrides = {}) {
+    return {
+        id: 'dsn_1',
+        issue_id: feedbackKey,
+        revision: 1,
+        status: 'awaiting_decision',
+        created_by_run_id: 'run_design_1',
+        problem: '批量编辑缺少提交前确认。',
+        current_behavior: '保存后立即生效。',
+        proposed_change: '增加影响摘要和确认步骤。',
+        user_value: '降低误操作风险。',
+        affected_areas_json: JSON.stringify(['批量编辑面板']),
+        acceptance_criteria_json: JSON.stringify(['确认前不写入', '确认后只提交一次']),
+        risks_json: JSON.stringify(['移动端摘要过长']),
+        implementation_outline: '复用现有确认卡片。',
+        verification_plan_json: JSON.stringify(['Vitest', 'Playwright']),
+        decision: '是否采用两步确认。',
+        created_at: '2026-08-01T08:00:00.000Z',
+        decided_at: null,
         ...overrides,
     };
 }
@@ -1208,7 +1383,7 @@ async function openWorkbench(env, { url = 'https://worker.test/feedback', routes
     return dom;
 }
 
-function ownerWorkbenchRoutes({ status = 'open', events, humanActions = [] } = {}) {
+function ownerWorkbenchRoutes({ status = 'open', events, humanActions = [], designs = [] } = {}) {
     const detailPath = `/api/feedback/issues/${encodeURIComponent(feedbackKey)}`;
 
     return {
@@ -1243,6 +1418,7 @@ function ownerWorkbenchRoutes({ status = 'open', events, humanActions = [] } = {
             ],
         },
         [`${detailPath}/human-actions`]: { humanActions },
+        [`${detailPath}/designs`]: { designs },
         [`${detailPath}/candidates`]: { candidates: [] },
         [`${detailPath}/releases`]: { releases: [] },
     };
@@ -1404,6 +1580,73 @@ describe('feedback issue board Worker routes', () => {
         expect(notice).toContain('不会发送邮件、短信或 IM 通知');
         // §21.1: the capability must not survive in the address bar.
         expect(dom.window.location.hash).toBe('');
+    });
+
+    it('[SCN-FWB-020] renders a Design read-only for its owner', async () => {
+        const designId = 'dsn_1';
+        const actionId = 'hac_design_1';
+        const routes = ownerWorkbenchRoutes({
+            status: 'needs_human',
+            humanActions: [
+                {
+                    id: actionId,
+                    issueId: feedbackKey,
+                    runId: 'run_design_1',
+                    candidateId: '',
+                    designId,
+                    type: 'design_decision',
+                    requestedAction: '请确认第 1 版交互方案',
+                    evidence: [],
+                    allowedReturnStates: ['queued', 'closed'],
+                    status: 'active',
+                    createdAt: '2026-08-01T08:00:00.000Z',
+                    resolvedAt: '',
+                },
+            ],
+            designs: [
+                {
+                    id: designId,
+                    issueId: feedbackKey,
+                    revision: 1,
+                    status: 'awaiting_decision',
+                    problem: '批量编辑缺少提交前确认。',
+                    currentBehavior: '保存后立即生效。',
+                    proposedChange: '增加影响摘要和确认步骤。',
+                    userValue: '降低误操作风险。',
+                    affectedAreas: ['批量编辑面板'],
+                    acceptanceCriteria: ['确认前不写入', '确认后只提交一次'],
+                    risks: ['移动端摘要过长'],
+                    implementationOutline: '复用现有确认卡片。',
+                    verificationPlan: ['Vitest', '375/768/1440 Playwright'],
+                    decision: '是否采用两步确认。',
+                    createdAt: '2026-08-01T08:00:00.000Z',
+                    decidedAt: '',
+                },
+            ],
+        });
+        const dom = await openWorkbench(env, {
+            url: `https://worker.test/feedback#issue=${encodeURIComponent(
+                feedbackKey
+            )}&capability=owner-token`,
+            routes,
+        });
+
+        await waitFor(() => {
+            expect(dom.window.document.getElementById('designCard').hidden).toBe(false);
+        });
+
+        const designCard = dom.window.document.getElementById('designCard');
+        expect(designCard.textContent).toContain('方案 v1');
+        expect(designCard.textContent).toContain('增加影响摘要和确认步骤');
+        expect(designCard.textContent).toContain('确认前不写入');
+        expect(dom.window.document.getElementById('nextActionCopy').textContent).toContain(
+            '需要管理员确认'
+        );
+        expect(dom.window.document.querySelector('[data-design-decision="approve"]')).toBeNull();
+        expect(dom.window.document.getElementById('designDecisionNote')).toBeNull();
+        expect(
+            dom.requests.some((entry) => entry.path.endsWith(`/human-actions/${actionId}/respond`))
+        ).toBe(false);
     });
 
     it('[SCN-FWB-017] hides admin surfaces until an admin session exists', async () => {
@@ -4183,7 +4426,12 @@ describe('feedback workbench V2 routes', () => {
         const env = createV2Env(
             {},
             {
-                feedback_issues: [createD1IssueRow({ status: 'needs_human' })],
+                feedback_issues: [
+                    createD1IssueRow({
+                        status: 'needs_human',
+                        active_human_action_id: 'hac_1',
+                    }),
+                ],
                 feedback_human_actions: [humanActionRow()],
             }
         );
@@ -4210,11 +4458,553 @@ describe('feedback workbench V2 routes', () => {
         expect(accepted.issue.workflow.status).toBe('queued');
     });
 
+    it('[SCN-FWB-020] lists Design revisions and applies a decision to the exact revision', async () => {
+        const design = createDesignRow();
+        const env = createV2Env(
+            {},
+            {
+                feedback_issues: [
+                    createD1IssueRow({
+                        status: 'needs_human',
+                        current_design_id: design.id,
+                        active_human_action_id: 'hac_design_1',
+                    }),
+                ],
+                feedback_human_actions: [
+                    humanActionRow({
+                        id: 'hac_design_1',
+                        type: 'design_decision',
+                        design_id: design.id,
+                        allowed_return_states_json: JSON.stringify(['queued', 'closed']),
+                    }),
+                ],
+                feedback_designs: [design],
+                feedback_workflows: [
+                    {
+                        issue_id: feedbackKey,
+                        generation: 1,
+                        instance_id: workflowInstanceId(feedbackKey, 1),
+                        status: 'waiting',
+                        active_run_id: 'run_design_1',
+                        context_version: 1,
+                        started_at: '2026-08-01T07:00:00.000Z',
+                        waiting_until: null,
+                        finished_at: null,
+                        terminal_reason: null,
+                    },
+                ],
+            }
+        );
+        const ownerCapability = 'design-owner-capability';
+        const issueRow = env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey);
+        issueRow.owner_capability_hash = await hashCapability(ownerCapability);
+        issueRow.owner_capability_expires_at = '2099-01-01T00:00:00.000Z';
+        const resumed = [];
+        env.FEEDBACK_WORKFLOW = {
+            async get(id) {
+                return {
+                    async sendEvent(event) {
+                        resumed.push({ id, event });
+                    },
+                };
+            },
+        };
+        const headers = await adminHeaders(env);
+
+        const listed = await json(
+            await request(
+                `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/designs`,
+                { headers },
+                env
+            )
+        );
+        expect(listed.designs).toEqual([
+            expect.objectContaining({
+                id: design.id,
+                revision: 1,
+                status: 'awaiting_decision',
+                acceptanceCriteria: ['确认前不写入', '确认后只提交一次'],
+            }),
+        ]);
+
+        const ownerListed = await json(
+            await request(
+                `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/designs`,
+                { headers: { Authorization: `Bearer ${ownerCapability}` } },
+                env
+            )
+        );
+        expect(ownerListed.designs[0].createdByRunId).toBeUndefined();
+        expect(ownerListed.designs[0].implementationOutline).toBeUndefined();
+        expect(ownerListed.designs[0].verificationPlan).toBeUndefined();
+
+        const ownerDecision = await request(
+            '/api/feedback/human-actions/hac_design_1/respond',
+            {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${ownerCapability}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    decision: 'queued',
+                    designDecision: 'approve',
+                    designId: design.id,
+                }),
+            },
+            env
+        );
+        expect(ownerDecision.status).toBe(403);
+        expect(env.FEEDBACK_DB.tables.feedback_human_actions.get('hac_design_1').status).toBe(
+            'active'
+        );
+        expect(env.FEEDBACK_DB.tables.feedback_designs.get(design.id).status).toBe(
+            'awaiting_decision'
+        );
+
+        const mismatched = await request(
+            '/api/feedback/human-actions/hac_design_1/respond',
+            {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({
+                    decision: 'queued',
+                    designDecision: 'approve',
+                    designId: 'dsn_other',
+                }),
+            },
+            env
+        );
+        expect(mismatched.status).toBe(409);
+        expect(env.FEEDBACK_DB.tables.feedback_designs.get(design.id).status).toBe(
+            'awaiting_decision'
+        );
+
+        const approved = await json(
+            await request(
+                '/api/feedback/human-actions/hac_design_1/respond',
+                {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({
+                        decision: 'queued',
+                        designDecision: 'approve',
+                        designId: design.id,
+                    }),
+                },
+                env
+            )
+        );
+        expect(approved.action.status).toBe('resolved');
+        expect(env.FEEDBACK_DB.tables.feedback_designs.get(design.id).status).toBe('approved');
+        expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).current_design_id).toBe(
+            design.id
+        );
+        expect(
+            Array.from(env.FEEDBACK_DB.tables.feedback_events.values()).map((event) => event.type)
+        ).toContain('design.approved');
+        expect(resumed).toEqual([
+            {
+                id: workflowInstanceId(feedbackKey, 1),
+                event: expect.objectContaining({
+                    type: 'feedback-resume',
+                    payload: expect.objectContaining({ eventType: 'status.changed' }),
+                }),
+            },
+        ]);
+    });
+
+    it('[SCN-FWB-020] distinguishes revision requests from rejected Designs', async () => {
+        const cases = [
+            {
+                designDecision: 'revise',
+                decision: 'queued',
+                designStatus: 'revision_requested',
+                eventType: 'design.revision_requested',
+            },
+            {
+                designDecision: 'reject',
+                decision: 'closed',
+                designStatus: 'rejected',
+                eventType: 'design.rejected',
+            },
+        ];
+
+        for (const item of cases) {
+            const design = createDesignRow();
+            const env = createV2Env(
+                {},
+                {
+                    feedback_issues: [
+                        createD1IssueRow({
+                            status: 'needs_human',
+                            current_design_id: design.id,
+                            active_human_action_id: 'hac_design_1',
+                        }),
+                    ],
+                    feedback_human_actions: [
+                        humanActionRow({
+                            id: 'hac_design_1',
+                            type: 'design_decision',
+                            design_id: design.id,
+                            allowed_return_states_json: JSON.stringify(['queued', 'closed']),
+                        }),
+                    ],
+                    feedback_designs: [design],
+                }
+            );
+            const response = await request(
+                '/api/feedback/human-actions/hac_design_1/respond',
+                {
+                    method: 'POST',
+                    headers: await adminHeaders(env),
+                    body: JSON.stringify({
+                        decision: item.decision,
+                        designDecision: item.designDecision,
+                        designId: design.id,
+                        note: '请收窄移动端范围。',
+                    }),
+                },
+                env
+            );
+
+            expect(response.status).toBe(200);
+            expect(env.FEEDBACK_DB.tables.feedback_designs.get(design.id).status).toBe(
+                item.designStatus
+            );
+            expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe(
+                item.decision
+            );
+            expect(
+                Array.from(env.FEEDBACK_DB.tables.feedback_events.values()).map(
+                    (event) => event.type
+                )
+            ).toContain(item.eventType);
+        }
+    });
+
+    it('[SCN-FWB-020] rejects a Design decision when the active action or revision is stale', async () => {
+        const cases = [
+            {
+                active_human_action_id: 'hac_replacement',
+                current_design_id: 'dsn_1',
+            },
+            {
+                active_human_action_id: 'hac_design_1',
+                current_design_id: 'dsn_replacement',
+            },
+        ];
+
+        for (const issueOverrides of cases) {
+            const design = createDesignRow();
+            const env = createV2Env(
+                {},
+                {
+                    feedback_issues: [
+                        createD1IssueRow({ status: 'needs_human', ...issueOverrides }),
+                    ],
+                    feedback_human_actions: [
+                        humanActionRow({
+                            id: 'hac_design_1',
+                            type: 'design_decision',
+                            design_id: design.id,
+                            allowed_return_states_json: JSON.stringify(['queued', 'closed']),
+                        }),
+                    ],
+                    feedback_designs: [design],
+                }
+            );
+
+            const response = await request(
+                '/api/feedback/human-actions/hac_design_1/respond',
+                {
+                    method: 'POST',
+                    headers: await adminHeaders(env),
+                    body: JSON.stringify({
+                        decision: 'queued',
+                        designDecision: 'approve',
+                        designId: design.id,
+                    }),
+                },
+                env
+            );
+
+            expect(response.status).toBe(409);
+            expect(env.FEEDBACK_DB.tables.feedback_human_actions.get('hac_design_1').status).toBe(
+                'active'
+            );
+            expect(env.FEEDBACK_DB.tables.feedback_designs.get(design.id).status).toBe(
+                'awaiting_decision'
+            );
+            expect(env.FEEDBACK_DB.tables.feedback_events.size).toBe(0);
+        }
+    });
+
+    it('[SCN-FWB-020] reports a durable Design approval as pending when Workflow resume fails', async () => {
+        const design = createDesignRow();
+        const instanceId = workflowInstanceId(feedbackKey, 1);
+        const env = createV2Env(
+            {},
+            {
+                feedback_issues: [
+                    createD1IssueRow({
+                        status: 'needs_human',
+                        active_human_action_id: 'hac_design_1',
+                        current_design_id: design.id,
+                        active_workflow_id: instanceId,
+                    }),
+                ],
+                feedback_human_actions: [
+                    humanActionRow({
+                        id: 'hac_design_1',
+                        type: 'design_decision',
+                        design_id: design.id,
+                    }),
+                ],
+                feedback_designs: [design],
+                feedback_workflows: [
+                    {
+                        issue_id: feedbackKey,
+                        generation: 1,
+                        instance_id: instanceId,
+                        status: 'waiting',
+                        active_run_id: 'run_design_1',
+                    },
+                ],
+            }
+        );
+        env.FEEDBACK_WORKFLOW = {
+            async get() {
+                return {
+                    async sendEvent() {
+                        throw new Error('control plane unavailable');
+                    },
+                };
+            },
+        };
+
+        const response = await request(
+            '/api/feedback/human-actions/hac_design_1/respond',
+            {
+                method: 'POST',
+                headers: await adminHeaders(env),
+                body: JSON.stringify({
+                    decision: 'queued',
+                    designDecision: 'approve',
+                    designId: design.id,
+                }),
+            },
+            env
+        );
+        const body = await json(response);
+
+        expect(response.status).toBe(200);
+        expect(body.resumeState).toBe('pending');
+        expect(body.delivery.workflow.error).toBe('RESUME_FAILED');
+        expect(env.FEEDBACK_DB.tables.feedback_designs.get(design.id).status).toBe('approved');
+        expect(env.FEEDBACK_DB.tables.feedback_human_actions.get('hac_design_1').status).toBe(
+            'resolved'
+        );
+        expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe('queued');
+    });
+
+    it('[SCN-FWB-020] rejects a Design by terminating its Run and Workflow before reopen creates generation 2', async () => {
+        const design = createDesignRow();
+        const firstWorkflowId = workflowInstanceId(feedbackKey, 1);
+        const env = createV2Env(
+            {},
+            {
+                feedback_issues: [
+                    createD1IssueRow({
+                        status: 'needs_human',
+                        workflow_generation: 1,
+                        active_workflow_id: firstWorkflowId,
+                        last_run_id: 'run_design_1',
+                        current_design_id: design.id,
+                        active_human_action_id: 'hac_design_1',
+                    }),
+                ],
+                feedback_human_actions: [
+                    humanActionRow({
+                        id: 'hac_design_1',
+                        run_id: 'run_design_1',
+                        type: 'design_decision',
+                        design_id: design.id,
+                        allowed_return_states_json: JSON.stringify(['queued', 'closed']),
+                    }),
+                ],
+                feedback_designs: [design],
+                feedback_workflows: [
+                    {
+                        issue_id: feedbackKey,
+                        generation: 1,
+                        instance_id: firstWorkflowId,
+                        status: 'waiting',
+                        active_run_id: 'run_design_1',
+                        context_version: 1,
+                        started_at: '2026-08-01T07:00:00.000Z',
+                        waiting_until: '2026-08-08T07:00:00.000Z',
+                        finished_at: null,
+                        terminal_reason: null,
+                    },
+                ],
+            }
+        );
+        env.FEEDBACK_DB.tables.feedback_runs.set('run_design_1', {
+            id: 'run_design_1',
+            issue_id: feedbackKey,
+            workflow_id: firstWorkflowId,
+            policy: 'analyze',
+            status: 'waiting_human',
+            finished_at: null,
+        });
+        const terminated = [];
+        const created = [];
+        env.FEEDBACK_WORKFLOW = {
+            async get(id) {
+                return {
+                    async terminate() {
+                        terminated.push(id);
+                    },
+                };
+            },
+            async create(options) {
+                created.push(options);
+                return { id: options.id };
+            },
+        };
+        const headers = await adminHeaders(env);
+
+        const rejected = await json(
+            await request(
+                '/api/feedback/human-actions/hac_design_1/respond',
+                {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({
+                        decision: 'closed',
+                        designDecision: 'reject',
+                        designId: design.id,
+                    }),
+                },
+                env
+            )
+        );
+
+        expect(rejected.workflowTermination).toEqual({
+            instanceId: firstWorkflowId,
+            terminated: true,
+        });
+        expect(terminated).toEqual([firstWorkflowId]);
+        expect(env.FEEDBACK_DB.tables.feedback_runs.get('run_design_1').status).toBe('cancelled');
+        expect(env.FEEDBACK_DB.tables.feedback_workflows.get(firstWorkflowId)).toEqual(
+            expect.objectContaining({
+                status: 'terminated',
+                active_run_id: null,
+                waiting_until: null,
+                terminal_reason: 'design_rejected',
+            })
+        );
+        const closedIssue = env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey);
+        expect(closedIssue.status).toBe('closed');
+        expect(closedIssue.active_workflow_id).toBeNull();
+
+        const reopened = await json(
+            await request(
+                `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/reopen`,
+                {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({ expectedVersion: closedIssue.version }),
+                },
+                env
+            )
+        );
+        expect(reopened.issue.workflow.status).toBe('open');
+        expect(created).toHaveLength(1);
+        expect(created[0].id).toBe(workflowInstanceId(feedbackKey, 2));
+    });
+
+    it('[SCN-FWB-020] lets only one concurrent Design response project events and status', async () => {
+        const design = createDesignRow();
+        const env = createV2Env(
+            {},
+            {
+                feedback_issues: [
+                    createD1IssueRow({
+                        status: 'needs_human',
+                        current_design_id: design.id,
+                        active_human_action_id: 'hac_design_1',
+                    }),
+                ],
+                feedback_human_actions: [
+                    humanActionRow({
+                        id: 'hac_design_1',
+                        type: 'design_decision',
+                        design_id: design.id,
+                        allowed_return_states_json: JSON.stringify(['queued', 'closed']),
+                    }),
+                ],
+                feedback_designs: [design],
+            }
+        );
+        env.FEEDBACK_WORKFLOW = {
+            async create(options) {
+                return { id: options.id };
+            },
+            async get() {
+                return { async sendEvent() {} };
+            },
+        };
+        const originalExecute = env.FEEDBACK_DB.execute.bind(env.FEEDBACK_DB);
+        let readers = 0;
+        let releaseReaders;
+        const bothRead = new Promise((resolve) => {
+            releaseReaders = resolve;
+        });
+        env.FEEDBACK_DB.execute = async (query, values) => {
+            const normalized = query.replace(/\s+/g, ' ').trim().toLowerCase();
+            if (normalized === 'select * from feedback_human_actions where id = ?') {
+                readers += 1;
+                if (readers === 2) releaseReaders();
+                await bothRead;
+            }
+            return originalExecute(query, values);
+        };
+        const headers = await adminHeaders(env);
+        const respond = (note) =>
+            request(
+                '/api/feedback/human-actions/hac_design_1/respond',
+                {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({
+                        decision: 'queued',
+                        designDecision: 'approve',
+                        designId: design.id,
+                        note,
+                    }),
+                },
+                env
+            );
+
+        const responses = await Promise.all([respond('first'), respond('second')]);
+        expect(responses.map((response) => response.status).sort()).toEqual([200, 409]);
+        const eventTypes = Array.from(env.FEEDBACK_DB.tables.feedback_events.values()).map(
+            (event) => event.type
+        );
+        expect(eventTypes.filter((type) => type === 'design.approved')).toHaveLength(1);
+        expect(eventTypes.filter((type) => type === 'status.changed')).toHaveLength(1);
+        expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).version).toBe(2);
+    });
+
     it('[SCN-FWB-021] requires the exact candidateId before approving delivery', async () => {
         const env = createV2Env(
             {},
             {
-                feedback_issues: [createD1IssueRow({ status: 'needs_human' })],
+                feedback_issues: [
+                    createD1IssueRow({ status: 'needs_human', active_human_action_id: 'hac_1' }),
+                ],
                 feedback_human_actions: [
                     humanActionRow({
                         type: 'review_candidate',
@@ -4505,14 +5295,20 @@ describe('feedback workbench V2 event dispatch', () => {
         return { env, headers };
     }
 
-    async function postComment(env, headers, expectedVersion, body = '触发一次投递') {
+    async function postComment(
+        env,
+        headers,
+        expectedVersion,
+        body = '触发一次投递',
+        mode = 'resume'
+    ) {
         return json(
             await request(
                 `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/comments`,
                 {
                     method: 'POST',
                     headers,
-                    body: JSON.stringify({ body, mode: 'record', expectedVersion }),
+                    body: JSON.stringify({ body, mode, expectedVersion }),
                 },
                 env
             )
@@ -4557,7 +5353,12 @@ describe('feedback workbench V2 event dispatch', () => {
         expect(env.FEEDBACK_WORKFLOW.created).toHaveLength(1);
         expect(env.FEEDBACK_WORKFLOW.sentEvents).toHaveLength(1);
         expect(env.FEEDBACK_WORKFLOW.sentEvents[0].id).toBe(workflowInstanceId(feedbackKey, 1));
-        expect(env.FEEDBACK_WORKFLOW.sentEvents[0].event.type).toBe('comment.created');
+        expect(env.FEEDBACK_WORKFLOW.sentEvents[0].event).toEqual(
+            expect.objectContaining({
+                type: 'feedback-resume',
+                payload: expect.objectContaining({ eventType: 'comment.created' }),
+            })
+        );
     });
 
     it('[SCN-FWB-007] uses generation + 1 once the previous instance is terminal', async () => {
@@ -4608,7 +5409,7 @@ describe('feedback workbench V2 event dispatch', () => {
             estimated_cost: 0,
         });
 
-        const result = await postComment(env, headers, 1);
+        const result = await postComment(env, headers, 1, '仅记录但受投递配额限制', 'record');
 
         expect(result.delivery.suppressed).toBe(true);
         expect(result.delivery.reason).toBe('DAILY_QUOTA_EXCEEDED');
@@ -4892,15 +5693,32 @@ describe('feedback workbench V2 Run and Callback', () => {
                     typeof configOrCallback === 'function' ? configOrCallback : maybeCallback;
                 return callback();
             },
+            async waitForEvent() {
+                throw new Error('WORKFLOW_TEST_STOP_AFTER_DISPATCH');
+            },
         };
         const workflow = new FeedbackWorkflow({}, env);
-        return workflow.run(
-            {
-                instanceId: `${issueId}:${generation}`,
-                payload: { issueId, generation, deliveryId, provider, contextVersion: 1 },
-            },
-            step
-        );
+        try {
+            return await workflow.run(
+                {
+                    instanceId: `${issueId}:${generation}`,
+                    payload: { issueId, generation, deliveryId, provider, contextVersion: 1 },
+                },
+                step
+            );
+        } catch (error) {
+            if (error.message !== 'WORKFLOW_TEST_STOP_AFTER_DISPATCH') throw error;
+            const run = Array.from(env.FEEDBACK_DB.tables.feedback_runs.values()).at(-1);
+            const issue = env.FEEDBACK_DB.tables.feedback_issues.get(issueId);
+            if (run && issue) {
+                issue.active_workflow_id = run.workflow_id;
+                issue.workflow_generation = generation;
+            }
+            return {
+                run: run ? { runId: run.id, dispatched: run.status === 'dispatched' } : null,
+                workflowStatus: 'running',
+            };
+        }
     }
 
     async function createRunEnv(issueOverrides = {}) {
@@ -5000,6 +5818,68 @@ describe('feedback workbench V2 Run and Callback', () => {
         for (const [classification, expected] of cases) {
             const { run } = await createRunEnv(classification);
             expect(run.policy, JSON.stringify(classification)).toBe(expected);
+        }
+    });
+
+    it('[SCN-FWB-020] enforces the Design gate for every classification that requires it', async () => {
+        const cases = [
+            {
+                classification: {
+                    business_type: 'bug',
+                    scope: 'small',
+                    automation_decision: 'design_required',
+                },
+                approved: false,
+                expected: 'analyze',
+            },
+            {
+                classification: {
+                    business_type: 'bug',
+                    scope: 'small',
+                    automation_decision: 'design_required',
+                },
+                approved: true,
+                expected: 'implement_and_verify',
+            },
+            {
+                classification: { business_type: 'bug', scope: 'large' },
+                approved: true,
+                expected: 'implement_and_verify',
+            },
+            {
+                classification: { business_type: 'improvement', scope: 'medium' },
+                approved: true,
+                expected: 'implement_and_verify',
+            },
+            {
+                classification: { business_type: 'requirement', scope: 'small' },
+                approved: true,
+                expected: 'implement_and_verify',
+            },
+        ];
+
+        for (const { classification, approved, expected } of cases) {
+            const design = createDesignRow({
+                status: approved ? 'approved' : 'awaiting_decision',
+            });
+            const env = createV2Env(
+                {},
+                {
+                    feedback_issues: [
+                        createD1IssueRow({
+                            status: 'queued',
+                            current_design_id: design.id,
+                            ...classification,
+                        }),
+                    ],
+                    feedback_designs: [design],
+                }
+            );
+
+            await runWorkflow(env, { issueId: feedbackKey });
+            const run = Array.from(env.FEEDBACK_DB.tables.feedback_runs.values())[0];
+            expect(run.policy, JSON.stringify({ classification, approved })).toBe(expected);
+            expect(run.design_id).toBe(approved ? design.id : null);
         }
     });
 
@@ -5178,21 +6058,37 @@ describe('feedback workbench V2 Run and Callback', () => {
     it('[SCN-FWB-020] agent.waiting_human creates a structured HumanAction', async () => {
         const { env, run } = await createRunEnv();
         const token = await callbackTokenFor(env, run.id);
-
-        await postCallback(
-            env,
-            run.id,
-            {
-                eventId: 'cb_wait',
-                type: 'agent.waiting_human',
-                payload: {
-                    actionType: 'need_reproduction',
-                    requestedAction: '请提供导入的 Excel 样例',
-                    evidence: [{ label: '已检查', summary: '导入解析路径无异常' }],
-                    allowedReturnStates: ['queued', 'closed'],
-                },
+        const workflowSignals = [];
+        env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).active_workflow_id =
+            run.workflow_id;
+        env.FEEDBACK_WORKFLOW = {
+            async get(id) {
+                return {
+                    async sendEvent(event) {
+                        workflowSignals.push({ id, event });
+                    },
+                };
             },
-            token
+        };
+
+        const callback = await json(
+            await postCallback(
+                env,
+                run.id,
+                {
+                    eventId: 'cb_wait',
+                    type: 'agent.waiting_human',
+                    payload: {
+                        actionType: 'need_reproduction',
+                        requestedAction: '请提供导入的 Excel 样例',
+                        evidence: [{ label: '已检查', summary: '导入解析路径无异常' }],
+                        // Provider output is untrusted; it cannot grant or
+                        // remove a return state owned by the action type.
+                        allowedReturnStates: ['closed'],
+                    },
+                },
+                token
+            )
         );
 
         const action = Array.from(env.FEEDBACK_DB.tables.feedback_human_actions.values())[0];
@@ -5203,6 +6099,391 @@ describe('feedback workbench V2 Run and Callback', () => {
         expect(JSON.parse(action.evidence_json)).toHaveLength(1);
         expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe('needs_human');
         expect(env.FEEDBACK_DB.tables.feedback_runs.get(run.id).status).toBe('waiting_human');
+        expect(callback.workflowNotification).toEqual({
+            instanceId: run.workflow_id,
+            sent: true,
+        });
+        expect(workflowSignals).toEqual([
+            {
+                id: run.workflow_id,
+                event: {
+                    type: 'feedback-run-result',
+                    payload: {
+                        issueId: feedbackKey,
+                        runId: run.id,
+                        eventId: `evt_cb_${run.id}_cb_wait`,
+                        callbackType: 'agent.waiting_human',
+                    },
+                },
+            },
+        ]);
+    });
+
+    it('[SCN-FWB-020] creates successive Design revisions from structured callbacks', async () => {
+        const { env, run } = await createRunEnv({
+            business_type: 'requirement',
+            scope: 'large',
+        });
+        env.FEEDBACK_DB.tables.feedback_designs.set(
+            'dsn_previous',
+            createDesignRow({
+                id: 'dsn_previous',
+                status: 'revision_requested',
+                decided_at: '2026-08-01T07:30:00.000Z',
+            })
+        );
+        env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).current_design_id = 'dsn_previous';
+        const token = await callbackTokenFor(env, run.id);
+
+        const response = await json(
+            await postCallback(
+                env,
+                run.id,
+                {
+                    eventId: 'cb_design_1',
+                    type: 'agent.waiting_human',
+                    payload: {
+                        actionType: 'design_decision',
+                        requestedAction: '请确认第 1 版交互方案',
+                        allowedReturnStates: ['queued', 'closed'],
+                        design: {
+                            problem: '批量编辑缺少提交前确认。',
+                            currentBehavior: '保存后立即生效。',
+                            proposedChange: '增加影响摘要和确认步骤。',
+                            userValue: '降低误操作风险。',
+                            affectedAreas: ['批量编辑面板'],
+                            acceptanceCriteria: ['确认前不写入', '确认后只提交一次'],
+                            risks: ['移动端摘要过长'],
+                            implementationOutline: '复用现有确认卡片。',
+                            verificationPlan: ['Vitest', 'Playwright'],
+                            decision: '是否采用两步确认。',
+                        },
+                    },
+                },
+                token
+            )
+        );
+
+        expect(response.designId).toBeTruthy();
+        const design = env.FEEDBACK_DB.tables.feedback_designs.get(response.designId);
+        expect(design.revision).toBe(2);
+        expect(design.status).toBe('awaiting_decision');
+        expect(JSON.parse(design.acceptance_criteria_json)).toEqual([
+            '确认前不写入',
+            '确认后只提交一次',
+        ]);
+        const action = env.FEEDBACK_DB.tables.feedback_human_actions.get(response.humanActionId);
+        expect(action.type).toBe('design_decision');
+        expect(action.design_id).toBe(response.designId);
+        expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).current_design_id).toBe(
+            response.designId
+        );
+    });
+
+    it('[SCN-FWB-020] rejects a design_decision Callback without acceptance criteria', async () => {
+        const { env, run } = await createRunEnv({
+            business_type: 'requirement',
+            scope: 'large',
+        });
+
+        const response = await postCallback(env, run.id, {
+            eventId: 'cb_design_invalid',
+            type: 'agent.waiting_human',
+            payload: {
+                actionType: 'design_decision',
+                requestedAction: '请确认方案',
+                design: { problem: '缺少验收标准' },
+            },
+        });
+
+        expect(response.status).toBe(400);
+        expect(env.FEEDBACK_DB.tables.feedback_designs.size).toBe(0);
+        expect(env.FEEDBACK_DB.tables.feedback_human_actions.size).toBe(0);
+        expect(env.FEEDBACK_DB.tables.feedback_events.size).toBe(0);
+    });
+
+    it('[SCN-FWB-020] atomically retries a Design callback when HumanAction persistence fails', async () => {
+        const { env, run } = await createRunEnv({
+            business_type: 'requirement',
+            scope: 'large',
+        });
+        const token = await callbackTokenFor(env, run.id);
+        const originalExecute = env.FEEDBACK_DB.execute.bind(env.FEEDBACK_DB);
+        let failHumanActionOnce = true;
+        env.FEEDBACK_DB.execute = async (query, values) => {
+            const normalized = query.replace(/\s+/g, ' ').trim().toLowerCase();
+            if (
+                failHumanActionOnce &&
+                normalized.startsWith('insert into feedback_human_actions')
+            ) {
+                failHumanActionOnce = false;
+                throw new Error('injected HumanAction write failure');
+            }
+            return originalExecute(query, values);
+        };
+        const callback = {
+            eventId: 'cb_design_atomic',
+            type: 'agent.waiting_human',
+            payload: {
+                actionType: 'design_decision',
+                requestedAction: '请确认方案',
+                allowedReturnStates: ['queued', 'closed'],
+                design: {
+                    problem: '提交前缺少确认',
+                    proposedChange: '增加确认步骤',
+                    acceptanceCriteria: ['确认前不写入'],
+                },
+            },
+        };
+
+        const failed = await postCallback(env, run.id, callback, token);
+        expect(failed.status).toBe(500);
+        expect(env.FEEDBACK_DB.tables.feedback_events.size).toBe(0);
+        expect(env.FEEDBACK_DB.tables.feedback_designs.size).toBe(0);
+        expect(env.FEEDBACK_DB.tables.feedback_human_actions.size).toBe(0);
+        expect(env.FEEDBACK_DB.tables.feedback_runs.get(run.id).status).toBe('dispatched');
+        expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe('queued');
+
+        const retried = await json(await postCallback(env, run.id, callback, token));
+        expect(retried.designId).toBeTruthy();
+        expect(retried.humanActionId).toBeTruthy();
+        expect(env.FEEDBACK_DB.tables.feedback_events.size).toBe(2);
+        expect(env.FEEDBACK_DB.tables.feedback_designs.size).toBe(1);
+        expect(env.FEEDBACK_DB.tables.feedback_human_actions.size).toBe(1);
+        expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe('needs_human');
+    });
+
+    it('[SCN-FWB-020][SCN-FWB-021] derives HumanAction return states from the server contract', async () => {
+        const cases = [
+            {
+                actionType: 'design_decision',
+                expected: ['queued', 'closed'],
+                requested: ['closed'],
+                design: {
+                    problem: '提交前缺少确认',
+                    proposedChange: '增加确认步骤',
+                    acceptanceCriteria: ['确认前不写入'],
+                },
+            },
+            {
+                actionType: 'need_reproduction',
+                expected: ['queued', 'closed'],
+                requested: ['queued'],
+            },
+            {
+                actionType: 'review_required',
+                expected: ['ready_for_deploy', 'queued', 'closed'],
+                requested: ['ready_for_deploy'],
+            },
+        ];
+
+        for (const [index, item] of cases.entries()) {
+            const { env, run } = await createRunEnv({
+                business_type: 'requirement',
+                scope: 'large',
+            });
+            const response = await json(
+                await postCallback(env, run.id, {
+                    eventId: `cb_contract_${index}`,
+                    type: 'agent.waiting_human',
+                    payload: {
+                        actionType: item.actionType,
+                        requestedAction: '请处理',
+                        allowedReturnStates: item.requested,
+                        candidateId:
+                            item.actionType === 'review_required' ? 'cnd_claimed' : undefined,
+                        design: item.design,
+                    },
+                })
+            );
+            const action = env.FEEDBACK_DB.tables.feedback_human_actions.get(
+                response.humanActionId
+            );
+            expect(JSON.parse(action.allowed_return_states_json)).toEqual(item.expected);
+
+            const hostile = await request(
+                `/api/feedback/human-actions/${encodeURIComponent(action.id)}/respond`,
+                {
+                    method: 'POST',
+                    headers: await adminHeaders(env),
+                    body: JSON.stringify({ decision: 'resolved' }),
+                },
+                env
+            );
+            expect(hostile.status).toBe(400);
+            expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe(
+                'needs_human'
+            );
+        }
+    });
+
+    it('[SCN-FWB-020] binds an implementation Run and context to the approved Design revision', async () => {
+        const design = createDesignRow({ status: 'approved' });
+        const env = createV2Env(
+            {},
+            {
+                feedback_issues: [
+                    createD1IssueRow({
+                        status: 'queued',
+                        business_type: 'requirement',
+                        scope: 'large',
+                        current_design_id: design.id,
+                    }),
+                ],
+                feedback_designs: [design],
+            }
+        );
+        env.FEEDBACK_CALLBACK_ORIGIN = 'https://worker.test';
+        env.FEEDBACK_GITHUB_REPOSITORY = 'acme/gantt-task-editor';
+        env.FEEDBACK_GITHUB_TOKEN = 'ghp_test';
+        const fetchSpy = vi
+            .spyOn(globalThis, 'fetch')
+            .mockResolvedValue(new Response(null, { status: 204 }));
+        try {
+            await runWorkflow(env, { issueId: feedbackKey });
+        } finally {
+            fetchSpy.mockRestore();
+        }
+
+        const run = Array.from(env.FEEDBACK_DB.tables.feedback_runs.values())[0];
+        expect(run.policy).toBe('implement_and_verify');
+        expect(run.design_id).toBe(design.id);
+
+        const payload = Buffer.from(
+            JSON.stringify({
+                aud: 'context',
+                runId: run.id,
+                provider: 'codex',
+                exp: Date.now() + 60_000,
+            }),
+            'utf8'
+        )
+            .toString('base64')
+            .replace(/\+/g, '-')
+            .replace(/\//g, '_')
+            .replace(/=+$/, '');
+        const key = await crypto.subtle.importKey(
+            'raw',
+            new TextEncoder().encode('unit-test-secret'),
+            { name: 'HMAC', hash: 'SHA-256' },
+            false,
+            ['sign']
+        );
+        const signature = Buffer.from(
+            new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload)))
+        )
+            .toString('base64')
+            .replace(/\+/g, '-')
+            .replace(/\//g, '_')
+            .replace(/=+$/, '');
+
+        const context = await json(
+            await request(
+                `/api/feedback/runs/${encodeURIComponent(run.id)}/context`,
+                { headers: { Authorization: `Bearer ${payload}.${signature}` } },
+                env
+            )
+        );
+        expect(context.context.design).toEqual(
+            expect.objectContaining({ id: design.id, revision: 1, status: 'approved' })
+        );
+    });
+
+    it('[SCN-FWB-020] resumes the waiting Workflow and binds the approved Design to its next Run', async () => {
+        const design = createDesignRow();
+        const env = createV2Env(
+            {},
+            {
+                feedback_issues: [
+                    createD1IssueRow({
+                        status: 'queued',
+                        business_type: 'requirement',
+                        scope: 'large',
+                        current_design_id: design.id,
+                    }),
+                ],
+                feedback_designs: [design],
+            }
+        );
+        env.FEEDBACK_CALLBACK_ORIGIN = 'https://worker.test';
+        env.FEEDBACK_GITHUB_REPOSITORY = 'acme/gantt-task-editor';
+        env.FEEDBACK_GITHUB_TOKEN = 'ghp_test';
+        let waitCount = 0;
+        const stepConfigs = new Map();
+        const step = {
+            async do(name, configOrCallback, maybeCallback) {
+                if (typeof configOrCallback !== 'function') {
+                    stepConfigs.set(name, configOrCallback);
+                }
+                const callback =
+                    typeof configOrCallback === 'function' ? configOrCallback : maybeCallback;
+                return callback();
+            },
+            async waitForEvent(name, options) {
+                waitCount += 1;
+                if (waitCount === 1) {
+                    expect(options).toEqual({
+                        type: 'feedback-run-result',
+                        timeout: '30 minutes',
+                    });
+                    const runId = Array.from(env.FEEDBACK_DB.tables.feedback_runs.keys())[0];
+                    return {
+                        type: 'feedback-run-result',
+                        payload: { runId, callbackType: 'agent.waiting_human' },
+                    };
+                }
+                if (waitCount === 2) {
+                    expect(options).toEqual({ type: 'feedback-resume', timeout: '7 days' });
+                    env.FEEDBACK_DB.tables.feedback_designs.get(design.id).status = 'approved';
+                    env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status = 'queued';
+                    return {
+                        type: 'feedback-resume',
+                        payload: {
+                            issueId: feedbackKey,
+                            eventId: 'evt_design_approved',
+                            eventType: 'status.changed',
+                        },
+                    };
+                }
+                expect(options).toEqual({
+                    type: 'feedback-run-result',
+                    timeout: '60 minutes',
+                });
+                throw new Error('workflow wait timeout');
+            },
+        };
+
+        const fetchSpy = vi
+            .spyOn(globalThis, 'fetch')
+            .mockResolvedValue(new Response(null, { status: 204 }));
+        try {
+            await new FeedbackWorkflow({}, env).run(
+                {
+                    instanceId: workflowInstanceId(feedbackKey, 1),
+                    payload: { issueId: feedbackKey, generation: 1, contextVersion: 1 },
+                },
+                step
+            );
+        } finally {
+            fetchSpy.mockRestore();
+        }
+
+        const runs = Array.from(env.FEEDBACK_DB.tables.feedback_runs.values());
+        expect(runs).toHaveLength(2);
+        expect(runs.map((run) => run.policy)).toEqual(['analyze', 'implement_and_verify']);
+        expect(runs[1].design_id).toBe(design.id);
+        // §20: the durable step result contains callback/context tokens, so it
+        // must not be readable through Workflow logs or instance inspection.
+        expect(stepConfigs.get('create run 1')).toEqual({ sensitive: 'output' });
+        expect(stepConfigs.get('create run 2')).toEqual({ sensitive: 'output' });
+        expect(
+            env.FEEDBACK_DB.tables.feedback_workflows.get(workflowInstanceId(feedbackKey, 1)).status
+        ).toBe('terminated');
+        expect(runs[1].status).toBe('timed_out');
+        expect(
+            env.FEEDBACK_DB.tables.feedback_workflows.get(workflowInstanceId(feedbackKey, 1))
+                .terminal_reason
+        ).toBe('run_timeout');
     });
 
     it('[SCN-FWB-006] a failed verification lands in test_failed, not resolved', async () => {
@@ -5373,14 +6654,26 @@ describe('feedback workbench V2 GitHub dispatch', () => {
                     typeof configOrCallback === 'function' ? configOrCallback : maybeCallback;
                 return callback();
             },
-        };
-        return new FeedbackWorkflow({}, env).run(
-            {
-                instanceId: `${issueId}:${generation}`,
-                payload: { issueId, generation, contextVersion: 1 },
+            async waitForEvent() {
+                throw new Error('WORKFLOW_TEST_STOP_AFTER_DISPATCH');
             },
-            step
-        );
+        };
+        try {
+            return await new FeedbackWorkflow({}, env).run(
+                {
+                    instanceId: `${issueId}:${generation}`,
+                    payload: { issueId, generation, contextVersion: 1 },
+                },
+                step
+            );
+        } catch (error) {
+            if (error.message !== 'WORKFLOW_TEST_STOP_AFTER_DISPATCH') throw error;
+            const run = Array.from(env.FEEDBACK_DB.tables.feedback_runs.values()).at(-1);
+            return {
+                run: run ? { runId: run.id, dispatched: run.status === 'dispatched' } : null,
+                workflowStatus: 'running',
+            };
+        }
     }
 
     function createDispatchEnv(overrides = {}) {
@@ -5737,6 +7030,9 @@ describe('feedback workbench V2 Candidate and Release', () => {
                     typeof configOrCallback === 'function' ? configOrCallback : maybeCallback;
                 return callback();
             },
+            async waitForEvent() {
+                throw new Error('WORKFLOW_TEST_STOP_AFTER_DISPATCH');
+            },
         };
         const fetchSpy = vi
             .spyOn(globalThis, 'fetch')
@@ -5749,6 +7045,8 @@ describe('feedback workbench V2 Candidate and Release', () => {
                 },
                 step
             );
+        } catch (error) {
+            if (error.message !== 'WORKFLOW_TEST_STOP_AFTER_DISPATCH') throw error;
         } finally {
             fetchSpy.mockRestore();
         }
@@ -5805,6 +7103,9 @@ describe('feedback workbench V2 Candidate and Release', () => {
                 created_at: '2026-07-31T09:00:00.000Z',
             });
         }
+        const issue = env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey);
+        issue.status = 'needs_human';
+        issue.active_human_action_id = actionId;
         return json(
             await request(
                 `/api/feedback/human-actions/${actionId}/respond`,
@@ -5953,6 +7254,31 @@ describe('feedback workbench V2 Candidate and Release', () => {
         const { env, candidateId, headers } = await createCandidateEnv({
             changedFiles: ['workers/share-worker.js'],
         });
+        const activeWorkflowId = workflowInstanceId(feedbackKey, 1);
+        const terminated = [];
+        const created = [];
+        const issueState = env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey);
+        issueState.workflow_generation = 1;
+        issueState.active_workflow_id = activeWorkflowId;
+        Object.assign(env.FEEDBACK_DB.tables.feedback_workflows.get(activeWorkflowId), {
+            status: 'waiting',
+            waiting_until: '2026-08-08T07:00:00.000Z',
+            finished_at: null,
+            terminal_reason: null,
+        });
+        env.FEEDBACK_WORKFLOW = {
+            async get(id) {
+                return {
+                    async terminate() {
+                        terminated.push(id);
+                    },
+                };
+            },
+            async create(options) {
+                created.push(options);
+                return { id: options.id };
+            },
+        };
         await approveCandidate(env, headers, candidateId);
         const release = await json(
             await request(
@@ -6013,6 +7339,31 @@ describe('feedback workbench V2 Candidate and Release', () => {
         expect(env.FEEDBACK_DB.tables.feedback_candidates.get(candidateId).status).toBe(
             'integrated'
         );
+        expect(issue.active_workflow_id).toBeNull();
+        expect(env.FEEDBACK_DB.tables.feedback_workflows.get(activeWorkflowId)).toEqual(
+            expect.objectContaining({
+                status: 'terminated',
+                active_run_id: null,
+                waiting_until: null,
+                terminal_reason: 'issue_resolved',
+            })
+        );
+        expect(terminated).toEqual([activeWorkflowId]);
+
+        const reopened = await json(
+            await request(
+                `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/reopen`,
+                {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({ expectedVersion: issue.version }),
+                },
+                env
+            )
+        );
+        expect(reopened.issue.workflow.status).toBe('open');
+        expect(created).toHaveLength(1);
+        expect(created[0].id).toBe(workflowInstanceId(feedbackKey, 2));
     });
 
     it('[SCN-FWB-024] refuses a deploy whose commit is not the merged commit', async () => {
@@ -6240,6 +7591,59 @@ describe('feedback workbench V2 reconcile sweep', () => {
         expect(summary.clearedWorkflowMappings).toBe(0);
         // A healthy Issue is never touched by the sweep.
         expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe('open');
+        expect(env.FEEDBACK_DB.tables.feedback_runs.size).toBe(0);
+    });
+
+    it('[SCN-FWB-020] retries a durable HumanAction resume that the control plane missed', async () => {
+        const instanceId = workflowInstanceId(feedbackKey, 1);
+        const env = createV2Env(
+            {},
+            {
+                feedback_issues: [
+                    createD1IssueRow({
+                        status: 'queued',
+                        active_workflow_id: instanceId,
+                    }),
+                ],
+                feedback_workflows: [
+                    {
+                        issue_id: feedbackKey,
+                        generation: 1,
+                        instance_id: instanceId,
+                        status: 'waiting',
+                        active_run_id: 'run_design_1',
+                        started_at: '2026-08-01T00:00:00.000Z',
+                    },
+                ],
+            }
+        );
+        const sent = [];
+        env.FEEDBACK_WORKFLOW = {
+            async get(id) {
+                return {
+                    async sendEvent(event) {
+                        sent.push({ id, event });
+                    },
+                };
+            },
+        };
+
+        const summary = await runScheduled(env);
+
+        expect(summary.resumedWorkflows).toBe(1);
+        expect(sent).toEqual([
+            {
+                id: instanceId,
+                event: {
+                    type: 'feedback-resume',
+                    payload: {
+                        issueId: feedbackKey,
+                        eventId: `reconcile:${instanceId}`,
+                        eventType: 'status.changed',
+                    },
+                },
+            },
+        ]);
         expect(env.FEEDBACK_DB.tables.feedback_runs.size).toBe(0);
     });
 

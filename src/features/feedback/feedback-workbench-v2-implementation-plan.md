@@ -132,13 +132,52 @@ creation sat behind Hook delivery retries, parking the Agent behind up to ~21 mi
 backoff. Re-running the pipeline now produces `feedback-<id>-g1`, a Run at the routed
 policy, and an honest `GITHUB_DISPATCH_NOT_CONFIGURED`.
 
-**Still not built:** Design revisions (§16.4) are not modelled, `auto_deliver` (§7.4)
-always routes through Candidate review, and `/runners/test` still returns
-`ACTION_SMOKE_NOT_CONFIGURED`. Nothing has run against a real repository: that needs
-`FEEDBACK_GITHUB_REPOSITORY`, `FEEDBACK_GITHUB_TOKEN`, `FEEDBACK_CALLBACK_ORIGIN`, the
-provider secrets and a remote D1 migration. SCN-FWB-005/016 stay `todo` until that smoke
-run happens, and the workbench UI does not yet render Candidate review or Release progress
-panels — the data is served, the timeline just shows the events.
+**Status (2026-08-01) — Design revision approval landed.**
+
+- `0004_feedback_design_run_binding.sql` links each follow-up Run to the exact approved
+  Design. Structured `design_decision` callbacks create immutable numbered revisions plus
+  an exact HumanAction; malformed Designs are rejected before any partial event/action write.
+- `GET /api/feedback/issues/:key/designs` serves revisions to owner/admin. Approve, revise
+  and reject require the HumanAction's exact `designId`; approval/revision returns to
+  `queued`, rejection closes, and the decision is preserved in the Design/event audit trail.
+- `FeedbackWorkflow` now separates the policy-bound Run deadline (`analyze` 30 minutes,
+  `implement` 45, `implement_and_verify` 60, `local_required` 120) from the seven-day
+  `needs_human` wait. A durable Run callback uses `feedback-run-result`; only a persisted
+  HumanAction enters the Cloudflare-safe `feedback-resume` wait. Run timeout marks the Run
+  `timed_out`, terminates the Workflow, and releases the active mapping.
+- The durable `create run` step marks its output sensitive because the persisted result carries
+  short-lived Callback/Context tokens; Workflow logs and instance inspection redact that output.
+- Review hardening now makes every explicit/derived Design gate read-only until approval,
+  commits Callback + Design + HumanAction in one D1 batch, CAS-guards every decision
+  projection, terminates rejected Design Runs/Workflows before generation 2 can reopen, and
+  removes internal Run/implementation details from the owner Design API. HumanAction return
+  states now come from the §16.3 per-type server contract rather than Agent-provided values.
+- Owner capability can read the Design but cannot approve it or any other privileged
+  HumanAction; only administrators see those controls. The response CAS requires the exact
+  active HumanAction, `needs_human` Issue projection, current Design revision and
+  `awaiting_decision` status. Approve/revise/reject append distinct audit event types.
+- Persisted terminal Run callbacks signal the exact run-bound Workflow before it decides whether
+  to wait for a person or finish. A failed control-plane send is reported as `pending`, can be
+  replayed by the idempotent Callback, and is retried by the narrow daily reconcile sweep without
+  creating a Run. Every `resolved/closed` transition terminates the D1 and Cloudflare Workflow
+  lifecycle, clears the active mapping, and a later reopen claims generation `+ 1` rather than
+  resuming a stale instance.
+- The workbench renders the structured Design and acceptance criteria, with explicit
+  admin-only approve/revise/reject controls. A checked-in Playwright journey drives a real local
+  requirement Issue through signed Callback, owner read-only verification, administrator
+  approval and D1 verification of the `implement_and_verify` Run's `design_id`.
+- A true local pipeline run reproduced and fixed the previous false resume: the old Workflow
+  returned after dispatch while D1 still said `running`, so `sendEvent` appeared successful
+  but created no Run. Re-running now leaves generation 1 in `waiting`, resumes it, creates
+  the Design-bound implementation Run and still reports `GITHUB_DISPATCH_NOT_CONFIGURED`
+  rather than inventing dispatch success.
+
+**Still not built:** `auto_deliver` (§7.4) still routes every write-capable delivery through
+Candidate review, and `/runners/test` still returns `ACTION_SMOKE_NOT_CONFIGURED`. Nothing
+has run against a real repository: that needs `FEEDBACK_GITHUB_REPOSITORY`,
+`FEEDBACK_GITHUB_TOKEN`, `FEEDBACK_CALLBACK_ORIGIN`, provider secrets and a remote D1
+migration. SCN-FWB-020 remains `todo` because its real-Action verification clause is still
+unmet; only SCN-FWB-015 is `active`.
 
 ---
 

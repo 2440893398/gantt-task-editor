@@ -1,4 +1,8 @@
+import { createHmac } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
 import { expect, test } from '@playwright/test';
 
 /**
@@ -36,6 +40,12 @@ function readDevVar(name) {
 
 const ADMIN_PASSWORD =
     readDevVar('FEEDBACK_ADMIN_PASSWORD') || process.env.FEEDBACK_ADMIN_PASSWORD || '';
+const RUN_TOKEN_SECRET =
+    readDevVar('FEEDBACK_RUN_TOKEN_SECRET') ||
+    readDevVar('FEEDBACK_ADMIN_TOKEN_SECRET') ||
+    ADMIN_PASSWORD;
+const PROJECT_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
+const WRANGLER_CLI = resolve(PROJECT_ROOT, 'node_modules/wrangler/bin/wrangler.js');
 const VIEWPORTS = [
     { name: '375', width: 375, height: 812 },
     { name: '768', width: 768, height: 1024 },
@@ -71,13 +81,181 @@ async function signInAsAdmin(page, token) {
     }, token);
 }
 
+function queryLocalFeedbackDb(sql) {
+    const output = execFileSync(
+        process.execPath,
+        [
+            WRANGLER_CLI,
+            'd1',
+            'execute',
+            'FEEDBACK_DB',
+            '--local',
+            '--config',
+            'wrangler.toml',
+            '--command',
+            sql,
+            '--json',
+        ],
+        {
+            cwd: PROJECT_ROOT,
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'ignore'],
+            windowsHide: true,
+        }
+    );
+    return JSON.parse(output)[0]?.results || [];
+}
+
+function createRunCallbackToken(runId) {
+    const claims = Buffer.from(
+        JSON.stringify({
+            aud: 'callback',
+            runId,
+            provider: 'codex',
+            exp: Date.now() + 60 * 60 * 1000,
+        }),
+        'utf8'
+    ).toString('base64url');
+    const signature = createHmac('sha256', RUN_TOKEN_SECRET).update(claims).digest('base64url');
+    return `${claims}.${signature}`;
+}
+
+async function clearLocalHook(request, token) {
+    const headers = { Authorization: `Bearer ${token}` };
+    const currentResponse = await request.get('/api/feedback/automation/settings', { headers });
+    expect(currentResponse.status()).toBe(200);
+    const current = (await currentResponse.json()).settings;
+    if (!current.hookUrl) return;
+
+    const saved = await request.patch('/api/feedback/automation/settings', {
+        headers,
+        data: { expectedVersion: current.version, settings: { hookUrl: '' } },
+    });
+    expect(saved.status()).toBe(200);
+}
+
+async function createDesignDecision(request, issueId, runId) {
+    const response = await request.post(`/api/feedback/runs/${encodeURIComponent(runId)}/events`, {
+        headers: { Authorization: `Bearer ${createRunCallbackToken(runId)}` },
+        data: {
+            eventId: `e2e-design-${Date.now()}`,
+            type: 'agent.waiting_human',
+            payload: {
+                actionType: 'design_decision',
+                requestedAction: '请批准此 Design 后再开始实现',
+                evidence: [{ label: '需求分析', summary: '中大型需求需要先确认结构化方案' }],
+                allowedReturnStates: ['queued', 'closed'],
+                design: {
+                    problem: '中大型需求在方案未确认时不能直接实现',
+                    currentBehavior: '分析 Run 已完成，正在等待方案决定',
+                    proposedChange: '批准版本化 Design 后创建实现 Run',
+                    userValue: '确保实现与已确认的产品意图一致',
+                    affectedAreas: ['反馈工作台', 'Workflow 编排'],
+                    acceptanceCriteria: [
+                        '批准的 revision 标记为 approved',
+                        '后续 Run 精确绑定同一 design_id',
+                    ],
+                    risks: ['审批后必须恢复同一 Workflow'],
+                    implementationOutline: '保存 Design 与 HumanAction，批准后恢复 Workflow',
+                    verificationPlan: ['Playwright UI', 'D1 Run 绑定'],
+                    decision: '批准、要求修订或拒绝',
+                },
+            },
+        },
+    });
+    expect(response.status()).toBe(201);
+    const result = await response.json();
+    expect(result.designId).toBeTruthy();
+    expect(result.issueStatus).toBe('needs_human');
+    return result;
+}
+
 function horizontalOverflow(page) {
     return page.evaluate(
         () => document.documentElement.scrollWidth - document.documentElement.clientWidth
     );
 }
 
+test.describe('[SCN-FWB-020] Design 版本审批', () => {
+    test('[SCN-FWB-020] owner 只读 Design，管理员批准后启动绑定版本的实现 Run', async ({
+        page,
+        request,
+    }) => {
+        const token = await adminToken(request);
+        await clearLocalHook(request, token);
+        const title = `Design 版本审批 ${Date.now()}`;
+        const created = await createIssue(request, {
+            title,
+            description: '先确认方案，再开始中大型需求实现。',
+            submittedType: 'requirement',
+            ai: {
+                businessType: 'requirement',
+                scope: 'large',
+                automationDecision: '',
+                confidence: 'high',
+            },
+        });
+        const escapedIssueId = created.issueId.replace(/'/g, "''");
+
+        await expect
+            .poll(
+                () =>
+                    queryLocalFeedbackDb(
+                        `SELECT last_run_id FROM feedback_issues WHERE id = '${escapedIssueId}'`
+                    )[0]?.last_run_id || '',
+                { timeout: 15_000 }
+            )
+            .not.toBe('');
+        const initialRunId = queryLocalFeedbackDb(
+            `SELECT last_run_id FROM feedback_issues WHERE id = '${escapedIssueId}'`
+        )[0].last_run_id;
+        const callback = await createDesignDecision(request, created.issueId, initialRunId);
+
+        await page.goto(
+            `/feedback#issue=${encodeURIComponent(created.issueId)}&capability=${encodeURIComponent(
+                created.ownerCapability
+            )}`
+        );
+        await expect(page.getByRole('heading', { name: title })).toBeVisible();
+        await expect(page.locator('#designCard')).toBeVisible();
+        await expect(page.locator('#designBody')).toContainText('方案 v1');
+        await expect(page.locator('#designBody')).toContainText('后续 Run 精确绑定同一 design_id');
+        await expect(page.locator('#nextActionCopy')).toContainText('需要管理员确认');
+        await expect(page.getByRole('button', { name: '批准此方案' })).toHaveCount(0);
+
+        await signInAsAdmin(page, token);
+        await page.reload();
+        const issueButton = page.locator('[data-issue]').filter({ hasText: title });
+        await expect(issueButton).toBeVisible();
+        await issueButton.click();
+        await expect(page.getByRole('button', { name: '批准此方案' })).toBeVisible();
+
+        await page.getByRole('button', { name: '批准此方案' }).click();
+        await expect(page.locator('#designBadge')).toHaveText('已批准', { timeout: 10_000 });
+
+        await expect
+            .poll(
+                () =>
+                    queryLocalFeedbackDb(
+                        `SELECT policy, design_id FROM feedback_runs WHERE issue_id = '${escapedIssueId}' ORDER BY started_at`
+                    ),
+                { timeout: 15_000 }
+            )
+            .toEqual([
+                { policy: 'analyze', design_id: null },
+                { policy: 'implement_and_verify', design_id: callback.designId },
+            ]);
+    });
+});
+
 test.describe('[SCN-FWB-015] 自动化设置页', () => {
+    test.afterEach(async ({ request }) => {
+        // The Worker and D1 are shared across this serial suite. Restore the
+        // deliberately unreachable example Hook so later Issue journeys do
+        // not create real retrying deliveries as a side effect of this test.
+        await clearLocalHook(request, await adminToken(request));
+    });
+
     test('[SCN-FWB-015] 首屏展示核心配置，隐藏成本与轮询对比', async ({ page, request }) => {
         await signInAsAdmin(page, await adminToken(request));
         await page.goto('/feedback');

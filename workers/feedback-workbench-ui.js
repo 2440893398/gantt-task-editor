@@ -281,6 +281,14 @@ function issueAside() {
                     </div>
                 </section>
 
+                <section class="side-card" id="designCard" hidden>
+                    <div class="side-card-head">
+                        <h3>方案</h3>
+                        <span class="badge" id="designBadge"></span>
+                    </div>
+                    <div class="side-card-body" id="designBody"></div>
+                </section>
+
                 <section class="side-card" id="candidateCard" hidden>
                     <div class="side-card-head">
                         <h3>候选实现</h3>

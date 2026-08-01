@@ -46,6 +46,7 @@
 | 2026-07-28 | 收紧 `SCN-FWB-005/006/011/012` | 用户确认保留旧自动处理器的交付成熟度；Run 成功不再等同 Issue 解决，保护路径按硬阻断/审批/可审计合同变更分级 |
 | 2026-07-28 | 新增 `SCN-FWB-020`～`SCN-FWB-024` | 吸收旧流程在结构化人工交接、Design/Candidate 延续、分级自治、干净集成、部署一致性和生产 smoke 方面的经验，防止 V2 只改触发器却降低最终处理效果 |
 | 2026-07-30 | `SCN-FWB-015` 由 `todo` 转 `active` | 工作台 V2 UI 与自动化/执行器 API 落地，`tests/e2e/workbench/feedback-workbench.spec.js` 已按 §19.6 在本地 `gantt-share` Worker `/feedback` 上覆盖首屏信息层级、即时反馈与 375/768/1440 无横向溢出，验证点全部有自动化断言 |
+| 2026-08-01 | 补齐 `SCN-FWB-020` 的 Design revision 实施批次 | 按 Spec §16.4 增加结构化 Design 创建、精确 revision 审批/修订/拒绝、后续 Run 绑定与工作台展示；场景仍为 `todo`，直到真实 Action 运行同时证明中大型需求在实现前完成该闭环 |
 
 ## 例外队列
 
