@@ -1,0 +1,1278 @@
+# Feedback Workbench V2 - exact Candidate Release runner (spec sections 7.4 and 14.6-14.7).
+#
+# Candidate verification is deliberately separated from privileged delivery. The verify job
+# may execute Candidate-controlled package scripts but receives no merge, deploy, or callback
+# secrets. The deliver job uses a fresh runner and treats the verified artifact strictly as data.
+name: feedback-delivery
+
+on:
+  workflow_dispatch:
+    inputs:
+      payload:
+        description: JSON Release payload issued by the feedback workbench
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: feedback-delivery-${{ github.repository_id }}-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      error_code: ${{ steps.classify.outputs.error_code }}
+    steps:
+      - name: Resolve trusted tool paths
+        id: trusted_tools
+        run: echo "node=$(command -v node)" >> "$GITHUB_OUTPUT"
+
+      - name: Validate Release payload
+        id: payload
+        env:
+          PAYLOAD: ${{ inputs.payload }}
+          FEEDBACK_CALLBACK_ORIGIN: ${{ vars.FEEDBACK_CALLBACK_ORIGIN }}
+          FEEDBACK_PRODUCTION_ORIGIN: ${{ vars.FEEDBACK_PRODUCTION_ORIGIN }}
+          TRUSTED_NODE: ${{ steps.trusted_tools.outputs.node }}
+        run: |
+          set -euo pipefail
+          "$TRUSTED_NODE" -e '
+            const payload = JSON.parse(process.env.PAYLOAD);
+            const required = [
+              "releaseId", "issueId", "candidateId", "repository", "baseRef",
+              "baseCommit", "candidateRef", "changeCommit", "diffManifestSha256",
+            ];
+            for (const key of required) {
+              if (!payload[key]) throw new Error(`missing ${key}`);
+            }
+            if (payload.repository !== process.env.GITHUB_REPOSITORY) throw new Error("repository mismatch");
+            if (payload.baseRef !== process.env.GITHUB_REF_NAME) throw new Error("base ref mismatch");
+            if (!/^rel_[0-9a-f-]{36}$/i.test(payload.releaseId)) throw new Error("invalid releaseId");
+            if (!/^cnd_[0-9a-f-]{36}$/i.test(payload.candidateId)) throw new Error("invalid candidateId");
+            if (!/^feedback\/candidate\/run_[0-9a-f-]{36}$/i.test(payload.candidateRef)) {
+              throw new Error("invalid candidateRef");
+            }
+            if (!/^[0-9a-f]{40,64}$/i.test(payload.baseCommit) || !/^[0-9a-f]{40,64}$/i.test(payload.changeCommit)) {
+              throw new Error("invalid commit identity");
+            }
+            if (!/^[0-9a-f]{64}$/i.test(payload.diffManifestSha256)) {
+              throw new Error("invalid diff manifest hash");
+            }
+            const callbackOrigin = String(process.env.FEEDBACK_CALLBACK_ORIGIN || "").replace(/\/+$/, "");
+            const parsedCallbackOrigin = new URL(callbackOrigin);
+            if (parsedCallbackOrigin.protocol !== "https:" || parsedCallbackOrigin.origin !== callbackOrigin) {
+              throw new Error("invalid trusted callback origin");
+            }
+            const changedFiles = Array.isArray(payload.changedFiles) ? payload.changedFiles : [];
+            if (!changedFiles.length || changedFiles.some((file) => typeof file !== "string" || !file)) {
+              throw new Error("invalid changed file manifest");
+            }
+            const deploymentRequired = payload.deploymentRequired === true;
+            const deploymentTarget = payload.deploymentTarget || "";
+            if ((deploymentRequired && !["worker", "pages"].includes(deploymentTarget)) ||
+                (!deploymentRequired && deploymentTarget)) {
+              throw new Error("invalid deployment target");
+            }
+            const productionOrigin = String(process.env.FEEDBACK_PRODUCTION_ORIGIN || "").replace(/\/+$/, "");
+            if (deploymentRequired) {
+              const parsedProductionOrigin = new URL(productionOrigin);
+              if (parsedProductionOrigin.protocol !== "https:" || parsedProductionOrigin.origin !== productionOrigin) {
+                throw new Error("invalid production origin");
+              }
+              if (String(payload.productionOrigin || "").replace(/\/+$/, "") !== productionOrigin) {
+                throw new Error("production origin mismatch");
+              }
+            }
+            const smokeUrls = deploymentTarget === "worker" ? ["/feedback", "/api/feedback/issues"]
+              : deploymentTarget === "pages" ? ["/"] : [];
+            const out = {
+              releaseId: payload.releaseId,
+              candidateId: payload.candidateId,
+              repository: payload.repository,
+              baseRef: payload.baseRef,
+              baseCommit: payload.baseCommit,
+              candidateRef: payload.candidateRef,
+              changeCommit: payload.changeCommit,
+              diffManifestSha256: payload.diffManifestSha256,
+              changedFilesJson: JSON.stringify(changedFiles),
+              deploymentRequired,
+              deploymentTarget,
+            };
+            const fs = require("fs");
+            for (const [key, value] of Object.entries(out)) {
+              fs.appendFileSync(process.env.GITHUB_OUTPUT, `${key}=${value}\n`);
+            }
+          '
+
+      - name: Checkout clean default branch
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ steps.payload.outputs.baseRef }}
+
+      - name: Validate exact Candidate
+        env:
+          BASE_COMMIT: ${{ steps.payload.outputs.baseCommit }}
+          CANDIDATE_REF: ${{ steps.payload.outputs.candidateRef }}
+          CHANGE_COMMIT: ${{ steps.payload.outputs.changeCommit }}
+          EXPECTED_CHANGED_FILES_JSON: ${{ steps.payload.outputs.changedFilesJson }}
+          TRUSTED_NODE: ${{ steps.trusted_tools.outputs.node }}
+        run: |
+          set -euo pipefail
+          /usr/bin/git fetch origin "refs/heads/${CANDIDATE_REF}:refs/remotes/origin/${CANDIDATE_REF}"
+          test "$(/usr/bin/git rev-parse "refs/remotes/origin/${CANDIDATE_REF}")" = "$CHANGE_COMMIT"
+          test "$(/usr/bin/git rev-parse "${CHANGE_COMMIT}^")" = "$BASE_COMMIT"
+          ACTUAL_CHANGED_FILES_JSON="$(/usr/bin/git diff --no-ext-diff --no-textconv --name-only --no-renames \
+            "$BASE_COMMIT" "$CHANGE_COMMIT" | "$TRUSTED_NODE" -e '
+              const input = require("fs").readFileSync(0, "utf8");
+              process.stdout.write(JSON.stringify(input.split(/\r?\n/).filter(Boolean).sort()));
+            ')"
+          export ACTUAL_CHANGED_FILES_JSON
+          "$TRUSTED_NODE" -e '
+            const expected = JSON.parse(process.env.EXPECTED_CHANGED_FILES_JSON).sort();
+            const actual = JSON.parse(process.env.ACTUAL_CHANGED_FILES_JSON);
+            if (JSON.stringify(expected) !== JSON.stringify(actual)) {
+              throw new Error("changed file manifest mismatch");
+            }
+          '
+      - name: Build clean integration commit
+        id: integration
+        env:
+          BASE_COMMIT: ${{ steps.payload.outputs.baseCommit }}
+          BASE_REF: ${{ steps.payload.outputs.baseRef }}
+          CHANGE_COMMIT: ${{ steps.payload.outputs.changeCommit }}
+          RELEASE_ID: ${{ steps.payload.outputs.releaseId }}
+        run: |
+          set -euo pipefail
+          /usr/bin/git fetch origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+          DEFAULT_COMMIT="$(/usr/bin/git rev-parse "origin/${BASE_REF}")"
+          DRIFTED=false
+          /usr/bin/git config user.name "feedback-workbench[bot]"
+          /usr/bin/git config user.email "feedback-workbench[bot]@users.noreply.github.com"
+          if [ "$DEFAULT_COMMIT" = "$BASE_COMMIT" ]; then
+            /usr/bin/git checkout --detach "$CHANGE_COMMIT"
+          else
+            DRIFTED=true
+            /usr/bin/git checkout -B "feedback-integration-${RELEASE_ID}" "$CHANGE_COMMIT"
+            if ! /usr/bin/git -c core.hooksPath=/dev/null rebase --onto "$DEFAULT_COMMIT" "$BASE_COMMIT"; then
+              /usr/bin/git rebase --abort || true
+              /usr/bin/git checkout -B "feedback-integration-${RELEASE_ID}" "$DEFAULT_COMMIT"
+              /usr/bin/git -c core.hooksPath=/dev/null cherry-pick "$CHANGE_COMMIT"
+            fi
+          fi
+          test "$(/usr/bin/git rev-parse HEAD^)" = "$DEFAULT_COMMIT"
+          echo "sha=$(/usr/bin/git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "expected_remote_commit=$DEFAULT_COMMIT" >> "$GITHUB_OUTPUT"
+          echo "drifted=$DRIFTED" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Integration tests
+        id: tests
+        run: npm test
+
+      - name: Integration build
+        id: build
+        env:
+          VITE_FEEDBACK_API_URL: ${{ vars.FEEDBACK_PRODUCTION_API_URL }}
+        run: npm run build
+
+      - name: Validate Pages production artifact
+        id: pages_artifact
+        if: steps.payload.outputs.deploymentTarget == 'pages'
+        env:
+          VITE_FEEDBACK_API_URL: ${{ vars.FEEDBACK_PRODUCTION_API_URL }}
+        run: |
+          set -euo pipefail
+          test -d dist
+          if ! grep -R -F "$VITE_FEEDBACK_API_URL" dist >/dev/null; then
+            echo "Pages artifact does not contain VITE_FEEDBACK_API_URL" >&2
+            exit 1
+          fi
+          if grep -R -E 'VITE_FEEDBACK_API_URL|__FEEDBACK_API_URL__|https://[^" ]+\.(example|invalid)(/|"|$)' dist >/dev/null; then
+            echo "placeholder Worker URL found in Pages artifact" >&2
+            exit 1
+          fi
+
+      - name: Worker deployment dry-run
+        id: worker_dry_run
+        if: steps.payload.outputs.deploymentTarget == 'worker'
+        run: npx wrangler deploy --dry-run --config wrangler.toml
+
+      - name: Refresh default branch before push
+        id: final_integration
+        env:
+          BASE_COMMIT: ${{ steps.payload.outputs.baseCommit }}
+          BASE_REF: ${{ steps.payload.outputs.baseRef }}
+          CHANGE_COMMIT: ${{ steps.payload.outputs.changeCommit }}
+          INITIAL_DRIFTED: ${{ steps.integration.outputs.drifted }}
+          RELEASE_ID: ${{ steps.payload.outputs.releaseId }}
+          VALIDATED_DEFAULT_COMMIT: ${{ steps.integration.outputs.expected_remote_commit }}
+          BASH_ENV: ''
+          ENV: ''
+          PATH: /usr/bin:/bin
+        run: |
+          set -euo pipefail
+          /usr/bin/git fetch origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+          LATEST_DEFAULT_COMMIT="$(/usr/bin/git rev-parse "origin/${BASE_REF}")"
+          DEFAULT_BRANCH_DRIFT="$INITIAL_DRIFTED"
+          REVERIFY_REQUIRED=false
+          if [ "$LATEST_DEFAULT_COMMIT" != "$VALIDATED_DEFAULT_COMMIT" ]; then
+            DEFAULT_BRANCH_DRIFT=true
+            REVERIFY_REQUIRED=true
+            /usr/bin/git checkout -B "feedback-integration-${RELEASE_ID}" "$CHANGE_COMMIT"
+            if ! /usr/bin/git -c core.hooksPath=/dev/null rebase --onto "$LATEST_DEFAULT_COMMIT" "$BASE_COMMIT"; then
+              /usr/bin/git rebase --abort || true
+              /usr/bin/git checkout -B "feedback-integration-${RELEASE_ID}" "$LATEST_DEFAULT_COMMIT"
+              /usr/bin/git -c core.hooksPath=/dev/null cherry-pick "$CHANGE_COMMIT"
+            fi
+          fi
+          test "$(/usr/bin/git rev-parse HEAD^)" = "$LATEST_DEFAULT_COMMIT"
+          echo "sha=$(/usr/bin/git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "expected_remote_commit=$LATEST_DEFAULT_COMMIT" >> "$GITHUB_OUTPUT"
+          echo "drifted=$DEFAULT_BRANCH_DRIFT" >> "$GITHUB_OUTPUT"
+          echo "reverify_required=$REVERIFY_REQUIRED" >> "$GITHUB_OUTPUT"
+
+      - name: Reverify drifted integration
+        id: reverify
+        if: steps.final_integration.outputs.reverify_required == 'true'
+        env:
+          DEPLOYMENT_TARGET: ${{ steps.payload.outputs.deploymentTarget }}
+          VITE_FEEDBACK_API_URL: ${{ vars.FEEDBACK_PRODUCTION_API_URL }}
+        run: |
+          set -euo pipefail
+          npm test
+          npm run build
+          if [ "$DEPLOYMENT_TARGET" = "pages" ]; then
+            test -d dist
+            grep -R -F "$VITE_FEEDBACK_API_URL" dist >/dev/null
+            if grep -R -E 'VITE_FEEDBACK_API_URL|__FEEDBACK_API_URL__|https://[^" ]+\.(example|invalid)(/|"|$)' dist >/dev/null; then
+              echo "placeholder Worker URL found in drifted Pages artifact" >&2
+              exit 1
+            fi
+          fi
+          if [ "$DEPLOYMENT_TARGET" = "worker" ]; then
+            npx wrangler deploy --dry-run --config wrangler.toml
+          fi
+
+      - name: Package verified integration
+        id: package
+        env:
+          BASE_COMMIT: ${{ steps.payload.outputs.baseCommit }}
+          BASE_REF: ${{ steps.payload.outputs.baseRef }}
+          CANDIDATE_ID: ${{ steps.payload.outputs.candidateId }}
+          CANDIDATE_REF: ${{ steps.payload.outputs.candidateRef }}
+          CHANGE_COMMIT: ${{ steps.payload.outputs.changeCommit }}
+          CHANGED_FILES_JSON: ${{ steps.payload.outputs.changedFilesJson }}
+          DEPLOYMENT_TARGET: ${{ steps.payload.outputs.deploymentTarget }}
+          DIFF_MANIFEST_SHA256: ${{ steps.payload.outputs.diffManifestSha256 }}
+          DRIFTED: ${{ steps.final_integration.outputs.drifted }}
+          EXPECTED_REMOTE_COMMIT: ${{ steps.final_integration.outputs.expected_remote_commit }}
+          INTEGRATION_COMMIT: ${{ steps.final_integration.outputs.sha }}
+          RELEASE_ID: ${{ steps.payload.outputs.releaseId }}
+          REPOSITORY: ${{ steps.payload.outputs.repository }}
+          TRUSTED_NODE: ${{ steps.trusted_tools.outputs.node }}
+          BASH_ENV: ''
+          ENV: ''
+          PATH: /usr/bin:/bin
+        run: |
+          set -euo pipefail
+          OUTPUT_ROOT="$RUNNER_TEMP/verified-integration"
+          /bin/rm -rf "$OUTPUT_ROOT"
+          /bin/mkdir -p "$OUTPUT_ROOT"
+          test "$(/usr/bin/git rev-parse HEAD)" = "$INTEGRATION_COMMIT"
+          test "$(/usr/bin/git rev-parse HEAD^)" = "$EXPECTED_REMOTE_COMMIT"
+          /usr/bin/git bundle create "$OUTPUT_ROOT/integration.bundle" HEAD "^$EXPECTED_REMOTE_COMMIT"
+          BUNDLE_SHA256="$($TRUSTED_NODE -e '
+            const fs = require("fs");
+            const { createHash } = require("crypto");
+            process.stdout.write(createHash("sha256").update(fs.readFileSync(process.argv[1])).digest("hex"));
+          ' "$OUTPUT_ROOT/integration.bundle")"
+          PAGES_ARTIFACT_SHA256=""
+          if [ "$DEPLOYMENT_TARGET" = "pages" ]; then
+            /bin/cp -R dist "$OUTPUT_ROOT/dist"
+            PAGES_ARTIFACT_SHA256="$($TRUSTED_NODE -e '
+              const fs = require("fs");
+              const path = require("path");
+              const { createHash } = require("crypto");
+              const root = process.argv[1];
+              const hash = createHash("sha256");
+              const visit = (directory) => {
+                for (const entry of fs.readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+                  const absolute = path.join(directory, entry.name);
+                  const relative = path.relative(root, absolute).replaceAll(path.sep, "/");
+                  if (entry.isSymbolicLink()) throw new Error("Pages artifact contains a symbolic link");
+                  if (entry.isDirectory()) visit(absolute);
+                  else if (entry.isFile()) hash.update(relative).update("\0").update(fs.readFileSync(absolute));
+                  else throw new Error("Pages artifact contains an unsupported entry");
+                }
+              };
+              visit(root);
+              process.stdout.write(hash.digest("hex"));
+            ' "$OUTPUT_ROOT/dist")"
+          fi
+          export BUNDLE_SHA256 PAGES_ARTIFACT_SHA256
+          "$TRUSTED_NODE" -e '
+            const manifest = {
+              specVersion: "1.0",
+              releaseId: process.env.RELEASE_ID,
+              candidateId: process.env.CANDIDATE_ID,
+              repository: process.env.REPOSITORY,
+              baseRef: process.env.BASE_REF,
+              baseCommit: process.env.BASE_COMMIT,
+              candidateRef: process.env.CANDIDATE_REF,
+              changeCommit: process.env.CHANGE_COMMIT,
+              diffManifestSha256: process.env.DIFF_MANIFEST_SHA256,
+              changedFiles: JSON.parse(process.env.CHANGED_FILES_JSON).sort(),
+              expectedRemoteCommit: process.env.EXPECTED_REMOTE_COMMIT,
+              integrationCommit: process.env.INTEGRATION_COMMIT,
+              drifted: process.env.DRIFTED === "true",
+              deploymentTarget: process.env.DEPLOYMENT_TARGET,
+              bundleSha256: process.env.BUNDLE_SHA256,
+              pagesArtifactSha256: process.env.PAGES_ARTIFACT_SHA256,
+            };
+            require("fs").writeFileSync(
+              process.env.RUNNER_TEMP + "/verified-integration/verification-manifest.json",
+              JSON.stringify(manifest)
+            );
+          '
+
+      - name: Upload verified integration
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: feedback-verified-integration
+          path: ${{ runner.temp }}/verified-integration/**
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Classify verification failure
+        id: classify
+        if: always()
+        env:
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+          FINAL_INTEGRATION_OUTCOME: ${{ steps.final_integration.outcome }}
+          INTEGRATION_OUTCOME: ${{ steps.integration.outcome }}
+          PACKAGE_OUTCOME: ${{ steps.package.outcome }}
+          PAGES_ARTIFACT_OUTCOME: ${{ steps.pages_artifact.outcome }}
+          REVERIFY_OUTCOME: ${{ steps.reverify.outcome }}
+          TESTS_OUTCOME: ${{ steps.tests.outcome }}
+          UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
+          WORKER_DRY_RUN_OUTCOME: ${{ steps.worker_dry_run.outcome }}
+        run: |
+          set -euo pipefail
+          ERROR_CODE=""
+          if [ "$INTEGRATION_OUTCOME" = "failure" ] || [ "$FINAL_INTEGRATION_OUTCOME" = "failure" ]; then
+            ERROR_CODE="review_required"
+          elif [ "$PAGES_ARTIFACT_OUTCOME" = "failure" ]; then
+            ERROR_CODE="review_required"
+          elif [ "$WORKER_DRY_RUN_OUTCOME" = "failure" ]; then
+            ERROR_CODE="blocked_external"
+          elif [ "$TESTS_OUTCOME" = "failure" ] || [ "$BUILD_OUTCOME" = "failure" ] || [ "$REVERIFY_OUTCOME" = "failure" ]; then
+            ERROR_CODE="release_failed"
+          elif [ "$PACKAGE_OUTCOME" = "failure" ] || [ "$UPLOAD_OUTCOME" = "failure" ]; then
+            ERROR_CODE="security_policy_violation"
+          fi
+          echo "error_code=$ERROR_CODE" >> "$GITHUB_OUTPUT"
+
+  deliver:
+    needs: verify
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Resolve trusted tool paths
+        id: trusted_tools
+        run: |
+          echo "node=$(command -v node)" >> "$GITHUB_OUTPUT"
+          echo "npm=$(command -v npm)" >> "$GITHUB_OUTPUT"
+
+      - name: Validate Release payload
+        id: payload
+        env:
+          PAYLOAD: ${{ inputs.payload }}
+          FEEDBACK_CALLBACK_ORIGIN: ${{ vars.FEEDBACK_CALLBACK_ORIGIN }}
+          FEEDBACK_PRODUCTION_ORIGIN: ${{ vars.FEEDBACK_PRODUCTION_ORIGIN }}
+          TRUSTED_NODE: ${{ steps.trusted_tools.outputs.node }}
+        run: |
+          set -euo pipefail
+          "$TRUSTED_NODE" -e '
+            const payload = JSON.parse(process.env.PAYLOAD);
+            const required = [
+              "releaseId", "issueId", "candidateId", "repository", "baseRef",
+              "baseCommit", "candidateRef", "changeCommit", "diffManifestSha256",
+            ];
+            for (const key of required) {
+              if (!payload[key]) throw new Error(`missing ${key}`);
+            }
+            if (payload.repository !== process.env.GITHUB_REPOSITORY) throw new Error("repository mismatch");
+            if (payload.baseRef !== process.env.GITHUB_REF_NAME) throw new Error("base ref mismatch");
+            if (!/^rel_[0-9a-f-]{36}$/i.test(payload.releaseId)) throw new Error("invalid releaseId");
+            if (!/^cnd_[0-9a-f-]{36}$/i.test(payload.candidateId)) throw new Error("invalid candidateId");
+            if (!/^feedback\/candidate\/run_[0-9a-f-]{36}$/i.test(payload.candidateRef)) {
+              throw new Error("invalid candidateRef");
+            }
+            if (!/^[0-9a-f]{40,64}$/i.test(payload.baseCommit) || !/^[0-9a-f]{40,64}$/i.test(payload.changeCommit)) {
+              throw new Error("invalid commit identity");
+            }
+            if (!/^[0-9a-f]{64}$/i.test(payload.diffManifestSha256)) {
+              throw new Error("invalid diff manifest hash");
+            }
+            const callbackOrigin = String(process.env.FEEDBACK_CALLBACK_ORIGIN || "").replace(/\/+$/, "");
+            const parsedCallbackOrigin = new URL(callbackOrigin);
+            if (parsedCallbackOrigin.protocol !== "https:" || parsedCallbackOrigin.origin !== callbackOrigin) {
+              throw new Error("invalid trusted callback origin");
+            }
+            const changedFiles = Array.isArray(payload.changedFiles) ? payload.changedFiles : [];
+            if (!changedFiles.length || changedFiles.some((file) => typeof file !== "string" || !file)) {
+              throw new Error("invalid changed file manifest");
+            }
+            const deploymentRequired = payload.deploymentRequired === true;
+            const deploymentTarget = payload.deploymentTarget || "";
+            if ((deploymentRequired && !["worker", "pages"].includes(deploymentTarget)) ||
+                (!deploymentRequired && deploymentTarget)) {
+              throw new Error("invalid deployment target");
+            }
+            const productionOrigin = String(process.env.FEEDBACK_PRODUCTION_ORIGIN || "").replace(/\/+$/, "");
+            if (deploymentRequired) {
+              const parsedProductionOrigin = new URL(productionOrigin);
+              if (parsedProductionOrigin.protocol !== "https:" || parsedProductionOrigin.origin !== productionOrigin) {
+                throw new Error("invalid production origin");
+              }
+              if (String(payload.productionOrigin || "").replace(/\/+$/, "") !== productionOrigin) {
+                throw new Error("production origin mismatch");
+              }
+            }
+            const smokeUrls = deploymentTarget === "worker" ? ["/feedback", "/api/feedback/issues"]
+              : deploymentTarget === "pages" ? ["/"] : [];
+            const out = {
+              releaseId: payload.releaseId,
+              candidateId: payload.candidateId,
+              repository: payload.repository,
+              baseRef: payload.baseRef,
+              baseCommit: payload.baseCommit,
+              candidateRef: payload.candidateRef,
+              changeCommit: payload.changeCommit,
+              diffManifestSha256: payload.diffManifestSha256,
+              callbackUrl: `${callbackOrigin}/api/feedback/releases/${encodeURIComponent(payload.releaseId)}/events`,
+              changedFilesJson: JSON.stringify(changedFiles),
+              deploymentRequired,
+              deploymentTarget,
+              productionOrigin,
+              smokeUrlsJson: JSON.stringify(smokeUrls),
+            };
+            const fs = require("fs");
+            for (const [key, value] of Object.entries(out)) {
+              fs.appendFileSync(process.env.GITHUB_OUTPUT, `${key}=${value}\n`);
+            }
+          '
+
+      - name: Checkout clean default branch
+        if: needs.verify.result == 'success'
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ steps.payload.outputs.baseRef }}
+
+      - name: Install trusted delivery CLI
+        id: delivery_tools
+        if: needs.verify.result == 'success' && steps.payload.outputs.deploymentRequired == 'true'
+        env:
+          TRUSTED_NPM: ${{ steps.trusted_tools.outputs.npm }}
+          BASH_ENV: ''
+          ENV: ''
+        run: |
+          set -euo pipefail
+          TOOL_ROOT="$RUNNER_TEMP/feedback-delivery-tools"
+          /bin/mkdir -p "$TOOL_ROOT"
+          "$TRUSTED_NPM" install --prefix "$TOOL_ROOT" --ignore-scripts --no-audit --no-fund wrangler@4.114.0
+          test -f "$TOOL_ROOT/node_modules/wrangler/bin/wrangler.js"
+          echo "wrangler=$TOOL_ROOT/node_modules/wrangler/bin/wrangler.js" >> "$GITHUB_OUTPUT"
+
+      - name: Download verified integration
+        if: needs.verify.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: feedback-verified-integration
+          path: ${{ runner.temp }}/verified-integration
+
+      - name: Verify exact integration artifact
+        id: integration
+        if: needs.verify.result == 'success'
+        env:
+          ARTIFACT_ROOT: ${{ runner.temp }}/verified-integration
+          BASE_COMMIT: ${{ steps.payload.outputs.baseCommit }}
+          BASE_REF: ${{ steps.payload.outputs.baseRef }}
+          CANDIDATE_ID: ${{ steps.payload.outputs.candidateId }}
+          CANDIDATE_REF: ${{ steps.payload.outputs.candidateRef }}
+          CHANGE_COMMIT: ${{ steps.payload.outputs.changeCommit }}
+          CHANGED_FILES_JSON: ${{ steps.payload.outputs.changedFilesJson }}
+          DEPLOYMENT_TARGET: ${{ steps.payload.outputs.deploymentTarget }}
+          DIFF_MANIFEST_SHA256: ${{ steps.payload.outputs.diffManifestSha256 }}
+          RELEASE_ID: ${{ steps.payload.outputs.releaseId }}
+          REPOSITORY: ${{ steps.payload.outputs.repository }}
+          TRUSTED_NODE: ${{ steps.trusted_tools.outputs.node }}
+          BASH_ENV: ''
+          ENV: ''
+          PATH: /usr/bin:/bin
+        run: |
+          set -euo pipefail
+          MANIFEST_PATH="$ARTIFACT_ROOT/verification-manifest.json"
+          BUNDLE_PATH="$ARTIFACT_ROOT/integration.bundle"
+          test -f "$MANIFEST_PATH"
+          test -f "$BUNDLE_PATH"
+          /usr/bin/git fetch origin "refs/heads/${CANDIDATE_REF}:refs/remotes/origin/${CANDIDATE_REF}"
+          /usr/bin/git fetch origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+          test "$(/usr/bin/git rev-parse "refs/remotes/origin/${CANDIDATE_REF}")" = "$CHANGE_COMMIT"
+          test "$(/usr/bin/git rev-parse "${CHANGE_COMMIT}^")" = "$BASE_COMMIT"
+          /usr/bin/git bundle verify "$BUNDLE_PATH"
+          BUNDLE_SHA256="$($TRUSTED_NODE -e '
+            const fs = require("fs");
+            const { createHash } = require("crypto");
+            process.stdout.write(createHash("sha256").update(fs.readFileSync(process.argv[1])).digest("hex"));
+          ' "$BUNDLE_PATH")"
+          export BUNDLE_SHA256 MANIFEST_PATH
+          "$TRUSTED_NODE" -e '
+            const fs = require("fs");
+            const path = require("path");
+            const { createHash } = require("crypto");
+            const manifest = JSON.parse(fs.readFileSync(process.env.MANIFEST_PATH, "utf8"));
+            const expected = {
+              releaseId: process.env.RELEASE_ID,
+              candidateId: process.env.CANDIDATE_ID,
+              repository: process.env.REPOSITORY,
+              baseRef: process.env.BASE_REF,
+              baseCommit: process.env.BASE_COMMIT,
+              candidateRef: process.env.CANDIDATE_REF,
+              changeCommit: process.env.CHANGE_COMMIT,
+              diffManifestSha256: process.env.DIFF_MANIFEST_SHA256,
+              deploymentTarget: process.env.DEPLOYMENT_TARGET,
+              bundleSha256: process.env.BUNDLE_SHA256,
+            };
+            for (const [key, value] of Object.entries(expected)) {
+              if (manifest[key] !== value) throw new Error(`integration artifact ${key} mismatch`);
+            }
+            const expectedFiles = JSON.parse(process.env.CHANGED_FILES_JSON).sort();
+            if (JSON.stringify(manifest.changedFiles) !== JSON.stringify(expectedFiles)) {
+              throw new Error("integration artifact changed files mismatch");
+            }
+            if (!/^[0-9a-f]{40,64}$/i.test(manifest.expectedRemoteCommit) ||
+                !/^[0-9a-f]{40,64}$/i.test(manifest.integrationCommit)) {
+              throw new Error("integration artifact commit identity is invalid");
+            }
+            const dist = path.join(process.env.ARTIFACT_ROOT, "dist");
+            if (process.env.DEPLOYMENT_TARGET === "pages") {
+              const hash = createHash("sha256");
+              const visit = (directory) => {
+                for (const entry of fs.readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+                  const absolute = path.join(directory, entry.name);
+                  const relative = path.relative(dist, absolute).replaceAll(path.sep, "/");
+                  if (entry.isSymbolicLink()) throw new Error("Pages artifact contains a symbolic link");
+                  if (entry.isDirectory()) visit(absolute);
+                  else if (entry.isFile()) hash.update(relative).update("\0").update(fs.readFileSync(absolute));
+                  else throw new Error("Pages artifact contains an unsupported entry");
+                }
+              };
+              if (!fs.existsSync(dist)) throw new Error("Pages artifact is missing");
+              visit(dist);
+              if (hash.digest("hex") !== manifest.pagesArtifactSha256) {
+                throw new Error("Pages artifact hash mismatch");
+              }
+            } else if (manifest.pagesArtifactSha256) {
+              throw new Error("unexpected Pages artifact hash");
+            }
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `sha=${manifest.integrationCommit}\n`);
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `expected_remote_commit=${manifest.expectedRemoteCommit}\n`);
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `drifted=${manifest.drifted === true}\n`);
+          '
+          INTEGRATION_COMMIT="$("$TRUSTED_NODE" -e '
+            process.stdout.write(JSON.parse(require("fs").readFileSync(process.env.MANIFEST_PATH, "utf8")).integrationCommit)
+          ')"
+          EXPECTED_REMOTE_COMMIT="$("$TRUSTED_NODE" -e '
+            process.stdout.write(JSON.parse(require("fs").readFileSync(process.env.MANIFEST_PATH, "utf8")).expectedRemoteCommit)
+          ')"
+          if [ "$(/usr/bin/git rev-parse "origin/${BASE_REF}")" != "$EXPECTED_REMOTE_COMMIT" ]; then
+            echo "error_code=default_branch_drift" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          /usr/bin/git fetch "$BUNDLE_PATH" "HEAD:refs/feedback/integration/${RELEASE_ID}"
+          test "$(/usr/bin/git rev-parse "refs/feedback/integration/${RELEASE_ID}")" = "$INTEGRATION_COMMIT"
+          test "$(/usr/bin/git rev-parse "${INTEGRATION_COMMIT}^")" = "$EXPECTED_REMOTE_COMMIT"
+          ACTUAL_CHANGED_FILES_JSON="$(/usr/bin/git diff --no-ext-diff --no-textconv --name-only --no-renames \
+            "$EXPECTED_REMOTE_COMMIT" "$INTEGRATION_COMMIT" | "$TRUSTED_NODE" -e '
+              const input = require("fs").readFileSync(0, "utf8");
+              process.stdout.write(JSON.stringify(input.split(/\r?\n/).filter(Boolean).sort()));
+            ')"
+          export ACTUAL_CHANGED_FILES_JSON
+          "$TRUSTED_NODE" -e '
+            const expected = JSON.parse(process.env.CHANGED_FILES_JSON).sort();
+            const actual = JSON.parse(process.env.ACTUAL_CHANGED_FILES_JSON);
+            if (JSON.stringify(expected) !== JSON.stringify(actual)) {
+              throw new Error("changed file manifest mismatch");
+            }
+          '
+          /usr/bin/git -c core.hooksPath=/dev/null checkout --detach "$INTEGRATION_COMMIT"
+
+      - name: Rebuild exact Candidate tree
+        id: exact_candidate
+        if: steps.integration.outcome == 'success'
+        env:
+          BASE_COMMIT: ${{ steps.payload.outputs.baseCommit }}
+          CHANGE_COMMIT: ${{ steps.payload.outputs.changeCommit }}
+          EXPECTED_REMOTE_COMMIT: ${{ steps.integration.outputs.expected_remote_commit }}
+          INTEGRATION_COMMIT: ${{ steps.integration.outputs.sha }}
+          RELEASE_ID: ${{ steps.payload.outputs.releaseId }}
+          BASH_ENV: ''
+          ENV: ''
+          PATH: /usr/bin:/bin
+        run: |
+          set -euo pipefail
+          EXACT_PATCH="$RUNNER_TEMP/exact-candidate.patch"
+          /usr/bin/git diff --no-ext-diff --no-textconv --binary --full-index --no-renames \
+            "$BASE_COMMIT" "$CHANGE_COMMIT" -- > "$EXACT_PATCH"
+          test -s "$EXACT_PATCH"
+          /usr/bin/git -c core.hooksPath=/dev/null checkout -B "feedback-exact-${RELEASE_ID}" \
+            "$EXPECTED_REMOTE_COMMIT"
+          /usr/bin/git apply --index --3way "$EXACT_PATCH"
+          EXPECTED_TREE="$(/usr/bin/git write-tree)"
+          ACTUAL_TREE="$(/usr/bin/git rev-parse "${INTEGRATION_COMMIT}^{tree}")"
+          test "$ACTUAL_TREE" = "$EXPECTED_TREE"
+          /usr/bin/git -c core.hooksPath=/dev/null checkout --detach "$INTEGRATION_COMMIT"
+
+      - name: Revalidate Pages artifact
+        id: revalidate_pages
+        if: steps.exact_candidate.outcome == 'success' && steps.payload.outputs.deploymentTarget == 'pages'
+        env:
+          ARTIFACT_ROOT: ${{ runner.temp }}/verified-integration
+          VITE_FEEDBACK_API_URL: ${{ vars.FEEDBACK_PRODUCTION_API_URL }}
+          BASH_ENV: ''
+          ENV: ''
+          PATH: /usr/bin:/bin
+        run: |
+          set -euo pipefail
+          test -d "$ARTIFACT_ROOT/dist"
+          case "$VITE_FEEDBACK_API_URL" in
+            https://*) ;;
+            *) echo "Pages production API URL is invalid" >&2; exit 1 ;;
+          esac
+          if ! /usr/bin/grep -R -F "$VITE_FEEDBACK_API_URL" "$ARTIFACT_ROOT/dist" >/dev/null; then
+            echo "Pages artifact does not contain VITE_FEEDBACK_API_URL" >&2
+            exit 1
+          fi
+          if /usr/bin/grep -R -E 'VITE_FEEDBACK_API_URL|__FEEDBACK_API_URL__|https://[^" ]+\.(example|invalid)(/|"|$)' \
+            "$ARTIFACT_ROOT/dist" >/dev/null; then
+            echo "placeholder Worker URL found in Pages artifact" >&2
+            exit 1
+          fi
+
+      - name: Preflight delivery credentials
+        id: preflight
+        if: >-
+          steps.exact_candidate.outcome == 'success' &&
+          (steps.payload.outputs.deploymentTarget != 'pages' || steps.revalidate_pages.outcome == 'success')
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          DEPLOYMENT_REQUIRED: ${{ steps.payload.outputs.deploymentRequired }}
+          DEPLOYMENT_TARGET: ${{ steps.payload.outputs.deploymentTarget }}
+          FEEDBACK_PAGES_PROJECT: ${{ vars.FEEDBACK_PAGES_PROJECT }}
+          PRODUCTION_ORIGIN: ${{ steps.payload.outputs.productionOrigin }}
+          VITE_FEEDBACK_API_URL: ${{ vars.FEEDBACK_PRODUCTION_API_URL }}
+        run: |
+          set -euo pipefail
+          if [ "$DEPLOYMENT_REQUIRED" = "true" ]; then
+            test -n "$CLOUDFLARE_API_TOKEN"
+            test -n "$CLOUDFLARE_ACCOUNT_ID"
+            test -n "$PRODUCTION_ORIGIN"
+            if [ "$DEPLOYMENT_TARGET" = "pages" ]; then
+              test -n "$FEEDBACK_PAGES_PROJECT"
+              case "$FEEDBACK_PAGES_PROJECT" in
+                *[!A-Za-z0-9-]*) echo "Pages project name is invalid" >&2; exit 1 ;;
+              esac
+              case "$VITE_FEEDBACK_API_URL" in
+                https://*) ;;
+                *) echo "Pages production API URL is invalid" >&2; exit 1 ;;
+              esac
+            fi
+          fi
+
+      - name: Report integration.started
+        id: integration_started
+        if: steps.preflight.outcome == 'success'
+        env:
+          BASE_COMMIT: ${{ steps.payload.outputs.baseCommit }}
+          BASE_REF: ${{ steps.payload.outputs.baseRef }}
+          CALLBACK_URL: ${{ steps.payload.outputs.callbackUrl }}
+          CANDIDATE_ID: ${{ steps.payload.outputs.candidateId }}
+          CANDIDATE_REF: ${{ steps.payload.outputs.candidateRef }}
+          CHANGE_COMMIT: ${{ steps.payload.outputs.changeCommit }}
+          DEPLOYMENT_REQUIRED: ${{ steps.payload.outputs.deploymentRequired }}
+          DEPLOYMENT_TARGET: ${{ steps.payload.outputs.deploymentTarget }}
+          DIFF_MANIFEST_SHA256: ${{ steps.payload.outputs.diffManifestSha256 }}
+          FEEDBACK_RELEASE_TOKEN_SECRET: ${{ secrets.FEEDBACK_RELEASE_TOKEN_SECRET }}
+          RELEASE_ID: ${{ steps.payload.outputs.releaseId }}
+          REPOSITORY: ${{ steps.payload.outputs.repository }}
+          TRUSTED_NODE: ${{ steps.trusted_tools.outputs.node }}
+        run: |
+          set -euo pipefail
+          test -n "$FEEDBACK_RELEASE_TOKEN_SECRET"
+          FEEDBACK_RELEASE_TOKEN="$($TRUSTED_NODE -e '
+            const { createHmac } = require("crypto");
+            const payload = Buffer.from(JSON.stringify({ aud: "release", releaseId: process.env.RELEASE_ID, exp: Date.now() + 15 * 60 * 1000 })).toString("base64url");
+            process.stdout.write(`${payload}.${createHmac("sha256", process.env.FEEDBACK_RELEASE_TOKEN_SECRET).update(payload).digest("base64url")}`);
+          ')"
+          echo "::add-mask::$FEEDBACK_RELEASE_TOKEN"
+          "$TRUSTED_NODE" -e '
+            const body = {
+              eventId: `rel-integration-started-${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}`,
+              type: "integration.started",
+              payload: {
+                candidateId: process.env.CANDIDATE_ID,
+                repository: process.env.REPOSITORY,
+                baseRef: process.env.BASE_REF,
+                baseCommit: process.env.BASE_COMMIT,
+                candidateRef: process.env.CANDIDATE_REF,
+                changeCommit: process.env.CHANGE_COMMIT,
+                diffManifestSha256: process.env.DIFF_MANIFEST_SHA256,
+                deploymentRequired: process.env.DEPLOYMENT_REQUIRED === "true",
+                deploymentTarget: process.env.DEPLOYMENT_TARGET,
+              },
+            };
+            require("fs").writeFileSync("release-stage-10-integration-started.json", JSON.stringify(body));
+          '
+          for delay in 0 5 15 45; do
+            if [ "$delay" -gt 0 ]; then /usr/bin/sleep "$delay"; fi
+            if /usr/bin/curl --fail-with-body --silent --show-error --max-time 20 -X POST "$CALLBACK_URL" \
+              -H "Authorization: Bearer $FEEDBACK_RELEASE_TOKEN" -H 'Content-Type: application/json' \
+              --data @release-stage-10-integration-started.json; then exit 0; fi
+          done
+          exit 1
+
+      - name: Report integration.rebased
+        continue-on-error: true
+        if: steps.integration_started.outcome == 'success' && steps.integration.outputs.drifted == 'true'
+        env:
+          CALLBACK_URL: ${{ steps.payload.outputs.callbackUrl }}
+          CANDIDATE_ID: ${{ steps.payload.outputs.candidateId }}
+          FEEDBACK_RELEASE_TOKEN_SECRET: ${{ secrets.FEEDBACK_RELEASE_TOKEN_SECRET }}
+          INTEGRATION_COMMIT: ${{ steps.integration.outputs.sha }}
+          RELEASE_ID: ${{ steps.payload.outputs.releaseId }}
+          TRUSTED_NODE: ${{ steps.trusted_tools.outputs.node }}
+        run: |
+          set -euo pipefail
+          FEEDBACK_RELEASE_TOKEN="$($TRUSTED_NODE -e '
+            const { createHmac } = require("crypto");
+            const payload = Buffer.from(JSON.stringify({ aud: "release", releaseId: process.env.RELEASE_ID, exp: Date.now() + 15 * 60 * 1000 })).toString("base64url");
+            process.stdout.write(`${payload}.${createHmac("sha256", process.env.FEEDBACK_RELEASE_TOKEN_SECRET).update(payload).digest("base64url")}`);
+          ')"
+          echo "::add-mask::$FEEDBACK_RELEASE_TOKEN"
+          "$TRUSTED_NODE" -e '
+            require("fs").writeFileSync("release-stage-20-integration-rebased.json", JSON.stringify({
+              eventId: `rel-integration-rebased-${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}`,
+              type: "integration.rebased",
+              payload: { candidateId: process.env.CANDIDATE_ID, integrationCommit: process.env.INTEGRATION_COMMIT },
+            }));
+          '
+          for delay in 0 5 15 45; do
+            if [ "$delay" -gt 0 ]; then /usr/bin/sleep "$delay"; fi
+            if /usr/bin/curl --fail-with-body --silent --show-error --max-time 20 -X POST "$CALLBACK_URL" \
+              -H "Authorization: Bearer $FEEDBACK_RELEASE_TOKEN" -H 'Content-Type: application/json' \
+              --data @release-stage-20-integration-rebased.json; then exit 0; fi
+          done
+          exit 1
+
+      - name: Report integration.verification_completed
+        id: integration_verified
+        if: steps.integration_started.outcome == 'success'
+        env:
+          CALLBACK_URL: ${{ steps.payload.outputs.callbackUrl }}
+          CANDIDATE_ID: ${{ steps.payload.outputs.candidateId }}
+          FEEDBACK_RELEASE_TOKEN_SECRET: ${{ secrets.FEEDBACK_RELEASE_TOKEN_SECRET }}
+          INTEGRATION_COMMIT: ${{ steps.integration.outputs.sha }}
+          RELEASE_ID: ${{ steps.payload.outputs.releaseId }}
+          TRUSTED_NODE: ${{ steps.trusted_tools.outputs.node }}
+        run: |
+          set -euo pipefail
+          FEEDBACK_RELEASE_TOKEN="$($TRUSTED_NODE -e '
+            const { createHmac } = require("crypto");
+            const payload = Buffer.from(JSON.stringify({ aud: "release", releaseId: process.env.RELEASE_ID, exp: Date.now() + 15 * 60 * 1000 })).toString("base64url");
+            process.stdout.write(`${payload}.${createHmac("sha256", process.env.FEEDBACK_RELEASE_TOKEN_SECRET).update(payload).digest("base64url")}`);
+          ')"
+          echo "::add-mask::$FEEDBACK_RELEASE_TOKEN"
+          "$TRUSTED_NODE" -e '
+            require("fs").writeFileSync("release-stage-30-integration-verified.json", JSON.stringify({
+              eventId: `rel-integration-verified-${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}`,
+              type: "integration.verification_completed",
+              payload: { candidateId: process.env.CANDIDATE_ID, integrationCommit: process.env.INTEGRATION_COMMIT, passed: true },
+            }));
+          '
+          for delay in 0 5 15 45; do
+            if [ "$delay" -gt 0 ]; then /usr/bin/sleep "$delay"; fi
+            if /usr/bin/curl --fail-with-body --silent --show-error --max-time 20 -X POST "$CALLBACK_URL" \
+              -H "Authorization: Bearer $FEEDBACK_RELEASE_TOKEN" -H 'Content-Type: application/json' \
+              --data @release-stage-30-integration-verified.json; then exit 0; fi
+          done
+          exit 1
+
+      - name: Push exact integration commit
+        id: push
+        if: steps.integration_verified.outcome == 'success'
+        env:
+          BASE_REF: ${{ steps.payload.outputs.baseRef }}
+          EXPECTED_REMOTE_COMMIT: ${{ steps.integration.outputs.expected_remote_commit }}
+          FEEDBACK_MERGE_TOKEN: ${{ secrets.FEEDBACK_MERGE_TOKEN }}
+          BASH_ENV: ''
+          ENV: ''
+          PATH: /usr/bin:/bin
+        run: |
+          set -euo pipefail
+          test -n "$FEEDBACK_MERGE_TOKEN"
+          if ! /usr/bin/git push --force-with-lease=refs/heads/${BASE_REF}:${EXPECTED_REMOTE_COMMIT} \
+            --no-verify \
+            "https://x-access-token:${FEEDBACK_MERGE_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            "HEAD:refs/heads/${BASE_REF}"; then
+            /usr/bin/git fetch origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+            CURRENT_REMOTE_COMMIT="$(/usr/bin/git rev-parse "origin/${BASE_REF}")"
+            if [ "$CURRENT_REMOTE_COMMIT" != "$EXPECTED_REMOTE_COMMIT" ]; then
+              echo "error_code=default_branch_drift" >> "$GITHUB_OUTPUT"
+            else
+              echo "error_code=blocked_external" >> "$GITHUB_OUTPUT"
+            fi
+            exit 1
+          fi
+
+      - name: Report integration.merged
+        id: integration_merged
+        if: steps.push.outcome == 'success'
+        continue-on-error: true
+        env:
+          CALLBACK_URL: ${{ steps.payload.outputs.callbackUrl }}
+          CANDIDATE_ID: ${{ steps.payload.outputs.candidateId }}
+          FEEDBACK_RELEASE_TOKEN_SECRET: ${{ secrets.FEEDBACK_RELEASE_TOKEN_SECRET }}
+          INTEGRATION_COMMIT: ${{ steps.integration.outputs.sha }}
+          RELEASE_ID: ${{ steps.payload.outputs.releaseId }}
+          TRUSTED_NODE: ${{ steps.trusted_tools.outputs.node }}
+        run: |
+          set -euo pipefail
+          FEEDBACK_RELEASE_TOKEN="$($TRUSTED_NODE -e '
+            const { createHmac } = require("crypto");
+            const payload = Buffer.from(JSON.stringify({ aud: "release", releaseId: process.env.RELEASE_ID, exp: Date.now() + 15 * 60 * 1000 })).toString("base64url");
+            process.stdout.write(`${payload}.${createHmac("sha256", process.env.FEEDBACK_RELEASE_TOKEN_SECRET).update(payload).digest("base64url")}`);
+          ')"
+          echo "::add-mask::$FEEDBACK_RELEASE_TOKEN"
+          "$TRUSTED_NODE" -e '
+            require("fs").writeFileSync("release-stage-40-integration-merged.json", JSON.stringify({
+              eventId: `rel-integration-merged-${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}`,
+              type: "integration.merged",
+              payload: { candidateId: process.env.CANDIDATE_ID, integrationCommit: process.env.INTEGRATION_COMMIT },
+            }));
+          '
+          for delay in 0 5 15 45; do
+            if [ "$delay" -gt 0 ]; then /usr/bin/sleep "$delay"; fi
+            if /usr/bin/curl --fail-with-body --silent --show-error --max-time 20 -X POST "$CALLBACK_URL" \
+              -H "Authorization: Bearer $FEEDBACK_RELEASE_TOKEN" -H 'Content-Type: application/json' \
+              --data @release-stage-40-integration-merged.json; then exit 0; fi
+          done
+          exit 1
+
+      - name: Report deployment.started
+        id: deployment_started
+        if: steps.push.outcome == 'success' && steps.payload.outputs.deploymentRequired == 'true'
+        continue-on-error: true
+        env:
+          CALLBACK_URL: ${{ steps.payload.outputs.callbackUrl }}
+          CANDIDATE_ID: ${{ steps.payload.outputs.candidateId }}
+          DEPLOYMENT_TARGET: ${{ steps.payload.outputs.deploymentTarget }}
+          FEEDBACK_RELEASE_TOKEN_SECRET: ${{ secrets.FEEDBACK_RELEASE_TOKEN_SECRET }}
+          RELEASE_ID: ${{ steps.payload.outputs.releaseId }}
+          TRUSTED_NODE: ${{ steps.trusted_tools.outputs.node }}
+        run: |
+          set -euo pipefail
+          FEEDBACK_RELEASE_TOKEN="$($TRUSTED_NODE -e '
+            const { createHmac } = require("crypto");
+            const payload = Buffer.from(JSON.stringify({ aud: "release", releaseId: process.env.RELEASE_ID, exp: Date.now() + 15 * 60 * 1000 })).toString("base64url");
+            process.stdout.write(`${payload}.${createHmac("sha256", process.env.FEEDBACK_RELEASE_TOKEN_SECRET).update(payload).digest("base64url")}`);
+          ')"
+          echo "::add-mask::$FEEDBACK_RELEASE_TOKEN"
+          "$TRUSTED_NODE" -e '
+            require("fs").writeFileSync("release-stage-50-deployment-started.json", JSON.stringify({
+              eventId: `rel-deployment-started-${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}`,
+              type: "deployment.started",
+              payload: { candidateId: process.env.CANDIDATE_ID, deploymentTarget: process.env.DEPLOYMENT_TARGET },
+            }));
+          '
+          for delay in 0 5 15 45; do
+            if [ "$delay" -gt 0 ]; then /usr/bin/sleep "$delay"; fi
+            if /usr/bin/curl --fail-with-body --silent --show-error --max-time 20 -X POST "$CALLBACK_URL" \
+              -H "Authorization: Bearer $FEEDBACK_RELEASE_TOKEN" -H 'Content-Type: application/json' \
+              --data @release-stage-50-deployment-started.json; then exit 0; fi
+          done
+          exit 1
+
+      - name: Deploy Worker
+        id: deploy_worker
+        if: steps.push.outcome == 'success' && steps.payload.outputs.deploymentTarget == 'worker'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TRUSTED_NODE: ${{ steps.trusted_tools.outputs.node }}
+          WRANGLER_CLI: ${{ steps.delivery_tools.outputs.wrangler }}
+          NO_COLOR: 1
+        run: |
+          set -euo pipefail
+          "$TRUSTED_NODE" "$WRANGLER_CLI" deploy --config "$GITHUB_WORKSPACE/wrangler.toml" 2>&1 | tee worker-deploy.log
+          DEPLOYMENT_ID="$(sed -nE 's/.*Current Version ID:[[:space:]]*([0-9a-f-]{36}).*/\1/p' worker-deploy.log | tail -1)"
+          case "$DEPLOYMENT_ID" in
+            ????????-????-????-????-????????????) ;;
+            *) echo "Worker deployment did not return a Cloudflare Version ID" >&2; exit 1 ;;
+          esac
+          echo "deployment_id=$DEPLOYMENT_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy Pages
+        id: deploy_pages
+        if: steps.push.outcome == 'success' && steps.payload.outputs.deploymentTarget == 'pages'
+        env:
+          BASE_REF: ${{ steps.payload.outputs.baseRef }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          FEEDBACK_PAGES_PROJECT: ${{ vars.FEEDBACK_PAGES_PROJECT }}
+          INTEGRATION_COMMIT: ${{ steps.integration.outputs.sha }}
+          TRUSTED_NODE: ${{ steps.trusted_tools.outputs.node }}
+          WRANGLER_CLI: ${{ steps.delivery_tools.outputs.wrangler }}
+        run: |
+          set -euo pipefail
+          "$TRUSTED_NODE" "$WRANGLER_CLI" pages deploy "$RUNNER_TEMP/verified-integration/dist" \
+            --project-name "$FEEDBACK_PAGES_PROJECT" \
+            --branch "$BASE_REF" \
+            --commit-hash "$INTEGRATION_COMMIT"
+          /usr/bin/curl --fail-with-body --silent --show-error --max-time 20 \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/pages/projects/${FEEDBACK_PAGES_PROJECT}/deployments" \
+            -o pages-deployments.json
+          DEPLOYMENT_ID="$("$TRUSTED_NODE" -e '
+            const response = require("./pages-deployments.json");
+            const matches = (response.result || [])
+              .filter((item) => item.deployment_trigger?.metadata?.commit_hash === process.env.INTEGRATION_COMMIT)
+              .sort((left, right) => String(right.created_on).localeCompare(String(left.created_on)));
+            if (!matches[0]?.id) throw new Error("Pages deployment for integration commit not found");
+            process.stdout.write(matches[0].id);
+          ')"
+          case "$DEPLOYMENT_ID" in
+            ????????-????-????-????-????????????) ;;
+            *) echo "Pages deployment did not return a Cloudflare deployment ID" >&2; exit 1 ;;
+          esac
+          echo "deployment_id=$DEPLOYMENT_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Report deployment.completed
+        id: deployment_completed
+        if: >-
+          steps.payload.outputs.deploymentRequired == 'true' &&
+           (steps.deploy_worker.outcome == 'success' || steps.deploy_pages.outcome == 'success')
+        continue-on-error: true
+        env:
+          CALLBACK_URL: ${{ steps.payload.outputs.callbackUrl }}
+          CANDIDATE_ID: ${{ steps.payload.outputs.candidateId }}
+          DEPLOYMENT_ID: ${{ steps.deploy_worker.outputs.deployment_id || steps.deploy_pages.outputs.deployment_id }}
+          DEPLOYMENT_TARGET: ${{ steps.payload.outputs.deploymentTarget }}
+          FEEDBACK_RELEASE_TOKEN_SECRET: ${{ secrets.FEEDBACK_RELEASE_TOKEN_SECRET }}
+          INTEGRATION_COMMIT: ${{ steps.integration.outputs.sha }}
+          RELEASE_ID: ${{ steps.payload.outputs.releaseId }}
+          TRUSTED_NODE: ${{ steps.trusted_tools.outputs.node }}
+        run: |
+          set -euo pipefail
+          FEEDBACK_RELEASE_TOKEN="$($TRUSTED_NODE -e '
+            const { createHmac } = require("crypto");
+            const payload = Buffer.from(JSON.stringify({ aud: "release", releaseId: process.env.RELEASE_ID, exp: Date.now() + 15 * 60 * 1000 })).toString("base64url");
+            process.stdout.write(`${payload}.${createHmac("sha256", process.env.FEEDBACK_RELEASE_TOKEN_SECRET).update(payload).digest("base64url")}`);
+          ')"
+          echo "::add-mask::$FEEDBACK_RELEASE_TOKEN"
+          "$TRUSTED_NODE" -e '
+            require("fs").writeFileSync("release-stage-60-deployment-completed.json", JSON.stringify({
+              eventId: `rel-deployment-completed-${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}`,
+              type: "deployment.completed",
+              payload: {
+                candidateId: process.env.CANDIDATE_ID,
+                integrationCommit: process.env.INTEGRATION_COMMIT,
+                deployedCommit: process.env.INTEGRATION_COMMIT,
+                deploymentTarget: process.env.DEPLOYMENT_TARGET,
+                deploymentId: process.env.DEPLOYMENT_ID,
+              },
+            }));
+          '
+          for delay in 0 5 15 45; do
+            if [ "$delay" -gt 0 ]; then /usr/bin/sleep "$delay"; fi
+            if /usr/bin/curl --fail-with-body --silent --show-error --max-time 20 -X POST "$CALLBACK_URL" \
+              -H "Authorization: Bearer $FEEDBACK_RELEASE_TOKEN" -H 'Content-Type: application/json' \
+              --data @release-stage-60-deployment-completed.json; then exit 0; fi
+          done
+          exit 1
+
+      - name: Production smoke
+        id: smoke
+        if: steps.deploy_worker.outcome == 'success' || steps.deploy_pages.outcome == 'success'
+        env:
+          PRODUCTION_ORIGIN: ${{ steps.payload.outputs.productionOrigin }}
+          SMOKE_URLS_JSON: ${{ steps.payload.outputs.smokeUrlsJson }}
+          TRUSTED_NODE: ${{ steps.trusted_tools.outputs.node }}
+        run: |
+          set -euo pipefail
+          "$TRUSTED_NODE" -e '
+            const fs = require("fs");
+            const origin = process.env.PRODUCTION_ORIGIN.replace(/\/$/, "");
+            const paths = JSON.parse(process.env.SMOKE_URLS_JSON || "[]");
+            if (!origin || !paths.length) throw new Error("production smoke target missing");
+            const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+            (async () => {
+              const checks = [];
+              for (const path of paths) {
+                const url = `${origin}${path}`;
+                let finalCheck = null;
+                for (let attempt = 1; attempt <= 3; attempt += 1) {
+                  let status = 0;
+                  try {
+                    const response = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(20_000) });
+                    status = response.status;
+                  } catch {}
+                  const statusOk = status >= 200 && status < 300;
+                  const protectedAuth = path === "/api/feedback/issues" && (status === 401 || status === 403);
+                  finalCheck = {
+                    path,
+                    status,
+                    assertion: statusOk ? "status_2xx" : protectedAuth ? "protected_auth_required" : "status_rejected",
+                    checkedAt: new Date().toISOString(),
+                  };
+                  if (statusOk || protectedAuth) break;
+                  if (attempt < 3) await wait(attempt * 1000);
+                }
+                checks.push(finalCheck);
+                if (finalCheck.assertion === "status_rejected") {
+                  throw new Error(`SMOKE_HTTP_${finalCheck.status || "000"} ${url}`);
+                }
+              }
+              fs.writeFileSync("smoke-results.json", JSON.stringify(checks));
+            })().catch((error) => {
+              console.error(error.message);
+              process.exit(1);
+            });
+          '
+
+      - name: Report smoke.completed
+        id: smoke_completed
+        if: steps.smoke.outcome == 'success'
+        continue-on-error: true
+        env:
+          CALLBACK_URL: ${{ steps.payload.outputs.callbackUrl }}
+          CANDIDATE_ID: ${{ steps.payload.outputs.candidateId }}
+          DEPLOYMENT_ID: ${{ steps.deploy_worker.outputs.deployment_id || steps.deploy_pages.outputs.deployment_id }}
+          DEPLOYMENT_TARGET: ${{ steps.payload.outputs.deploymentTarget }}
+          FEEDBACK_RELEASE_TOKEN_SECRET: ${{ secrets.FEEDBACK_RELEASE_TOKEN_SECRET }}
+          INTEGRATION_COMMIT: ${{ steps.integration.outputs.sha }}
+          RELEASE_ID: ${{ steps.payload.outputs.releaseId }}
+          TRUSTED_NODE: ${{ steps.trusted_tools.outputs.node }}
+        run: |
+          set -euo pipefail
+          FEEDBACK_RELEASE_TOKEN="$($TRUSTED_NODE -e '
+            const { createHmac } = require("crypto");
+            const payload = Buffer.from(JSON.stringify({ aud: "release", releaseId: process.env.RELEASE_ID, exp: Date.now() + 15 * 60 * 1000 })).toString("base64url");
+            process.stdout.write(`${payload}.${createHmac("sha256", process.env.FEEDBACK_RELEASE_TOKEN_SECRET).update(payload).digest("base64url")}`);
+          ')"
+          echo "::add-mask::$FEEDBACK_RELEASE_TOKEN"
+          "$TRUSTED_NODE" -e '
+            const checks = JSON.parse(require("fs").readFileSync("smoke-results.json", "utf8"));
+            require("fs").writeFileSync("release-stage-70-smoke-completed.json", JSON.stringify({
+              eventId: `rel-smoke-completed-${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}`,
+              type: "smoke.completed",
+              payload: {
+                candidateId: process.env.CANDIDATE_ID,
+                integrationCommit: process.env.INTEGRATION_COMMIT,
+                deployedCommit: process.env.INTEGRATION_COMMIT,
+                deploymentTarget: process.env.DEPLOYMENT_TARGET,
+                deploymentId: process.env.DEPLOYMENT_ID,
+                passed: true,
+                checks,
+              },
+            }));
+          '
+          for delay in 0 5 15 45; do
+            if [ "$delay" -gt 0 ]; then /usr/bin/sleep "$delay"; fi
+            if /usr/bin/curl --fail-with-body --silent --show-error --max-time 20 -X POST "$CALLBACK_URL" \
+              -H "Authorization: Bearer $FEEDBACK_RELEASE_TOKEN" -H 'Content-Type: application/json' \
+              --data @release-stage-70-smoke-completed.json; then exit 0; fi
+          done
+          exit 1
+
+      - name: Report release.completed
+        id: release_completed
+        if: >-
+          steps.push.outcome == 'success' &&
+          (steps.payload.outputs.deploymentRequired != 'true' || steps.smoke.outcome == 'success')
+        continue-on-error: true
+        env:
+          CALLBACK_URL: ${{ steps.payload.outputs.callbackUrl }}
+          CANDIDATE_ID: ${{ steps.payload.outputs.candidateId }}
+          FEEDBACK_RELEASE_TOKEN_SECRET: ${{ secrets.FEEDBACK_RELEASE_TOKEN_SECRET }}
+          INTEGRATION_COMMIT: ${{ steps.integration.outputs.sha }}
+          RELEASE_ID: ${{ steps.payload.outputs.releaseId }}
+          TRUSTED_NODE: ${{ steps.trusted_tools.outputs.node }}
+        run: |
+          set -euo pipefail
+          FEEDBACK_RELEASE_TOKEN="$($TRUSTED_NODE -e '
+            const { createHmac } = require("crypto");
+            const payload = Buffer.from(JSON.stringify({ aud: "release", releaseId: process.env.RELEASE_ID, exp: Date.now() + 15 * 60 * 1000 })).toString("base64url");
+            process.stdout.write(`${payload}.${createHmac("sha256", process.env.FEEDBACK_RELEASE_TOKEN_SECRET).update(payload).digest("base64url")}`);
+          ')"
+          echo "::add-mask::$FEEDBACK_RELEASE_TOKEN"
+          "$TRUSTED_NODE" -e '
+            require("fs").writeFileSync("release-stage-80-release-completed.json", JSON.stringify({
+              eventId: `rel-completed-${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}`,
+              type: "release.completed",
+              payload: {
+                candidateId: process.env.CANDIDATE_ID,
+                integrationCommit: process.env.INTEGRATION_COMMIT,
+                passed: true,
+                summary: "The exact Candidate passed isolated integration, delivery, and required production smoke.",
+              },
+            }));
+          '
+          for delay in 0 5 15 45; do
+            if [ "$delay" -gt 0 ]; then /usr/bin/sleep "$delay"; fi
+            if /usr/bin/curl --fail-with-body --silent --show-error --max-time 20 -X POST "$CALLBACK_URL" \
+              -H "Authorization: Bearer $FEEDBACK_RELEASE_TOKEN" -H 'Content-Type: application/json' \
+              --data @release-stage-80-release-completed.json; then exit 0; fi
+          done
+          exit 1
+
+      - name: Reconcile Release callbacks
+        id: callback_reconcile
+        if: >-
+          always() && steps.push.outcome == 'success' &&
+          steps.release_completed.outcome == 'failure' &&
+          (steps.payload.outputs.deploymentRequired != 'true' || steps.smoke.outcome == 'success')
+        env:
+          CALLBACK_URL: ${{ steps.payload.outputs.callbackUrl }}
+          FEEDBACK_RELEASE_TOKEN_SECRET: ${{ secrets.FEEDBACK_RELEASE_TOKEN_SECRET }}
+          RELEASE_ID: ${{ steps.payload.outputs.releaseId }}
+          TRUSTED_NODE: ${{ steps.trusted_tools.outputs.node }}
+          BASH_ENV: ''
+          ENV: ''
+          PATH: /usr/bin:/bin
+        run: |
+          set -euo pipefail
+          test -n "$FEEDBACK_RELEASE_TOKEN_SECRET"
+          FEEDBACK_RELEASE_TOKEN="$($TRUSTED_NODE -e '
+            const { createHmac } = require("crypto");
+            const payload = Buffer.from(JSON.stringify({ aud: "release", releaseId: process.env.RELEASE_ID, exp: Date.now() + 30 * 60 * 1000 })).toString("base64url");
+            process.stdout.write(`${payload}.${createHmac("sha256", process.env.FEEDBACK_RELEASE_TOKEN_SECRET).update(payload).digest("base64url")}`);
+          ')"
+          echo "::add-mask::$FEEDBACK_RELEASE_TOKEN"
+          shopt -s nullglob
+          EVENTS=(release-stage-*.json)
+          test "${#EVENTS[@]}" -gt 0
+          for delay in 0 60 300 900; do
+            if [ "$delay" -gt 0 ]; then /usr/bin/sleep "$delay"; fi
+            FAILED=0
+            for event in "${EVENTS[@]}"; do
+              if ! /usr/bin/curl --fail-with-body --silent --show-error --max-time 20 \
+                -X POST "$CALLBACK_URL" \
+                -H "Authorization: Bearer $FEEDBACK_RELEASE_TOKEN" \
+                -H 'Content-Type: application/json' \
+                --data "@$event"; then
+                FAILED=1
+              fi
+            done
+            if [ "$FAILED" -eq 0 ]; then exit 0; fi
+          done
+          exit 1
+
+      - name: Report release.failed
+        if: >-
+          always() && steps.payload.outcome == 'success' &&
+          (needs.verify.result != 'success' ||
+           steps.delivery_tools.outcome == 'failure' ||
+           steps.integration.outcome == 'failure' ||
+           steps.exact_candidate.outcome == 'failure' ||
+           steps.revalidate_pages.outcome == 'failure' ||
+           steps.preflight.outcome == 'failure' ||
+           steps.push.outcome == 'failure' ||
+           steps.deploy_worker.outcome == 'failure' ||
+           steps.deploy_pages.outcome == 'failure' ||
+           steps.smoke.outcome == 'failure')
+        env:
+          CALLBACK_URL: ${{ steps.payload.outputs.callbackUrl }}
+          CANDIDATE_ID: ${{ steps.payload.outputs.candidateId }}
+          DELIVERY_TOOLS_OUTCOME: ${{ steps.delivery_tools.outcome }}
+          DEPLOY_PAGES_OUTCOME: ${{ steps.deploy_pages.outcome }}
+          DEPLOY_WORKER_OUTCOME: ${{ steps.deploy_worker.outcome }}
+          EXACT_CANDIDATE_OUTCOME: ${{ steps.exact_candidate.outcome }}
+          FEEDBACK_RELEASE_TOKEN_SECRET: ${{ secrets.FEEDBACK_RELEASE_TOKEN_SECRET }}
+          INTEGRATION_COMMIT: ${{ steps.integration.outputs.sha }}
+          INTEGRATION_ERROR_CODE: ${{ steps.integration.outputs.error_code }}
+          INTEGRATION_STARTED_OUTCOME: ${{ steps.integration_started.outcome }}
+          NEEDS_VERIFY_RESULT: ${{ needs.verify.result }}
+          VERIFY_ERROR_CODE: ${{ needs.verify.outputs.error_code }}
+          PREFLIGHT_OUTCOME: ${{ steps.preflight.outcome }}
+          PUSH_ERROR_CODE: ${{ steps.push.outputs.error_code }}
+          PUSH_OUTCOME: ${{ steps.push.outcome }}
+          REVALIDATE_PAGES_OUTCOME: ${{ steps.revalidate_pages.outcome }}
+          RELEASE_ID: ${{ steps.payload.outputs.releaseId }}
+          SMOKE_OUTCOME: ${{ steps.smoke.outcome }}
+          TRUSTED_NODE: ${{ steps.trusted_tools.outputs.node }}
+        run: |
+          set -euo pipefail
+          test -n "$FEEDBACK_RELEASE_TOKEN_SECRET"
+          FEEDBACK_RELEASE_TOKEN="$($TRUSTED_NODE -e '
+            const { createHmac } = require("crypto");
+            const payload = Buffer.from(JSON.stringify({ aud: "release", releaseId: process.env.RELEASE_ID, exp: Date.now() + 30 * 60 * 1000 })).toString("base64url");
+            process.stdout.write(`${payload}.${createHmac("sha256", process.env.FEEDBACK_RELEASE_TOKEN_SECRET).update(payload).digest("base64url")}`);
+          ')"
+          echo "::add-mask::$FEEDBACK_RELEASE_TOKEN"
+          "$TRUSTED_NODE" -e '
+            const retryableDrift = [process.env.INTEGRATION_ERROR_CODE, process.env.PUSH_ERROR_CODE]
+              .includes("default_branch_drift");
+            const blockedExternal = [
+              process.env.DELIVERY_TOOLS_OUTCOME,
+              process.env.PREFLIGHT_OUTCOME,
+              process.env.PUSH_OUTCOME,
+              process.env.DEPLOY_WORKER_OUTCOME,
+              process.env.DEPLOY_PAGES_OUTCOME,
+            ].includes("failure");
+            const securityBlocked = [
+              process.env.EXACT_CANDIDATE_OUTCOME,
+              process.env.REVALIDATE_PAGES_OUTCOME,
+            ].includes("failure");
+            const errorCode = process.env.VERIFY_ERROR_CODE || (retryableDrift
+              ? "default_branch_drift"
+              : securityBlocked
+                ? "review_required"
+                : blockedExternal
+                  ? "blocked_external"
+                  : "release_failed");
+            require("fs").writeFileSync("release-event.json", JSON.stringify({
+              eventId: `rel-failed-${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}`,
+              type: "release.failed",
+              payload: {
+                candidateId: process.env.CANDIDATE_ID,
+                integrationCommit: process.env.INTEGRATION_COMMIT || "",
+                errorCode,
+                summary: errorCode === "blocked_external"
+                  ? "Release delivery was blocked by external credentials, connectivity, or callback availability."
+                  : errorCode === "default_branch_drift"
+                    ? "The default branch changed after isolated verification; retry the same Release."
+                    : "Release integration, verification, deployment, or smoke failed.",
+              },
+            }));
+          '
+          for delay in 0 60 300 900; do
+            if [ "$delay" -gt 0 ]; then /usr/bin/sleep "$delay"; fi
+            if /usr/bin/curl --fail-with-body --silent --show-error --max-time 20 -X POST "$CALLBACK_URL" \
+              -H "Authorization: Bearer $FEEDBACK_RELEASE_TOKEN" -H 'Content-Type: application/json' \
+              --data @release-event.json; then exit 0; fi
+          done
+          exit 1

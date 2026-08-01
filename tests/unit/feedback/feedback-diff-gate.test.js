@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+    classifyFeedbackQualityTier,
     classifyDiffPath,
     evaluateDiffGate,
     findVerificationWeakening,
+    requiresFeedbackVisualEvidence,
     normalizeDiffPath,
 } from '../../../src/features/feedback/diff-gate.js';
 
@@ -78,6 +80,17 @@ describe('[SCN-FWB-012] feedback diff gate', () => {
                 'hard_deny'
             );
             expect(classifyDiffPath('../../etc/passwd')).toBe('hard_deny');
+            expect(classifyDiffPath('/etc/passwd')).toBe('hard_deny');
+            expect(classifyDiffPath('C:\\Users\\runner\\secret.txt')).toBe('hard_deny');
+            expect(classifyDiffPath('D:/runner/secret.txt')).toBe('hard_deny');
+            expect(classifyDiffPath('\\\\server\\share\\secret.txt')).toBe('hard_deny');
+        });
+
+        it('requires review for dependency and build configuration', () => {
+            for (const file of ['package.json', 'package-lock.json', 'vite.config.js']) {
+                expect(classifyDiffPath(file), file).toBe('needs_approval');
+                expect(classifyFeedbackQualityTier([file]), file).toBe(3);
+            }
         });
     });
 
@@ -208,21 +221,58 @@ describe('[SCN-FWB-012] feedback diff gate', () => {
             expect(result.violations[0].detail).toBe('ASSERTION_REMOVED');
         });
 
-        it('lets an ordinary fix through and marks it auto-deliverable', () => {
+        it('[SCN-FWB-022] mechanically assigns quality tiers and visual evidence needs', () => {
+            expect(classifyFeedbackQualityTier(['doc/feedback-copy.md'])).toBe(0);
+            expect(
+                classifyFeedbackQualityTier([
+                    'src/utils/time-formatter.js',
+                    'tests/unit/time-formatter.test.js',
+                ])
+            ).toBe(1);
+            expect(classifyFeedbackQualityTier(['workers/feedback-workbench-ui.js'])).toBe(2);
+            expect(classifyFeedbackQualityTier(['src/core/storage.js'])).toBe(3);
+            expect(classifyFeedbackQualityTier(['src/features/gantt/domain/link-ops.js'])).toBe(3);
+            expect(classifyFeedbackQualityTier(['src/features/ai/tools/hierarchy.js'])).toBe(3);
+            expect(classifyFeedbackQualityTier(['src/features/agent-cli/commands/link.js'])).toBe(
+                3
+            );
+            expect(
+                classifyFeedbackQualityTier([
+                    'src/features/ai/api.js',
+                    'src/features/task-details/panel.js',
+                ])
+            ).toBe(3);
+            expect(requiresFeedbackVisualEvidence(['workers/feedback-workbench-ui.js'])).toBe(true);
+            expect(requiresFeedbackVisualEvidence(['src/utils/time-formatter.js'])).toBe(false);
+        });
+
+        it('[SCN-FWB-022] lets an ordinary low-risk fix through and marks it auto-deliverable', () => {
             const result = evaluateDiffGate({
-                changedFiles: [
-                    'src/features/gantt/domain/link-ops.js',
-                    'tests/unit/gantt/domain/link-ops.test.js',
-                ],
+                changedFiles: ['src/utils/time-formatter.js', 'tests/unit/time-formatter.test.js'],
                 diffText: [
-                    '+++ b/tests/unit/gantt/domain/link-ops.test.js',
-                    '+        expect(link.type).toBe("FS");',
+                    '+++ b/tests/unit/time-formatter.test.js',
+                    '+        expect(formatDuration(1)).toBe("1 day");',
                 ].join('\n'),
             });
 
             expect(result.allowed).toBe(true);
             expect(result.violations).toEqual([]);
+            expect(result.qualityTier).toBe(1);
+            expect(result.visualEvidenceRequired).toBe(false);
             expect(result.autoDeliverAllowed).toBe(true);
+        });
+
+        it('[SCN-FWB-022] forces Tier 3 core changes through Candidate review', () => {
+            const result = evaluateDiffGate({
+                changedFiles: [
+                    'src/features/gantt/domain/link-ops.js',
+                    'tests/unit/gantt/domain/link-ops.test.js',
+                ],
+            });
+
+            expect(result.allowed).toBe(true);
+            expect(result.qualityTier).toBe(3);
+            expect(result.autoDeliverAllowed).toBe(false);
         });
     });
 });

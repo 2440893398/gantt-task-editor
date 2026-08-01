@@ -32,6 +32,8 @@ export const ADMIN_APPROVAL_PATTERNS = [
     /^\.github\/workflows\//,
     /^scripts\//,
     /^wrangler\./,
+    /^package(?:-lock)?\.json$/,
+    /^vite\.config\.[cm]?js$/,
     /^AGENTS\.md$/,
     /^CLAUDE\.md$/,
     /^\.agents\//,
@@ -57,6 +59,26 @@ const VERIFICATION_WEAKENING_PATTERNS = [
     { code: 'DEEP_COMPARE_WEAKENED', pattern: /^-\s*.*\.\s*(?:toEqual|toStrictEqual)\s*\(/ },
 ];
 
+// docs/ai-development-quality-gates.md defines these as Tier 3 core flows.
+// Keep the list mechanical and conservative: an Agent cannot self-report a
+// lower tier to unlock autonomous delivery.
+const TIER_3_PATH_PATTERNS = [
+    /^package(?:-lock)?\.json$/,
+    /^vite\.config\.[cm]?js$/,
+    /^src\/core\//,
+    /^src\/features\/(?:calendar|config|gantt|projects|selection|share|task-details)\//,
+    /(?:^|\/)[^/]*(?:batch|undo|redo|import|export|cache|worktime|hierarchy|link|drag|persist)[^/]*\.js$/i,
+    /^workers\/share-worker\.js$/,
+];
+
+const VISUAL_EVIDENCE_PATH_PATTERNS = [
+    /(?:^|\/)styles?\//,
+    /(?:^|\/)(?:components?|ui)\//,
+    /(?:^|\/)[^/]*(?:ui|view|panel|modal|dialog|drawer|lightbox)[^/]*\.js$/i,
+    /\.(?:css|html)$/i,
+    /^index\.html$/,
+];
+
 function matchesAny(patterns, filePath) {
     return patterns.some((pattern) => pattern.test(filePath));
 }
@@ -73,6 +95,7 @@ export function normalizeDiffPath(filePath) {
 export function classifyDiffPath(filePath) {
     const normalized = normalizeDiffPath(filePath);
     if (!normalized) return 'allowed';
+    if (normalized.startsWith('/') || /^[a-zA-Z]:\//.test(normalized)) return 'hard_deny';
     // A traversal segment can only be an attempt to escape the workspace.
     if (normalized.split('/').includes('..')) return 'hard_deny';
     if (matchesAny(HARD_DENY_PATTERNS, normalized)) return 'hard_deny';
@@ -81,6 +104,35 @@ export function classifyDiffPath(filePath) {
     if (matchesAny(CONTRACT_AWARE_PATTERNS, normalized)) return 'contract_aware';
     if (matchesAny(ADMIN_APPROVAL_PATTERNS, normalized)) return 'needs_approval';
     return 'allowed';
+}
+
+/**
+ * Computes the repository quality tier from the changed surface. Tests and
+ * docs do not raise the runtime tier by themselves; multiple feature domains
+ * do, because the project quality contract treats cross-module state as Tier 3.
+ */
+export function classifyFeedbackQualityTier(changedFiles = []) {
+    const files = changedFiles.map(normalizeDiffPath).filter(Boolean);
+    const runtimeFiles = files.filter(
+        (file) => !file.startsWith('tests/') && !file.startsWith('doc/') && !file.endsWith('.md')
+    );
+    if (!runtimeFiles.length) return 0;
+    if (runtimeFiles.some((file) => matchesAny(TIER_3_PATH_PATTERNS, file))) return 3;
+
+    const featureDomains = new Set(
+        runtimeFiles
+            .map((file) => file.match(/^src\/features\/([^/]+)\//)?.[1] || '')
+            .filter(Boolean)
+    );
+    if (featureDomains.size > 1) return 3;
+    return requiresFeedbackVisualEvidence(runtimeFiles) ? 2 : 1;
+}
+
+export function requiresFeedbackVisualEvidence(changedFiles = []) {
+    return changedFiles
+        .map(normalizeDiffPath)
+        .filter(Boolean)
+        .some((file) => matchesAny(VISUAL_EVIDENCE_PATH_PATTERNS, file));
 }
 
 /**
@@ -181,6 +233,9 @@ export function evaluateDiffGate({
         });
     }
 
+    const qualityTier = classifyFeedbackQualityTier(files);
+    const visualEvidenceRequired = requiresFeedbackVisualEvidence(files);
+
     return {
         allowed: violations.length === 0,
         // §14.4 rule 5: any hit fails the Run as a policy violation, which is
@@ -188,6 +243,9 @@ export function evaluateDiffGate({
         errorCode: violations.length ? 'security_policy_violation' : '',
         violations,
         requiresCandidateReview: Array.from(new Set(requiresCandidateReview)),
-        autoDeliverAllowed: violations.length === 0 && requiresCandidateReview.length === 0,
+        qualityTier,
+        visualEvidenceRequired,
+        autoDeliverAllowed:
+            violations.length === 0 && requiresCandidateReview.length === 0 && qualityTier <= 2,
     };
 }

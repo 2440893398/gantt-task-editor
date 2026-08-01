@@ -172,24 +172,81 @@ policy, and an honest `GITHUB_DISPATCH_NOT_CONFIGURED`.
   the Design-bound implementation Run and still reports `GITHUB_DISPATCH_NOT_CONFIGURED`
   rather than inventing dispatch success.
 
-**Still not built:** `auto_deliver` (§7.4) still routes every write-capable delivery through
-Candidate review, and `/runners/test` still returns `ACTION_SMOKE_NOT_CONFIGURED`. Nothing
-has run against a real repository: that needs `FEEDBACK_GITHUB_REPOSITORY`,
-`FEEDBACK_GITHUB_TOKEN`, `FEEDBACK_CALLBACK_ORIGIN`, provider secrets and a remote D1
-migration. SCN-FWB-020 remains `todo` because its real-Action verification clause is still
-unmet; only SCN-FWB-015 is `active`.
+**Status (2026-08-01) — `auto_deliver` implementation landed, external proof still pending.**
+
+- A write Run fixes `deliveryMode` before dispatch from server-owned facts. Only an enabled,
+  healthy trusted admin/system actor or named actor allowlist entry, `scope=small`,
+  `auto_fix`, bug/improvement route can select `auto_deliver`; every absent prerequisite
+  deterministically selects `candidate_review`.
+- The shared diff gate now derives Tier 0–3 and visual-evidence requirements from changed paths.
+  Callback re-checks that classification plus structured target-test/build/Playwright/visual
+  evidence. Tier 3, protected paths and evidence gaps create an exact `review_required`
+  HumanAction instead of letting the Agent self-authorize delivery.
+- A passing low-risk Candidate is still registered first, then system-approved into the existing
+  repository delivery lock and dispatched to `feedback-delivery.yml`. Agent workflows now build,
+  commit and push a recoverable per-Run Candidate ref; the Release workflow validates that exact
+  ref/commit, integrates from a clean checkout, reruns tests/build, performs required Cloudflare
+  deploy and production smoke, and reports every Release stage with its scoped token.
+- GitHub dispatch failure never reports success: timeout/429/5xx remain resumable on the exact
+  Release, while permanent rejection fails Candidate/Release, returns the Issue to `needs_human`,
+  and records an exact `blocked_external` HumanAction.
+
+**Local full-chain run (2026-08-01).** One Issue was driven end to end against a local
+`wrangler dev` Worker with real D1 and the real Workflows runtime, using placeholder GitHub
+credentials so dispatch reaches `api.github.com` and is honestly rejected. What it confirmed:
+
+- An admin reopen of a `bug` / `small` / `auto_fix` Issue produced an `implement_and_verify`
+  Run whose `delivery_mode` the Worker itself fixed to `auto_deliver` before dispatch.
+- A `run.completed` callback carrying a Tier 1, unprotected change set with passing
+  target-test and build evidence registered a Candidate, created a Release and dispatched it
+  to `feedback-delivery.yml`. GitHub answered `401`, and the Worker recorded exactly that:
+  Candidate and Release `failed` with `error_code=GITHUB_HTTP_401`, `retryable=false`, the
+  Issue back to `needs_human`, and one active `blocked_external` HumanAction. No step
+  reported a success it had not observed.
+- The four downgrade paths were each exercised on their own Run and all held: `src/core/`
+  → `QUALITY_TIER_REQUIRES_REVIEW`; a UI path without visual evidence →
+  `VISUAL_EVIDENCE_REQUIRED`; failing target tests → `TARGETED_TEST_EVIDENCE_REQUIRED`; and
+  `.github/workflows/` was blocked harder still — the diff gate failed the callback with
+  `PATH_NOT_IN_APPROVED_SCOPE` before any Candidate existed.
+
+Two things the run made precise, neither of which is a defect but both of which were easy to
+misread from the code alone:
+
+1. **The provider-health precondition is an admin assertion, not a smoke result.**
+   `resolveFeedbackDeliveryMode` requires `connectionState === 'connected'` and
+   `lastTestResult.ok === true`, but `/runners/test` deliberately never returns success, and
+   no other code path writes that state. Today it can only be satisfied by an admin writing
+   it through `PATCH /api/feedback/runners/settings`. `auto_deliver` is therefore inert until
+   a person deliberately vouches for the provider — fail-closed, but it is an explicit
+   human act rather than machine-verified health.
+2. **A gate-blocked callback still echoes the Run's configured `deliveryMode`.** Case 3 above
+   returned `deliveryMode: "auto_deliver"` alongside `gate.allowed: false` and
+   `candidateId: null`, because the mode is the Run's fixed attribute and the delivery branch
+   never ran. The response is unambiguous read as a whole; the field is not a claim that
+   anything was delivered.
+
+**Still not externally verified:** `/runners/test` intentionally continues to return
+`ACTION_SMOKE_NOT_CONFIGURED`. No Agent or Release workflow has run against a real repository;
+that still needs `FEEDBACK_GITHUB_REPOSITORY`, `FEEDBACK_GITHUB_TOKEN`,
+`FEEDBACK_CALLBACK_ORIGIN`, `FEEDBACK_CANDIDATE_TOKEN`, `FEEDBACK_MERGE_TOKEN`,
+`FEEDBACK_RELEASE_TOKEN_SECRET`, provider secrets,
+deployment credentials, `FEEDBACK_PRODUCTION_ORIGIN`, `FEEDBACK_PRODUCTION_API_URL` and a remote
+D1 migration. SCN-FWB-020 and SCN-FWB-022 therefore remain `todo`;
+only SCN-FWB-015 is `active`.
 
 ---
 
 ### Task 1: Freeze the Phase 0 infrastructure contract
 
 **Files:**
+
 - Modify: `package.json`
 - Modify: `package-lock.json`
 - Modify: `wrangler.toml`
 - Test: `tests/unit/feedback/feedback-v2-infrastructure.test.js`
 
 **Steps:**
+
 1. Write failing tests for the pinned Wrangler dependency, Worker-only D1/R2/Workflow bindings, the `2026-07-28` compatibility date, and local/remote migration scripts.
 2. Run `npx vitest run tests/unit/feedback/feedback-v2-infrastructure.test.js`; expect failures for missing configuration.
 3. Add Wrangler and the Worker/migration scripts. Keep `wrangler.jsonc` free of V2 write bindings.
@@ -198,10 +255,12 @@ unmet; only SCN-FWB-015 is `active`.
 ### Task 2: Add the append-only D1 schema
 
 **Files:**
+
 - Create: `src/features/feedback/migrations/0001_feedback_workbench_v2.sql`
 - Test: `tests/unit/feedback/feedback-v2-infrastructure.test.js`
 
 **Steps:**
+
 1. Add failing schema assertions for Issue/Event/Workflow/Run/HumanAction/Design/Candidate/Release/Delivery/Artifact/Attachment/Usage tables, foreign keys, uniqueness, active-record partial indexes, and migration-safe defaults.
 2. Run the focused test and confirm the missing-schema failure.
 3. Add the first append-only migration. Store JSON and ISO timestamps as `TEXT`; store booleans as constrained integers; keep attachment bodies out of D1.
@@ -210,10 +269,12 @@ unmet; only SCN-FWB-015 is `active`.
 ### Task 3: Introduce D1-first reads without breaking V1
 
 **Files:**
+
 - Modify: `workers/share-worker.js`
 - Test: `tests/unit/feedback/share-worker-feedback-board.test.js`
 
 **Steps:**
+
 1. Add failing tests showing D1 wins when both stores contain an issue, a D1 miss falls back to KV, a D1 failure does not silently write KV, and D1 list results never enumerate anonymous KV data.
 2. Run the focused Worker test and confirm the failures reflect the existing KV-only behavior.
 3. Implement prepared D1 reads and compatibility mapping while retaining the existing serializers.
@@ -222,10 +283,12 @@ unmet; only SCN-FWB-015 is `active`.
 ### Task 4: Backfill legacy history idempotently
 
 **Files:**
+
 - Modify: `workers/share-worker.js`
 - Test: `tests/unit/feedback/share-worker-feedback-board.test.js`
 
 **Steps:**
+
 1. Add failing tests for deterministic legacy event IDs, stable per-Issue sequence numbers, public/internal visibility, contact/context preservation, and repeatable backfill.
 2. Confirm RED because no D1 backfill exists.
 3. Implement a D1 transaction/batch that inserts the normalized Issue and uses uniqueness constraints for event/history deduplication. Record inline attachments only as legacy references; never copy `dataUrl` into D1.
@@ -234,10 +297,12 @@ unmet; only SCN-FWB-015 is `active`.
 ### Task 5: Enforce D1-only mutation contracts
 
 **Files:**
+
 - Modify: `workers/share-worker.js`
 - Test: `tests/unit/feedback/share-worker-feedback-board.test.js`
 
 **Steps:**
+
 1. Add failing tests for D1-only creation/PATCH, append-only events, expected-version conflicts, and failure when D1/R2 are unavailable.
 2. Confirm RED and state that the tests catch accidental KV dual-writes and lost updates.
 3. Implement minimal prepared statements/batches and return stable 409 errors on optimistic concurrency conflicts.
@@ -246,10 +311,12 @@ unmet; only SCN-FWB-015 is `active`.
 ### Task 6: Add the minimal Workflow entrypoint
 
 **Files:**
+
 - Modify: `workers/share-worker.js`
 - Test: `tests/unit/feedback/feedback-v2-infrastructure.test.js`
 
 **Steps:**
+
 1. Add a failing export/config contract test for `FeedbackWorkflow`.
 2. Confirm RED because the class is absent.
 3. Add a deterministic, no-dispatch Phase 0 Workflow skeleton whose durable steps only persist serializable state and use `this.env`.
@@ -258,9 +325,11 @@ unmet; only SCN-FWB-015 is `active`.
 ### Task 7: Verify the delivery slice
 
 **Files:**
+
 - Test: `tests/e2e/feedback-workbench-v2.spec.js`
 
 **Steps:**
+
 1. Add owner/admin local Worker smoke coverage using `[SCN-FWB-017]` and `[SCN-FWB-018]`.
 2. Apply local D1 migrations and run the Worker with local bindings.
 3. Run focused Vitest, `npm run check:scenarios`, the focused Playwright path, `npm test`, and Worker dry-run.

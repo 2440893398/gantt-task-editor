@@ -85,10 +85,15 @@ const changeCommit = (() => {
 // exact base, the exact head and the exact file list (§15.3).
 const manifest = {
     specVersion: '1.0',
+    repository: args.repository || process.env.GITHUB_REPOSITORY || '',
+    baseRef: args['base-ref'] || process.env.FEEDBACK_BASE_REF || '',
+    candidateRef: args['candidate-ref'] || process.env.FEEDBACK_CANDIDATE_REF || '',
     baseCommit: base,
     changeCommit,
     changedFiles,
     requiresCandidateReview: result.requiresCandidateReview,
+    qualityTier: result.qualityTier,
+    visualEvidenceRequired: result.visualEvidenceRequired,
     autoDeliverAllowed: result.autoDeliverAllowed,
 };
 manifest.diffManifestSha256 = createHash('sha256')

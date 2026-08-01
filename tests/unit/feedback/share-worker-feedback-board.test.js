@@ -1,7 +1,20 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { TextDecoder } from 'node:util';
 import worker, { FeedbackWorkflow } from '../../../workers/share-worker.js';
+
+async function attachDiffManifestHash(manifest) {
+    const unsignedManifest = { ...manifest };
+    delete unsignedManifest.diffManifestSha256;
+    const digest = await crypto.subtle.digest(
+        'SHA-256',
+        new TextEncoder().encode(JSON.stringify(unsignedManifest))
+    );
+    return {
+        ...unsignedManifest,
+        diffManifestSha256: Buffer.from(new Uint8Array(digest)).toString('hex'),
+    };
+}
 
 class MemoryKV {
     constructor(seed = {}) {
@@ -530,6 +543,23 @@ class MemoryD1 {
                 .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
             return ok(rows.map((row) => ({ ...row })));
         }
+        if (
+            normalized.startsWith('update feedback_human_actions') &&
+            normalized.includes('where candidate_id = ?')
+        ) {
+            const [resolvedAt, candidateId] = values;
+            let changes = 0;
+            for (const [id, action] of this.tables.feedback_human_actions.entries()) {
+                if (action.candidate_id !== candidateId || action.status !== 'active') continue;
+                this.tables.feedback_human_actions.set(id, {
+                    ...action,
+                    status: 'resolved',
+                    resolved_at: resolvedAt,
+                });
+                changes += 1;
+            }
+            return ok([], changes);
+        }
         if (normalized.startsWith('update feedback_human_actions')) {
             const [
                 resolvedAt,
@@ -986,8 +1016,73 @@ class MemoryD1 {
         }
 
         // --- feedback_candidates / feedback_releases ---
+        if (
+            normalized.includes('from feedback_candidates c') &&
+            normalized.includes('join feedback_releases rel')
+        ) {
+            const rows = Array.from(this.tables.feedback_candidates.values())
+                .filter((candidate) => {
+                    const release = Array.from(this.tables.feedback_releases.values()).find(
+                        (item) => item.candidate_id === candidate.id
+                    );
+                    return (
+                        candidate.status === 'integrating' &&
+                        ['integrating', 'merged', 'deploying', 'smoke_testing'].includes(
+                            release?.status
+                        ) &&
+                        release?.error_code
+                    );
+                })
+                .sort((left, right) => {
+                    const releaseStartedAt = (candidate) =>
+                        Array.from(this.tables.feedback_releases.values()).find(
+                            (item) => item.candidate_id === candidate.id
+                        )?.started_at || '';
+                    return (
+                        String(releaseStartedAt(left)).localeCompare(releaseStartedAt(right)) ||
+                        String(left.id).localeCompare(String(right.id))
+                    );
+                });
+            return ok(rows.slice(0, 25).map((row) => ({ ...row })));
+        }
+        if (normalized.includes('from feedback_candidates c')) {
+            const rows = Array.from(this.tables.feedback_candidates.values())
+                .filter((candidate) => {
+                    const issue = this.tables.feedback_issues.get(candidate.issue_id);
+                    const hasRelease = Array.from(this.tables.feedback_releases.values()).some(
+                        (release) => release.candidate_id === candidate.id
+                    );
+                    return (
+                        candidate.status === 'approved' &&
+                        issue?.status === 'ready_for_deploy' &&
+                        !hasRelease
+                    );
+                })
+                .sort((left, right) => {
+                    const priority = (candidate) => {
+                        const mode = this.tables.feedback_runs.get(candidate.run_id)?.delivery_mode;
+                        if (mode === 'candidate_review') return 0;
+                        if (mode === 'auto_deliver') return 1;
+                        return 2;
+                    };
+                    return (
+                        priority(left) - priority(right) ||
+                        String(left.approved_at || left.created_at).localeCompare(
+                            String(right.approved_at || right.created_at)
+                        ) ||
+                        String(left.id).localeCompare(String(right.id))
+                    );
+                });
+            return ok(rows.slice(0, 25).map((row) => ({ ...row })));
+        }
         if (normalized.includes('from feedback_candidates where id = ?')) {
             const row = this.tables.feedback_candidates.get(values[0]);
+            return ok(row ? [{ ...row }] : []);
+        }
+        if (normalized.includes('from feedback_candidates where run_id = ?')) {
+            const row = Array.from(this.tables.feedback_candidates.values()).find(
+                (candidate) => candidate.run_id === values[0]
+            );
             return ok(row ? [{ ...row }] : []);
         }
         if (normalized.includes('from feedback_candidates where issue_id = ?')) {
@@ -1026,6 +1121,12 @@ class MemoryD1 {
             const row = this.tables.feedback_releases.get(values[0]);
             return ok(row ? [{ ...row }] : []);
         }
+        if (normalized.includes('from feedback_releases where candidate_id = ?')) {
+            const rows = Array.from(this.tables.feedback_releases.values())
+                .filter((row) => row.candidate_id === values[0])
+                .sort((a, b) => String(b.started_at).localeCompare(String(a.started_at)));
+            return ok(rows.slice(0, 1).map((row) => ({ ...row })));
+        }
         if (normalized.includes('from feedback_releases where repository = ?')) {
             const rows = Array.from(this.tables.feedback_releases.values()).filter(
                 (row) =>
@@ -1053,6 +1154,13 @@ class MemoryD1 {
         if (normalized === 'select id from feedback_events where id = ?') {
             const row = this.tables.feedback_events.get(values[0]);
             return ok(row ? [{ id: row.id }] : []);
+        }
+        if (
+            normalized ===
+            'select actor_type, actor_id from feedback_events where id = ? and issue_id = ?'
+        ) {
+            const row = this.tables.feedback_events.get(values[0]);
+            return ok(row && row.issue_id === values[1] ? [{ ...row }] : []);
         }
 
         // --- feedback_issues updates (parsed from the SET clause so new
@@ -5690,7 +5798,17 @@ describe('feedback workbench V2 Run and Callback', () => {
     }
 
     /** Runs the real Workflow body against a minimal durable-step stub. */
-    async function runWorkflow(env, { issueId, generation = 1, deliveryId = null, provider = '' }) {
+    async function runWorkflow(
+        env,
+        {
+            issueId,
+            generation = 1,
+            deliveryId = null,
+            eventId = null,
+            eventType = 'status.changed',
+            provider = '',
+        }
+    ) {
         const step = {
             async do(name, configOrCallback, maybeCallback) {
                 const callback =
@@ -5706,7 +5824,15 @@ describe('feedback workbench V2 Run and Callback', () => {
             return await workflow.run(
                 {
                     instanceId: `${issueId}:${generation}`,
-                    payload: { issueId, generation, deliveryId, provider, contextVersion: 1 },
+                    payload: {
+                        issueId,
+                        generation,
+                        deliveryId,
+                        eventId,
+                        eventType,
+                        provider,
+                        contextVersion: 1,
+                    },
                 },
                 step
             );
@@ -5755,6 +5881,106 @@ describe('feedback workbench V2 Run and Callback', () => {
         }
         const run = Array.from(env.FEEDBACK_DB.tables.feedback_runs.values())[0];
         return { env, run, workflowResult: result };
+    }
+
+    async function createAutoDeliverRunEnv() {
+        const triggerEventId = 'evt_trusted_auto_delivery';
+        const env = createV2Env(
+            {},
+            {
+                feedback_issues: [
+                    createD1IssueRow({
+                        status: 'queued',
+                        business_type: 'bug',
+                        scope: 'small',
+                        automation_decision: 'auto_fix',
+                    }),
+                ],
+                feedback_events: [
+                    {
+                        id: triggerEventId,
+                        issue_id: feedbackKey,
+                        sequence: 1,
+                        type: 'status.changed',
+                        actor_type: 'admin',
+                        actor_id: null,
+                        visibility: 'public',
+                        run_id: null,
+                        occurred_at: '2026-08-01T09:00:00.000Z',
+                        body_json: '{}',
+                        metadata_json: '{}',
+                        legacy_hash: null,
+                    },
+                ],
+                feedback_settings: [
+                    {
+                        name: 'runners',
+                        value_json: JSON.stringify({
+                            defaultProvider: 'codex',
+                            providers: {
+                                codex: {
+                                    connectionState: 'connected',
+                                    lastTestResult: { ok: true },
+                                },
+                            },
+                        }),
+                        version: 1,
+                        updated_at: '2026-08-01T08:59:00.000Z',
+                        updated_by: 'admin',
+                    },
+                ],
+            }
+        );
+        Object.assign(env, {
+            FEEDBACK_AUTO_DELIVER_ENABLED: 'true',
+            FEEDBACK_AUTO_DELIVER_PREFLIGHT_OK: 'true',
+            FEEDBACK_CALLBACK_ORIGIN: 'https://worker.test',
+            FEEDBACK_GITHUB_REPOSITORY: 'acme/gantt-task-editor',
+            FEEDBACK_GITHUB_TOKEN: 'ghp_test',
+            FEEDBACK_RELEASE_TOKEN_SECRET: 'unit-test-secret',
+        });
+        const fetchSpy = vi
+            .spyOn(globalThis, 'fetch')
+            .mockResolvedValue(new Response(null, { status: 204 }));
+        try {
+            await runWorkflow(env, { issueId: feedbackKey, eventId: triggerEventId });
+        } finally {
+            fetchSpy.mockRestore();
+        }
+        const run = Array.from(env.FEEDBACK_DB.tables.feedback_runs.values())[0];
+        return { env, run };
+    }
+
+    async function completedRunBody(runId, changedFiles, verificationOverrides = {}) {
+        const manifest = await attachDiffManifestHash({
+            specVersion: '1.0',
+            repository: 'acme/gantt-task-editor',
+            baseRef: 'master',
+            candidateRef: `feedback/candidate/${runId.replace(/[^a-zA-Z0-9_-]/g, '-')}`,
+            baseCommit: 'base111',
+            changeCommit: 'change222',
+            changedFiles,
+            requiresCandidateReview: [],
+            qualityTier: 1,
+            visualEvidenceRequired: false,
+            autoDeliverAllowed: true,
+        });
+
+        return {
+            eventId: `cb_done_${changedFiles.join('_')}`,
+            type: 'run.completed',
+            payload: {
+                summary: '实现与验证完成',
+                verification: {
+                    targetedTests: { passed: true },
+                    build: { passed: true },
+                    playwright: { required: true, passed: true },
+                    visualEvidence: { required: false, present: false },
+                    ...verificationOverrides,
+                },
+                diffManifest: manifest,
+            },
+        };
     }
 
     async function callbackTokenFor(env, runId) {
@@ -5822,6 +6048,189 @@ describe('feedback workbench V2 Run and Callback', () => {
         for (const [classification, expected] of cases) {
             const { run } = await createRunEnv(classification);
             expect(run.policy, JSON.stringify(classification)).toBe(expected);
+        }
+    });
+
+    it('[SCN-FWB-022] selects auto_deliver only for a trusted small auto-fix with healthy preflight', async () => {
+        const triggerEventId = 'evt_admin_auto_fix';
+        const env = createV2Env(
+            {},
+            {
+                feedback_issues: [
+                    createD1IssueRow({
+                        status: 'queued',
+                        business_type: 'bug',
+                        scope: 'small',
+                        automation_decision: 'auto_fix',
+                    }),
+                ],
+                feedback_events: [
+                    {
+                        id: triggerEventId,
+                        issue_id: feedbackKey,
+                        sequence: 1,
+                        type: 'status.changed',
+                        actor_type: 'admin',
+                        actor_id: null,
+                        visibility: 'public',
+                        run_id: null,
+                        occurred_at: '2026-08-01T09:00:00.000Z',
+                        body_json: '{}',
+                        metadata_json: '{}',
+                        legacy_hash: null,
+                    },
+                ],
+                feedback_settings: [
+                    {
+                        name: 'runners',
+                        value_json: JSON.stringify({
+                            defaultProvider: 'codex',
+                            providers: {
+                                codex: {
+                                    connectionState: 'connected',
+                                    lastTestResult: { ok: true },
+                                },
+                            },
+                        }),
+                        version: 1,
+                        updated_at: '2026-08-01T08:59:00.000Z',
+                        updated_by: 'admin',
+                    },
+                ],
+            }
+        );
+        Object.assign(env, {
+            FEEDBACK_AUTO_DELIVER_ENABLED: 'true',
+            FEEDBACK_AUTO_DELIVER_PREFLIGHT_OK: 'true',
+            FEEDBACK_CALLBACK_ORIGIN: 'https://worker.test',
+            FEEDBACK_GITHUB_REPOSITORY: 'acme/gantt-task-editor',
+            FEEDBACK_GITHUB_TOKEN: 'ghp_test',
+            FEEDBACK_RELEASE_TOKEN_SECRET: 'unit-test-secret',
+        });
+        const fetchSpy = vi
+            .spyOn(globalThis, 'fetch')
+            .mockResolvedValue(new Response(null, { status: 204 }));
+        try {
+            await runWorkflow(env, { issueId: feedbackKey, eventId: triggerEventId });
+        } finally {
+            fetchSpy.mockRestore();
+        }
+
+        const run = Array.from(env.FEEDBACK_DB.tables.feedback_runs.values())[0];
+        expect(run.delivery_mode).toBe('auto_deliver');
+    });
+
+    it('[SCN-FWB-022] allows named internal actors but keeps other unsafe triggers in Candidate review', async () => {
+        const cases = [
+            {
+                actorType: 'user',
+                actorId: 'trusted-operator',
+                allowlist: 'trusted-operator',
+                scope: 'small',
+                decision: 'auto_fix',
+                healthy: true,
+                expected: 'auto_deliver',
+            },
+            {
+                actorType: 'user',
+                scope: 'small',
+                decision: 'auto_fix',
+                healthy: true,
+                expected: 'candidate_review',
+            },
+            {
+                actorType: 'admin',
+                scope: 'medium',
+                decision: 'auto_fix',
+                healthy: true,
+                expected: 'candidate_review',
+            },
+            {
+                actorType: 'admin',
+                scope: 'small',
+                decision: '',
+                healthy: true,
+                expected: 'candidate_review',
+            },
+            {
+                actorType: 'admin',
+                scope: 'small',
+                decision: 'auto_fix',
+                healthy: false,
+                expected: 'candidate_review',
+            },
+        ];
+
+        for (const [index, testCase] of cases.entries()) {
+            const triggerEventId = `evt_candidate_review_${index}`;
+            const env = createV2Env(
+                {},
+                {
+                    feedback_issues: [
+                        createD1IssueRow({
+                            status: 'queued',
+                            business_type: 'bug',
+                            scope: testCase.scope,
+                            automation_decision: testCase.decision,
+                        }),
+                    ],
+                    feedback_events: [
+                        {
+                            id: triggerEventId,
+                            issue_id: feedbackKey,
+                            sequence: 1,
+                            type: 'status.changed',
+                            actor_type: testCase.actorType,
+                            actor_id: testCase.actorId || null,
+                            visibility: 'public',
+                            run_id: null,
+                            occurred_at: '2026-08-01T09:00:00.000Z',
+                            body_json: '{}',
+                            metadata_json: '{}',
+                            legacy_hash: null,
+                        },
+                    ],
+                    feedback_settings: [
+                        {
+                            name: 'runners',
+                            value_json: JSON.stringify({
+                                defaultProvider: 'codex',
+                                providers: {
+                                    codex: {
+                                        connectionState: testCase.healthy
+                                            ? 'connected'
+                                            : 'unverified',
+                                        lastTestResult: { ok: testCase.healthy },
+                                    },
+                                },
+                            }),
+                            version: 1,
+                            updated_at: '2026-08-01T08:59:00.000Z',
+                            updated_by: 'admin',
+                        },
+                    ],
+                }
+            );
+            Object.assign(env, {
+                FEEDBACK_AUTO_DELIVER_ENABLED: 'true',
+                FEEDBACK_AUTO_DELIVER_PREFLIGHT_OK: 'true',
+                FEEDBACK_CALLBACK_ORIGIN: 'https://worker.test',
+                FEEDBACK_GITHUB_REPOSITORY: 'acme/gantt-task-editor',
+                FEEDBACK_GITHUB_TOKEN: 'ghp_test',
+                FEEDBACK_RELEASE_TOKEN_SECRET: 'unit-test-secret',
+                FEEDBACK_AUTO_DELIVER_ACTOR_ALLOWLIST: testCase.allowlist || '',
+            });
+            const fetchSpy = vi
+                .spyOn(globalThis, 'fetch')
+                .mockResolvedValue(new Response(null, { status: 204 }));
+            try {
+                await runWorkflow(env, { issueId: feedbackKey, eventId: triggerEventId });
+            } finally {
+                fetchSpy.mockRestore();
+            }
+
+            const run = Array.from(env.FEEDBACK_DB.tables.feedback_runs.values())[0];
+            expect(run.delivery_mode, JSON.stringify(testCase)).toBe(testCase.expected);
         }
     });
 
@@ -6013,12 +6422,15 @@ describe('feedback workbench V2 Run and Callback', () => {
                     type: 'run.completed',
                     payload: {
                         summary: '实现完成',
-                        diffManifest: {
+                        diffManifest: await attachDiffManifestHash({
+                            specVersion: '1.0',
+                            repository: 'acme/gantt-task-editor',
+                            baseRef: 'master',
+                            candidateRef: `feedback/candidate/${run.id}`,
                             baseCommit: 'abc123',
                             changeCommit: 'def456',
-                            diffManifestSha256: 'hash',
                             changedFiles: ['src/features/gantt/domain/link-ops.js'],
-                        },
+                        }),
                     },
                 },
                 token
@@ -6221,6 +6633,374 @@ describe('feedback workbench V2 Run and Callback', () => {
         expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).current_design_id).toBe(
             response.designId
         );
+    });
+
+    it('[SCN-FWB-022] auto-delivers a low-risk verified Candidate into a dispatched Release', async () => {
+        const { env, run } = await createAutoDeliverRunEnv();
+        const token = await callbackTokenFor(env, run.id);
+        const fetchSpy = vi
+            .spyOn(globalThis, 'fetch')
+            .mockResolvedValue(new Response(null, { status: 204 }));
+        let completed;
+        try {
+            completed = await json(
+                await postCallback(
+                    env,
+                    run.id,
+                    await completedRunBody(run.id, [
+                        'src/utils/time-formatter.js',
+                        'tests/unit/time-formatter.test.js',
+                    ]),
+                    token
+                )
+            );
+        } finally {
+            fetchSpy.mockRestore();
+        }
+
+        const candidate = env.FEEDBACK_DB.tables.feedback_candidates.get(completed.candidateId);
+        const release = Array.from(env.FEEDBACK_DB.tables.feedback_releases.values())[0];
+        expect(completed.deliveryMode).toBe('auto_deliver');
+        expect(completed.autoDelivery).toEqual(
+            expect.objectContaining({
+                dispatched: true,
+                releaseId: release.id,
+                workflowFile: 'feedback-delivery.yml',
+            })
+        );
+        expect(JSON.stringify(completed)).not.toContain('releaseToken');
+        expect(candidate.status).toBe('integrating');
+        expect(release.candidate_id).toBe(candidate.id);
+        expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe('testing');
+        expect(env.FEEDBACK_DB.tables.feedback_human_actions.size).toBe(0);
+    });
+
+    it('[SCN-FWB-022] downgrades mixed deployment surfaces and still wakes the waiting Workflow', async () => {
+        const { env, run } = await createAutoDeliverRunEnv();
+        const workflowSignals = [];
+        env.FEEDBACK_WORKFLOW = {
+            async get(id) {
+                return {
+                    async sendEvent(event) {
+                        workflowSignals.push({ id, event });
+                    },
+                };
+            },
+        };
+
+        const response = await postCallback(
+            env,
+            run.id,
+            await completedRunBody(run.id, [
+                'workers/feedback-hook.js',
+                'src/utils/time-formatter.js',
+            ]),
+            await callbackTokenFor(env, run.id)
+        );
+        const completed = await json(response);
+
+        expect(response.status).toBe(201);
+        expect(completed.deliveryMode).toBe('candidate_review');
+        expect(completed.autoDelivery).toEqual(
+            expect.objectContaining({
+                dispatched: false,
+                reason: 'FEEDBACK_MULTIPLE_DEPLOYMENT_TARGETS',
+            })
+        );
+        expect(completed.workflowNotification).toEqual(expect.objectContaining({ sent: true }));
+        expect(workflowSignals).toEqual([
+            expect.objectContaining({
+                id: run.workflow_id,
+                event: expect.objectContaining({
+                    type: 'feedback-run-result',
+                    payload: expect.objectContaining({
+                        runId: run.id,
+                        callbackType: 'run.completed',
+                    }),
+                }),
+            }),
+        ]);
+        expect(env.FEEDBACK_DB.tables.feedback_releases.size).toBe(0);
+        expect(env.FEEDBACK_DB.tables.feedback_candidates.get(completed.candidateId).status).toBe(
+            'awaiting_review'
+        );
+        expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe('needs_human');
+    });
+
+    it('[SCN-FWB-022] downgrades Tier 3 Candidates to an exact review HumanAction', async () => {
+        const { env, run } = await createAutoDeliverRunEnv();
+        const completed = await json(
+            await postCallback(
+                env,
+                run.id,
+                await completedRunBody(run.id, ['src/core/store.js', 'tests/unit/store.test.js']),
+                await callbackTokenFor(env, run.id)
+            )
+        );
+
+        const candidate = env.FEEDBACK_DB.tables.feedback_candidates.get(completed.candidateId);
+        const action = Array.from(env.FEEDBACK_DB.tables.feedback_human_actions.values())[0];
+        expect(completed.deliveryMode).toBe('candidate_review');
+        expect(completed.autoDelivery).toEqual(
+            expect.objectContaining({ dispatched: false, reason: 'QUALITY_TIER_REQUIRES_REVIEW' })
+        );
+        expect(candidate.status).toBe('awaiting_review');
+        expect(action).toEqual(
+            expect.objectContaining({
+                type: 'review_required',
+                candidate_id: candidate.id,
+                status: 'active',
+            })
+        );
+        expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey)).toEqual(
+            expect.objectContaining({
+                status: 'needs_human',
+                active_human_action_id: action.id,
+            })
+        );
+        expect(env.FEEDBACK_DB.tables.feedback_releases.size).toBe(0);
+    });
+
+    it('[SCN-FWB-022] downgrades a visual Candidate when fresh visual evidence is missing', async () => {
+        const { env, run } = await createAutoDeliverRunEnv();
+        const completed = await json(
+            await postCallback(
+                env,
+                run.id,
+                await completedRunBody(run.id, ['workers/feedback-workbench-ui.js'], {
+                    visualEvidence: { required: true, present: false },
+                }),
+                await callbackTokenFor(env, run.id)
+            )
+        );
+
+        expect(completed.deliveryMode).toBe('candidate_review');
+        expect(completed.autoDelivery).toEqual(
+            expect.objectContaining({ dispatched: false, reason: 'VISUAL_EVIDENCE_REQUIRED' })
+        );
+        expect(env.FEEDBACK_DB.tables.feedback_human_actions.size).toBe(1);
+        expect(env.FEEDBACK_DB.tables.feedback_releases.size).toBe(0);
+    });
+
+    it('[SCN-FWB-022] keeps a retryable Release resumable and continues it on Callback replay', async () => {
+        const { env, run } = await createAutoDeliverRunEnv();
+        const createdWorkflows = [];
+        env.FEEDBACK_WORKFLOW = {
+            async create(options) {
+                createdWorkflows.push(options);
+                return { id: options.id };
+            },
+            async get() {
+                return { async sendEvent() {} };
+            },
+        };
+        const completionBody = await completedRunBody(run.id, ['src/utils/time-formatter.js']);
+        const fetchSpy = vi
+            .spyOn(globalThis, 'fetch')
+            .mockResolvedValueOnce(new Response(null, { status: 503 }))
+            .mockResolvedValueOnce(new Response(null, { status: 204 }));
+        let completed;
+        let replayed;
+        try {
+            completed = await json(
+                await postCallback(env, run.id, completionBody, await callbackTokenFor(env, run.id))
+            );
+            replayed = await json(
+                await postCallback(env, run.id, completionBody, await callbackTokenFor(env, run.id))
+            );
+        } finally {
+            fetchSpy.mockRestore();
+        }
+
+        const candidate = env.FEEDBACK_DB.tables.feedback_candidates.get(completed.candidateId);
+        const release = Array.from(env.FEEDBACK_DB.tables.feedback_releases.values())[0];
+        expect(completed.autoDelivery).toEqual(
+            expect.objectContaining({
+                dispatched: false,
+                reason: 'GITHUB_HTTP_503',
+                resumable: true,
+                releaseId: release.id,
+            })
+        );
+        expect(replayed).toEqual(
+            expect.objectContaining({
+                duplicate: true,
+                autoDelivery: expect.objectContaining({
+                    dispatched: true,
+                    releaseId: release.id,
+                }),
+            })
+        );
+        expect(candidate.status).toBe('integrating');
+        expect(release).toEqual(
+            expect.objectContaining({ status: 'integrating', error_code: null })
+        );
+        expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey)).toEqual(
+            expect.objectContaining({
+                status: 'testing',
+            })
+        );
+        expect(
+            env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).active_human_action_id
+        ).toBeFalsy();
+        expect(env.FEEDBACK_DB.tables.feedback_human_actions.size).toBe(0);
+        expect(createdWorkflows).toEqual([
+            expect.objectContaining({
+                id: expect.stringMatching(/^feedback-release-retry-rel_/),
+                params: expect.objectContaining({ releaseId: release.id }),
+            }),
+        ]);
+    });
+
+    it('[SCN-FWB-013] wakes the same Release at the durable 1/5/15 minute retry points', async () => {
+        const { env, run } = await createAutoDeliverRunEnv();
+        const createdWorkflows = [];
+        env.FEEDBACK_WORKFLOW = {
+            async create(options) {
+                createdWorkflows.push(options);
+                return { id: options.id };
+            },
+            async get() {
+                return { async sendEvent() {} };
+            },
+        };
+        const fetchSpy = vi
+            .spyOn(globalThis, 'fetch')
+            .mockResolvedValueOnce(new Response(null, { status: 503 }))
+            .mockResolvedValueOnce(new Response(null, { status: 503 }))
+            .mockResolvedValueOnce(new Response(null, { status: 503 }))
+            .mockResolvedValueOnce(new Response(null, { status: 204 }));
+        const sleeps = [];
+        let completed;
+        let retryResult;
+        let fetchCalls = 0;
+        try {
+            completed = await json(
+                await postCallback(
+                    env,
+                    run.id,
+                    await completedRunBody(run.id, ['src/utils/time-formatter.js']),
+                    await callbackTokenFor(env, run.id)
+                )
+            );
+            const scheduled = createdWorkflows[0];
+            retryResult = await new FeedbackWorkflow({}, env).run(
+                { instanceId: scheduled.id, payload: scheduled.params },
+                {
+                    async sleep(_name, duration) {
+                        sleeps.push(duration);
+                    },
+                    async do(_name, callback) {
+                        return callback();
+                    },
+                }
+            );
+            fetchCalls = fetchSpy.mock.calls.length;
+        } finally {
+            fetchSpy.mockRestore();
+        }
+
+        expect(completed.autoDelivery).toEqual(
+            expect.objectContaining({ dispatched: false, resumable: true })
+        );
+        expect(sleeps).toEqual(['1 minute', '5 minutes', '15 minutes']);
+        expect(retryResult).toEqual(
+            expect.objectContaining({
+                releaseId: completed.autoDelivery.releaseId,
+                dispatched: true,
+            })
+        );
+        expect(fetchCalls).toBe(4);
+        expect(
+            env.FEEDBACK_DB.tables.feedback_releases.get(completed.autoDelivery.releaseId)
+                .error_code
+        ).toBeNull();
+    });
+
+    it('[SCN-FWB-022] blocks a permanent Release dispatch rejection for human repair', async () => {
+        const { env, run } = await createAutoDeliverRunEnv();
+        const fetchSpy = vi
+            .spyOn(globalThis, 'fetch')
+            .mockResolvedValue(new Response(null, { status: 401 }));
+        let completed;
+        try {
+            completed = await json(
+                await postCallback(
+                    env,
+                    run.id,
+                    await completedRunBody(run.id, ['src/utils/time-formatter.js']),
+                    await callbackTokenFor(env, run.id)
+                )
+            );
+        } finally {
+            fetchSpy.mockRestore();
+        }
+
+        const candidate = env.FEEDBACK_DB.tables.feedback_candidates.get(completed.candidateId);
+        const release = Array.from(env.FEEDBACK_DB.tables.feedback_releases.values())[0];
+        const action = Array.from(env.FEEDBACK_DB.tables.feedback_human_actions.values())[0];
+        expect(completed.autoDelivery).toEqual(
+            expect.objectContaining({ dispatched: false, reason: 'GITHUB_HTTP_401' })
+        );
+        expect(candidate.status).toBe('failed');
+        expect(release).toEqual(
+            expect.objectContaining({ status: 'failed', error_code: 'GITHUB_HTTP_401' })
+        );
+        expect(action).toEqual(
+            expect.objectContaining({ type: 'blocked_external', candidate_id: candidate.id })
+        );
+    });
+
+    it('[SCN-FWB-022] rejects a tampered manifest hash before creating a Candidate', async () => {
+        const { env, run } = await createAutoDeliverRunEnv();
+        const body = await completedRunBody(run.id, ['src/utils/time-formatter.js']);
+        body.payload.diffManifest.diffManifestSha256 = '0'.repeat(64);
+
+        const completed = await json(
+            await postCallback(env, run.id, body, await callbackTokenFor(env, run.id))
+        );
+
+        expect(completed.gate).toEqual(
+            expect.objectContaining({
+                allowed: false,
+                violations: [expect.objectContaining({ code: 'DIFF_MANIFEST_HASH_MISMATCH' })],
+            })
+        );
+        expect(completed.runStatus).toBe('failed');
+        expect(env.FEEDBACK_DB.tables.feedback_candidates.size).toBe(0);
+        expect(env.FEEDBACK_DB.tables.feedback_releases.size).toBe(0);
+    });
+
+    it('[SCN-FWB-022] rejects a self-consistent manifest for a different repository', async () => {
+        const { env, run } = await createAutoDeliverRunEnv();
+        const body = await completedRunBody(run.id, ['src/utils/time-formatter.js']);
+        body.payload.diffManifest = await attachDiffManifestHash({
+            ...body.payload.diffManifest,
+            repository: 'acme/other-repository',
+        });
+        const fetchSpy = vi
+            .spyOn(globalThis, 'fetch')
+            .mockResolvedValue(new Response(null, { status: 204 }));
+        let completed;
+        try {
+            completed = await json(
+                await postCallback(env, run.id, body, await callbackTokenFor(env, run.id))
+            );
+        } finally {
+            fetchSpy.mockRestore();
+        }
+
+        expect(completed.gate).toEqual(
+            expect.objectContaining({
+                allowed: false,
+                violations: [
+                    expect.objectContaining({ code: 'DIFF_MANIFEST_REPOSITORY_MISMATCH' }),
+                ],
+            })
+        );
+        expect(completed.runStatus).toBe('failed');
+        expect(env.FEEDBACK_DB.tables.feedback_candidates.size).toBe(0);
+        expect(env.FEEDBACK_DB.tables.feedback_releases.size).toBe(0);
     });
 
     it('[SCN-FWB-020] rejects a design_decision Callback without acceptance criteria', async () => {
@@ -6899,15 +7679,18 @@ describe('feedback workbench V2 GitHub dispatch', () => {
                     type: 'run.completed',
                     payload: {
                         summary: '已完成',
-                        diffManifest: {
+                        diffManifest: await attachDiffManifestHash({
+                            specVersion: '1.0',
+                            repository: 'acme/gantt-task-editor',
+                            baseRef: 'master',
+                            candidateRef: `feedback/candidate/${runId}`,
                             baseCommit: 'abc123',
                             changeCommit: 'def456',
-                            diffManifestSha256: 'hash',
                             changedFiles: [
                                 'src/features/gantt/domain/scheduler.js',
                                 'tests/e2e/agent-journeys/expected/import-project-plan.json',
                             ],
-                        },
+                        }),
                     },
                 }),
             },
@@ -6991,12 +7774,15 @@ describe('feedback workbench V2 GitHub dispatch', () => {
                         type: 'run.completed',
                         payload: {
                             summary: '修复完成，回归通过',
-                            diffManifest: {
+                            diffManifest: await attachDiffManifestHash({
+                                specVersion: '1.0',
+                                repository: 'acme/gantt-task-editor',
+                                baseRef: 'master',
+                                candidateRef: `feedback/candidate/${runId}`,
                                 baseCommit: 'abc123',
                                 changeCommit: 'def456',
-                                diffManifestSha256: 'hash',
                                 changedFiles: ['src/features/gantt/domain/link-ops.js'],
-                            },
+                            }),
                         },
                     }),
                 },
@@ -7012,6 +7798,10 @@ describe('feedback workbench V2 GitHub dispatch', () => {
 });
 
 describe('feedback workbench V2 Candidate and Release', () => {
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
     async function adminHeaders(env) {
         const session = await json(
             await request(
@@ -7066,6 +7856,7 @@ describe('feedback workbench V2 Candidate and Release', () => {
         env.FEEDBACK_GITHUB_REPOSITORY = 'acme/gantt-task-editor';
         env.FEEDBACK_GITHUB_TOKEN = 'ghp_test';
         env.FEEDBACK_GITHUB_REF = 'master';
+        env.FEEDBACK_RELEASE_TOKEN_SECRET = 'unit-test-secret';
 
         const step = {
             async do(name, configOrCallback, maybeCallback) {
@@ -7091,10 +7882,19 @@ describe('feedback workbench V2 Candidate and Release', () => {
         } catch (error) {
             if (error.message !== 'WORKFLOW_TEST_STOP_AFTER_DISPATCH') throw error;
         } finally {
-            fetchSpy.mockRestore();
+            fetchSpy.mockClear();
         }
 
         const run = Array.from(env.FEEDBACK_DB.tables.feedback_runs.values())[0];
+        const manifest = await attachDiffManifestHash({
+            specVersion: '1.0',
+            repository: 'acme/gantt-task-editor',
+            baseRef: 'master',
+            candidateRef: `feedback/candidate/${run.id}`,
+            baseCommit: 'base111',
+            changeCommit: 'change222',
+            changedFiles,
+        });
         const completed = await json(
             await request(
                 `/api/feedback/runs/${encodeURIComponent(run.id)}/events`,
@@ -7110,13 +7910,7 @@ describe('feedback workbench V2 Candidate and Release', () => {
                         payload: {
                             summary: '修复完成',
                             verification: { targetedTests: 'passed', playwright: 'passed' },
-                            diffManifest: {
-                                repository: 'acme/gantt-task-editor',
-                                baseCommit: 'base111',
-                                changeCommit: 'change222',
-                                diffManifestSha256: 'sha-abc',
-                                changedFiles,
-                            },
+                            diffManifest: manifest,
                         },
                     }),
                 },
@@ -7124,7 +7918,14 @@ describe('feedback workbench V2 Candidate and Release', () => {
             )
         );
 
-        return { env, run, candidateId: completed.candidateId, headers: await adminHeaders(env) };
+        return {
+            env,
+            run,
+            manifest,
+            candidateId: completed.candidateId,
+            headers: await adminHeaders(env),
+            releaseFetchSpy: fetchSpy,
+        };
     }
 
     async function approveCandidate(env, headers, candidateId) {
@@ -7162,26 +7963,59 @@ describe('feedback workbench V2 Candidate and Release', () => {
         );
     }
 
+    function exactReleaseIdentity(env, candidateId, release) {
+        const candidate = env.FEEDBACK_DB.tables.feedback_candidates.get(candidateId);
+        return {
+            candidateId,
+            repository: candidate.repository,
+            baseRef: candidate.base_ref,
+            baseCommit: candidate.base_commit,
+            candidateRef: candidate.candidate_ref,
+            changeCommit: candidate.change_commit,
+            diffManifestSha256: candidate.diff_manifest_sha256,
+            deploymentRequired: release.deploymentRequired,
+            deploymentTarget: release.deploymentTarget || '',
+        };
+    }
+
     it('[SCN-FWB-005] registers a Candidate with a recoverable identity', async () => {
-        const { env, run, candidateId } = await createCandidateEnv();
+        const { env, run, manifest, candidateId } = await createCandidateEnv();
         const candidate = env.FEEDBACK_DB.tables.feedback_candidates.get(candidateId);
 
         expect(candidateId).toBeTruthy();
-        expect(candidate.status).toBe('verified');
+        expect(candidate.status).toBe('awaiting_review');
         expect(candidate.run_id).toBe(run.id);
         expect(candidate.repository).toBe('acme/gantt-task-editor');
         expect(candidate.base_commit).toBe('base111');
         expect(candidate.change_commit).toBe('change222');
-        expect(candidate.diff_manifest_sha256).toBe('sha-abc');
+        expect(candidate.diff_manifest_sha256).toBe(manifest.diffManifestSha256);
         // §9.3: identity is repository + commits, never a Runner worktree path.
         expect(candidate.candidate_worktree).toBeFalsy();
         expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).active_candidate_id).toBe(
             candidateId
         );
+        const action = Array.from(env.FEEDBACK_DB.tables.feedback_human_actions.values())[0];
+        expect(action).toEqual(
+            expect.objectContaining({
+                candidate_id: candidateId,
+                run_id: run.id,
+                type: 'review_required',
+                status: 'active',
+            })
+        );
     });
 
     it('[SCN-FWB-021] a superseding Candidate abandons its parent explicitly', async () => {
         const { env, run, candidateId } = await createCandidateEnv();
+
+        env.FEEDBACK_DB.tables.feedback_candidates.set('cnd_newer_but_not_active', {
+            ...env.FEEDBACK_DB.tables.feedback_candidates.get(candidateId),
+            id: 'cnd_newer_but_not_active',
+            change_commit: 'change-decoy',
+            status: 'verified',
+            created_at: '2026-08-02T00:00:00.000Z',
+        });
+        env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).active_candidate_id = candidateId;
 
         // A second Run on the same Issue produces a follow-up Candidate.
         env.FEEDBACK_DB.tables.feedback_runs.set('run_second', {
@@ -7202,13 +8036,15 @@ describe('feedback workbench V2 Candidate and Release', () => {
                         eventId: 'cb_done_2',
                         type: 'run.completed',
                         payload: {
-                            diffManifest: {
+                            diffManifest: await attachDiffManifestHash({
+                                specVersion: '1.0',
                                 repository: 'acme/gantt-task-editor',
+                                baseRef: 'master',
+                                candidateRef: 'feedback/candidate/run_second',
                                 baseCommit: 'base111',
                                 changeCommit: 'change333',
-                                diffManifestSha256: 'sha-def',
                                 changedFiles: ['src/features/gantt/domain/link-ops.js'],
-                            },
+                            }),
                         },
                     }),
                 },
@@ -7221,6 +8057,9 @@ describe('feedback workbench V2 Candidate and Release', () => {
         expect(env.FEEDBACK_DB.tables.feedback_candidates.get(candidateId).status).toBe(
             'abandoned'
         );
+        expect(
+            env.FEEDBACK_DB.tables.feedback_candidates.get('cnd_newer_but_not_active').status
+        ).toBe('verified');
     });
 
     it('[SCN-FWB-021] refuses to deliver a Candidate that was never approved', async () => {
@@ -7257,6 +8096,268 @@ describe('feedback workbench V2 Candidate and Release', () => {
         expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe('testing');
         expect(env.FEEDBACK_DB.tables.feedback_candidates.get(candidateId).status).toBe(
             'integrating'
+        );
+    });
+
+    it('[SCN-FWB-022] admin delivery dispatches the exact Release workflow without a payload callback URL', async () => {
+        const { env, candidateId, headers, releaseFetchSpy } = await createCandidateEnv({
+            changedFiles: ['src/features/feedback/diff-gate.js'],
+        });
+        await approveCandidate(env, headers, candidateId);
+        releaseFetchSpy.mockClear();
+
+        const response = await request(
+            `/api/feedback/candidates/${candidateId}/deliver`,
+            { method: 'POST', headers },
+            env
+        );
+        const release = await json(response);
+
+        expect(response.status).toBe(201);
+        expect(release).toEqual(
+            expect.objectContaining({
+                releaseId: expect.stringMatching(/^rel_/),
+                candidateId,
+                dispatched: true,
+                workflowFile: 'feedback-delivery.yml',
+            })
+        );
+        expect(releaseFetchSpy).toHaveBeenCalledTimes(1);
+        const [dispatchUrl, dispatchOptions] = releaseFetchSpy.mock.calls[0];
+        expect(String(dispatchUrl)).toContain(
+            '/repos/acme/gantt-task-editor/actions/workflows/feedback-delivery.yml/dispatches'
+        );
+        const dispatchBody = JSON.parse(dispatchOptions.body);
+        const payload = JSON.parse(dispatchBody.inputs.payload);
+        expect(dispatchBody.ref).toBe('master');
+        expect(payload).toEqual(
+            expect.objectContaining({
+                releaseId: release.releaseId,
+                candidateId,
+                repository: 'acme/gantt-task-editor',
+                candidateRef: expect.stringMatching(/^feedback\/candidate\/run_/),
+                changeCommit: 'change222',
+            })
+        );
+        expect(payload).not.toHaveProperty('callbackUrl');
+        expect(payload).not.toHaveProperty('releaseToken');
+    });
+
+    it('[SCN-FWB-012] signs Release callbacks with a dedicated secret', async () => {
+        const { env, candidateId, headers } = await createCandidateEnv({
+            changedFiles: ['doc/release-notes.md'],
+        });
+        env.FEEDBACK_RELEASE_TOKEN_SECRET = 'release-only-secret';
+        await approveCandidate(env, headers, candidateId);
+        const release = await json(
+            await request(
+                `/api/feedback/candidates/${candidateId}/deliver`,
+                { method: 'POST', headers },
+                env
+            )
+        );
+        const callback = () =>
+            request(
+                `/api/feedback/releases/${release.releaseId}/events`,
+                {
+                    method: 'POST',
+                    headers: {
+                        Authorization: `Bearer ${release.releaseToken.token}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        eventId: 'release_secret_contract',
+                        type: 'integration.merged',
+                        payload: { candidateId, integrationCommit: 'merge-secret' },
+                    }),
+                },
+                env
+            );
+
+        delete env.FEEDBACK_RELEASE_TOKEN_SECRET;
+        expect((await callback()).status).toBe(401);
+        env.FEEDBACK_RELEASE_TOKEN_SECRET = 'release-only-secret';
+        expect((await callback()).status).toBe(201);
+    });
+
+    it('[SCN-FWB-024] refuses a Candidate that would require both Worker and Pages deployment', async () => {
+        const { env, candidateId, headers } = await createCandidateEnv({
+            changedFiles: ['workers/share-worker.js', 'src/main.js'],
+        });
+        await approveCandidate(env, headers, candidateId);
+
+        const response = await request(
+            `/api/feedback/candidates/${candidateId}/deliver`,
+            { method: 'POST', headers },
+            env
+        );
+
+        expect(response.status).toBe(409);
+        expect(env.FEEDBACK_DB.tables.feedback_releases.size).toBe(0);
+        expect(env.FEEDBACK_DB.tables.feedback_candidates.get(candidateId).status).toBe(
+            'awaiting_review'
+        );
+        expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe('needs_human');
+        const action = Array.from(env.FEEDBACK_DB.tables.feedback_human_actions.values()).find(
+            (item) => item.status === 'active'
+        );
+        expect(action).toEqual(
+            expect.objectContaining({ type: 'review_required', candidate_id: candidateId })
+        );
+    });
+
+    it('[SCN-FWB-023] reconcile dispatches an approved Candidate after its delivery lock clears', async () => {
+        const { env, candidateId, headers, releaseFetchSpy } = await createCandidateEnv({
+            changedFiles: ['src/features/feedback/diff-gate.js'],
+        });
+        await approveCandidate(env, headers, candidateId);
+        env.FEEDBACK_DB.tables.feedback_releases.set('rel_other', {
+            id: 'rel_other',
+            issue_id: 'feedback:other',
+            candidate_id: 'cnd_other',
+            repository: 'acme/gantt-task-editor',
+            remote_default_branch: 'master',
+            status: 'integrating',
+        });
+
+        const queued = await request(
+            `/api/feedback/candidates/${candidateId}/deliver`,
+            { method: 'POST', headers },
+            env
+        );
+        expect(queued.status).toBe(409);
+        env.FEEDBACK_DB.tables.feedback_releases.delete('rel_other');
+        releaseFetchSpy.mockClear();
+
+        const summary = await worker.scheduled(
+            { scheduledTime: Date.now(), cron: '0 3 * * *' },
+            env,
+            { waitUntil: () => {} }
+        );
+
+        expect(summary.resumedReleases).toBe(1);
+        expect(summary.releaseResumeFailures).toBe(0);
+        expect(releaseFetchSpy).toHaveBeenCalledTimes(1);
+        expect(env.FEEDBACK_DB.tables.feedback_candidates.get(candidateId).status).toBe(
+            'integrating'
+        );
+        expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe('testing');
+    });
+
+    it('[SCN-FWB-022] reconcile retries the same Release after a retryable GitHub dispatch failure', async () => {
+        const { env, candidateId, headers, releaseFetchSpy } = await createCandidateEnv({
+            changedFiles: ['src/features/feedback/diff-gate.js'],
+        });
+        await approveCandidate(env, headers, candidateId);
+        releaseFetchSpy.mockReset();
+        releaseFetchSpy
+            .mockResolvedValueOnce(new Response('', { status: 503 }))
+            .mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+        const first = await request(
+            `/api/feedback/candidates/${candidateId}/deliver`,
+            { method: 'POST', headers },
+            env
+        );
+        const failedDispatch = await json(first);
+        expect(first.status).toBe(503);
+        expect(failedDispatch).toEqual(
+            expect.objectContaining({
+                releaseId: expect.stringMatching(/^rel_/),
+                reason: 'GITHUB_HTTP_503',
+                retryable: true,
+                resumable: true,
+            })
+        );
+        expect(env.FEEDBACK_DB.tables.feedback_releases.size).toBe(1);
+
+        const releaseBeforeRetry = env.FEEDBACK_DB.tables.feedback_releases.get(
+            failedDispatch.releaseId
+        );
+        const firstDispatchState = JSON.parse(releaseBeforeRetry.verification_json)._dispatch;
+        expect(
+            new Date(firstDispatchState.nextAttemptAt).getTime() -
+                new Date(firstDispatchState.lastAttemptAt).getTime()
+        ).toBe(60_000);
+
+        const earlySummary = await worker.scheduled(
+            {
+                scheduledTime: new Date(firstDispatchState.nextAttemptAt).getTime() - 1,
+                cron: '0 3 * * *',
+            },
+            env,
+            { waitUntil: () => {} }
+        );
+        expect(earlySummary.resumedReleases).toBe(0);
+        expect(releaseFetchSpy).toHaveBeenCalledTimes(1);
+
+        const summary = await worker.scheduled(
+            {
+                scheduledTime: new Date(firstDispatchState.nextAttemptAt).getTime(),
+                cron: '0 3 * * *',
+            },
+            env,
+            { waitUntil: () => {} }
+        );
+
+        expect(summary.resumedReleases).toBe(1);
+        expect(summary.releaseResumeFailures).toBe(0);
+        expect(releaseFetchSpy).toHaveBeenCalledTimes(2);
+        expect(env.FEEDBACK_DB.tables.feedback_releases.size).toBe(1);
+        expect(
+            env.FEEDBACK_DB.tables.feedback_releases.get(failedDispatch.releaseId).error_code
+        ).toBeNull();
+    });
+
+    it('[SCN-FWB-013] stops retrying a Release dispatch after the fourth transient failure', async () => {
+        const { env, candidateId, headers, releaseFetchSpy } = await createCandidateEnv({
+            changedFiles: ['src/features/feedback/diff-gate.js'],
+        });
+        await approveCandidate(env, headers, candidateId);
+        releaseFetchSpy.mockReset();
+        releaseFetchSpy.mockResolvedValue(new Response('', { status: 503 }));
+
+        const first = await request(
+            `/api/feedback/candidates/${candidateId}/deliver`,
+            { method: 'POST', headers },
+            env
+        );
+        const { releaseId } = await json(first);
+        expect(first.status).toBe(503);
+
+        const retryDelays = [];
+        for (let attempt = 2; attempt <= 4; attempt += 1) {
+            const release = env.FEEDBACK_DB.tables.feedback_releases.get(releaseId);
+            const dispatchState = JSON.parse(release.verification_json)._dispatch;
+            retryDelays.push(
+                new Date(dispatchState.nextAttemptAt).getTime() -
+                    new Date(dispatchState.lastAttemptAt).getTime()
+            );
+            await worker.scheduled(
+                {
+                    scheduledTime: new Date(dispatchState.nextAttemptAt).getTime(),
+                    cron: '0 3 * * *',
+                },
+                env,
+                { waitUntil: () => {} }
+            );
+        }
+        expect(retryDelays).toEqual([60_000, 5 * 60_000, 15 * 60_000]);
+        await worker.scheduled({ scheduledTime: Date.now() + 5, cron: '0 3 * * *' }, env, {
+            waitUntil: () => {},
+        });
+
+        expect(releaseFetchSpy).toHaveBeenCalledTimes(4);
+        expect(env.FEEDBACK_DB.tables.feedback_releases.get(releaseId)).toEqual(
+            expect.objectContaining({ status: 'failed', error_code: 'GITHUB_HTTP_503' })
+        );
+        expect(env.FEEDBACK_DB.tables.feedback_candidates.get(candidateId).status).toBe('failed');
+        expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe('needs_human');
+        const action = Array.from(env.FEEDBACK_DB.tables.feedback_human_actions.values()).find(
+            (item) => item.status === 'active'
+        );
+        expect(action).toEqual(
+            expect.objectContaining({ type: 'blocked_external', candidate_id: candidateId })
         );
     });
 
@@ -7343,7 +8444,7 @@ describe('feedback workbench V2 Candidate and Release', () => {
                         Authorization: `Bearer ${token}`,
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({ eventId, type, payload }),
+                    body: JSON.stringify({ eventId, type, payload: { candidateId, ...payload } }),
                 },
                 env
             );
@@ -7353,23 +8454,49 @@ describe('feedback workbench V2 Candidate and Release', () => {
         expect(premature.status).toBe(409);
         expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe('testing');
 
-        await send('e1', 'integration.started');
+        await send('e1', 'integration.started', exactReleaseIdentity(env, candidateId, release));
         await send('e2', 'integration.merged', { integrationCommit: 'merge777' });
-        await send('e3', 'integration.verification_completed', { passed: true });
+        await send('e3', 'integration.verification_completed', { passed: false });
+
+        const failedVerification = await send('e4', 'release.completed', {
+            integrationCommit: 'merge777',
+            passed: true,
+        });
+        expect(failedVerification.status).toBe(409);
+        await send('e5', 'integration.verification_completed', { passed: true });
 
         // A Worker-surface Release still needs deployment and smoke.
-        const stillEarly = await send('e4', 'release.completed', { integrationCommit: 'merge777' });
+        const stillEarly = await send('e6', 'release.completed', {
+            integrationCommit: 'merge777',
+            passed: true,
+        });
         expect(stillEarly.status).toBe(409);
 
-        await send('e5', 'deployment.completed', {
-            deploymentId: 'dep_1',
+        const deploymentId = '12345678-1234-4123-8123-123456789abc';
+        await send('e7', 'deployment.completed', {
+            deploymentTarget: 'worker',
+            deploymentId,
             deployedCommit: 'merge777',
         });
-        await send('e6', 'smoke.completed', { passed: true, urls: ['/feedback'] });
+        await send('e8', 'smoke.completed', {
+            passed: true,
+            deploymentTarget: 'worker',
+            deploymentId,
+            deployedCommit: 'merge777',
+            checks: [
+                { path: '/feedback', status: 200, assertion: 'status_2xx' },
+                {
+                    path: '/api/feedback/issues',
+                    status: 401,
+                    assertion: 'protected_auth_required',
+                },
+            ],
+        });
 
         const completed = await json(
-            await send('e7', 'release.completed', {
+            await send('e9', 'release.completed', {
                 integrationCommit: 'merge777',
+                passed: true,
                 summary: '已合并、部署并通过生产 smoke。',
             })
         );
@@ -7431,7 +8558,7 @@ describe('feedback workbench V2 Candidate and Release', () => {
                         Authorization: `Bearer ${token}`,
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({ eventId, type, payload }),
+                    body: JSON.stringify({ eventId, type, payload: { candidateId, ...payload } }),
                 },
                 env
             );
@@ -7439,6 +8566,8 @@ describe('feedback workbench V2 Candidate and Release', () => {
         await send('e1', 'integration.merged', { integrationCommit: 'merge777' });
 
         const mismatch = await send('e2', 'deployment.completed', {
+            deploymentTarget: 'worker',
+            deploymentId: '12345678-1234-4123-8123-123456789abc',
             deployedCommit: 'someother',
         });
 
@@ -7469,24 +8598,245 @@ describe('feedback workbench V2 Candidate and Release', () => {
                         Authorization: `Bearer ${token}`,
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({ eventId, type, payload }),
+                    body: JSON.stringify({ eventId, type, payload: { candidateId, ...payload } }),
                 },
                 env
             );
 
-        await send('e1', 'integration.merged', { integrationCommit: 'merge777' });
-        await send('e2', 'integration.verification_completed', { passed: true });
-        await send('e3', 'deployment.completed', { deployedCommit: 'merge777' });
-        await send('e4', 'smoke.completed', { passed: false, urls: ['/feedback'] });
+        await send('e1', 'integration.started', exactReleaseIdentity(env, candidateId, release));
+        await send('e2', 'integration.merged', { integrationCommit: 'merge777' });
+        await send('e3', 'integration.verification_completed', { passed: true });
+        const deploymentId = '12345678-1234-4123-8123-123456789abc';
+        await send('e4', 'deployment.completed', {
+            deploymentTarget: 'worker',
+            deploymentId,
+            deployedCommit: 'merge777',
+        });
+        await send('e5', 'smoke.completed', {
+            passed: true,
+            deploymentTarget: 'worker',
+            deploymentId,
+            deployedCommit: 'merge777',
+            checks: [
+                { path: '/feedback', status: 302, assertion: 'status_2xx' },
+                {
+                    path: '/api/feedback/issues',
+                    status: 401,
+                    assertion: 'protected_auth_required',
+                },
+            ],
+        });
 
-        const blocked = await send('e5', 'release.completed', { integrationCommit: 'merge777' });
+        const blocked = await send('e6', 'release.completed', {
+            integrationCommit: 'merge777',
+            passed: true,
+        });
         expect(blocked.status).toBe(409);
 
         const failed = await json(
-            await send('e6', 'release.failed', { errorCode: 'smoke_failed' })
+            await send('e7', 'release.failed', { errorCode: 'smoke_failed' })
         );
         expect(failed.issueStatus).toBe('test_failed');
         expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe('test_failed');
+    });
+
+    it('[SCN-FWB-023] routes an integration conflict back to exact Candidate review', async () => {
+        const { env, candidateId, headers } = await createCandidateEnv({
+            changedFiles: ['src/utils/time-formatter.js'],
+        });
+        await approveCandidate(env, headers, candidateId);
+        const release = await json(
+            await request(
+                `/api/feedback/candidates/${candidateId}/deliver`,
+                { method: 'POST', headers },
+                env
+            )
+        );
+
+        const response = await request(
+            `/api/feedback/releases/${release.releaseId}/events`,
+            {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${release.releaseToken.token}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    eventId: 'review_required_conflict',
+                    type: 'release.failed',
+                    payload: {
+                        candidateId,
+                        errorCode: 'review_required',
+                        summary:
+                            'The exact Candidate cannot be applied cleanly to the current base.',
+                    },
+                }),
+            },
+            env
+        );
+        const failed = await json(response);
+
+        expect(response.status).toBe(201);
+        expect(failed.issueStatus).toBe('needs_human');
+        expect(env.FEEDBACK_DB.tables.feedback_releases.get(release.releaseId)).toEqual(
+            expect.objectContaining({ status: 'failed', error_code: 'review_required' })
+        );
+        expect(env.FEEDBACK_DB.tables.feedback_candidates.get(candidateId).status).toBe(
+            'awaiting_review'
+        );
+        expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe('needs_human');
+        expect(
+            Array.from(env.FEEDBACK_DB.tables.feedback_human_actions.values()).find(
+                (item) => item.status === 'active'
+            )
+        ).toEqual(expect.objectContaining({ type: 'review_required', candidate_id: candidateId }));
+    });
+
+    it('[SCN-FWB-022] preserves and retries the exact Release after an external block', async () => {
+        const { env, candidateId, headers, releaseFetchSpy } = await createCandidateEnv();
+        await approveCandidate(env, headers, candidateId);
+        const release = await json(
+            await request(
+                `/api/feedback/candidates/${candidateId}/deliver`,
+                { method: 'POST', headers },
+                env
+            )
+        );
+
+        const failed = await json(
+            await request(
+                `/api/feedback/releases/${release.releaseId}/events`,
+                {
+                    method: 'POST',
+                    headers: {
+                        Authorization: `Bearer ${release.releaseToken.token}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        eventId: 'release_blocked_external',
+                        type: 'release.failed',
+                        payload: {
+                            candidateId,
+                            errorCode: 'blocked_external',
+                            summary: 'Cloudflare deployment credentials are unavailable.',
+                        },
+                    }),
+                },
+                env
+            )
+        );
+
+        const action = Array.from(env.FEEDBACK_DB.tables.feedback_human_actions.values()).find(
+            (item) => item.status === 'active'
+        );
+        expect(failed).toEqual(
+            expect.objectContaining({ issueStatus: 'needs_human', humanActionId: action.id })
+        );
+        expect(action).toEqual(
+            expect.objectContaining({
+                type: 'blocked_external',
+                candidate_id: candidateId,
+            })
+        );
+        expect(env.FEEDBACK_DB.tables.feedback_candidates.get(candidateId).status).toBe(
+            'integrating'
+        );
+        expect(env.FEEDBACK_DB.tables.feedback_releases.get(release.releaseId)).toEqual(
+            expect.objectContaining({ status: 'integrating', error_code: 'blocked_external' })
+        );
+        expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey)).toEqual(
+            expect.objectContaining({
+                status: 'needs_human',
+                active_human_action_id: action.id,
+            })
+        );
+
+        expect(
+            (
+                await request(
+                    `/api/feedback/releases/${release.releaseId}/retry`,
+                    { method: 'POST' },
+                    env
+                )
+            ).status
+        ).toBe(401);
+
+        releaseFetchSpy.mockClear();
+        const retried = await json(
+            await request(
+                `/api/feedback/releases/${release.releaseId}/retry`,
+                { method: 'POST', headers },
+                env
+            )
+        );
+        expect(retried).toEqual(
+            expect.objectContaining({
+                releaseId: release.releaseId,
+                candidateId,
+                dispatched: true,
+            })
+        );
+        expect(releaseFetchSpy).toHaveBeenCalledTimes(1);
+        expect(env.FEEDBACK_DB.tables.feedback_releases.size).toBe(1);
+        expect(env.FEEDBACK_DB.tables.feedback_releases.get(release.releaseId)).toEqual(
+            expect.objectContaining({ status: 'integrating', error_code: null })
+        );
+        expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe('testing');
+        expect(env.FEEDBACK_DB.tables.feedback_human_actions.get(action.id).status).toBe(
+            'resolved'
+        );
+    });
+
+    it('[SCN-FWB-023] automatically retries the same Release after default branch drift', async () => {
+        const { env, candidateId, headers, releaseFetchSpy } = await createCandidateEnv();
+        await approveCandidate(env, headers, candidateId);
+        const release = await json(
+            await request(
+                `/api/feedback/candidates/${candidateId}/deliver`,
+                { method: 'POST', headers },
+                env
+            )
+        );
+        releaseFetchSpy.mockClear();
+
+        const failure = await request(
+            `/api/feedback/releases/${release.releaseId}/events`,
+            {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${release.releaseToken.token}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    eventId: 'release_default_branch_drift',
+                    type: 'release.failed',
+                    payload: { candidateId, errorCode: 'default_branch_drift' },
+                }),
+            },
+            env
+        );
+
+        expect(failure.status).toBe(201);
+        expect(env.FEEDBACK_DB.tables.feedback_candidates.get(candidateId).status).toBe(
+            'integrating'
+        );
+        expect(env.FEEDBACK_DB.tables.feedback_releases.get(release.releaseId)).toEqual(
+            expect.objectContaining({ status: 'integrating', error_code: 'default_branch_drift' })
+        );
+        expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe('testing');
+
+        const summary = await worker.scheduled(
+            { scheduledTime: Date.now(), cron: '0 3 * * *' },
+            env,
+            { waitUntil: () => {} }
+        );
+
+        expect(summary.resumedReleases).toBe(1);
+        expect(releaseFetchSpy).toHaveBeenCalledTimes(1);
+        expect(env.FEEDBACK_DB.tables.feedback_releases.size).toBe(1);
+        expect(
+            env.FEEDBACK_DB.tables.feedback_releases.get(release.releaseId).error_code
+        ).toBeNull();
     });
 
     it('[SCN-FWB-024] a docs-only change needs no deployment', async () => {
@@ -7511,19 +8861,35 @@ describe('feedback workbench V2 Candidate and Release', () => {
                         Authorization: `Bearer ${token}`,
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({ eventId, type, payload }),
+                    body: JSON.stringify({ eventId, type, payload: { candidateId, ...payload } }),
                 },
                 env
             );
 
         expect(release.deploymentRequired).toBe(false);
+        await send('e0', 'integration.started', exactReleaseIdentity(env, candidateId, release));
         await send('e1', 'integration.merged', { integrationCommit: 'merge888' });
         await send('e2', 'integration.verification_completed', { passed: true });
+        const missingCompletionEvidence = await send('e3', 'release.completed', {
+            integrationCommit: 'merge888',
+        });
+        expect(missingCompletionEvidence.status).toBe(409);
         const completed = await json(
-            await send('e3', 'release.completed', { integrationCommit: 'merge888' })
+            await send('e4', 'release.completed', {
+                integrationCommit: 'merge888',
+                passed: true,
+            })
         );
 
         expect(completed.issueStatus).toBe('resolved');
+        const duplicateResponse = await send('e4', 'release.completed', {
+            integrationCommit: 'merge888',
+            passed: true,
+        });
+        expect(duplicateResponse.status).toBe(200);
+        expect(await json(duplicateResponse)).toEqual(
+            expect.objectContaining({ duplicate: true, status: 'succeeded' })
+        );
     });
 
     it('[SCN-FWB-017] a Release event needs its own release-scoped token', async () => {
@@ -7564,6 +8930,54 @@ describe('feedback workbench V2 Candidate and Release', () => {
         expect(wrongAudience.status).toBe(401);
     });
 
+    it('[SCN-FWB-024] authenticates integration.started against the exact Release identity', async () => {
+        const { env, candidateId, headers } = await createCandidateEnv({
+            changedFiles: ['workers/share-worker.js'],
+        });
+        await approveCandidate(env, headers, candidateId);
+        const release = await json(
+            await request(
+                `/api/feedback/candidates/${candidateId}/deliver`,
+                { method: 'POST', headers },
+                env
+            )
+        );
+        const candidate = env.FEEDBACK_DB.tables.feedback_candidates.get(candidateId);
+        const identity = {
+            candidateId,
+            repository: candidate.repository,
+            baseRef: candidate.base_ref,
+            baseCommit: candidate.base_commit,
+            candidateRef: candidate.candidate_ref,
+            changeCommit: candidate.change_commit,
+            diffManifestSha256: candidate.diff_manifest_sha256,
+            deploymentRequired: release.deploymentRequired,
+            deploymentTarget: release.deploymentTarget || '',
+        };
+        const sendStarted = (eventId, payload) =>
+            request(
+                `/api/feedback/releases/${release.releaseId}/events`,
+                {
+                    method: 'POST',
+                    headers: {
+                        Authorization: `Bearer ${release.releaseToken.token}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ eventId, type: 'integration.started', payload }),
+                },
+                env
+            );
+
+        const mismatch = await sendStarted('identity_mismatch', {
+            ...identity,
+            repository: 'attacker/other-repository',
+        });
+        expect(mismatch.status).toBe(409);
+
+        const accepted = await sendStarted('identity_match', identity);
+        expect(accepted.status).toBe(201);
+    });
+
     it('[SCN-FWB-003] a repeated Release event is idempotent', async () => {
         const { env, candidateId, headers } = await createCandidateEnv();
         await approveCandidate(env, headers, candidateId);
@@ -7586,7 +9000,7 @@ describe('feedback workbench V2 Candidate and Release', () => {
                     body: JSON.stringify({
                         eventId: 'e1',
                         type: 'integration.merged',
-                        payload: { integrationCommit: 'merge777' },
+                        payload: { candidateId, integrationCommit: 'merge777' },
                     }),
                 },
                 env
