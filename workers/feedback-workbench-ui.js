@@ -580,6 +580,52 @@ function runnersView() {
                                 需要秒级流式进度、原生会话续接或私有环境时，再升级 SDK
                                 Runner；Callback 契约保持不变。
                             </div>
+
+                            <!-- §19.5 分级自治交付：首屏只给状态、范围和 Release 健康，
+                                 允许名单与交付目标收进折叠详情。 -->
+                            <div class="runner-autodeliver" id="autoDeliverBlock">
+                                <div class="runner-autodeliver-head">
+                                    <span>
+                                        <strong>分级自治交付</strong>
+                                        <small id="autoDeliverScope"></small>
+                                    </span>
+                                    <button type="button" class="switch" role="switch"
+                                        aria-checked="false" data-runner-switch="autoDeliverEnabled"
+                                        id="autoDeliverSwitch" aria-label="启用分级自治交付">
+                                        <span class="switch-dot"></span>
+                                    </button>
+                                </div>
+                                <div class="runner-autodeliver-status">
+                                    <span class="badge" id="autoDeliverBadge">未启用</span>
+                                    <span id="autoDeliverReleaseHealth"></span>
+                                </div>
+                                <div class="field-error" id="autoDeliverBlockedReason"
+                                    role="status" aria-live="polite"></div>
+                                <div class="runner-autodeliver-actions">
+                                    <button type="button" class="ghost" id="runAutoDeliverPreflight">
+                                        运行交付预检
+                                    </button>
+                                    <span id="autoDeliverPreflightState" role="status"
+                                        aria-live="polite"></span>
+                                </div>
+                                <details class="runner-autodeliver-detail">
+                                    <summary>
+                                        <span><small>允许名单、审批级路径与交付目标</small></span>
+                                        ${icon('chevron', 16, 'class="summary-chevron"')}
+                                    </summary>
+                                    <div class="runner-autodeliver-detail-body">
+                                        <div class="field">
+                                            <label for="autoDeliverAllowlist">Actor 允许名单</label>
+                                            <textarea id="autoDeliverAllowlist" rows="2"
+                                                placeholder="每行一个 actor id；管理员与系统触发默认可信"></textarea>
+                                        </div>
+                                        <div class="runner-contract">
+                                            <span>预检项</span>
+                                            <div id="autoDeliverChecks"></div>
+                                        </div>
+                                    </div>
+                                </details>
+                            </div>
                         </div>
                     </details>
                 </div>

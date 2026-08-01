@@ -1487,6 +1487,56 @@
             '<div><span>分发</span><strong>' +
             (runtime.dispatchConfigured ? '已配置' : '未配置') +
             '</strong></div>';
+
+        renderAutoDeliver(settings.autoDeliver || {});
+    }
+
+    /* §19.5: the graded-autonomy block never claims more than the server said.
+       The switch reflects stored state, and a blocked enable shows its reason. */
+    function renderAutoDeliver(autoDeliver) {
+        var scope = autoDeliver.allowedScope || {};
+        var preflight = autoDeliver.preflight || {};
+        var checks = preflight.checks || [];
+
+        $('autoDeliverScope').textContent =
+            '仅限可信触发 + small 范围 + Tier 0～' + (scope.maxQualityTier || 2);
+
+        var badge = $('autoDeliverBadge');
+        badge.textContent = autoDeliver.enabled ? '已启用' : '未启用';
+        badge.className = 'badge ' + (autoDeliver.enabled ? 'green' : '');
+        setSwitch($('autoDeliverSwitch'), autoDeliver.enabled === true);
+
+        var failed = checks.filter(function (check) {
+            return !check.ok;
+        }).length;
+        $('autoDeliverReleaseHealth').textContent = !preflight.checkedAt
+            ? '尚未运行交付预检'
+            : preflight.ok
+              ? '交付预检通过 · ' + checks.length + ' 项'
+              : '交付预检未通过 · ' + failed + '/' + checks.length + ' 项待处理';
+
+        var reason = $('autoDeliverBlockedReason');
+        reason.textContent =
+            autoDeliver.blockedReason === 'PREFLIGHT_REQUIRED'
+                ? '交付预检未通过，开关保持关闭。'
+                : autoDeliver.blockedReason === 'PREFLIGHT_REGRESSED'
+                  ? '交付预检回退，自治交付已自动关闭。'
+                  : '';
+
+        $('autoDeliverAllowlist').value = (autoDeliver.actorAllowlist || []).join('\n');
+        $('autoDeliverChecks').innerHTML = checks.length
+            ? checks
+                  .map(function (check) {
+                      return (
+                          '<code>' +
+                          (check.ok ? '✓ ' : '✗ ') +
+                          escapeHtml(check.label || check.id) +
+                          (check.ok ? '' : ' — ' + escapeHtml(check.reason || '')) +
+                          '</code>'
+                      );
+                  })
+                  .join('')
+            : '<code>尚未运行</code>';
     }
 
     function loadRunners() {
@@ -1571,6 +1621,15 @@
             callbackUrl: $('runnerCallbackUrl').value.trim(),
             providers: {
                 codex: { responsesEndpoint: endpointInput ? endpointInput.value.trim() : '' }
+            },
+            autoDeliver: {
+                enabled: readSwitch('[data-runner-switch="autoDeliverEnabled"]'),
+                actorAllowlist: $('autoDeliverAllowlist')
+                    .value.split(/[\n,]/)
+                    .map(function (item) {
+                        return item.trim();
+                    })
+                    .filter(Boolean)
             }
         };
     }
@@ -1991,6 +2050,33 @@
             markDirty('runners');
         }
         if (event.target.id === 'runnerCallbackUrl') markDirty('runners');
+        if (event.target.id === 'autoDeliverAllowlist') markDirty('runners');
+    });
+
+    /* §19.5: the preflight is a server-side check; the UI only reports what it
+       returned, including the reason a failing check keeps the switch off. */
+    $('runAutoDeliverPreflight').addEventListener('click', function () {
+        var button = $('runAutoDeliverPreflight');
+        var status = $('autoDeliverPreflightState');
+        button.disabled = true;
+        status.className = 'connection-status';
+        status.textContent = '预检中…';
+
+        request('/api/feedback/runners/auto-deliver/preflight', { method: 'POST' })
+            .then(function (payload) {
+                state.runners = payload.settings;
+                renderAutoDeliver(payload.settings.autoDeliver || {});
+                status.className = 'connection-status ' + (payload.preflight.ok ? 'ok' : 'error');
+                status.textContent = payload.preflight.ok ? '预检通过' : '预检未通过';
+            })
+            .catch(function (error) {
+                status.className = 'connection-status error';
+                status.textContent = '预检请求失败';
+                handleAuthError(error);
+            })
+            .then(function () {
+                button.disabled = false;
+            });
     });
 
     $('testHook').addEventListener('click', function () {

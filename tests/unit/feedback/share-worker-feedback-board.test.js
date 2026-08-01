@@ -158,6 +158,13 @@ class MemoryD1 {
         for (const row of seed.feedback_migration_state || []) {
             this.tables.feedback_migration_state.set(row.name, { ...row });
         }
+
+        // The remaining id-keyed tables seed uniformly; §20.1 metrics read them.
+        for (const name of ['feedback_runs', 'feedback_candidates', 'feedback_releases']) {
+            for (const row of seed[name] || []) {
+                this.tables[name].set(row.id, { ...row });
+            }
+        }
     }
 
     prepare(query) {
@@ -418,6 +425,32 @@ class MemoryD1 {
                 return { success: true, results: [{ id }], meta: { changes: 1 } };
             }
             return { success: true, results: [], meta: { changes: 0 } };
+        }
+
+        // §20.1 aggregates read a plain column list from one whole table. Project
+        // the requested columns so the metrics query exercises real row data.
+        const projection = normalized.match(/^select ([a-z0-9_, ]+) from (feedback_[a-z_]+)$/);
+        if (projection) {
+            const table = this.tables[projection[2]];
+            if (!table) throw new Error(`Unsupported in-memory D1 table: ${projection[2]}`);
+            const columns = projection[1].split(',').map((column) => column.trim());
+            const rows = Array.from(table.values());
+            // Real D1 rejects an unknown column. Silently yielding `undefined`
+            // here would let a column-name typo pass unit tests and only fail
+            // against the actual schema, so mirror SQLite and throw.
+            // Fixtures are partial rows, so an unset column is fine; a column no
+            // row has ever heard of is a typo against the real schema.
+            for (const column of columns) {
+                if (rows.length && !rows.some((row) => Object.hasOwn(row, column))) {
+                    throw new Error(`no such column: ${column}`);
+                }
+            }
+            return {
+                success: true,
+                results: rows.map((row) =>
+                    Object.fromEntries(columns.map((column) => [column, row[column]]))
+                ),
+            };
         }
 
         throw new Error(`Unsupported in-memory D1 query: ${normalized}`);
@@ -4330,6 +4363,436 @@ describe('feedback workbench V2 routes', () => {
         expect(payload.settings.providers.codex.connectionState).toBe('unverified');
     });
 
+    it('[SCN-FWB-016] dispatches the real minimal Action smoke when GitHub is configured', async () => {
+        const env = createV2Env();
+        env.FEEDBACK_GITHUB_REPOSITORY = 'acme/gantt';
+        env.FEEDBACK_GITHUB_TOKEN = 'gh-token';
+        env.FEEDBACK_CALLBACK_ORIGIN = 'https://workbench.example.com';
+        const headers = await adminHeaders(env);
+
+        const fetchSpy = vi
+            .spyOn(globalThis, 'fetch')
+            .mockResolvedValue(new Response(null, { status: 204 }));
+        try {
+            const response = await request(
+                '/api/feedback/runners/test',
+                { method: 'POST', headers, body: JSON.stringify({ provider: 'codex' }) },
+                env
+            );
+            const payload = await json(response);
+
+            // §19.5: a dispatched smoke is "testing", never an invented success.
+            expect(response.status).toBe(202);
+            expect(payload.result.ok).toBe(false);
+            expect(payload.result.status).toBe('running');
+            expect(payload.result.smokeId).toMatch(/^smk_[0-9a-f-]{36}$/i);
+            expect(payload.settings.providers.codex.connectionState).toBe('testing');
+
+            const [url, init] = fetchSpy.mock.calls[0];
+            expect(url).toBe(
+                'https://api.github.com/repos/acme/gantt/actions/workflows/feedback-runner-smoke.yml/dispatches'
+            );
+            const dispatched = JSON.parse(JSON.parse(init.body).inputs.payload);
+            expect(dispatched.provider).toBe('codex');
+            expect(dispatched.action).toBe('openai/codex-action@v1');
+            expect(dispatched.smokeId).toBe(payload.result.smokeId);
+            expect(dispatched.callbackUrl).toContain(payload.result.smokeId);
+            expect(dispatched.callbackToken).toBeTruthy();
+        } finally {
+            fetchSpy.mockRestore();
+        }
+    });
+
+    it('[SCN-FWB-016] records a passing smoke result and marks the provider connected', async () => {
+        const env = createV2Env();
+        env.FEEDBACK_GITHUB_REPOSITORY = 'acme/gantt';
+        env.FEEDBACK_GITHUB_TOKEN = 'gh-token';
+        env.FEEDBACK_CALLBACK_ORIGIN = 'https://workbench.example.com';
+        const headers = await adminHeaders(env);
+
+        const fetchSpy = vi
+            .spyOn(globalThis, 'fetch')
+            .mockResolvedValue(new Response(null, { status: 204 }));
+        let smokeId = '';
+        let smokeToken = '';
+        try {
+            const started = await json(
+                await request(
+                    '/api/feedback/runners/test',
+                    { method: 'POST', headers, body: JSON.stringify({ provider: 'codex' }) },
+                    env
+                )
+            );
+            smokeId = started.result.smokeId;
+            smokeToken = JSON.parse(
+                JSON.parse(fetchSpy.mock.calls[0][1].body).inputs.payload
+            ).callbackToken;
+        } finally {
+            fetchSpy.mockRestore();
+        }
+
+        const response = await request(
+            `/api/feedback/runners/smoke/${smokeId}/result`,
+            {
+                method: 'POST',
+                headers: { authorization: `Bearer ${smokeToken}` },
+                body: JSON.stringify({
+                    ok: true,
+                    actionCommit: 'a'.repeat(40),
+                    model: 'gpt-5-codex',
+                    endpointMode: 'official',
+                    completedAt: '2026-08-01T10:00:00.000Z',
+                }),
+            },
+            env
+        );
+        const payload = await json(response);
+
+        expect(response.status).toBe(200);
+        const provider = payload.settings.providers.codex;
+        expect(provider.connectionState).toBe('connected');
+        expect(provider.lastTestResult.ok).toBe(true);
+        expect(provider.lastTestResult.actionCommit).toBe('a'.repeat(40));
+        expect(provider.lastTestResult.model).toBe('gpt-5-codex');
+        expect(provider.lastTestResult.endpointMode).toBe('official');
+        expect(provider.lastTestResult.completedAt).toBe('2026-08-01T10:00:00.000Z');
+    });
+
+    it('[SCN-FWB-016] records a failing smoke without ever reporting connected', async () => {
+        const env = createV2Env();
+        env.FEEDBACK_GITHUB_REPOSITORY = 'acme/gantt';
+        env.FEEDBACK_GITHUB_TOKEN = 'gh-token';
+        env.FEEDBACK_CALLBACK_ORIGIN = 'https://workbench.example.com';
+        const headers = await adminHeaders(env);
+
+        const fetchSpy = vi
+            .spyOn(globalThis, 'fetch')
+            .mockResolvedValue(new Response(null, { status: 204 }));
+        let smokeId = '';
+        let smokeToken = '';
+        try {
+            const started = await json(
+                await request(
+                    '/api/feedback/runners/test',
+                    { method: 'POST', headers, body: JSON.stringify({ provider: 'claude' }) },
+                    env
+                )
+            );
+            smokeId = started.result.smokeId;
+            smokeToken = JSON.parse(
+                JSON.parse(fetchSpy.mock.calls[0][1].body).inputs.payload
+            ).callbackToken;
+        } finally {
+            fetchSpy.mockRestore();
+        }
+
+        const payload = await json(
+            await request(
+                `/api/feedback/runners/smoke/${smokeId}/result`,
+                {
+                    method: 'POST',
+                    headers: { authorization: `Bearer ${smokeToken}` },
+                    body: JSON.stringify({
+                        ok: false,
+                        // A raw provider message may carry a key; only the code survives.
+                        errorCode: 'ANTHROPIC_AUTH_FAILED sk-ant-secret-value',
+                        completedAt: '2026-08-01T10:05:00.000Z',
+                    }),
+                },
+                env
+            )
+        );
+
+        const provider = payload.settings.providers.claude;
+        expect(provider.connectionState).toBe('failed');
+        expect(provider.lastTestResult.ok).toBe(false);
+        expect(provider.lastTestResult.errorCode).toBe('ANTHROPIC_AUTH_FAILED');
+        expect(JSON.stringify(provider)).not.toContain('sk-ant-secret-value');
+    });
+
+    it('[SCN-FWB-017] rejects a smoke result signed for a different smoke', async () => {
+        const env = createV2Env();
+        env.FEEDBACK_GITHUB_REPOSITORY = 'acme/gantt';
+        env.FEEDBACK_GITHUB_TOKEN = 'gh-token';
+        env.FEEDBACK_CALLBACK_ORIGIN = 'https://workbench.example.com';
+        const headers = await adminHeaders(env);
+
+        const fetchSpy = vi
+            .spyOn(globalThis, 'fetch')
+            .mockResolvedValue(new Response(null, { status: 204 }));
+        let smokeToken = '';
+        try {
+            await request(
+                '/api/feedback/runners/test',
+                { method: 'POST', headers, body: JSON.stringify({ provider: 'codex' }) },
+                env
+            );
+            smokeToken = JSON.parse(
+                JSON.parse(fetchSpy.mock.calls[0][1].body).inputs.payload
+            ).callbackToken;
+        } finally {
+            fetchSpy.mockRestore();
+        }
+
+        const response = await request(
+            `/api/feedback/runners/smoke/smk_${'0'.repeat(8)}-0000-4000-8000-${'0'.repeat(12)}/result`,
+            {
+                method: 'POST',
+                headers: { authorization: `Bearer ${smokeToken}` },
+                body: JSON.stringify({ ok: true }),
+            },
+            env
+        );
+
+        expect(response.status).toBe(401);
+    });
+
+    it('[SCN-FWB-022] refuses to let an admin hand-assert provider health', async () => {
+        const env = createV2Env();
+        const headers = await adminHeaders(env);
+
+        // §7.4 reads this state to authorize autonomous delivery, so it has to be
+        // produced by a real smoke rather than written straight into settings.
+        const payload = await json(
+            await request(
+                '/api/feedback/runners/settings',
+                {
+                    method: 'PATCH',
+                    headers,
+                    body: JSON.stringify({
+                        expectedVersion: 0,
+                        settings: {
+                            providers: {
+                                claude: {
+                                    connectionState: 'connected',
+                                    lastTestResult: { ok: true },
+                                },
+                            },
+                        },
+                    }),
+                },
+                env
+            )
+        );
+
+        expect(payload.settings.providers.claude.connectionState).toBe('unverified');
+        expect(payload.settings.providers.claude.lastTestResult).toBeNull();
+    });
+
+    it('[SCN-FWB-022] fails the auto-delivery preflight with a reason per missing credential', async () => {
+        const env = createV2Env();
+        const headers = await adminHeaders(env);
+
+        const payload = await json(
+            await request(
+                '/api/feedback/runners/auto-deliver/preflight',
+                { method: 'POST', headers },
+                env
+            )
+        );
+
+        expect(payload.preflight.ok).toBe(false);
+        const byId = Object.fromEntries(payload.preflight.checks.map((c) => [c.id, c]));
+        // §19.5 names these three explicitly as gates on enabling auto delivery.
+        expect(byId.merge_credentials.ok).toBe(false);
+        expect(byId.deployment_credentials.ok).toBe(false);
+        expect(byId.production_smoke.ok).toBe(false);
+        for (const check of payload.preflight.checks) {
+            if (!check.ok) expect(check.reason).toBeTruthy();
+        }
+    });
+
+    it('[SCN-FWB-022] keeps the auto-delivery switch off when the preflight has not passed', async () => {
+        const env = createV2Env();
+        const headers = await adminHeaders(env);
+
+        const payload = await json(
+            await request(
+                '/api/feedback/runners/settings',
+                {
+                    method: 'PATCH',
+                    headers,
+                    body: JSON.stringify({
+                        expectedVersion: 0,
+                        settings: { autoDeliver: { enabled: true } },
+                    }),
+                },
+                env
+            )
+        );
+
+        expect(payload.settings.autoDeliver.enabled).toBe(false);
+        expect(payload.settings.autoDeliver.blockedReason).toBe('PREFLIGHT_REQUIRED');
+    });
+
+    it('[SCN-FWB-022] lets an admin enable auto delivery once the preflight passes', async () => {
+        const env = createV2Env();
+        env.FEEDBACK_GITHUB_REPOSITORY = 'acme/gantt';
+        env.FEEDBACK_GITHUB_TOKEN = 'gh-token';
+        env.FEEDBACK_CALLBACK_ORIGIN = 'https://workbench.example.com';
+        env.FEEDBACK_MERGE_TOKEN = 'merge-token';
+        env.FEEDBACK_RELEASE_TOKEN_SECRET = 'release-secret';
+        env.FEEDBACK_DEPLOY_TOKEN = 'deploy-token';
+        env.FEEDBACK_PRODUCTION_ORIGIN = 'https://gantt.example.com';
+        env.FEEDBACK_PRODUCTION_API_URL = 'https://api.gantt.example.com';
+        const headers = await adminHeaders(env);
+
+        const preflight = await json(
+            await request(
+                '/api/feedback/runners/auto-deliver/preflight',
+                { method: 'POST', headers },
+                env
+            )
+        );
+        expect(preflight.preflight.ok).toBe(true);
+
+        const payload = await json(
+            await request(
+                '/api/feedback/runners/settings',
+                {
+                    method: 'PATCH',
+                    headers,
+                    body: JSON.stringify({
+                        expectedVersion: preflight.settings.version,
+                        settings: {
+                            autoDeliver: { enabled: true, actorAllowlist: ['ops@example.com'] },
+                        },
+                    }),
+                },
+                env
+            )
+        );
+
+        expect(payload.settings.autoDeliver.enabled).toBe(true);
+        expect(payload.settings.autoDeliver.actorAllowlist).toEqual(['ops@example.com']);
+        expect(payload.settings.autoDeliver.blockedReason).toBe('');
+    });
+
+    it('[SCN-FWB-012] correlates workbench logs without leaking secrets', async () => {
+        const env = createV2Env();
+        const headers = await adminHeaders(env);
+        const entries = [];
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation((...args) => {
+            entries.push(args);
+        });
+        try {
+            // Malformed JSON reaches the shared error path, and the admin bearer
+            // token on this request must never appear in what it logs.
+            await request(
+                '/api/feedback/runners/settings',
+                { method: 'PATCH', headers, body: '{ not json' },
+                env
+            );
+        } finally {
+            warnSpy.mockRestore();
+        }
+
+        const structured = entries.map((args) => args[1]).filter(Boolean);
+        expect(structured.length).toBeGreaterThan(0);
+        const entry = structured[0];
+        // §20.2 correlation keys are always present, even when empty.
+        for (const key of [
+            'issueId',
+            'eventId',
+            'workflowId',
+            'runId',
+            'deliveryId',
+            'provider',
+            'policy',
+            'actorType',
+            'workflowGeneration',
+            'candidateId',
+            'releaseId',
+            'integrationCommit',
+            'deploymentId',
+        ]) {
+            expect(entry).toHaveProperty(key);
+        }
+        const token = String(headers.authorization).replace('Bearer ', '');
+        expect(JSON.stringify(entries)).not.toContain(token);
+    });
+
+    it('[SCN-FWB-017] keeps the observability metrics admin-only', async () => {
+        const env = createV2Env();
+
+        const anonymous = await request('/api/feedback/observability/metrics', {}, env);
+        expect(anonymous.status).toBe(401);
+    });
+
+    it('[SCN-FWB-002] reports the section 20.1 run, delivery and autonomy metrics', async () => {
+        const env = createV2Env(
+            {},
+            {
+                feedback_runs: [
+                    {
+                        id: 'run_a',
+                        issue_id: 'feedback:1:a',
+                        workflow_id: 'wf-1',
+                        policy: 'implement_and_verify',
+                        delivery_mode: 'auto_deliver',
+                        provider: 'codex',
+                        runner_type: 'github_hosted',
+                        status: 'succeeded',
+                        attempt: 1,
+                        started_at: '2026-08-01T10:00:00.000Z',
+                        finished_at: '2026-08-01T10:04:00.000Z',
+                        error_code: '',
+                        // A succeeded write Run that produced nothing would count
+                        // as an empty run, which §20.1 targets at zero.
+                        change_commit: 'b'.repeat(40),
+                    },
+                    {
+                        id: 'run_b',
+                        issue_id: 'feedback:1:b',
+                        workflow_id: 'wf-2',
+                        policy: 'analyze',
+                        delivery_mode: 'no_delivery',
+                        provider: 'claude',
+                        runner_type: 'github_hosted',
+                        status: 'failed',
+                        attempt: 2,
+                        started_at: '2026-08-01T10:00:00.000Z',
+                        finished_at: '2026-08-01T10:02:00.000Z',
+                        error_code: 'security_policy_violation',
+                    },
+                ],
+                feedback_deliveries: [
+                    {
+                        id: 'dly_a',
+                        issue_id: 'feedback:1:a',
+                        status: 'dead_letter',
+                        attempt_count: 4,
+                    },
+                    {
+                        id: 'dly_b',
+                        issue_id: 'feedback:1:b',
+                        status: 'delivered',
+                        attempt_count: 2,
+                    },
+                ],
+            }
+        );
+        const headers = await adminHeaders(env);
+
+        const payload = await json(
+            await request('/api/feedback/observability/metrics', { headers }, env)
+        );
+
+        expect(payload.metrics.runs.total).toBe(2);
+        expect(payload.metrics.runs.succeeded).toBe(1);
+        expect(payload.metrics.runs.failed).toBe(1);
+        expect(payload.metrics.runs.successRate).toBeCloseTo(0.5);
+        expect(payload.metrics.runs.averageDurationMs).toBe(180_000);
+        expect(payload.metrics.runs.byProvider).toEqual({ codex: 1, claude: 1 });
+        expect(payload.metrics.runs.byPolicy.implement_and_verify).toBe(1);
+        expect(payload.metrics.delivery.deadLetter).toBe(1);
+        expect(payload.metrics.security.diffGateBlocked).toBe(1);
+        expect(payload.metrics.autonomy.autoDeliverRuns).toBe(1);
+        // §20.1 targets these at zero, so they must be reported even when zero.
+        expect(payload.metrics.release.commitMismatches).toBe(0);
+        expect(payload.metrics.runs.emptyRuns).toBe(0);
+    });
+
     it('[SCN-FWB-011] orders the admin queue by delivery, human wait, then failure', async () => {
         const env = createV2Env(
             {},
@@ -5917,6 +6380,7 @@ describe('feedback workbench V2 Run and Callback', () => {
                         name: 'runners',
                         value_json: JSON.stringify({
                             defaultProvider: 'codex',
+                            autoDeliver: { enabled: true, preflight: { ok: true, checks: [] } },
                             providers: {
                                 codex: {
                                     connectionState: 'connected',
@@ -6085,6 +6549,7 @@ describe('feedback workbench V2 Run and Callback', () => {
                         name: 'runners',
                         value_json: JSON.stringify({
                             defaultProvider: 'codex',
+                            autoDeliver: { enabled: true, preflight: { ok: true, checks: [] } },
                             providers: {
                                 codex: {
                                     connectionState: 'connected',
@@ -6195,6 +6660,7 @@ describe('feedback workbench V2 Run and Callback', () => {
                             name: 'runners',
                             value_json: JSON.stringify({
                                 defaultProvider: 'codex',
+                                autoDeliver: { enabled: true, preflight: { ok: true, checks: [] } },
                                 providers: {
                                     codex: {
                                         connectionState: testCase.healthy

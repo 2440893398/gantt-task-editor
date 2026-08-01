@@ -1,0 +1,166 @@
+# Feedback Workbench V2 - minimal Action smoke (spec section 19.5).
+#
+# "Test connection" must run the official Action for real rather than ping an
+# endpoint, because the result gates auto_deliver in section 7.4. This workflow
+# runs the smallest possible read-only invocation of the provider's official
+# Action and reports the exact Action commit, model and endpoint mode back to
+# the workbench through a token scoped to this one smoke.
+#
+# The job holds no repository write, merge or deploy credentials.
+name: feedback-runner-smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      payload:
+        description: JSON smoke payload issued by the feedback workbench
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: feedback-runner-smoke-${{ fromJSON(inputs.payload).smokeId }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Validate smoke payload
+        id: payload
+        env:
+          PAYLOAD: ${{ inputs.payload }}
+          FEEDBACK_CALLBACK_ORIGIN: ${{ vars.FEEDBACK_CALLBACK_ORIGIN }}
+        run: |
+          set -euo pipefail
+          node -e '
+            const payload = JSON.parse(process.env.PAYLOAD);
+            for (const key of ["smokeId", "provider", "action", "callbackUrl", "callbackToken"]) {
+              if (!payload[key]) throw new Error(`missing ${key}`);
+            }
+            if (!/^smk_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(payload.smokeId)) {
+              throw new Error("invalid smokeId");
+            }
+            if (!["codex", "claude"].includes(payload.provider)) throw new Error("unknown provider");
+            if (!/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(payload.callbackToken)) {
+              throw new Error("invalid scoped token");
+            }
+            // The callback may only ever go back to the configured workbench.
+            const origin = String(process.env.FEEDBACK_CALLBACK_ORIGIN || "").replace(/\/+$/, "");
+            const parsedOrigin = new URL(origin);
+            if (parsedOrigin.protocol !== "https:" || parsedOrigin.origin !== origin) {
+              throw new Error("invalid trusted callback origin");
+            }
+            const callbackUrl = new URL(payload.callbackUrl);
+            if (callbackUrl.origin !== origin) throw new Error("callback origin mismatch");
+            if (callbackUrl.pathname !== `/api/feedback/runners/smoke/${payload.smokeId}/result`) {
+              throw new Error("callback path mismatch");
+            }
+            const endpointMode = payload.endpointMode === "relay" ? "relay" : "official";
+            if (endpointMode === "relay") {
+              const endpoint = new URL(payload.responsesEndpoint);
+              if (endpoint.protocol !== "https:" || !endpoint.pathname.endsWith("/v1/responses")) {
+                throw new Error("invalid Responses API endpoint");
+              }
+            }
+            const fs = require("fs");
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, [
+              `smoke_id=${payload.smokeId}`,
+              `provider=${payload.provider}`,
+              `action=${payload.action}`,
+              `endpoint_mode=${endpointMode}`,
+              `responses_endpoint=${payload.responsesEndpoint || ""}`,
+              `callback_url=${payload.callbackUrl}`,
+            ].join("\n") + "\n");
+            fs.appendFileSync(process.env.GITHUB_ENV, `SMOKE_CALLBACK_TOKEN=${payload.callbackToken}\n`);
+          '
+
+      # The pinned commit is what actually ran, and it is what the workbench
+      # records. Bumping the tag alone therefore shows up as unverified.
+      - name: Resolve pinned Action commit
+        id: action_commit
+        env:
+          ACTION_REF: ${{ steps.payload.outputs.action }}
+        run: |
+          set -euo pipefail
+          repo="${ACTION_REF%@*}"
+          ref="${ACTION_REF##*@}"
+          commit="$(git ls-remote "https://github.com/${repo}.git" "refs/tags/${ref}" "refs/heads/${ref}" | head -n1 | cut -f1)"
+          if [ -z "$commit" ]; then
+            echo "could not resolve ${ACTION_REF}" >&2
+            exit 1
+          fi
+          echo "commit=${commit}" >> "$GITHUB_OUTPUT"
+
+      - name: Run minimal Codex smoke
+        id: codex_smoke
+        if: steps.payload.outputs.provider == 'codex'
+        continue-on-error: true
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          # A read-only, single-turn prompt: enough to prove credentials, model
+          # routing and the Responses endpoint all work, and nothing more.
+          prompt: 'Reply with exactly: FEEDBACK_SMOKE_OK'
+          permission-profile: read-only
+          openai-base-url: ${{ steps.payload.outputs.endpoint_mode == 'relay' && steps.payload.outputs.responses_endpoint || '' }}
+
+      - name: Run minimal Claude Agent smoke
+        id: claude_smoke
+        if: steps.payload.outputs.provider == 'claude'
+        continue-on-error: true
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: 'Reply with exactly: FEEDBACK_SMOKE_OK'
+          claude_args: '--max-turns 1 --allowedTools ""'
+
+      # Always reports, so a failed smoke is recorded as failed rather than
+      # leaving the provider stuck in "testing" until the token expires.
+      - name: Report smoke result
+        if: always()
+        env:
+          SMOKE_ID: ${{ steps.payload.outputs.smoke_id }}
+          PROVIDER: ${{ steps.payload.outputs.provider }}
+          ENDPOINT_MODE: ${{ steps.payload.outputs.endpoint_mode }}
+          CALLBACK_URL: ${{ steps.payload.outputs.callback_url }}
+          ACTION_COMMIT: ${{ steps.action_commit.outputs.commit }}
+          CODEX_OUTCOME: ${{ steps.codex_smoke.outcome }}
+          CLAUDE_OUTCOME: ${{ steps.claude_smoke.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          node -e '
+            const provider = process.env.PROVIDER;
+            const outcome = provider === "codex" ? process.env.CODEX_OUTCOME : process.env.CLAUDE_OUTCOME;
+            const ok = outcome === "success";
+            const body = {
+              ok,
+              actionCommit: process.env.ACTION_COMMIT || "",
+              model: provider === "codex" ? "gpt-5-codex" : "claude-opus-4-6",
+              endpointMode: process.env.ENDPOINT_MODE,
+              completedAt: new Date().toISOString(),
+              runUrl: process.env.RUN_URL,
+              // Only a code travels back; provider output may quote a key.
+              errorCode: ok ? "" : `ACTION_SMOKE_${String(outcome || "FAILED").toUpperCase()}`,
+            };
+            fetch(process.env.CALLBACK_URL, {
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+                authorization: `Bearer ${process.env.SMOKE_CALLBACK_TOKEN}`,
+              },
+              body: JSON.stringify(body),
+            }).then(async (response) => {
+              if (!response.ok) {
+                console.error(`callback failed: ${response.status}`);
+                process.exit(1);
+              }
+            }).catch((error) => {
+              console.error(`callback failed: ${error.message}`);
+              process.exit(1);
+            });
+          '

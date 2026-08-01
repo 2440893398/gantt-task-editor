@@ -225,8 +225,49 @@ misread from the code alone:
    never ran. The response is unambiguous read as a whole; the field is not a claim that
    anything was delivered.
 
-**Still not externally verified:** `/runners/test` intentionally continues to return
-`ACTION_SMOKE_NOT_CONFIGURED`. No Agent or Release workflow has run against a real repository;
+**Status (2026-08-01, later) — the remaining buildable spec sections landed.**
+
+A gap audit against the spec found three sections with no implementation. All three are now
+built, and the first of them closes the honesty gap recorded above.
+
+- **§19.5 real Action smoke.** "测试连接" now dispatches `feedback-runner-smoke.yml`, which runs
+  the provider's official Action read-only and reports back through a token scoped to that one
+  smoke. The provider sits at `testing` until the result arrives, then moves to `connected` or
+  `failed` carrying the exact pinned Action commit, model, endpoint mode and completion time.
+  A provider error string is reduced to its leading code, because Runner output quotes requests
+  that can contain a key. Without dispatch credentials the endpoint still returns an honest
+  `ACTION_SMOKE_NOT_CONFIGURED`. Provider health is now *server-owned*: `PATCH
+  /api/feedback/runners/settings` no longer accepts `connectionState`/`lastTestResult`, so §7.4
+  reads a machine-observed fact instead of an operator's assertion.
+- **§19.5 graded-autonomy UI.** The switch, allowed scope, Release health summary and per-check
+  preflight reasons live in 高级设置; the actor allowlist and check detail stay collapsed.
+  `POST /api/feedback/runners/auto-deliver/preflight` checks the merge, deployment and
+  production-smoke prerequisites the spec names. The switch cannot be turned on without a
+  passing preflight (`PREFLIGHT_REQUIRED`), and a later failing re-check turns it back off
+  (`PREFLIGHT_REGRESSED`). The autonomy switch moved from `FEEDBACK_AUTO_DELIVER_ENABLED` into
+  admin-saved settings; the environment variables remain an outer kill switch.
+- **§20 observability.** `GET /api/feedback/observability/metrics` (admin only) aggregates the
+  §20.1 counters from records the pipeline already writes. Counters the spec targets at zero
+  (`release.commitMismatches`, `runs.emptyRuns`) are always reported so zero is a measurement.
+  All workbench logs now go through one `logFeedback()` helper carrying the §20.2 correlation
+  keys, built from an explicit allowlist so tokens, capabilities, contact details and source IPs
+  cannot reach a log line.
+
+**Local full-chain run of this batch.** Re-running the five §7.4 routing cases against a local
+Worker after the settings refactor reproduced all five outcomes unchanged. The run also found
+two defects that every unit test had passed:
+
+1. `collectFeedbackMetrics` selected `attempt` from `feedback_deliveries`, whose column is
+   `attempt_count`. The in-memory D1 double silently returned `undefined` for the unknown column,
+   so only real SQLite rejected it. The double now throws `no such column` for a name no seeded
+   row has, which keeps this class of typo inside the unit suite.
+2. `runs.emptyRuns` was structurally always wrong: `feedback_runs.change_commit` was inserted
+   `NULL` and never updated, so every succeeded write Run counted as an empty run. The Run now
+   records the base and change commits its completion manifest reported, and the metric matches
+   reality — the five still counted are genuine pre-fix rows.
+
+**Still not externally verified:** the smoke workflow, Agent workflows and Release workflow have
+never run against a real repository;
 that still needs `FEEDBACK_GITHUB_REPOSITORY`, `FEEDBACK_GITHUB_TOKEN`,
 `FEEDBACK_CALLBACK_ORIGIN`, `FEEDBACK_CANDIDATE_TOKEN`, `FEEDBACK_MERGE_TOKEN`,
 `FEEDBACK_RELEASE_TOKEN_SECRET`, provider secrets,

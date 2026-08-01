@@ -48,6 +48,8 @@
 | 2026-07-30 | `SCN-FWB-015` 由 `todo` 转 `active`                | 工作台 V2 UI 与自动化/执行器 API 落地，`tests/e2e/workbench/feedback-workbench.spec.js` 已按 §19.6 在本地 `gantt-share` Worker `/feedback` 上覆盖首屏信息层级、即时反馈与 375/768/1440 无横向溢出，验证点全部有自动化断言 |
 | 2026-08-01 | 补齐 `SCN-FWB-020` 的 Design revision 实施批次     | 按 Spec §16.4 增加结构化 Design 创建、精确 revision 审批/修订/拒绝、后续 Run 绑定与工作台展示；场景仍为 `todo`，直到真实 Action 运行同时证明中大型需求在实现前完成该闭环                                                  |
 | 2026-08-01 | 开始 `SCN-FWB-022` 的分级自治实施批次              | 按 Spec §7.4 先机械判定 trusted actor、small scope、Tier 0～2、自动验证、视觉证据与健康预检，再决定 `auto_deliver/candidate_review`；场景仍为 `todo`，直到真实 Action 完成集成、必要部署、生产 smoke 并进入 `resolved`    |
+| 2026-08-01 | 补齐 `SCN-FWB-016/022` 的真实冒烟与自治开关批次 | 按 Spec §19.5 把「测试连接」改为派发真实最小 Action 冒烟并由 smoke-scoped 回调写入执行器健康（管理员不再能手工断言健康），并补上分级自治交付开关、允许范围、Release 健康与交付预检；`SCN-FWB-016` 仍为 `todo`，直到真实 Action 冒烟跑通 |
+| 2026-08-01 | 补齐 Spec §20 可观察性实施批次                     | 增加管理员专用 `/api/feedback/observability/metrics` 聚合 §20.1 指标，并将工作台日志统一到带 §20.2 关联字段、按白名单构造的结构化日志；不新增场景，验证点并入现有 `SCN-FWB-002/012/017`                                    |
 
 ## 例外队列
 

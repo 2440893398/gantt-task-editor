@@ -322,6 +322,37 @@ test.describe('[SCN-FWB-016] AI 执行器页', () => {
         await expect(page.getByLabel('Callback URL')).toBeHidden();
     });
 
+    test('[SCN-FWB-022] 分级自治交付默认关闭，预检失败时就地说明原因', async ({
+        page,
+        request,
+    }) => {
+        await signInAsAdmin(page, await adminToken(request));
+        await page.goto('/feedback');
+        await page.getByRole('button', { name: 'AI 执行器', exact: true }).click();
+
+        // §19.5: graded autonomy lives inside 高级设置, not on the first screen.
+        await expect(page.locator('#autoDeliverBlock')).toBeHidden();
+        await page.locator('.runner-advanced-card > summary').click();
+
+        await expect(page.locator('#autoDeliverBadge')).toHaveText('未启用');
+        await expect(page.locator('#autoDeliverScope')).toContainText('small');
+        await expect(page.locator('#autoDeliverScope')).toContainText('Tier 0～2');
+
+        // The local Worker genuinely has no merge/deploy/smoke credentials, so
+        // the preflight must fail and say so rather than flatter the operator.
+        await page.locator('#runAutoDeliverPreflight').click();
+        await expect(page.locator('#autoDeliverPreflightState')).toHaveText('预检未通过', {
+            timeout: 10_000,
+        });
+        await expect(page.locator('#autoDeliverReleaseHealth')).toContainText('交付预检未通过');
+
+        await page.locator('.runner-autodeliver-detail > summary').click();
+        await expect(page.locator('#autoDeliverChecks')).toContainText('FEEDBACK_MERGE_TOKEN');
+
+        // A failed preflight must leave the switch off and unusable as approval.
+        await expect(page.locator('#autoDeliverSwitch')).toHaveAttribute('aria-checked', 'false');
+    });
+
     test('[SCN-FWB-016] 拦截非 /v1/responses 端点并把焦点交回输入框', async ({ page, request }) => {
         await signInAsAdmin(page, await adminToken(request));
         await page.goto('/feedback');

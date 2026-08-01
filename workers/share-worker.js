@@ -60,7 +60,10 @@ const FEEDBACK_MENTION_ROUTES = {
     '@claude-agent': 'claude',
 };
 const FEEDBACK_COMMENT_MODES = new Set(['resume', 'record', 'close']);
-const FEEDBACK_CONNECTION_STATES = new Set(['unverified', 'connected', 'failed']);
+// §19.5: `testing` covers the window between dispatching the minimal Action
+// smoke and its result callback. It is deliberately not `connected`, so §7.4
+// cannot read an in-flight smoke as proof of a healthy provider.
+const FEEDBACK_CONNECTION_STATES = new Set(['unverified', 'testing', 'connected', 'failed']);
 const FEEDBACK_DEFAULT_RESPONSES_ENDPOINT = 'https://api.openai.com/v1/responses';
 const FEEDBACK_SIGNATURE_HEADER = 'X-Feedback-Signature-256';
 const FEEDBACK_HOOK_TIMEOUT_MS = 10_000;
@@ -155,6 +158,10 @@ const FEEDBACK_PROVIDER_WORKFLOW_FILES = {
     claude: 'feedback-agent-claude.yml',
 };
 const FEEDBACK_RELEASE_WORKFLOW_FILE = 'feedback-delivery.yml';
+const FEEDBACK_SMOKE_WORKFLOW_FILE = 'feedback-runner-smoke.yml';
+// A smoke that never reports back must not leave the provider stuck in
+// `testing` forever; §19.5 wants an observable outcome either way.
+const FEEDBACK_SMOKE_TIMEOUT_MS = 30 * 60 * 1000;
 // §9.3 Candidate and Release states.
 const FEEDBACK_CANDIDATE_STATUSES = new Set([
     'created',
@@ -1411,7 +1418,7 @@ async function hydrateFeedbackContext(env, contextJson) {
         expectedByteLength < 0 ||
         expectedByteLength > MAX_FEEDBACK_BYTES
     ) {
-        console.warn('[Feedback] Stored context size metadata is invalid');
+        logFeedback('warn', 'Stored context size metadata is invalid');
         return storedContext;
     }
 
@@ -1419,7 +1426,7 @@ async function hydrateFeedbackContext(env, contextJson) {
         const object = await env.FEEDBACK_ARTIFACTS.get(storage.objectKey);
         if (!object) return storedContext;
         if (Number.isFinite(object.size) && object.size !== expectedByteLength) {
-            console.warn('[Feedback] Stored context object size does not match metadata');
+            logFeedback('warn', 'Stored context object size does not match metadata');
             return storedContext;
         }
 
@@ -1429,12 +1436,12 @@ async function hydrateFeedbackContext(env, contextJson) {
             bytes.byteLength !== expectedByteLength ||
             (await hashFeedbackValue(bytes)) !== storage.sha256
         ) {
-            console.warn('[Feedback] Stored context integrity check failed');
+            logFeedback('warn', 'Stored context integrity check failed');
             return storedContext;
         }
         return parseStoredJson(fullContextJson, storedContext);
     } catch (error) {
-        console.warn('[Feedback] Stored context could not be restored', error);
+        logFeedback('warn', 'Stored context could not be restored', { error });
         return storedContext;
     }
 }
@@ -2218,7 +2225,7 @@ async function readFeedbackIssue(env, key) {
     try {
         await backfillLegacyFeedbackIssue(env, issue);
     } catch (error) {
-        console.warn('[Feedback] Legacy D1 backfill deferred; KV remains authoritative', error);
+        logFeedback('warn', 'Legacy D1 backfill deferred; KV remains authoritative', { error });
     }
     return issue;
 }
@@ -2365,7 +2372,7 @@ async function backfillLegacyFeedbackList(env) {
         try {
             parsed = JSON.parse(value);
         } catch (error) {
-            console.warn('[Feedback] Skipped unreadable legacy feedback record', error);
+            logFeedback('warn', 'Skipped unreadable legacy feedback record', { error });
             continue;
         }
 
@@ -2375,7 +2382,7 @@ async function backfillLegacyFeedbackList(env) {
         } catch (error) {
             if (!isDeferredLegacyFeedbackBackfill(error)) throw error;
             fallbackIssues.push(issue);
-            console.warn('[Feedback] Legacy list backfill deferred; KV remains authoritative');
+            logFeedback('warn', 'Legacy list backfill deferred; KV remains authoritative');
         }
     }
 
@@ -2854,6 +2861,13 @@ function normalizeAutomationSettings(raw) {
     };
 }
 
+/** Drops the server-owned health fields from caller-supplied provider input. */
+function stripFeedbackProviderHealth(raw) {
+    if (!raw || typeof raw !== 'object') return {};
+    const { connectionState, lastTestedAt, lastTestResult, pendingSmoke, ...rest } = raw;
+    return rest;
+}
+
 function normalizeRunnerProvider(raw, provider) {
     const value = raw && typeof raw === 'object' ? raw : {};
     const normalized = {
@@ -2864,6 +2878,15 @@ function normalizeRunnerProvider(raw, provider) {
         lastTestResult:
             value.lastTestResult && typeof value.lastTestResult === 'object'
                 ? value.lastTestResult
+                : null,
+        // The in-flight smoke this provider is waiting on, so a late or replayed
+        // result can be matched to the exact dispatch that asked for it.
+        pendingSmoke:
+            value.pendingSmoke && typeof value.pendingSmoke === 'object'
+                ? {
+                      smokeId: limitText(value.pendingSmoke.smokeId, 60),
+                      dispatchedAt: limitText(value.pendingSmoke.dispatchedAt, 40),
+                  }
                 : null,
     };
     if (provider === 'codex') {
@@ -2888,6 +2911,219 @@ function normalizeRunnerSettings(raw) {
             codex: normalizeRunnerProvider(providers.codex, 'codex'),
             claude: normalizeRunnerProvider(providers.claude, 'claude'),
         },
+        autoDeliver: normalizeFeedbackAutoDeliverSettings(value.autoDeliver),
+    };
+}
+
+/**
+ * §20.1 metrics. Everything here is derived from records the pipeline already
+ * writes, so the numbers cannot drift from what actually happened. Counters the
+ * spec targets at zero (`commitMismatches`, `emptyRuns`) are always reported.
+ */
+async function collectFeedbackMetrics(env) {
+    if (!env.FEEDBACK_DB) {
+        throw feedbackStorageError('FEEDBACK_DB_REQUIRED');
+    }
+
+    const rowsOf = async (sql) => {
+        const result = await env.FEEDBACK_DB.prepare(sql).all();
+        return result?.results || [];
+    };
+
+    const [runs, deliveries, issues, humanActions, candidates, releases, usage, events] =
+        await Promise.all([
+            rowsOf(
+                `SELECT policy, provider, runner_type, status, delivery_mode, attempt,
+                        started_at, finished_at, error_code, change_commit
+                 FROM feedback_runs`
+            ),
+            rowsOf('SELECT status, attempt_count FROM feedback_deliveries'),
+            rowsOf('SELECT status FROM feedback_issues'),
+            rowsOf('SELECT type, status FROM feedback_human_actions'),
+            rowsOf('SELECT status FROM feedback_candidates'),
+            rowsOf('SELECT status, error_code FROM feedback_releases'),
+            rowsOf('SELECT run_count, estimated_cost FROM feedback_usage_daily'),
+            rowsOf('SELECT type FROM feedback_events'),
+        ]);
+
+    const tally = (rows, key) =>
+        rows.reduce((counts, row) => {
+            const value = String(row[key] || '') || 'unknown';
+            counts[value] = (counts[value] || 0) + 1;
+            return counts;
+        }, {});
+    const count = (rows, predicate) => rows.filter(predicate).length;
+
+    const durations = runs
+        .filter((run) => run.started_at && run.finished_at)
+        .map((run) => Date.parse(run.finished_at) - Date.parse(run.started_at))
+        .filter((value) => Number.isFinite(value) && value >= 0);
+    const succeeded = count(runs, (run) => run.status === 'succeeded');
+    const failed = count(runs, (run) => run.status === 'failed');
+    const autoDeliverRuns = count(runs, (run) => run.delivery_mode === 'auto_deliver');
+
+    return {
+        generatedAt: new Date().toISOString(),
+        issues: {
+            total: issues.length,
+            byStatus: tally(issues, 'status'),
+            needsHuman: count(issues, (issue) => issue.status === 'needs_human'),
+        },
+        events: { total: events.length, byType: tally(events, 'type') },
+        runs: {
+            total: runs.length,
+            succeeded,
+            failed,
+            successRate: runs.length ? succeeded / runs.length : 0,
+            averageDurationMs: durations.length
+                ? Math.round(durations.reduce((sum, value) => sum + value, 0) / durations.length)
+                : 0,
+            retries: runs.reduce((sum, run) => sum + Math.max(0, Number(run.attempt) - 1), 0),
+            byProvider: tally(runs, 'provider'),
+            byPolicy: tally(runs, 'policy'),
+            byRunnerType: tally(runs, 'runner_type'),
+            // §20.1 targets zero: a write Run that finished without producing a
+            // change commit did work that reached nothing.
+            emptyRuns: count(
+                runs,
+                (run) =>
+                    run.status === 'succeeded' &&
+                    FEEDBACK_WRITE_POLICIES.has(run.policy) &&
+                    !run.change_commit
+            ),
+        },
+        humanActions: {
+            total: humanActions.length,
+            active: count(humanActions, (action) => action.status === 'active'),
+            byType: tally(humanActions, 'type'),
+        },
+        delivery: {
+            total: deliveries.length,
+            deadLetter: count(deliveries, (delivery) => delivery.status === 'dead_letter'),
+            pending: count(deliveries, (delivery) => delivery.status === 'pending'),
+            retries: deliveries.reduce(
+                (sum, delivery) => sum + Math.max(0, Number(delivery.attempt_count) - 1),
+                0
+            ),
+        },
+        security: {
+            // Both diff-gate enforcement points fail the Run with this code.
+            diffGateBlocked: count(runs, (run) => run.error_code === 'security_policy_violation'),
+            suppressed: count(events, (event) => event.type === 'automation.suppressed'),
+        },
+        candidates: { total: candidates.length, byStatus: tally(candidates, 'status') },
+        release: {
+            total: releases.length,
+            byStatus: tally(releases, 'status'),
+            succeeded: count(releases, (release) => release.status === 'succeeded'),
+            failed: count(releases, (release) => release.status === 'failed'),
+            // §20.1 targets zero.
+            commitMismatches: count(
+                releases,
+                (release) => release.error_code === 'integration_commit_mismatch'
+            ),
+        },
+        autonomy: {
+            autoDeliverRuns,
+            candidateReviewRuns: count(runs, (run) => run.delivery_mode === 'candidate_review'),
+            downgradeRate: autoDeliverRuns
+                ? count(humanActions, (action) => action.type === 'review_required') /
+                  autoDeliverRuns
+                : 0,
+        },
+        cost: {
+            runCount: usage.reduce((sum, row) => sum + (Number(row.run_count) || 0), 0),
+            estimatedCost: usage.reduce((sum, row) => sum + (Number(row.estimated_cost) || 0), 0),
+        },
+    };
+}
+
+/**
+ * §19.5 graded autonomy block. `enabled` is only meaningful together with a
+ * passing preflight, so both travel in the same record and the switch carries
+ * the reason it is off.
+ */
+function normalizeFeedbackAutoDeliverSettings(raw) {
+    const value = raw && typeof raw === 'object' ? raw : {};
+    const preflight = value.preflight && typeof value.preflight === 'object' ? value.preflight : {};
+
+    return {
+        enabled: value.enabled === true,
+        blockedReason: limitText(value.blockedReason, 60),
+        actorAllowlist: Array.isArray(value.actorAllowlist)
+            ? value.actorAllowlist
+                  .map((item) => limitText(item, 120))
+                  .filter(Boolean)
+                  .slice(0, 50)
+            : [],
+        preflight: {
+            ok: preflight.ok === true,
+            checkedAt: limitText(preflight.checkedAt, 40),
+            checks: Array.isArray(preflight.checks)
+                ? preflight.checks.slice(0, 20).map((check) => ({
+                      id: limitText(check?.id, 40),
+                      label: limitText(check?.label, 80),
+                      ok: check?.ok === true,
+                      reason: limitText(check?.reason, 160),
+                  }))
+                : [],
+        },
+    };
+}
+
+/**
+ * §19.5: enabling autonomous delivery requires GitHub merge, deployment and
+ * production smoke prerequisites to be present. These are existence checks on
+ * server-held configuration — deliberately not a claim that a deploy succeeded.
+ */
+function evaluateFeedbackAutoDeliverPreflight(env) {
+    const has = (name) => Boolean(String(env[name] || '').trim());
+
+    // Provider health is deliberately absent here: §7.4 re-checks it per Run for
+    // the provider that Run actually uses, which is stricter than a snapshot.
+    const checks = [
+        {
+            id: 'github_dispatch',
+            label: 'GitHub 派发凭据',
+            ok: has('FEEDBACK_GITHUB_REPOSITORY') && has('FEEDBACK_GITHUB_TOKEN'),
+            reason: '缺少 FEEDBACK_GITHUB_REPOSITORY 或 FEEDBACK_GITHUB_TOKEN',
+        },
+        {
+            id: 'callback_origin',
+            label: 'Callback origin',
+            ok: has('FEEDBACK_CALLBACK_ORIGIN'),
+            reason: '缺少 FEEDBACK_CALLBACK_ORIGIN',
+        },
+        {
+            id: 'merge_credentials',
+            label: 'GitHub merge 凭据',
+            ok: has('FEEDBACK_MERGE_TOKEN'),
+            reason: '缺少 FEEDBACK_MERGE_TOKEN，无法完成干净集成',
+        },
+        {
+            id: 'release_token',
+            label: 'Release token secret',
+            ok: has('FEEDBACK_RELEASE_TOKEN_SECRET'),
+            reason: '缺少 FEEDBACK_RELEASE_TOKEN_SECRET',
+        },
+        {
+            id: 'deployment_credentials',
+            label: 'Worker/Pages 部署凭据',
+            ok: has('FEEDBACK_DEPLOY_TOKEN') || has('CLOUDFLARE_API_TOKEN'),
+            reason: '缺少 FEEDBACK_DEPLOY_TOKEN 或 CLOUDFLARE_API_TOKEN',
+        },
+        {
+            id: 'production_smoke',
+            label: '生产 smoke 目标',
+            ok: has('FEEDBACK_PRODUCTION_ORIGIN') && has('FEEDBACK_PRODUCTION_API_URL'),
+            reason: '缺少 FEEDBACK_PRODUCTION_ORIGIN 或 FEEDBACK_PRODUCTION_API_URL',
+        },
+    ].map((check) => ({ ...check, reason: check.ok ? '' : check.reason }));
+
+    return {
+        ok: checks.every((check) => check.ok),
+        checkedAt: new Date().toISOString(),
+        checks,
     };
 }
 
@@ -2978,6 +3214,17 @@ function serializeRunnerSettings(env, stored) {
         version: stored.version,
         updatedAt: stored.updatedAt,
         callbackContract: FEEDBACK_CALLBACK_EVENTS,
+        autoDeliver: {
+            ...settings.autoDeliver,
+            // §7.4 scope is a server-side constant, not an editable field: the
+            // UI shows what auto delivery is allowed to cover.
+            allowedScope: {
+                actor: 'trusted',
+                issueScope: 'small',
+                businessTypes: ['bug', 'improvement'],
+                maxQualityTier: 2,
+            },
+        },
         providers: {
             codex: {
                 ...settings.providers.codex,
@@ -3319,10 +3566,11 @@ async function ensureFeedbackWorkflowForEvent(env, issueId, { deliveryId, eventI
                 resumed: true,
             };
         } catch (error) {
-            console.warn('[Feedback] Could not resume Workflow instance', {
+            logFeedback('warn', 'Could not resume Workflow instance', {
                 issueId,
-                instanceId: active.instance_id,
-                error: String(error?.message || error),
+                workflowId: active.instance_id,
+                workflowGeneration: active.generation,
+                error,
             });
             return { instanceId: active.instance_id, resumed: false, error: 'RESUME_FAILED' };
         }
@@ -3415,15 +3663,20 @@ function resolveFeedbackPolicy({ businessType, scope, automationDecision, approv
     return FEEDBACK_POLICIES.has(policy) ? policy : 'analyze';
 }
 
-function isTrustedFeedbackAutoDeliveryActor(env, trigger) {
+function isTrustedFeedbackAutoDeliveryActor(env, trigger, autoDeliver) {
     if (FEEDBACK_AUTO_DELIVER_TRUSTED_ACTORS.has(trigger?.actor_type)) return true;
     const actorId = String(trigger?.actor_id || '').trim();
     if (!actorId) return false;
 
-    const allowlist = String(env.FEEDBACK_AUTO_DELIVER_ACTOR_ALLOWLIST || '')
-        .split(/[\n,]/)
-        .map((item) => item.trim())
-        .filter(Boolean);
+    // The allowlist lives in admin-saved settings (§19.5); the environment
+    // variable stays supported so an operator can pin it outside the UI.
+    const allowlist = [
+        ...(autoDeliver?.actorAllowlist || []),
+        ...String(env.FEEDBACK_AUTO_DELIVER_ACTOR_ALLOWLIST || '')
+            .split(/[\n,]/)
+            .map((item) => item.trim())
+            .filter(Boolean),
+    ];
     return allowlist.includes(actorId);
 }
 
@@ -3452,11 +3705,19 @@ async function resolveFeedbackDeliveryMode(
         env.FEEDBACK_CALLBACK_ORIGIN &&
         env.FEEDBACK_RELEASE_TOKEN_SECRET
     );
+    // §19.5: autonomy is switched on by an admin save backed by a passing
+    // preflight. The environment flags remain an outer kill switch, so removing
+    // either one still deterministically forces the review path.
+    const autoDeliver = runnerSettings.autoDeliver;
+    const envAllows =
+        String(env.FEEDBACK_AUTO_DELIVER_ENABLED || '').toLowerCase() !== 'false' &&
+        String(env.FEEDBACK_AUTO_DELIVER_PREFLIGHT_OK || '').toLowerCase() !== 'false';
     const eligible =
-        String(env.FEEDBACK_AUTO_DELIVER_ENABLED || '').toLowerCase() === 'true' &&
-        String(env.FEEDBACK_AUTO_DELIVER_PREFLIGHT_OK || '').toLowerCase() === 'true' &&
+        envAllows &&
+        autoDeliver?.enabled === true &&
+        autoDeliver?.preflight?.ok === true &&
         credentialsReady &&
-        isTrustedFeedbackAutoDeliveryActor(env, trigger) &&
+        isTrustedFeedbackAutoDeliveryActor(env, trigger, autoDeliver) &&
         issue.scope === 'small' &&
         ['bug', 'improvement'].includes(issue.business_type) &&
         issue.automation_decision === 'auto_fix' &&
@@ -3699,6 +3960,111 @@ async function recordFeedbackDispatchResult(env, runId, dispatch) {
     }
 
     return { runId, status, errorCode: dispatch.errorCode || null };
+}
+
+/**
+ * §19.5: the connection test is a real minimal Action smoke, not an HTTP ping.
+ * The result therefore cannot be known synchronously — the workflow reports back
+ * through a smoke-scoped callback. Until it does, the provider is `testing`.
+ */
+async function dispatchFeedbackRunnerSmoke(env, { provider, smokeId, settings }) {
+    const repository = String(env.FEEDBACK_GITHUB_REPOSITORY || '');
+    const githubToken = String(env.FEEDBACK_GITHUB_TOKEN || '');
+    const callbackOrigin = String(env.FEEDBACK_CALLBACK_ORIGIN || '');
+    if (!repository || !githubToken || !callbackOrigin) {
+        return { dispatched: false, errorCode: 'ACTION_SMOKE_NOT_CONFIGURED' };
+    }
+
+    const { token } = await createFeedbackSmokeToken(env, { smokeId, provider });
+    const endpointMode =
+        provider === 'codex' &&
+        settings.providers.codex.responsesEndpoint !== FEEDBACK_DEFAULT_RESPONSES_ENDPOINT
+            ? 'relay'
+            : 'official';
+    const payload = {
+        smokeId,
+        provider,
+        action: FEEDBACK_PROVIDER_ACTIONS[provider],
+        endpointMode,
+        responsesEndpoint: provider === 'codex' ? settings.providers.codex.responsesEndpoint : '',
+        callbackUrl: `${callbackOrigin.replace(/\/+$/, '')}/api/feedback/runners/smoke/${smokeId}/result`,
+        callbackToken: token,
+    };
+
+    const ref = String(env.FEEDBACK_GITHUB_REF || 'master');
+    const url = `https://api.github.com/repos/${repository}/actions/workflows/${FEEDBACK_SMOKE_WORKFLOW_FILE}/dispatches`;
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                Accept: 'application/vnd.github+json',
+                Authorization: `Bearer ${githubToken}`,
+                'X-GitHub-Api-Version': '2022-11-28',
+                'Content-Type': 'application/json',
+                'User-Agent': 'gantt-feedback-workbench',
+            },
+            body: JSON.stringify({ ref, inputs: { payload: JSON.stringify(payload) } }),
+            signal: AbortSignal.timeout(FEEDBACK_HOOK_TIMEOUT_MS),
+        });
+        if (!response.ok) {
+            return { dispatched: false, errorCode: `GITHUB_HTTP_${response.status}` };
+        }
+        return { dispatched: true, endpointMode };
+    } catch (error) {
+        return {
+            dispatched: false,
+            errorCode: error?.name === 'TimeoutError' ? 'GITHUB_TIMEOUT' : 'GITHUB_UNREACHABLE',
+        };
+    }
+}
+
+/**
+ * §19.5/§20.2: a smoke reports a *code*, not a provider message. Runner output
+ * routinely quotes the failing request, so anything past the leading token is
+ * dropped rather than trusted to be secret-free.
+ */
+function normalizeFeedbackSmokeErrorCode(value) {
+    const first = String(value || '')
+        .trim()
+        .split(/\s+/)[0]
+        .toUpperCase()
+        .replace(/[^A-Z0-9_]/g, '');
+    return first.slice(0, 60) || 'ACTION_SMOKE_FAILED';
+}
+
+async function createFeedbackSmokeToken(env, { smokeId, provider }) {
+    const expiresAt = Date.now() + FEEDBACK_SMOKE_TIMEOUT_MS;
+    const payload = base64UrlEncode(
+        JSON.stringify({ aud: 'runner_smoke', smokeId, provider, exp: expiresAt })
+    );
+    const signature = await signValue(payload, getFeedbackRunTokenSecret(env));
+
+    return { token: `${payload}.${signature}`, expiresAt: new Date(expiresAt).toISOString() };
+}
+
+/**
+ * §21.3: a smoke token proves one thing only — that this exact smoke may report
+ * its own result. It is never an admin token and never covers another smoke.
+ */
+async function verifyFeedbackSmokeToken(request, env, { smokeId }) {
+    const token = getBearerToken(request);
+    if (!token) return null;
+
+    const [payload, signature] = token.split('.');
+    if (!payload || !signature) return null;
+
+    const expected = await signValue(payload, getFeedbackRunTokenSecret(env));
+    if (!feedbackHashesMatch(expected, signature)) return null;
+
+    try {
+        const claims = JSON.parse(base64UrlDecode(payload));
+        if (claims.aud !== 'runner_smoke') return null;
+        if (claims.smokeId !== smokeId) return null;
+        if (!(Number(claims.exp) > Date.now())) return null;
+        return claims;
+    } catch {
+        return null;
+    }
 }
 
 /**
@@ -4106,7 +4472,9 @@ async function appendFeedbackCallbackEvent(env, runId, body) {
     // §14.4/§15.3: a `run.completed` claim is verified against the same rule
     // table the Runner used before it is allowed to project success.
     let gate = null;
+    let completionManifest = {};
     if (callback.type === 'run.completed') {
+        completionManifest = callback.payload.diffManifest || callback.payload;
         gate = await verifyRunCompletionManifest({
             env,
             run,
@@ -4201,13 +4569,17 @@ async function appendFeedbackCallbackEvent(env, runId, body) {
     ];
 
     if (projection.runStatus) {
+        // §20.1 counts a succeeded write Run with no change commit as an empty
+        // run, so the Run records the commits it actually produced.
         statements.push(
             env.FEEDBACK_DB.prepare(
                 `UPDATE feedback_runs
                  SET status = ?, provider_session_id = COALESCE(?, provider_session_id),
                      finished_at = CASE WHEN ? IN ('succeeded', 'failed', 'cancelled', 'timed_out')
                                         THEN ? ELSE finished_at END,
-                     error_code = COALESCE(?, error_code)
+                     error_code = COALESCE(?, error_code),
+                     base_commit = COALESCE(?, base_commit),
+                     change_commit = COALESCE(?, change_commit)
                  WHERE id = ?`
             ).bind(
                 projection.runStatus,
@@ -4215,6 +4587,8 @@ async function appendFeedbackCallbackEvent(env, runId, body) {
                 projection.runStatus,
                 callback.occurredAt,
                 limitText(callback.payload.errorCode, 80) || null,
+                limitText(completionManifest.baseCommit, 80) || null,
+                limitText(completionManifest.changeCommit, 80) || null,
                 runId
             )
         );
@@ -5689,7 +6063,7 @@ async function recordFeedbackArtifact(env, { issueId, runId, artifact }) {
         )
         .run()
         .catch((error) => {
-            console.warn('[Feedback] Artifact insert failed', error);
+            logFeedback('warn', 'Artifact insert failed', { error });
         });
     return artifactId;
 }
@@ -6912,11 +7286,46 @@ const FEEDBACK_ERROR_RESPONSES = {
     FEEDBACK_DEPLOYED_COMMIT_MISMATCH: [409, 'deployedCommit does not match integrationCommit'],
 };
 
+/**
+ * §20.2: every workbench log line carries the same correlation keys, so one
+ * Issue can be traced across Workflow, Run, delivery and Release. The listed
+ * fields are always present — an absent id logs as empty rather than vanishing.
+ *
+ * Nothing else is copied in: tokens, Authorization headers, owner capabilities,
+ * source IPs, contact details and admin credentials must never reach a log, so
+ * the correlation record is built from an explicit allowlist instead of a spread.
+ */
+function logFeedback(level, message, context = {}) {
+    const value = (key) => limitText(context[key], 120);
+    const entry = {
+        issueId: value('issueId'),
+        eventId: value('eventId'),
+        workflowId: value('workflowId'),
+        runId: value('runId'),
+        deliveryId: value('deliveryId'),
+        provider: value('provider'),
+        policy: value('policy'),
+        actorType: value('actorType'),
+        workflowGeneration: Number(context.workflowGeneration) || 0,
+        candidateId: value('candidateId'),
+        releaseId: value('releaseId'),
+        integrationCommit: value('integrationCommit'),
+        deploymentId: value('deploymentId'),
+        // Errors are reduced to name/code/message; a stack can quote a URL that
+        // carries a scoped token.
+        errorCode: limitText(context.error?.code || context.errorCode, 80),
+        errorName: limitText(context.error?.name, 80),
+    };
+
+    const sink = level === 'error' ? console.error : level === 'info' ? console.log : console.warn;
+    sink(`[Feedback] ${message}`, entry);
+}
+
 function feedbackErrorResponse(error, headers) {
     const mapped = FEEDBACK_ERROR_RESPONSES[error?.code];
     if (mapped) return errorResponse(mapped[1], mapped[0], headers);
 
-    console.warn('[Feedback] Unhandled workbench error', error);
+    logFeedback('warn', 'Unhandled workbench error', { error });
     return errorResponse('Invalid request', 400, headers);
 }
 
@@ -9388,20 +9797,49 @@ export default {
                         );
                     }
 
+                    // §7.4 authorizes autonomous delivery partly on provider
+                    // health, so health is server-owned: only a real Action smoke
+                    // may write it. An admin editing settings cannot vouch for a
+                    // provider by hand.
+                    const mergeProvider = (name) => ({
+                        ...current.settings.providers[name],
+                        ...stripFeedbackProviderHealth(patch.providers?.[name]),
+                        connectionState: current.settings.providers[name].connectionState,
+                        lastTestedAt: current.settings.providers[name].lastTestedAt,
+                        lastTestResult: current.settings.providers[name].lastTestResult,
+                        pendingSmoke: current.settings.providers[name].pendingSmoke,
+                    });
+                    // §19.5: the switch may only be turned on after a passing
+                    // preflight. The preflight result itself is server-owned.
+                    const currentAuto = current.settings.autoDeliver;
+                    const requestedAuto =
+                        patch.autoDeliver && typeof patch.autoDeliver === 'object'
+                            ? patch.autoDeliver
+                            : {};
+                    const wantsEnabled = Object.hasOwn(requestedAuto, 'enabled')
+                        ? requestedAuto.enabled === true
+                        : currentAuto.enabled;
+                    const preflightPassed = currentAuto.preflight.ok === true;
+                    const nextAuto = {
+                        ...currentAuto,
+                        actorAllowlist: Array.isArray(requestedAuto.actorAllowlist)
+                            ? requestedAuto.actorAllowlist
+                            : currentAuto.actorAllowlist,
+                        enabled: wantsEnabled && preflightPassed,
+                        blockedReason: wantsEnabled && !preflightPassed ? 'PREFLIGHT_REQUIRED' : '',
+                    };
+
                     const next = normalizeRunnerSettings({
                         ...current.settings,
                         ...patch,
                         providers: {
                             codex: {
-                                ...current.settings.providers.codex,
-                                ...patch.providers?.codex,
+                                ...mergeProvider('codex'),
                                 responsesEndpoint: nextCodexEndpoint,
                             },
-                            claude: {
-                                ...current.settings.providers.claude,
-                                ...patch.providers?.claude,
-                            },
+                            claude: mergeProvider('claude'),
                         },
+                        autoDeliver: nextAuto,
                     });
                     if (
                         next.providers.codex.responsesEndpoint !==
@@ -9423,6 +9861,63 @@ export default {
                         { headers }
                     );
                 }
+            } catch (error) {
+                return feedbackErrorResponse(error, headers);
+            }
+        }
+
+        // §20.1: one admin-only aggregate over the tables that already record the
+        // work. Counters the spec targets at zero are always present, so "zero"
+        // is a measurement rather than a missing field.
+        if (request.method === 'GET' && url.pathname === '/api/feedback/observability/metrics') {
+            if (!(await isValidAdminToken(request, env))) {
+                return errorResponse('Unauthorized', 401, headers);
+            }
+
+            try {
+                return jsonResponse({ metrics: await collectFeedbackMetrics(env) }, { headers });
+            } catch (error) {
+                return feedbackErrorResponse(error, headers);
+            }
+        }
+
+        // §19.5: enabling graded autonomy requires an explicit, re-runnable
+        // preflight over merge, deployment and production smoke prerequisites.
+        if (
+            request.method === 'POST' &&
+            url.pathname === '/api/feedback/runners/auto-deliver/preflight'
+        ) {
+            if (!(await isValidAdminToken(request, env))) {
+                return errorResponse('Unauthorized', 401, headers);
+            }
+
+            try {
+                const current = await readFeedbackSettings(env, 'runners');
+                const preflight = evaluateFeedbackAutoDeliverPreflight(env);
+                const saved = await writeFeedbackSettings(
+                    env,
+                    'runners',
+                    {
+                        ...current.settings,
+                        autoDeliver: {
+                            ...current.settings.autoDeliver,
+                            preflight,
+                            // A failing re-check must switch autonomy back off
+                            // rather than leave a stale approval in place.
+                            enabled: current.settings.autoDeliver.enabled && preflight.ok,
+                            blockedReason:
+                                current.settings.autoDeliver.enabled && !preflight.ok
+                                    ? 'PREFLIGHT_REGRESSED'
+                                    : current.settings.autoDeliver.blockedReason,
+                        },
+                    },
+                    current.version
+                );
+
+                return jsonResponse(
+                    { preflight, settings: serializeRunnerSettings(env, saved) },
+                    { headers }
+                );
             } catch (error) {
                 return feedbackErrorResponse(error, headers);
             }
@@ -9466,20 +9961,67 @@ export default {
                 // §19.5 requires a real minimal Action smoke run rather than an
                 // HTTP ping. Without dispatch credentials we report the gap
                 // instead of reporting a success we did not observe.
+                const smokeId = `smk_${crypto.randomUUID()}`;
+                const dispatch = await dispatchFeedbackRunnerSmoke(env, {
+                    provider,
+                    smokeId,
+                    settings: current.settings,
+                });
+
+                if (!dispatch.dispatched) {
+                    const result = {
+                        ok: false,
+                        provider,
+                        action: FEEDBACK_PROVIDER_ACTIONS[provider],
+                        endpointMode:
+                            provider === 'codex' &&
+                            current.settings.providers.codex.responsesEndpoint !==
+                                FEEDBACK_DEFAULT_RESPONSES_ENDPOINT
+                                ? 'relay'
+                                : 'official',
+                        testedAt,
+                        errorCode: dispatch.errorCode,
+                        message:
+                            dispatch.errorCode === 'ACTION_SMOKE_NOT_CONFIGURED'
+                                ? '端点格式校验通过；真实 Action 冒烟需要配置 FEEDBACK_GITHUB_REPOSITORY、FEEDBACK_GITHUB_TOKEN 和 FEEDBACK_CALLBACK_ORIGIN 后才能运行'
+                                : '真实 Action 冒烟派发失败，连接状态保持未验证',
+                    };
+                    const saved = await writeFeedbackSettings(
+                        env,
+                        'runners',
+                        {
+                            ...current.settings,
+                            providers: {
+                                ...current.settings.providers,
+                                [provider]: {
+                                    ...current.settings.providers[provider],
+                                    connectionState: 'unverified',
+                                    lastTestedAt: testedAt,
+                                    lastTestResult: result,
+                                    pendingSmoke: null,
+                                },
+                            },
+                        },
+                        current.version
+                    );
+
+                    return jsonResponse(
+                        { result, settings: serializeRunnerSettings(env, saved) },
+                        { status: 503, headers }
+                    );
+                }
+
+                // Dispatched, but nothing has been observed yet: the provider is
+                // `testing` until the smoke reports its own result (§19.5).
                 const result = {
                     ok: false,
+                    status: 'running',
+                    smokeId,
                     provider,
                     action: FEEDBACK_PROVIDER_ACTIONS[provider],
-                    endpointMode:
-                        provider === 'codex' &&
-                        current.settings.providers.codex.responsesEndpoint !==
-                            FEEDBACK_DEFAULT_RESPONSES_ENDPOINT
-                            ? 'relay'
-                            : 'official',
+                    endpointMode: dispatch.endpointMode,
                     testedAt,
-                    errorCode: 'ACTION_SMOKE_NOT_CONFIGURED',
-                    message:
-                        '端点格式校验通过；真实 Action 冒烟需要配置 FEEDBACK_GITHUB_DISPATCH_URL 后才能运行',
+                    message: '已派发真实最小 Action 冒烟，等待运行结果回调',
                 };
                 const saved = await writeFeedbackSettings(
                     env,
@@ -9490,9 +10032,10 @@ export default {
                             ...current.settings.providers,
                             [provider]: {
                                 ...current.settings.providers[provider],
-                                connectionState: 'unverified',
+                                connectionState: 'testing',
                                 lastTestedAt: testedAt,
                                 lastTestResult: result,
+                                pendingSmoke: { smokeId, dispatchedAt: testedAt },
                             },
                         },
                     },
@@ -9501,7 +10044,85 @@ export default {
 
                 return jsonResponse(
                     { result, settings: serializeRunnerSettings(env, saved) },
-                    { status: 503, headers }
+                    { status: 202, headers }
+                );
+            } catch (error) {
+                return feedbackErrorResponse(error, headers);
+            }
+        }
+
+        // §19.5: the minimal Action smoke reports its own outcome here, using a
+        // token scoped to that one smoke. This is the only writer of provider
+        // health, so §7.4 reads a machine-observed fact rather than a claim.
+        if (
+            request.method === 'POST' &&
+            url.pathname.startsWith('/api/feedback/runners/smoke/') &&
+            url.pathname.endsWith('/result')
+        ) {
+            const smokeId = decodeURIComponent(
+                url.pathname.slice('/api/feedback/runners/smoke/'.length, -'/result'.length)
+            );
+            const claims = await verifyFeedbackSmokeToken(request, env, { smokeId });
+            if (!claims) return errorResponse('Unauthorized', 401, headers);
+
+            try {
+                const body = await request.json();
+                const provider = String(claims.provider || '');
+                if (!FEEDBACK_PROVIDERS.has(provider)) {
+                    return errorResponse('Invalid provider', 400, headers);
+                }
+
+                const current = await readFeedbackSettings(env, 'runners');
+                const stored = current.settings.providers[provider];
+                // Only the smoke this provider is actually waiting on may write
+                // its health; a replayed older smoke is accepted and ignored.
+                if (stored.pendingSmoke?.smokeId !== smokeId) {
+                    return jsonResponse(
+                        { stale: true, settings: serializeRunnerSettings(env, current) },
+                        { headers }
+                    );
+                }
+
+                const ok = body.ok === true;
+                const completedAt = limitText(body.completedAt, 40) || new Date().toISOString();
+                const result = {
+                    ok,
+                    smokeId,
+                    provider,
+                    action: FEEDBACK_PROVIDER_ACTIONS[provider],
+                    // §19.5 requires the exact Action commit that ran, so a later
+                    // version bump is visibly unverified rather than assumed good.
+                    actionCommit: limitText(body.actionCommit, 80),
+                    model: limitText(body.model, 80),
+                    endpointMode: body.endpointMode === 'relay' ? 'relay' : 'official',
+                    completedAt,
+                    // A provider error string can carry a key; keep the code only.
+                    errorCode: ok ? '' : normalizeFeedbackSmokeErrorCode(body.errorCode),
+                    runUrl: limitText(body.runUrl, 300),
+                };
+
+                const saved = await writeFeedbackSettings(
+                    env,
+                    'runners',
+                    {
+                        ...current.settings,
+                        providers: {
+                            ...current.settings.providers,
+                            [provider]: {
+                                ...stored,
+                                connectionState: ok ? 'connected' : 'failed',
+                                lastTestedAt: completedAt,
+                                lastTestResult: result,
+                                pendingSmoke: null,
+                            },
+                        },
+                    },
+                    current.version
+                );
+
+                return jsonResponse(
+                    { result, settings: serializeRunnerSettings(env, saved) },
+                    { headers }
                 );
             } catch (error) {
                 return feedbackErrorResponse(error, headers);
@@ -9962,7 +10583,7 @@ export default {
                     eventType: 'issue.created',
                     issueId: created.issueId,
                 }).catch((error) => {
-                    console.warn('[Feedback] issue.created dispatch failed', error);
+                    logFeedback('warn', 'issue.created dispatch failed', { error });
                 });
                 if (ctx?.waitUntil) {
                     ctx.waitUntil(dispatch);
@@ -10042,11 +10663,11 @@ export default {
     async scheduled(event, env, ctx) {
         const sweep = runFeedbackReconcile(env, new Date(event.scheduledTime || Date.now())).then(
             (summary) => {
-                console.log('[Feedback] reconcile', summary);
+                logFeedback('info', 'reconcile', { deliveryId: summary?.jobId });
                 return summary;
             },
             (error) => {
-                console.warn('[Feedback] reconcile failed', error);
+                logFeedback('warn', 'reconcile failed', { error });
             }
         );
         if (ctx?.waitUntil) ctx.waitUntil(sweep);
