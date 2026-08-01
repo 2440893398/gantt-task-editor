@@ -593,6 +593,10 @@ class MemoryD1 {
         }
 
         // --- feedback_workflows ---
+        if (normalized.includes('from feedback_workflows where instance_id = ?')) {
+            const row = this.tables.feedback_workflows.get(values[0]);
+            return ok(row ? [{ ...row }] : []);
+        }
         if (normalized.includes('from feedback_workflows where issue_id = ?')) {
             const byGeneration = normalized.includes('generation = ?');
             const rows = Array.from(this.tables.feedback_workflows.values()).filter((row) => {
@@ -6117,6 +6121,45 @@ describe('feedback workbench V2 Run and Callback', () => {
                 },
             },
         ]);
+    });
+
+    it('[SCN-FWB-020] does not replay a stale Run result after the Workflow advances', async () => {
+        const { env, run } = await createRunEnv();
+        const token = await callbackTokenFor(env, run.id);
+        const workflowSignals = [];
+        env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).active_workflow_id =
+            run.workflow_id;
+        env.FEEDBACK_WORKFLOW = {
+            async get(id) {
+                return {
+                    async sendEvent(event) {
+                        workflowSignals.push({ id, event });
+                    },
+                };
+            },
+        };
+        const body = {
+            eventId: 'cb_wait_replay',
+            type: 'agent.waiting_human',
+            payload: {
+                actionType: 'need_reproduction',
+                requestedAction: 'Provide a reproduction file',
+            },
+        };
+
+        const first = await postCallback(env, run.id, body, token);
+        expect(first.status).toBe(201);
+        env.FEEDBACK_DB.tables.feedback_workflows.get(run.workflow_id).status = 'waiting';
+
+        const duplicate = await json(await postCallback(env, run.id, body, token));
+
+        expect(duplicate.duplicate).toBe(true);
+        expect(duplicate.workflowNotification).toEqual({
+            instanceId: run.workflow_id,
+            sent: false,
+            error: 'WORKFLOW_RUN_NOT_AWAITING_RESULT',
+        });
+        expect(workflowSignals).toHaveLength(1);
     });
 
     it('[SCN-FWB-020] creates successive Design revisions from structured callbacks', async () => {

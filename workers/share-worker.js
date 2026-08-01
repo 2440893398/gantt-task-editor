@@ -4151,6 +4151,19 @@ async function notifyFeedbackWorkflowRunResult(env, run, { eventId, callbackType
         return { instanceId, sent: false, error: 'WORKFLOW_RUN_NOT_ACTIVE' };
     }
 
+    const workflow = await env.FEEDBACK_DB.prepare(
+        'SELECT status, active_run_id FROM feedback_workflows WHERE instance_id = ?'
+    )
+        .bind(instanceId)
+        .first();
+    if (workflow?.status !== 'running' || workflow?.active_run_id !== run.id) {
+        return {
+            instanceId,
+            sent: false,
+            error: 'WORKFLOW_RUN_NOT_AWAITING_RESULT',
+        };
+    }
+
     try {
         const instance = await env.FEEDBACK_WORKFLOW.get(instanceId);
         await instance.sendEvent({
