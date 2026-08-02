@@ -6,11 +6,11 @@ compatibility_flags = ["nodejs_compat"]
 [observability]
 enabled = true
 
-[vars]
-FEEDBACK_GITHUB_REPOSITORY = "2440893398/gantt-task-editor"
-FEEDBACK_GITHUB_REF = "master"
-FEEDBACK_GITHUB_WORKFLOW = "feedback-agent-codex.yml"
-FEEDBACK_GITHUB_API_VERSION = "2026-03-10"
+# Spec §13.4/§17.2: the single low-frequency `feedback-reconcile` sweep. Issue
+# processing is event-driven (§4), so there is deliberately no high-frequency
+# cron here — see SCN-FWB-002.
+[triggers]
+crons = ["0 3 * * *"]
 
 [[kv_namespaces]]
 binding = "SHARE_KV"

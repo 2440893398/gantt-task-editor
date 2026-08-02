@@ -1,0 +1,4626 @@
+<!doctype html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>反馈处理工作台 V2 · 原型</title>
+        <link rel="icon" href="data:," />
+        <style>
+            @import url('https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700&display=swap');
+
+            :root {
+                color-scheme: light;
+                --canvas: #f6f8fa;
+                --panel: #ffffff;
+                --panel-subtle: #f6f8fa;
+                --border: #d0d7de;
+                --border-muted: #d8dee4;
+                --text: #1f2328;
+                --muted: #636c76;
+                --muted-2: #8c959f;
+                --brand: #0969da;
+                --brand-hover: #0757b6;
+                --brand-soft: #ddf4ff;
+                --success: #1a7f37;
+                --success-soft: #dafbe1;
+                --warning: #9a6700;
+                --warning-soft: #fff8c5;
+                --danger: #cf222e;
+                --danger-soft: #ffebe9;
+                --purple: #8250df;
+                --purple-soft: #fbefff;
+                --shadow: 0 1px 0 rgba(31, 35, 40, 0.04);
+                --focus: 0 0 0 3px rgba(9, 105, 218, 0.25);
+            }
+
+            * {
+                box-sizing: border-box;
+            }
+
+            html {
+                background: var(--canvas);
+            }
+
+            body {
+                min-width: 320px;
+                margin: 0;
+                color: var(--text);
+                background: var(--canvas);
+                font-family: 'Source Sans 3', 'Microsoft YaHei', system-ui, sans-serif;
+                font-size: 14px;
+                line-height: 1.5;
+            }
+
+            button,
+            input,
+            textarea,
+            select {
+                font: inherit;
+            }
+
+            button,
+            [role='button'] {
+                cursor: pointer;
+            }
+
+            button:focus-visible,
+            input:focus-visible,
+            textarea:focus-visible,
+            select:focus-visible,
+            summary:focus-visible {
+                outline: none;
+                box-shadow: var(--focus);
+            }
+
+            svg {
+                display: block;
+            }
+
+            .app {
+                min-height: 100vh;
+            }
+
+            .topbar {
+                position: sticky;
+                z-index: 50;
+                top: 0;
+                display: flex;
+                height: 56px;
+                align-items: center;
+                justify-content: space-between;
+                border-bottom: 1px solid var(--border);
+                background: rgba(255, 255, 255, 0.96);
+                padding: 0 20px;
+                backdrop-filter: blur(12px);
+            }
+
+            .brand,
+            .top-actions,
+            .top-tabs,
+            .toolbar-row,
+            .inline,
+            .meta-row,
+            .comment-head,
+            .composer-actions,
+            .property-row,
+            .status-line,
+            .stat-header,
+            .settings-title,
+            .delivery-main {
+                display: flex;
+                align-items: center;
+            }
+
+            .brand {
+                min-width: 260px;
+                gap: 10px;
+            }
+
+            .brand-mark {
+                display: grid;
+                width: 30px;
+                height: 30px;
+                place-items: center;
+                border-radius: 7px;
+                color: #ffffff;
+                background: #24292f;
+            }
+
+            .brand-copy strong {
+                display: block;
+                font-size: 15px;
+                line-height: 1.1;
+            }
+
+            .brand-copy span {
+                color: var(--muted);
+                font-size: 12px;
+            }
+
+            .top-tabs {
+                align-self: stretch;
+                gap: 18px;
+            }
+
+            .top-tab {
+                position: relative;
+                display: inline-flex;
+                align-items: center;
+                gap: 7px;
+                border: 0;
+                color: var(--muted);
+                background: none;
+                padding: 0 3px;
+                font-weight: 600;
+            }
+
+            .top-tab:hover {
+                color: var(--text);
+            }
+
+            .top-tab.active {
+                color: var(--text);
+            }
+
+            .top-tab.active::after {
+                position: absolute;
+                right: 0;
+                bottom: 0;
+                left: 0;
+                height: 2px;
+                border-radius: 2px 2px 0 0;
+                background: #fd8c73;
+                content: '';
+            }
+
+            .top-actions {
+                justify-content: flex-end;
+                min-width: 260px;
+                gap: 8px;
+            }
+
+            .button {
+                display: inline-flex;
+                min-height: 34px;
+                align-items: center;
+                justify-content: center;
+                gap: 7px;
+                border: 1px solid var(--border);
+                border-radius: 6px;
+                color: var(--text);
+                background: var(--panel-subtle);
+                padding: 5px 12px;
+                font-weight: 600;
+                text-decoration: none;
+                transition:
+                    background 160ms ease,
+                    border-color 160ms ease,
+                    color 160ms ease;
+            }
+
+            .button:hover {
+                border-color: #afb8c1;
+                background: #f3f4f6;
+            }
+
+            .button.primary {
+                border-color: rgba(31, 35, 40, 0.15);
+                color: #ffffff;
+                background: var(--success);
+                box-shadow: var(--shadow);
+            }
+
+            .button.primary:hover {
+                background: #176f2c;
+            }
+
+            .button.blue {
+                border-color: var(--brand);
+                color: #ffffff;
+                background: var(--brand);
+            }
+
+            .button.blue:hover {
+                background: var(--brand-hover);
+            }
+
+            .button:disabled {
+                cursor: not-allowed;
+                opacity: 0.62;
+            }
+
+            .button.danger {
+                color: var(--danger);
+                background: #ffffff;
+            }
+
+            .icon-button {
+                width: 34px;
+                padding: 0;
+            }
+
+            .badge {
+                display: inline-flex;
+                min-height: 22px;
+                align-items: center;
+                gap: 5px;
+                border: 1px solid transparent;
+                border-radius: 999px;
+                padding: 1px 8px;
+                color: var(--muted);
+                background: #eff2f5;
+                font-size: 12px;
+                font-weight: 600;
+                white-space: nowrap;
+            }
+
+            .badge.blue {
+                border-color: #b6d7fe;
+                color: #0550ae;
+                background: #ddf4ff;
+            }
+
+            .badge.green {
+                border-color: #a8d5b1;
+                color: #116329;
+                background: var(--success-soft);
+            }
+
+            .badge.orange {
+                border-color: #eac54f;
+                color: #7d4e00;
+                background: var(--warning-soft);
+            }
+
+            .badge.purple {
+                border-color: #d8b9ff;
+                color: #6639ba;
+                background: var(--purple-soft);
+            }
+
+            .badge.red {
+                border-color: #ffb6b9;
+                color: #a40e26;
+                background: var(--danger-soft);
+            }
+
+            .count {
+                display: inline-grid;
+                min-width: 20px;
+                height: 20px;
+                place-items: center;
+                border-radius: 10px;
+                color: var(--muted);
+                background: #eff2f5;
+                padding: 0 6px;
+                font-size: 11px;
+                font-weight: 700;
+            }
+
+            .layout {
+                display: grid;
+                min-height: calc(100vh - 56px);
+                grid-template-columns: 316px minmax(560px, 800px) 294px;
+                justify-content: center;
+                gap: 24px;
+                padding: 24px;
+            }
+
+            .queue {
+                position: sticky;
+                top: 80px;
+                height: calc(100vh - 104px);
+                overflow: hidden;
+                border: 1px solid var(--border);
+                border-radius: 8px;
+                background: var(--panel);
+                box-shadow: var(--shadow);
+            }
+
+            .queue-head {
+                border-bottom: 1px solid var(--border);
+                padding: 14px;
+            }
+
+            .toolbar-row {
+                justify-content: space-between;
+                gap: 10px;
+            }
+
+            .queue-head h2,
+            .page-heading h1,
+            .side-card h3,
+            .settings-title h1,
+            .settings-card h2 {
+                margin: 0;
+            }
+
+            .queue-head h2 {
+                font-size: 14px;
+            }
+
+            .queue-head p {
+                margin: 1px 0 0;
+                color: var(--muted);
+                font-size: 12px;
+            }
+
+            .search {
+                position: relative;
+                margin-top: 12px;
+            }
+
+            .search svg {
+                position: absolute;
+                top: 9px;
+                left: 10px;
+                color: var(--muted);
+            }
+
+            .search input {
+                width: 100%;
+                height: 34px;
+                border: 1px solid var(--border);
+                border-radius: 6px;
+                color: var(--text);
+                background: var(--panel);
+                padding: 6px 10px 6px 32px;
+            }
+
+            .filters {
+                display: flex;
+                gap: 6px;
+                margin-top: 10px;
+            }
+
+            .filter-chip {
+                border: 1px solid var(--border);
+                border-radius: 6px;
+                color: var(--muted);
+                background: #ffffff;
+                padding: 3px 8px;
+                font-size: 12px;
+                font-weight: 600;
+            }
+
+            .filter-chip.active {
+                border-color: #a8c7fa;
+                color: #0550ae;
+                background: var(--brand-soft);
+            }
+
+            .issue-list {
+                height: calc(100% - 130px);
+                overflow-y: auto;
+            }
+
+            .issue-item {
+                position: relative;
+                width: 100%;
+                border: 0;
+                border-bottom: 1px solid #eaeef2;
+                color: inherit;
+                background: #ffffff;
+                padding: 13px 14px;
+                text-align: left;
+            }
+
+            .issue-item:hover {
+                background: #f6f8fa;
+            }
+
+            .issue-item.active {
+                background: #f0f7ff;
+            }
+
+            .issue-item.active::before {
+                position: absolute;
+                top: 0;
+                bottom: 0;
+                left: 0;
+                width: 3px;
+                background: var(--brand);
+                content: '';
+            }
+
+            .issue-item-title {
+                display: flex;
+                align-items: flex-start;
+                justify-content: space-between;
+                gap: 10px;
+                font-weight: 600;
+            }
+
+            .issue-item-copy {
+                display: -webkit-box;
+                overflow: hidden;
+                margin-top: 5px;
+                color: var(--muted);
+                font-size: 12px;
+                -webkit-box-orient: vertical;
+                -webkit-line-clamp: 2;
+            }
+
+            .issue-item-meta {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                margin-top: 9px;
+                color: var(--muted-2);
+                font-size: 11px;
+            }
+
+            main {
+                min-width: 0;
+            }
+
+            .breadcrumbs {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                margin: 2px 0 8px;
+                color: var(--muted);
+                font-size: 13px;
+            }
+
+            .page-heading {
+                padding-bottom: 18px;
+                border-bottom: 1px solid var(--border-muted);
+            }
+
+            .page-heading h1 {
+                font-size: clamp(24px, 3vw, 30px);
+                font-weight: 600;
+                letter-spacing: -0.02em;
+                line-height: 1.22;
+            }
+
+            .issue-number {
+                color: var(--muted);
+                font-weight: 400;
+            }
+
+            .heading-meta {
+                display: flex;
+                flex-wrap: wrap;
+                align-items: center;
+                gap: 8px;
+                margin-top: 10px;
+                color: var(--muted);
+            }
+
+            .state-pill {
+                display: inline-flex;
+                min-height: 30px;
+                align-items: center;
+                gap: 6px;
+                border-radius: 18px;
+                color: #ffffff;
+                background: var(--success);
+                padding: 4px 12px;
+                font-weight: 600;
+            }
+
+            .state-pill.attention {
+                background: #bf8700;
+            }
+
+            .timeline {
+                position: relative;
+                padding: 24px 0 4px;
+            }
+
+            .timeline::before {
+                position: absolute;
+                top: 24px;
+                bottom: 0;
+                left: 20px;
+                width: 2px;
+                background: #d8dee4;
+                content: '';
+            }
+
+            .timeline-entry {
+                position: relative;
+                display: grid;
+                grid-template-columns: 40px minmax(0, 1fr);
+                gap: 12px;
+                margin-bottom: 18px;
+            }
+
+            .avatar {
+                position: relative;
+                z-index: 2;
+                display: grid;
+                width: 40px;
+                height: 40px;
+                place-items: center;
+                overflow: hidden;
+                border: 2px solid var(--canvas);
+                border-radius: 50%;
+                color: #ffffff;
+                background: #24292f;
+                font-size: 13px;
+                font-weight: 700;
+            }
+
+            .avatar.ai {
+                background: linear-gradient(135deg, #6639ba, #0969da);
+            }
+
+            .avatar.event {
+                width: 26px;
+                height: 26px;
+                margin: 7px;
+                border: 4px solid var(--canvas);
+                color: var(--muted);
+                background: #d8dee4;
+            }
+
+            .comment-card {
+                overflow: hidden;
+                border: 1px solid var(--border);
+                border-radius: 8px;
+                background: var(--panel);
+                box-shadow: var(--shadow);
+            }
+
+            .comment-card.attention {
+                border-color: #d4a72c;
+            }
+
+            .comment-head {
+                min-height: 42px;
+                justify-content: space-between;
+                gap: 10px;
+                border-bottom: 1px solid var(--border);
+                background: var(--panel-subtle);
+                padding: 8px 12px;
+                color: var(--muted);
+                font-size: 13px;
+            }
+
+            .comment-card.attention .comment-head {
+                border-color: #e2c55a;
+                background: var(--warning-soft);
+            }
+
+            .comment-head strong {
+                color: var(--text);
+            }
+
+            .comment-body {
+                padding: 15px 16px 16px;
+            }
+
+            .comment-body p {
+                margin: 0 0 12px;
+            }
+
+            .comment-body p:last-child {
+                margin-bottom: 0;
+            }
+
+            .comment-body ul {
+                margin: 8px 0 12px;
+                padding-left: 22px;
+            }
+
+            .comment-body li + li {
+                margin-top: 5px;
+            }
+
+            .attachment {
+                display: inline-flex;
+                min-width: 260px;
+                align-items: center;
+                gap: 10px;
+                border: 1px solid var(--border);
+                border-radius: 6px;
+                background: #ffffff;
+                padding: 9px 10px;
+            }
+
+            .attachment-thumb {
+                display: grid;
+                width: 46px;
+                height: 38px;
+                place-items: center;
+                border-radius: 4px;
+                color: var(--brand);
+                background: var(--brand-soft);
+            }
+
+            .attachment strong {
+                display: block;
+                font-size: 13px;
+            }
+
+            .attachment span {
+                color: var(--muted);
+                font-size: 11px;
+            }
+
+            .event-row {
+                display: flex;
+                min-height: 40px;
+                align-items: center;
+                justify-content: space-between;
+                gap: 10px;
+                color: var(--muted);
+                padding: 3px 0;
+                font-size: 13px;
+            }
+
+            .event-row strong {
+                color: var(--text);
+                font-weight: 600;
+            }
+
+            .evidence {
+                margin-top: 12px;
+                border: 1px solid var(--border-muted);
+                border-radius: 6px;
+                background: #f6f8fa;
+            }
+
+            .evidence summary {
+                display: flex;
+                min-height: 40px;
+                align-items: center;
+                justify-content: space-between;
+                gap: 10px;
+                border-radius: 6px;
+                padding: 8px 11px;
+                font-weight: 600;
+                list-style: none;
+                cursor: pointer;
+            }
+
+            .evidence summary::-webkit-details-marker {
+                display: none;
+            }
+
+            .evidence-grid {
+                display: grid;
+                grid-template-columns: repeat(3, 1fr);
+                gap: 8px;
+                border-top: 1px solid var(--border-muted);
+                padding: 10px;
+            }
+
+            .evidence-item {
+                min-height: 76px;
+                border: 1px solid var(--border-muted);
+                border-radius: 5px;
+                background: #ffffff;
+                padding: 9px;
+            }
+
+            .evidence-item span {
+                display: block;
+                color: var(--muted);
+                font-size: 11px;
+            }
+
+            .evidence-item strong {
+                display: block;
+                margin-top: 3px;
+                font-size: 12px;
+                line-height: 1.35;
+            }
+
+            .decision-box {
+                display: grid;
+                grid-template-columns: 22px 1fr;
+                gap: 10px;
+                margin-top: 12px;
+                border: 1px solid #e2c55a;
+                border-radius: 6px;
+                color: #5f4507;
+                background: #fffdf0;
+                padding: 11px 12px;
+            }
+
+            .decision-box strong {
+                display: block;
+                color: #3b2b05;
+            }
+
+            .decision-box p {
+                margin: 2px 0 0;
+                color: #6e550c;
+                font-size: 13px;
+            }
+
+            .composer {
+                position: relative;
+                display: grid;
+                grid-template-columns: 40px minmax(0, 1fr);
+                gap: 12px;
+                margin-top: 8px;
+            }
+
+            .composer-panel {
+                overflow: hidden;
+                border: 1px solid var(--border);
+                border-radius: 8px;
+                background: var(--panel);
+                box-shadow: var(--shadow);
+            }
+
+            .composer-tabs {
+                display: flex;
+                min-height: 42px;
+                align-items: flex-end;
+                gap: 18px;
+                border-bottom: 1px solid var(--border);
+                padding: 0 14px;
+            }
+
+            .composer-tab {
+                align-self: stretch;
+                border: 0;
+                border-bottom: 2px solid transparent;
+                color: var(--muted);
+                background: transparent;
+                padding: 0 2px;
+                font-weight: 600;
+            }
+
+            .composer-tab.active {
+                border-bottom-color: #fd8c73;
+                color: var(--text);
+            }
+
+            .composer-editor {
+                padding: 12px;
+            }
+
+            .mention-bar {
+                display: flex;
+                align-items: center;
+                gap: 7px;
+                margin-bottom: 8px;
+            }
+
+            .mention-button {
+                border: 1px solid #b6d7fe;
+                border-radius: 999px;
+                color: #0550ae;
+                background: var(--brand-soft);
+                padding: 3px 9px;
+                font-size: 12px;
+                font-weight: 600;
+            }
+
+            .mention-hint {
+                color: var(--muted);
+                font-size: 12px;
+            }
+
+            .composer textarea {
+                display: block;
+                width: 100%;
+                min-height: 112px;
+                resize: vertical;
+                border: 1px solid var(--border);
+                border-radius: 6px;
+                color: var(--text);
+                background: #ffffff;
+                padding: 10px 11px;
+                line-height: 1.55;
+            }
+
+            .composer-actions {
+                justify-content: space-between;
+                gap: 12px;
+                margin-top: 10px;
+            }
+
+            .reply-mode {
+                height: 34px;
+                max-width: 220px;
+                border: 1px solid var(--border);
+                border-radius: 6px;
+                color: var(--text);
+                background: var(--panel-subtle);
+                padding: 4px 30px 4px 10px;
+                font-weight: 600;
+            }
+
+            .reply-success {
+                display: none;
+                align-items: center;
+                gap: 7px;
+                color: var(--success);
+                font-size: 13px;
+                font-weight: 600;
+            }
+
+            aside {
+                min-width: 0;
+            }
+
+            .aside-sticky {
+                position: sticky;
+                top: 80px;
+                display: grid;
+                gap: 14px;
+            }
+
+            .side-card {
+                overflow: hidden;
+                border: 1px solid var(--border);
+                border-radius: 8px;
+                background: var(--panel);
+                box-shadow: var(--shadow);
+            }
+
+            .side-card-head {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 10px;
+                border-bottom: 1px solid var(--border);
+                background: var(--panel-subtle);
+                padding: 10px 12px;
+            }
+
+            .side-card h3 {
+                font-size: 13px;
+            }
+
+            .side-card-body {
+                padding: 12px;
+            }
+
+            .next-action {
+                border-color: #d4a72c;
+            }
+
+            .next-action .side-card-head {
+                border-color: #e2c55a;
+                background: var(--warning-soft);
+            }
+
+            .next-action-copy {
+                color: var(--muted);
+                font-size: 13px;
+            }
+
+            .next-action-copy strong {
+                display: block;
+                margin-bottom: 3px;
+                color: var(--text);
+                font-size: 14px;
+            }
+
+            .side-actions {
+                display: grid;
+                gap: 7px;
+                margin-top: 12px;
+            }
+
+            .side-actions .button {
+                width: 100%;
+            }
+
+            .property-list {
+                display: grid;
+            }
+
+            .property-row {
+                min-height: 42px;
+                justify-content: space-between;
+                gap: 12px;
+                border-bottom: 1px solid #eaeef2;
+                padding: 8px 0;
+            }
+
+            .property-row:last-child {
+                border-bottom: 0;
+            }
+
+            .property-row > span:first-child {
+                color: var(--muted);
+                font-size: 12px;
+            }
+
+            .property-value {
+                text-align: right;
+                font-weight: 600;
+            }
+
+            .avatar-mini {
+                display: inline-grid;
+                width: 20px;
+                height: 20px;
+                place-items: center;
+                border-radius: 50%;
+                color: #ffffff;
+                background: #24292f;
+                font-size: 9px;
+            }
+
+            .automation-health {
+                display: grid;
+                gap: 9px;
+            }
+
+            .status-line {
+                justify-content: space-between;
+                gap: 8px;
+                color: var(--muted);
+                font-size: 12px;
+            }
+
+            .status-value {
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                color: var(--text);
+                font-weight: 600;
+            }
+
+            .status-dot {
+                width: 8px;
+                height: 8px;
+                border-radius: 50%;
+                background: var(--success);
+                box-shadow: 0 0 0 3px var(--success-soft);
+            }
+
+            .status-dot.warn {
+                background: #bf8700;
+                box-shadow: 0 0 0 3px var(--warning-soft);
+            }
+
+            .cost-note {
+                border-radius: 6px;
+                color: #0550ae;
+                background: var(--brand-soft);
+                padding: 8px 9px;
+                font-size: 12px;
+            }
+
+            .mobile-queue-button {
+                display: none;
+            }
+
+            .settings-view {
+                display: none;
+                width: min(1180px, calc(100% - 40px));
+                margin: 0 auto;
+                padding: 28px 0 48px;
+            }
+
+            .settings-view.active {
+                display: block;
+            }
+
+            .issue-view.hidden {
+                display: none;
+            }
+
+            .hidden {
+                display: none !important;
+            }
+
+            .settings-title {
+                justify-content: space-between;
+                gap: 20px;
+                margin-bottom: 22px;
+            }
+
+            .settings-title h1 {
+                font-size: 28px;
+                line-height: 1.2;
+            }
+
+            .settings-title p {
+                margin: 4px 0 0;
+                color: var(--muted);
+            }
+
+            .settings-heading {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                flex-wrap: wrap;
+            }
+
+            .settings-heading .badge {
+                gap: 6px;
+            }
+
+            .settings-heading .status-dot {
+                width: 7px;
+                height: 7px;
+                box-shadow: none;
+            }
+
+            .settings-title > .button {
+                min-width: 104px;
+            }
+
+            .stats {
+                display: grid;
+                grid-template-columns: repeat(4, 1fr);
+                gap: 12px;
+                margin-bottom: 18px;
+            }
+
+            .stat-card,
+            .settings-card {
+                border: 1px solid var(--border);
+                border-radius: 8px;
+                background: var(--panel);
+                box-shadow: var(--shadow);
+            }
+
+            .stat-card {
+                padding: 14px 15px;
+            }
+
+            .stat-header {
+                justify-content: space-between;
+                color: var(--muted);
+                font-size: 12px;
+            }
+
+            .stat-value {
+                margin-top: 7px;
+                font-size: 25px;
+                font-weight: 600;
+                letter-spacing: -0.02em;
+            }
+
+            .stat-foot {
+                margin-top: 2px;
+                color: var(--muted);
+                font-size: 12px;
+            }
+
+            .settings-grid {
+                display: grid;
+                grid-template-columns: minmax(0, 1.55fr) minmax(320px, 0.85fr);
+                gap: 18px;
+                align-items: start;
+            }
+
+            .settings-column {
+                display: grid;
+                gap: 18px;
+            }
+
+            .automation-settings-grid {
+                grid-template-columns: minmax(0, 1.35fr) minmax(300px, 0.75fr);
+                gap: 16px;
+            }
+
+            .settings-card-head {
+                display: flex;
+                align-items: flex-start;
+                justify-content: space-between;
+                gap: 16px;
+                border-bottom: 1px solid var(--border);
+                padding: 14px 16px;
+            }
+
+            .settings-card h2 {
+                font-size: 15px;
+            }
+
+            .settings-card-head p {
+                margin: 2px 0 0;
+                color: var(--muted);
+                font-size: 12px;
+            }
+
+            .settings-card-head.compact {
+                align-items: center;
+                padding-block: 12px;
+            }
+
+            .settings-card-body {
+                padding: 16px;
+            }
+
+            .field {
+                display: grid;
+                gap: 6px;
+                margin-bottom: 14px;
+            }
+
+            .field:last-child {
+                margin-bottom: 0;
+            }
+
+            .field label,
+            .field-label {
+                color: var(--text);
+                font-size: 12px;
+                font-weight: 600;
+            }
+
+            .field-head {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 12px;
+            }
+
+            .input-group {
+                display: flex;
+                gap: 8px;
+            }
+
+            .input-group .button {
+                flex: 0 0 auto;
+                white-space: nowrap;
+            }
+
+            .field input[type='text'],
+            .field input[type='url'],
+            .field input[type='password'] {
+                width: 100%;
+                height: 38px;
+                border: 1px solid var(--border);
+                border-radius: 6px;
+                color: var(--text);
+                background: #ffffff;
+                padding: 7px 10px;
+                font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+                font-size: 12px;
+            }
+
+            .help {
+                color: var(--muted);
+                font-size: 11px;
+            }
+
+            .connection-status {
+                display: inline-flex;
+                align-items: center;
+                gap: 5px;
+                width: max-content;
+                color: var(--muted);
+                font-size: 11px;
+            }
+
+            .connection-status.success {
+                color: var(--success);
+            }
+
+            .connection-status.error {
+                color: var(--danger);
+            }
+
+            .connection-status svg {
+                flex: 0 0 auto;
+            }
+
+            .event-checks {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 8px;
+            }
+
+            .check-card {
+                display: grid;
+                grid-template-columns: 18px 1fr;
+                gap: 8px;
+                border: 1px solid var(--border-muted);
+                border-radius: 6px;
+                padding: 10px;
+                cursor: pointer;
+                transition:
+                    border-color 160ms ease,
+                    background 160ms ease;
+            }
+
+            .check-card:hover,
+            .check-card:focus-within {
+                border-color: #8c959f;
+            }
+
+            .check-card:has(input:checked) {
+                border-color: #b6d7ff;
+                background: #f6faff;
+            }
+
+            .check-card input {
+                width: 16px;
+                height: 16px;
+                margin: 2px 0 0;
+                accent-color: var(--brand);
+            }
+
+            .check-card strong {
+                display: block;
+                font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+                font-size: 11px;
+            }
+
+            .check-card span {
+                color: var(--muted);
+                font-size: 11px;
+            }
+
+            .advanced-details {
+                margin-bottom: 16px;
+                overflow: hidden;
+                border: 1px solid var(--border-muted);
+                border-radius: 6px;
+                background: var(--panel-subtle);
+            }
+
+            .advanced-details summary {
+                display: flex;
+                min-height: 44px;
+                align-items: center;
+                justify-content: space-between;
+                gap: 12px;
+                padding: 8px 10px;
+                font-size: 12px;
+                font-weight: 600;
+                list-style: none;
+                cursor: pointer;
+            }
+
+            .advanced-details summary::-webkit-details-marker,
+            .delivery-card summary::-webkit-details-marker {
+                display: none;
+            }
+
+            .advanced-details[open] summary {
+                border-bottom: 1px solid var(--border-muted);
+            }
+
+            .advanced-details-body {
+                padding: 12px;
+            }
+
+            .advanced-details-body .field {
+                margin-bottom: 8px;
+            }
+
+            .advanced-details-body .help {
+                line-height: 1.55;
+            }
+
+            .pipeline {
+                display: grid;
+                grid-template-columns: 1fr 32px 1fr 32px 1fr;
+                align-items: center;
+                gap: 4px;
+            }
+
+            .pipeline-node {
+                display: grid;
+                min-height: 102px;
+                place-items: center;
+                border: 1px solid var(--border-muted);
+                border-radius: 7px;
+                background: var(--panel-subtle);
+                padding: 10px;
+                text-align: center;
+            }
+
+            .pipeline-node svg {
+                color: var(--brand);
+            }
+
+            .pipeline-node strong {
+                display: block;
+                margin-top: 7px;
+                font-size: 12px;
+            }
+
+            .pipeline-node span {
+                color: var(--muted);
+                font-size: 10px;
+            }
+
+            .pipeline-arrow {
+                display: grid;
+                place-items: center;
+                color: var(--muted-2);
+            }
+
+            .delivery-list {
+                display: grid;
+                gap: 0;
+            }
+
+            .delivery {
+                display: grid;
+                grid-template-columns: minmax(0, 1fr) auto;
+                gap: 10px;
+                border-bottom: 1px solid #eaeef2;
+                padding: 11px 0;
+            }
+
+            .delivery:last-child {
+                border-bottom: 0;
+                padding-bottom: 0;
+            }
+
+            .delivery:first-child {
+                padding-top: 0;
+            }
+
+            .delivery-main {
+                min-width: 0;
+                gap: 8px;
+            }
+
+            .delivery-icon {
+                display: grid;
+                width: 24px;
+                height: 24px;
+                flex: 0 0 auto;
+                place-items: center;
+                border-radius: 50%;
+                color: var(--success);
+                background: var(--success-soft);
+            }
+
+            .delivery-copy {
+                min-width: 0;
+            }
+
+            .delivery-copy strong {
+                display: block;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+                font-size: 11px;
+                white-space: nowrap;
+            }
+
+            .delivery-copy span,
+            .delivery-time {
+                color: var(--muted);
+                font-size: 11px;
+            }
+
+            .delivery-card {
+                overflow: hidden;
+            }
+
+            .delivery-card summary {
+                display: flex;
+                min-height: 54px;
+                align-items: center;
+                justify-content: space-between;
+                gap: 12px;
+                padding: 12px 16px;
+                list-style: none;
+                cursor: pointer;
+            }
+
+            .delivery-summary {
+                display: grid;
+                gap: 2px;
+            }
+
+            .delivery-summary strong {
+                font-size: 15px;
+            }
+
+            .delivery-summary span {
+                color: var(--muted);
+                font-size: 11px;
+            }
+
+            .summary-chevron {
+                color: var(--muted);
+                transition: transform 160ms ease;
+            }
+
+            .delivery-card[open] .summary-chevron {
+                transform: rotate(180deg);
+            }
+
+            .advanced-details[open] .summary-chevron {
+                transform: rotate(180deg);
+            }
+
+            .delivery-card[open] summary {
+                border-bottom: 1px solid var(--border);
+            }
+
+            .toggle-row {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 14px;
+                border-bottom: 1px solid #eaeef2;
+                padding: 11px 0;
+            }
+
+            .toggle-row:last-child {
+                border-bottom: 0;
+            }
+
+            .toggle-copy strong {
+                display: block;
+                font-size: 13px;
+            }
+
+            .toggle-copy span {
+                color: var(--muted);
+                font-size: 11px;
+            }
+
+            .switch {
+                position: relative;
+                width: 44px;
+                height: 44px;
+                flex: 0 0 auto;
+                border: 0;
+                border-radius: 22px;
+                background: transparent;
+                padding: 0;
+            }
+
+            .switch::before {
+                position: absolute;
+                top: 10px;
+                left: 0;
+                width: 44px;
+                height: 24px;
+                border-radius: 12px;
+                background: #afb8c1;
+                content: '';
+                transition: background 160ms ease;
+            }
+
+            .switch::after {
+                position: absolute;
+                top: 13px;
+                left: 3px;
+                width: 18px;
+                height: 18px;
+                border-radius: 50%;
+                background: #ffffff;
+                content: '';
+                transition: transform 160ms ease;
+            }
+
+            .switch.on {
+                background: transparent;
+            }
+
+            .switch.on::before {
+                background: var(--success);
+            }
+
+            .switch.on::after {
+                transform: translateX(20px);
+            }
+
+            .executor-row {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 14px;
+            }
+
+            .executor-main {
+                display: flex;
+                min-width: 0;
+                align-items: center;
+                gap: 10px;
+            }
+
+            .executor-icon {
+                display: grid;
+                width: 36px;
+                height: 36px;
+                flex: 0 0 auto;
+                place-items: center;
+                border-radius: 8px;
+                color: var(--brand);
+                background: var(--brand-soft);
+            }
+
+            .executor-copy strong,
+            .executor-copy span {
+                display: block;
+            }
+
+            .executor-copy strong {
+                font-size: 13px;
+            }
+
+            .executor-copy span {
+                margin-top: 1px;
+                color: var(--muted);
+                font-size: 11px;
+            }
+
+            .runner-title-actions {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+            }
+
+            .runner-title-actions > span {
+                color: var(--muted);
+                font-size: 11px;
+            }
+
+            .runner-settings-grid {
+                display: grid;
+                grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.65fr);
+                align-items: start;
+                gap: 16px;
+            }
+
+            .runner-settings-grid .button,
+            .runner-title-actions .button,
+            .runner-settings-grid .field input,
+            .runner-select-row select {
+                min-height: 44px;
+            }
+
+            .runner-provider-grid {
+                gap: 10px;
+            }
+
+            .runner-provider-grid .provider-card {
+                display: flex;
+                min-width: 0;
+                flex-direction: column;
+                background: #ffffff;
+                transition:
+                    border-color 160ms ease,
+                    box-shadow 160ms ease;
+            }
+
+            .runner-provider-grid .provider-card:hover {
+                border-color: #8c959f;
+            }
+
+            .provider-state,
+            .provider-buttons {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+            }
+
+            .provider-summary {
+                min-height: 36px;
+                margin: 12px 0;
+                color: var(--muted);
+                font-size: 11px;
+                line-height: 1.55;
+            }
+
+            .runner-provider-grid .provider-actions {
+                align-items: center;
+                flex-wrap: wrap;
+            }
+
+            .runner-provider-grid .provider-buttons {
+                margin-left: auto;
+            }
+
+            .provider-config {
+                width: 100%;
+                margin: 12px 0 0;
+            }
+
+            .provider-config .advanced-details-body {
+                background: #ffffff;
+            }
+
+            .runner-secret-row {
+                display: flex;
+                min-height: 44px;
+                align-items: center;
+                justify-content: space-between;
+                gap: 12px;
+            }
+
+            .runner-secret-row span,
+            .runner-secret-row strong {
+                display: block;
+            }
+
+            .runner-secret-row span {
+                color: var(--muted);
+                font-size: 10px;
+            }
+
+            .runner-secret-row strong {
+                margin-top: 2px;
+                font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+                font-size: 10px;
+            }
+
+            .runner-route-form {
+                display: grid;
+                gap: 0;
+            }
+
+            .runner-select-row,
+            .runner-route-row {
+                display: flex;
+                min-height: 54px;
+                align-items: center;
+                justify-content: space-between;
+                gap: 16px;
+                border-bottom: 1px solid #eaeef2;
+                padding: 8px 0;
+            }
+
+            .runner-select-row:first-child {
+                padding-top: 0;
+            }
+
+            .runner-route-row:last-child {
+                border-bottom: 0;
+                padding-bottom: 0;
+            }
+
+            .runner-select-row > span > strong,
+            .runner-select-row > span > span,
+            .runner-route-row > span > strong,
+            .runner-route-row > span > small {
+                display: block;
+            }
+
+            .runner-select-row > span > strong,
+            .runner-route-row strong {
+                font-size: 12px;
+            }
+
+            .runner-select-row > span > span,
+            .runner-route-row small {
+                margin-top: 2px;
+                color: var(--muted);
+                font-size: 10px;
+            }
+
+            .runner-select-row select {
+                min-width: 150px;
+                height: 38px;
+                border: 1px solid var(--border);
+                border-radius: 6px;
+                color: var(--text);
+                background: #ffffff;
+                padding: 6px 30px 6px 10px;
+                font: inherit;
+                font-size: 12px;
+                cursor: pointer;
+            }
+
+            .runner-health-list {
+                display: grid;
+                gap: 0;
+            }
+
+            .runner-health-list > div {
+                display: flex;
+                min-height: 42px;
+                align-items: center;
+                justify-content: space-between;
+                gap: 12px;
+                border-bottom: 1px solid #eaeef2;
+                padding: 8px 0;
+            }
+
+            .runner-health-list > div:first-child {
+                padding-top: 0;
+            }
+
+            .runner-health-list > div:last-child {
+                border-bottom: 0;
+                padding-bottom: 0;
+            }
+
+            .runner-health-list span {
+                color: var(--muted);
+                font-size: 11px;
+            }
+
+            .runner-health-list strong {
+                font-size: 11px;
+                text-align: right;
+            }
+
+            .runner-health-list .inline-success {
+                color: var(--success);
+            }
+
+            .runner-advanced-card {
+                overflow: hidden;
+            }
+
+            .runner-advanced-card > summary {
+                display: flex;
+                min-height: 64px;
+                align-items: center;
+                justify-content: space-between;
+                gap: 12px;
+                padding: 12px 16px;
+                list-style: none;
+                cursor: pointer;
+            }
+
+            .runner-advanced-card > summary::-webkit-details-marker {
+                display: none;
+            }
+
+            .runner-advanced-card > summary strong,
+            .runner-advanced-card > summary small {
+                display: block;
+            }
+
+            .runner-advanced-card > summary strong {
+                font-size: 15px;
+            }
+
+            .runner-advanced-card > summary small {
+                margin-top: 2px;
+                color: var(--muted);
+                font-size: 11px;
+            }
+
+            .runner-advanced-card[open] > summary {
+                border-bottom: 1px solid var(--border);
+            }
+
+            .runner-advanced-card[open] .summary-chevron {
+                transform: rotate(180deg);
+            }
+
+            .runner-contract > span {
+                display: block;
+                margin-bottom: 7px;
+                font-size: 12px;
+                font-weight: 600;
+            }
+
+            .runner-contract > div {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 6px;
+            }
+
+            .runner-contract code {
+                border-radius: 5px;
+                color: #0550ae;
+                background: var(--brand-soft);
+                padding: 4px 6px;
+                font-size: 10px;
+            }
+
+            .runner-sdk-note {
+                margin-top: 14px;
+            }
+
+            .recommendation {
+                display: flex;
+                align-items: flex-start;
+                justify-content: space-between;
+                gap: 18px;
+                border: 1px solid #54aeff;
+                border-radius: 8px;
+                background: #f6f8fa;
+                padding: 16px;
+                margin-bottom: 18px;
+            }
+
+            .recommendation-copy {
+                display: flex;
+                align-items: flex-start;
+                gap: 12px;
+            }
+
+            .recommendation-icon {
+                display: grid;
+                width: 34px;
+                height: 34px;
+                flex: 0 0 auto;
+                place-items: center;
+                border-radius: 7px;
+                color: var(--brand);
+                background: var(--brand-soft);
+            }
+
+            .recommendation h2 {
+                font-size: 15px;
+            }
+
+            .recommendation p {
+                max-width: 760px;
+                margin: 4px 0 0;
+                color: var(--muted);
+                font-size: 12px;
+                line-height: 1.65;
+            }
+
+            .flow-grid {
+                display: grid;
+                grid-template-columns:
+                    minmax(120px, 1fr) 24px minmax(120px, 1fr) 24px
+                    minmax(120px, 1fr) 24px minmax(120px, 1fr) 24px
+                    minmax(120px, 1fr);
+                align-items: center;
+                gap: 3px;
+            }
+
+            .flow-node {
+                min-height: 116px;
+                border: 1px solid var(--border-muted);
+                border-radius: 7px;
+                background: var(--panel-subtle);
+                padding: 13px 10px;
+                text-align: center;
+            }
+
+            .flow-node.highlight {
+                border-color: #54aeff;
+                background: var(--brand-soft);
+            }
+
+            .flow-node svg {
+                color: var(--brand);
+            }
+
+            .flow-node strong {
+                display: block;
+                margin-top: 8px;
+                font-size: 12px;
+            }
+
+            .flow-node span {
+                display: block;
+                margin-top: 3px;
+                color: var(--muted);
+                font-size: 10px;
+                line-height: 1.45;
+            }
+
+            .flow-arrow {
+                display: grid;
+                place-items: center;
+                color: var(--muted-2);
+            }
+
+            .provider-grid {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 12px;
+            }
+
+            .provider-card {
+                border: 1px solid var(--border-muted);
+                border-radius: 7px;
+                background: var(--panel-subtle);
+                padding: 14px;
+            }
+
+            .provider-card.selected {
+                border-color: #54aeff;
+                box-shadow: inset 3px 0 0 var(--brand);
+            }
+
+            .provider-head {
+                display: flex;
+                align-items: flex-start;
+                justify-content: space-between;
+                gap: 10px;
+            }
+
+            .provider-title {
+                display: flex;
+                min-width: 0;
+                flex: 1 1 auto;
+                align-items: center;
+                gap: 9px;
+            }
+
+            .provider-title > span:last-child {
+                min-width: 0;
+                overflow-wrap: anywhere;
+            }
+
+            .provider-icon {
+                display: grid;
+                width: 32px;
+                height: 32px;
+                flex: 0 0 auto;
+                place-items: center;
+                border: 1px solid var(--border-muted);
+                border-radius: 7px;
+                color: var(--text);
+                background: #ffffff;
+            }
+
+            .provider-title strong {
+                display: block;
+                font-size: 13px;
+            }
+
+            .provider-title span {
+                color: var(--muted);
+                font-size: 11px;
+            }
+
+            .provider-details {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 9px;
+                margin: 14px 0;
+            }
+
+            .provider-detail {
+                border-top: 1px solid #eaeef2;
+                padding-top: 8px;
+            }
+
+            .provider-detail span {
+                display: block;
+                color: var(--muted);
+                font-size: 10px;
+            }
+
+            .provider-detail strong {
+                display: block;
+                overflow: hidden;
+                margin-top: 2px;
+                font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+                font-size: 10px;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+
+            .provider-actions {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 8px;
+            }
+
+            .provider-note {
+                color: var(--muted);
+                font-size: 10px;
+            }
+
+            .route-list,
+            .contract-list,
+            .run-list {
+                display: grid;
+                gap: 0;
+            }
+
+            .route-row {
+                display: grid;
+                grid-template-columns: 130px minmax(0, 1fr) auto;
+                align-items: center;
+                gap: 12px;
+                border-bottom: 1px solid #eaeef2;
+                padding: 11px 0;
+            }
+
+            .route-row:first-child,
+            .contract-row:first-child,
+            .run-row:first-child {
+                padding-top: 0;
+            }
+
+            .route-row:last-child,
+            .contract-row:last-child,
+            .run-row:last-child {
+                border-bottom: 0;
+                padding-bottom: 0;
+            }
+
+            .mention-code,
+            .event-code {
+                width: max-content;
+                border-radius: 5px;
+                color: #0550ae;
+                background: var(--brand-soft);
+                padding: 3px 6px;
+                font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+                font-size: 10px;
+                font-weight: 600;
+            }
+
+            .route-copy strong,
+            .contract-copy strong,
+            .run-copy strong {
+                display: block;
+                font-size: 12px;
+            }
+
+            .route-copy span,
+            .contract-copy span,
+            .run-copy span {
+                color: var(--muted);
+                font-size: 10px;
+            }
+
+            .contract-row {
+                display: grid;
+                grid-template-columns: 118px minmax(0, 1fr);
+                align-items: center;
+                gap: 11px;
+                border-bottom: 1px solid #eaeef2;
+                padding: 10px 0;
+            }
+
+            .run-row {
+                display: grid;
+                grid-template-columns: 20px minmax(0, 1fr) auto;
+                align-items: start;
+                gap: 9px;
+                border-bottom: 1px solid #eaeef2;
+                padding: 10px 0;
+            }
+
+            .run-dot {
+                width: 9px;
+                height: 9px;
+                margin: 4px 0 0 4px;
+                border-radius: 50%;
+                background: var(--success);
+                box-shadow: 0 0 0 3px var(--success-soft);
+            }
+
+            .run-dot.waiting {
+                background: #bf8700;
+                box-shadow: 0 0 0 3px var(--warning-soft);
+            }
+
+            .run-time {
+                color: var(--muted);
+                font-size: 10px;
+                white-space: nowrap;
+            }
+
+            .policy-callout {
+                margin-top: 12px;
+                border-left: 3px solid var(--warning);
+                border-radius: 0 5px 5px 0;
+                color: #6e4b00;
+                background: var(--warning-soft);
+                padding: 9px 10px;
+                font-size: 11px;
+                line-height: 1.55;
+            }
+
+            .toast {
+                position: fixed;
+                z-index: 100;
+                right: 20px;
+                bottom: 20px;
+                display: none;
+                align-items: center;
+                gap: 8px;
+                border: 1px solid #2da44e;
+                border-radius: 7px;
+                color: #ffffff;
+                background: #24292f;
+                padding: 10px 13px;
+                box-shadow: 0 8px 28px rgba(31, 35, 40, 0.2);
+                font-weight: 600;
+            }
+
+            @media (max-width: 1220px) {
+                .layout {
+                    grid-template-columns: 286px minmax(0, 760px);
+                }
+
+                aside {
+                    display: none;
+                }
+            }
+
+            @media (max-width: 920px) {
+                .brand {
+                    min-width: 0;
+                }
+
+                .brand-copy span {
+                    display: none;
+                }
+
+                .top-actions {
+                    min-width: 0;
+                }
+
+                .layout {
+                    display: block;
+                    padding: 18px;
+                }
+
+                .queue {
+                    position: fixed;
+                    z-index: 80;
+                    top: 56px;
+                    bottom: 0;
+                    left: 0;
+                    width: min(340px, calc(100vw - 48px));
+                    height: auto;
+                    border-radius: 0 8px 8px 0;
+                    transform: translateX(-102%);
+                    transition: transform 180ms ease;
+                    box-shadow: 12px 0 30px rgba(31, 35, 40, 0.18);
+                }
+
+                .queue.open {
+                    transform: translateX(0);
+                }
+
+                .mobile-queue-button {
+                    display: inline-flex;
+                }
+
+                .stats {
+                    grid-template-columns: repeat(2, 1fr);
+                }
+
+                .settings-grid {
+                    grid-template-columns: 1fr;
+                }
+
+                .runner-settings-grid {
+                    grid-template-columns: 1fr;
+                }
+
+                .flow-grid {
+                    grid-template-columns: 1fr;
+                }
+
+                .flow-arrow {
+                    transform: rotate(90deg);
+                }
+            }
+
+            @media (max-width: 680px) {
+                body {
+                    font-size: 14px;
+                }
+
+                .topbar {
+                    height: 56px;
+                    gap: 6px;
+                    padding: 0 12px;
+                }
+
+                .brand-mark {
+                    width: 28px;
+                    height: 28px;
+                }
+
+                .brand-copy {
+                    display: none;
+                }
+
+                .top-tabs {
+                    margin-left: auto;
+                    gap: 8px;
+                }
+
+                .top-tab {
+                    font-size: 13px;
+                }
+
+                .top-tab svg {
+                    display: none;
+                }
+
+                .top-tab,
+                .button,
+                .filter-chip,
+                .mention-button,
+                .composer-tab {
+                    min-height: 44px;
+                }
+
+                .top-tab .count {
+                    display: none;
+                }
+
+                .top-actions .button:not(.mobile-queue-button) span {
+                    display: none;
+                }
+
+                .layout {
+                    min-height: calc(100vh - 56px);
+                    padding: 14px 12px 32px;
+                }
+
+                .breadcrumbs {
+                    margin-top: 0;
+                }
+
+                .page-heading h1 {
+                    font-size: 24px;
+                }
+
+                .timeline::before {
+                    left: 16px;
+                }
+
+                .timeline-entry,
+                .composer {
+                    grid-template-columns: 32px minmax(0, 1fr);
+                    gap: 9px;
+                }
+
+                .avatar {
+                    width: 32px;
+                    height: 32px;
+                    font-size: 11px;
+                }
+
+                .avatar.event {
+                    width: 22px;
+                    height: 22px;
+                    margin: 5px;
+                }
+
+                .comment-body {
+                    padding: 13px;
+                }
+
+                .comment-head {
+                    align-items: flex-start;
+                    flex-direction: column;
+                    padding: 8px 11px;
+                }
+
+                .evidence-grid {
+                    grid-template-columns: 1fr;
+                }
+
+                .attachment {
+                    min-width: 0;
+                    width: 100%;
+                }
+
+                .composer-actions {
+                    align-items: stretch;
+                    flex-direction: column;
+                }
+
+                .reply-mode,
+                .composer-actions .button {
+                    width: 100%;
+                    max-width: none;
+                }
+
+                .settings-view {
+                    width: calc(100% - 24px);
+                    padding-top: 18px;
+                }
+
+                .settings-title {
+                    align-items: flex-start;
+                    flex-direction: column;
+                    gap: 12px;
+                    margin-bottom: 16px;
+                }
+
+                .settings-title h1 {
+                    font-size: 24px;
+                }
+
+                .settings-title > .button {
+                    width: 100%;
+                }
+
+                .runner-title-actions {
+                    width: 100%;
+                    align-items: stretch;
+                    flex-direction: column;
+                    gap: 6px;
+                }
+
+                .runner-title-actions .button {
+                    width: 100%;
+                }
+
+                .stats {
+                    grid-template-columns: 1fr 1fr;
+                }
+
+                .input-group {
+                    display: grid;
+                    grid-template-columns: 1fr;
+                }
+
+                .input-group .button {
+                    width: 100%;
+                }
+
+                .event-checks {
+                    grid-template-columns: 1fr;
+                }
+
+                .pipeline {
+                    grid-template-columns: 1fr;
+                }
+
+                .pipeline-arrow {
+                    transform: rotate(90deg);
+                }
+
+                .provider-grid {
+                    grid-template-columns: 1fr;
+                }
+
+                .runner-provider-grid .provider-actions {
+                    align-items: stretch;
+                    flex-direction: column;
+                }
+
+                .runner-provider-grid .provider-buttons {
+                    width: 100%;
+                    margin-left: 0;
+                }
+
+                .runner-provider-grid .provider-buttons .button {
+                    flex: 1;
+                }
+
+                .runner-select-row {
+                    align-items: stretch;
+                    flex-direction: column;
+                    gap: 8px;
+                }
+
+                .runner-select-row select {
+                    width: 100%;
+                    min-height: 44px;
+                }
+
+                .runner-secret-row {
+                    align-items: stretch;
+                    flex-direction: column;
+                }
+
+                .runner-secret-row .button {
+                    width: 100%;
+                }
+
+                .recommendation {
+                    align-items: stretch;
+                    flex-direction: column;
+                }
+
+                .route-row {
+                    grid-template-columns: 1fr;
+                    gap: 5px;
+                }
+
+                .route-row .badge {
+                    width: max-content;
+                }
+
+                .executor-row {
+                    align-items: stretch;
+                    flex-direction: column;
+                }
+
+                .executor-row .button {
+                    width: 100%;
+                }
+            }
+
+            @media (prefers-reduced-motion: reduce) {
+                *,
+                *::before,
+                *::after {
+                    scroll-behavior: auto !important;
+                    transition-duration: 0.01ms !important;
+                    animation-duration: 0.01ms !important;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <div class="app">
+            <header class="topbar">
+                <div class="brand">
+                    <div class="brand-mark" aria-hidden="true">
+                        <svg
+                            width="18"
+                            height="18"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                        >
+                            <path d="M4 5h16M4 12h10M4 19h7"></path>
+                        </svg>
+                    </div>
+                    <div class="brand-copy">
+                        <strong>反馈处理工作台</strong>
+                        <span>Issue 驱动的人机协作中心</span>
+                    </div>
+                </div>
+                <nav class="top-tabs" aria-label="工作台页面">
+                    <button class="top-tab active" type="button" data-view="issues">
+                        <svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                        >
+                            <circle cx="12" cy="12" r="9"></circle>
+                            <path d="M12 8v4m0 4h.01"></path>
+                        </svg>
+                        Issues
+                        <span class="count">14</span>
+                    </button>
+                    <button class="top-tab" type="button" data-view="automations">
+                        <svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                        >
+                            <path
+                                d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48 2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48 2.83-2.83"
+                            ></path>
+                            <circle cx="12" cy="12" r="3"></circle>
+                        </svg>
+                        自动化
+                    </button>
+                    <button class="top-tab" type="button" data-view="runners">
+                        <svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                        >
+                            <rect x="3" y="4" width="18" height="16" rx="2"></rect>
+                            <path d="m8 9 3 3-3 3m5 0h3"></path>
+                        </svg>
+                        AI 执行器
+                    </button>
+                </nav>
+                <div class="top-actions">
+                    <button
+                        class="button icon-button mobile-queue-button"
+                        id="mobileQueueButton"
+                        type="button"
+                        aria-label="打开反馈队列"
+                    >
+                        <svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                        >
+                            <path d="M4 6h16M4 12h16M4 18h16"></path>
+                        </svg>
+                    </button>
+                    <button class="button" type="button" id="refreshButton" aria-label="刷新工作台">
+                        <svg
+                            width="15"
+                            height="15"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                        >
+                            <path d="M20 6v5h-5M4 18v-5h5"></path>
+                            <path d="M18.5 9a7 7 0 0 0-12-2L4 11m16 2-2.5 4a7 7 0 0 1-12-2"></path>
+                        </svg>
+                        <span>刷新</span>
+                    </button>
+                    <button class="button icon-button" type="button" aria-label="管理员账户">
+                        <svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                        >
+                            <circle cx="12" cy="8" r="4"></circle>
+                            <path d="M4 21a8 8 0 0 1 16 0"></path>
+                        </svg>
+                    </button>
+                </div>
+            </header>
+
+            <section class="issue-view" id="issueView">
+                <div class="layout">
+                    <aside class="queue" id="queuePanel" aria-label="反馈队列">
+                        <div class="queue-head">
+                            <div class="toolbar-row">
+                                <div>
+                                    <h2>反馈队列</h2>
+                                    <p>优先处理等待你的 Issue</p>
+                                </div>
+                                <span class="badge orange">需你处理 3</span>
+                            </div>
+                            <div class="search">
+                                <svg
+                                    width="15"
+                                    height="15"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                >
+                                    <circle cx="11" cy="11" r="7"></circle>
+                                    <path d="m20 20-3.5-3.5"></path>
+                                </svg>
+                                <input
+                                    id="issueSearch"
+                                    type="search"
+                                    placeholder="搜索标题或编号"
+                                    aria-label="搜索反馈"
+                                />
+                            </div>
+                            <div class="filters" role="group" aria-label="反馈筛选">
+                                <button
+                                    class="filter-chip active"
+                                    type="button"
+                                    data-filter="attention"
+                                >
+                                    等我
+                                </button>
+                                <button class="filter-chip" type="button" data-filter="active">
+                                    处理中
+                                </button>
+                                <button class="filter-chip" type="button" data-filter="all">
+                                    全部
+                                </button>
+                            </div>
+                        </div>
+                        <div class="issue-list" id="issueList"></div>
+                    </aside>
+
+                    <main>
+                        <div class="breadcrumbs">
+                            <span>反馈</span>
+                            <span>/</span>
+                            <span>产品体验</span>
+                        </div>
+                        <header class="page-heading">
+                            <h1 id="issueTitle">
+                                反馈页面信息太杂，无法连续跟进
+                                <span class="issue-number">#142</span>
+                            </h1>
+                            <div class="heading-meta">
+                                <span class="state-pill attention" id="statePill">
+                                    <svg
+                                        width="16"
+                                        height="16"
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                    >
+                                        <circle cx="12" cy="12" r="9"></circle>
+                                        <path d="M12 8v4m0 4h.01"></path>
+                                    </svg>
+                                    等待你的回复
+                                </span>
+                                <span><strong>你</strong> 于 18 分钟前创建</span>
+                                <span>·</span>
+                                <span><strong>4</strong> 条回复</span>
+                                <span>·</span>
+                                <span>最近由 <strong>@codex-agent</strong> 更新</span>
+                            </div>
+                        </header>
+
+                        <section class="timeline" aria-label="Issue 处理时间线">
+                            <article class="timeline-entry">
+                                <div class="avatar">你</div>
+                                <div class="comment-card">
+                                    <div class="comment-head">
+                                        <span><strong>你</strong> 提交了反馈 · 18 分钟前</span>
+                                        <span class="badge blue">作者</span>
+                                    </div>
+                                    <div class="comment-body">
+                                        <p>
+                                            当前详情页把状态、AI 分类、设计、候选实现、证据和 JSON
+                                            都铺在一起。我更希望像 GitHub Issue
+                                            一样，每次处理都形成一条可以回复、可以追溯的记录。
+                                        </p>
+                                        <p>
+                                            另外现在依赖每半小时轮询一次，希望改成 Hook
+                                            触发，有新反馈或我补充信息时立即唤醒 Codex。
+                                        </p>
+                                        <div class="attachment">
+                                            <div class="attachment-thumb" aria-hidden="true">
+                                                <svg
+                                                    width="20"
+                                                    height="20"
+                                                    viewBox="0 0 24 24"
+                                                    fill="none"
+                                                    stroke="currentColor"
+                                                    stroke-width="2"
+                                                >
+                                                    <rect
+                                                        x="3"
+                                                        y="4"
+                                                        width="18"
+                                                        height="16"
+                                                        rx="2"
+                                                    ></rect>
+                                                    <path d="m7 15 3-3 3 3 2-2 3 3"></path>
+                                                </svg>
+                                            </div>
+                                            <div>
+                                                <strong>feedback-current.png</strong>
+                                                <span>当前页面截图 · 172 KB</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </article>
+
+                            <div class="timeline-entry">
+                                <div class="avatar event" aria-hidden="true"></div>
+                                <div class="event-row">
+                                    <span
+                                        ><strong>系统</strong> 将 Issue 指派给
+                                        <strong>@codex-agent</strong>，状态改为
+                                        <span class="badge blue">处理中</span></span
+                                    >
+                                    <span>18 分钟前</span>
+                                </div>
+                            </div>
+
+                            <article class="timeline-entry">
+                                <div class="avatar ai">AI</div>
+                                <div class="comment-card">
+                                    <div class="comment-head">
+                                        <span
+                                            ><strong>Codex Agent</strong> 完成现状分析 · 16
+                                            分钟前</span
+                                        >
+                                        <span class="badge purple">自动处理</span>
+                                    </div>
+                                    <div class="comment-body">
+                                        <p>
+                                            我已检查当前 Worker、历史记录和 Webhook
+                                            实现，确认可以在现有架构上渐进升级，不需要先引入完整的第三方
+                                            Issue 系统。
+                                        </p>
+                                        <ul>
+                                            <li>
+                                                展示问题来自“字段堆叠”，应改成
+                                                <strong>评论 + 状态事件</strong> 的单一时间线。
+                                            </li>
+                                            <li>
+                                                当前 Hook
+                                                只在首次提交时调用一次，缺少签名、幂等、重试和后续评论事件。
+                                            </li>
+                                            <li>
+                                                建议保留低频兜底巡检，但日常处理由事件触发，避免空跑。
+                                            </li>
+                                        </ul>
+                                        <details class="evidence">
+                                            <summary>
+                                                <span>查看已检查证据</span>
+                                                <span class="badge">3 项</span>
+                                            </summary>
+                                            <div class="evidence-grid">
+                                                <div class="evidence-item">
+                                                    <span>接口</span>
+                                                    <strong
+                                                        >POST /api/feedback 已调用 Webhook</strong
+                                                    >
+                                                </div>
+                                                <div class="evidence-item">
+                                                    <span>缺口</span>
+                                                    <strong
+                                                        >PATCH 后没有 status/comment 事件</strong
+                                                    >
+                                                </div>
+                                                <div class="evidence-item">
+                                                    <span>可靠性</span>
+                                                    <strong>失败只写 console.warn，无重试</strong>
+                                                </div>
+                                            </div>
+                                        </details>
+                                    </div>
+                                </div>
+                            </article>
+
+                            <div class="timeline-entry">
+                                <div class="avatar event" aria-hidden="true"></div>
+                                <div class="event-row">
+                                    <span
+                                        ><strong>Codex Agent</strong> 添加标签
+                                        <span class="badge blue">体验优化</span>
+                                        <span class="badge purple">范围：中</span>
+                                        并将状态改为
+                                        <span class="badge orange">等待你的回复</span></span
+                                    >
+                                    <span>9 分钟前</span>
+                                </div>
+                            </div>
+
+                            <article class="timeline-entry">
+                                <div class="avatar ai">AI</div>
+                                <div class="comment-card attention">
+                                    <div class="comment-head">
+                                        <span
+                                            ><strong>Codex Agent</strong> 请求你确认方案 · 8
+                                            分钟前</span
+                                        >
+                                        <span class="badge orange">需要你处理</span>
+                                    </div>
+                                    <div class="comment-body">
+                                        <p>建议第一版采用“Issue 时间线 + Webhook 事件队列”：</p>
+                                        <ul>
+                                            <li>
+                                                所有公开回复、内部处理结果、状态和负责人变化写入不可变事件。
+                                            </li>
+                                            <li>
+                                                你补充信息时用
+                                                <strong>@codex-agent</strong> 明确唤醒，系统投递
+                                                <code>comment.created</code>。
+                                            </li>
+                                            <li>
+                                                Codex
+                                                解决后写一条交付回复并关闭；需要你时写明问题并暂停。
+                                            </li>
+                                        </ul>
+                                        <div class="decision-box">
+                                            <svg
+                                                width="20"
+                                                height="20"
+                                                viewBox="0 0 24 24"
+                                                fill="none"
+                                                stroke="currentColor"
+                                                stroke-width="2"
+                                                aria-hidden="true"
+                                            >
+                                                <circle cx="12" cy="12" r="9"></circle>
+                                                <path d="M12 8v4m0 4h.01"></path>
+                                            </svg>
+                                            <div>
+                                                <strong>需要你的决定</strong>
+                                                <p>
+                                                    确认第一版先支持单一 Codex
+                                                    处理者，并保留未来扩展多个 Agent / @mention
+                                                    的数据结构。
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </article>
+                        </section>
+
+                        <section class="composer" aria-label="添加回复">
+                            <div class="avatar">你</div>
+                            <form class="composer-panel" id="replyForm">
+                                <div class="composer-tabs">
+                                    <button class="composer-tab active" type="button">
+                                        写回复
+                                    </button>
+                                    <button class="composer-tab" type="button">预览</button>
+                                </div>
+                                <div class="composer-editor">
+                                    <div class="mention-bar">
+                                        <button
+                                            class="mention-button"
+                                            type="button"
+                                            id="mentionButton"
+                                        >
+                                            @ Codex Agent
+                                        </button>
+                                        <span class="mention-hint"
+                                            >提及处理者会立即触发新的处理任务</span
+                                        >
+                                    </div>
+                                    <textarea
+                                        id="replyInput"
+                                        aria-label="回复内容"
+                                        placeholder="补充信息、确认方案，或 @ Codex Agent 继续处理…"
+                                    ></textarea>
+                                    <div class="composer-actions">
+                                        <select
+                                            class="reply-mode"
+                                            id="replyMode"
+                                            aria-label="回复后的动作"
+                                        >
+                                            <option value="resume">
+                                                回复并交给 Codex 继续处理
+                                            </option>
+                                            <option value="record">仅记录回复，暂不触发</option>
+                                            <option value="close">回复并关闭 Issue</option>
+                                        </select>
+                                        <div class="inline" style="gap: 9px">
+                                            <span class="reply-success" id="replySuccess">
+                                                <svg
+                                                    width="16"
+                                                    height="16"
+                                                    viewBox="0 0 24 24"
+                                                    fill="none"
+                                                    stroke="currentColor"
+                                                    stroke-width="2"
+                                                >
+                                                    <path d="m5 12 4 4L19 6"></path>
+                                                </svg>
+                                                已写入时间线
+                                            </span>
+                                            <button class="button primary" type="submit">
+                                                提交回复
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </form>
+                        </section>
+                    </main>
+
+                    <aside>
+                        <div class="aside-sticky">
+                            <section class="side-card next-action">
+                                <div class="side-card-head">
+                                    <h3>下一步</h3>
+                                    <span class="badge orange">等待你</span>
+                                </div>
+                                <div class="side-card-body">
+                                    <div class="next-action-copy">
+                                        <strong>确认原型方向</strong>
+                                        批准后状态回到“已排队”，Codex
+                                        会立刻收到事件并继续拆分实现任务。
+                                    </div>
+                                    <div class="side-actions">
+                                        <button
+                                            class="button blue"
+                                            type="button"
+                                            data-action="approve"
+                                        >
+                                            批准并交给 Codex
+                                        </button>
+                                        <button
+                                            class="button"
+                                            type="button"
+                                            data-action="supplement"
+                                        >
+                                            补充信息
+                                        </button>
+                                        <button
+                                            class="button danger"
+                                            type="button"
+                                            data-action="close"
+                                        >
+                                            关闭 Issue
+                                        </button>
+                                    </div>
+                                </div>
+                            </section>
+
+                            <section class="side-card">
+                                <div class="side-card-head">
+                                    <h3>Issue 属性</h3>
+                                </div>
+                                <div class="side-card-body property-list">
+                                    <div class="property-row">
+                                        <span>状态</span>
+                                        <span class="property-value badge orange"
+                                            >等待你的回复</span
+                                        >
+                                    </div>
+                                    <div class="property-row">
+                                        <span>负责人</span>
+                                        <span class="property-value inline" style="gap: 6px">
+                                            <span class="avatar-mini">你</span>
+                                            你
+                                        </span>
+                                    </div>
+                                    <div class="property-row">
+                                        <span>处理者</span>
+                                        <span class="property-value">@codex-agent</span>
+                                    </div>
+                                    <div class="property-row">
+                                        <span>优先级</span>
+                                        <span class="property-value">中</span>
+                                    </div>
+                                    <div class="property-row">
+                                        <span>类型</span>
+                                        <span class="property-value badge blue">体验优化</span>
+                                    </div>
+                                </div>
+                            </section>
+
+                            <section class="side-card">
+                                <div class="side-card-head">
+                                    <h3>自动化健康度</h3>
+                                    <button
+                                        class="button icon-button"
+                                        style="width: 28px; min-height: 28px"
+                                        type="button"
+                                        data-view="automations"
+                                        aria-label="打开自动化设置"
+                                    >
+                                        <svg
+                                            width="14"
+                                            height="14"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="2"
+                                        >
+                                            <path d="M14 3h7v7m0-7-9 9"></path>
+                                            <path
+                                                d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"
+                                            ></path>
+                                        </svg>
+                                    </button>
+                                </div>
+                                <div class="side-card-body automation-health">
+                                    <div class="status-line">
+                                        <span>Hook</span>
+                                        <span class="status-value"
+                                            ><span class="status-dot"></span>已连接</span
+                                        >
+                                    </div>
+                                    <div class="status-line">
+                                        <span>最近投递</span>
+                                        <span class="status-value">8 分钟前 · 202</span>
+                                    </div>
+                                    <div class="status-line">
+                                        <span>空跑轮询</span>
+                                        <span class="status-value">已关闭</span>
+                                    </div>
+                                    <div class="cost-note">
+                                        预计减少约 96% 的无效唤醒；保留每日一次低成本兜底巡检。
+                                    </div>
+                                </div>
+                            </section>
+                        </div>
+                    </aside>
+                </div>
+            </section>
+
+            <section class="settings-view" id="settingsView">
+                <div class="settings-title">
+                    <div>
+                        <div class="settings-heading">
+                            <h1>自动化</h1>
+                            <span class="badge green">
+                                <span class="status-dot"></span>
+                                运行正常
+                            </span>
+                        </div>
+                        <p>事件即时处理 · 最近成功投递于 8 分钟前</p>
+                    </div>
+                    <button class="button" type="button" id="saveAutomation" disabled>
+                        <svg
+                            width="15"
+                            height="15"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            aria-hidden="true"
+                        >
+                            <path d="m5 12 4 4L19 6"></path>
+                        </svg>
+                        <span id="saveAutomationLabel">已保存</span>
+                    </button>
+                </div>
+
+                <div class="settings-grid automation-settings-grid">
+                    <div class="settings-column">
+                        <section class="settings-card">
+                            <div class="settings-card-head compact">
+                                <h2>事件入口</h2>
+                                <span class="badge green" id="hookStatusBadge">已连接</span>
+                            </div>
+                            <div class="settings-card-body">
+                                <div class="field">
+                                    <div class="field-head">
+                                        <label for="hookUrl">Hook URL</label>
+                                        <span class="connection-status success" id="hookTestStatus">
+                                            <svg
+                                                width="13"
+                                                height="13"
+                                                viewBox="0 0 24 24"
+                                                fill="none"
+                                                stroke="currentColor"
+                                                stroke-width="2"
+                                                aria-hidden="true"
+                                            >
+                                                <path d="m5 12 4 4L19 6"></path>
+                                            </svg>
+                                            已验证
+                                        </span>
+                                    </div>
+                                    <div class="input-group">
+                                        <input
+                                            id="hookUrl"
+                                            type="url"
+                                            value="https://agent.example.com/hooks/feedback"
+                                            autocomplete="url"
+                                        />
+                                        <button class="button" type="button" id="testHook">
+                                            测试连接
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <details class="advanced-details">
+                                    <summary>
+                                        <span>签名与端点要求</span>
+                                        <svg
+                                            class="summary-chevron"
+                                            width="16"
+                                            height="16"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="2"
+                                            aria-hidden="true"
+                                        >
+                                            <path d="m6 9 6 6 6-6"></path>
+                                        </svg>
+                                    </summary>
+                                    <div class="advanced-details-body">
+                                        <div class="field">
+                                            <label for="hookSecret">签名密钥</label>
+                                            <div class="input-group">
+                                                <input
+                                                    id="hookSecret"
+                                                    type="password"
+                                                    value="feedback-signing-secret"
+                                                    autocomplete="off"
+                                                    readonly
+                                                />
+                                                <button
+                                                    class="button"
+                                                    type="button"
+                                                    id="regenerateHookSecret"
+                                                >
+                                                    重新生成
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <span class="help">
+                                            端点需在 10 秒内返回 2xx，并校验
+                                            X-Feedback-Signature-256。
+                                        </span>
+                                    </div>
+                                </details>
+
+                                <div class="field">
+                                    <span class="field-label">订阅事件</span>
+                                    <div class="event-checks">
+                                        <label class="check-card">
+                                            <input
+                                                type="checkbox"
+                                                name="automationEvent"
+                                                value="issue.created"
+                                                checked
+                                            />
+                                            <span>
+                                                <strong>issue.created</strong>
+                                                <span>新建反馈</span>
+                                            </span>
+                                        </label>
+                                        <label class="check-card">
+                                            <input
+                                                type="checkbox"
+                                                name="automationEvent"
+                                                value="comment.created"
+                                                checked
+                                            />
+                                            <span>
+                                                <strong>comment.created</strong>
+                                                <span>新增回复</span>
+                                            </span>
+                                        </label>
+                                        <label class="check-card">
+                                            <input
+                                                type="checkbox"
+                                                name="automationEvent"
+                                                value="issue.reopened"
+                                                checked
+                                            />
+                                            <span>
+                                                <strong>issue.reopened</strong>
+                                                <span>重新打开</span>
+                                            </span>
+                                        </label>
+                                        <label class="check-card">
+                                            <input
+                                                type="checkbox"
+                                                name="automationEvent"
+                                                value="status.changed"
+                                            />
+                                            <span>
+                                                <strong>status.changed</strong>
+                                                <span>状态同步</span>
+                                            </span>
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
+                    </div>
+
+                    <div class="settings-column">
+                        <section class="settings-card">
+                            <div class="settings-card-head compact">
+                                <h2>处理策略</h2>
+                            </div>
+                            <div class="settings-card-body">
+                                <div class="toggle-row">
+                                    <div class="toggle-copy">
+                                        <strong>失败重试</strong>
+                                        <span>1 / 5 / 15 分钟</span>
+                                    </div>
+                                    <button
+                                        class="switch on"
+                                        type="button"
+                                        role="switch"
+                                        aria-checked="true"
+                                        aria-label="失败重试"
+                                    ></button>
+                                </div>
+                                <div class="toggle-row">
+                                    <div class="toggle-copy">
+                                        <strong>失败事件队列</strong>
+                                        <span>重试耗尽后保留</span>
+                                    </div>
+                                    <button
+                                        class="switch on"
+                                        type="button"
+                                        role="switch"
+                                        aria-checked="true"
+                                        aria-label="失败事件队列"
+                                    ></button>
+                                </div>
+                                <div class="toggle-row">
+                                    <div class="toggle-copy">
+                                        <strong>每日兜底巡检</strong>
+                                        <span>每天 03:00</span>
+                                    </div>
+                                    <button
+                                        class="switch on"
+                                        type="button"
+                                        role="switch"
+                                        aria-checked="true"
+                                        aria-label="每日兜底巡检"
+                                    ></button>
+                                </div>
+                            </div>
+                        </section>
+
+                        <section class="settings-card">
+                            <div class="settings-card-head compact">
+                                <h2>执行器</h2>
+                                <span class="badge blue">默认</span>
+                            </div>
+                            <div class="settings-card-body">
+                                <div class="executor-row">
+                                    <div class="executor-main">
+                                        <span class="executor-icon">
+                                            <svg
+                                                width="19"
+                                                height="19"
+                                                viewBox="0 0 24 24"
+                                                fill="none"
+                                                stroke="currentColor"
+                                                stroke-width="2"
+                                                aria-hidden="true"
+                                            >
+                                                <path d="M4 5h16v14H4z"></path>
+                                                <path d="m8 10 2 2-2 2m4 0h4"></path>
+                                            </svg>
+                                        </span>
+                                        <span class="executor-copy">
+                                            <strong>Codex · GitHub-hosted</strong>
+                                            <span>连接正常</span>
+                                        </span>
+                                    </div>
+                                    <button class="button" type="button" data-view="runners">
+                                        配置
+                                    </button>
+                                </div>
+                            </div>
+                        </section>
+
+                        <details class="settings-card delivery-card">
+                            <summary>
+                                <span class="delivery-summary">
+                                    <strong>最近投递</strong>
+                                    <span>3 条成功记录</span>
+                                </span>
+                                <svg
+                                    class="summary-chevron"
+                                    width="18"
+                                    height="18"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    aria-hidden="true"
+                                >
+                                    <path d="m6 9 6 6 6-6"></path>
+                                </svg>
+                            </summary>
+                            <div class="settings-card-body delivery-list">
+                                <div class="delivery">
+                                    <div class="delivery-main">
+                                        <span class="delivery-icon">
+                                            <svg
+                                                width="14"
+                                                height="14"
+                                                viewBox="0 0 24 24"
+                                                fill="none"
+                                                stroke="currentColor"
+                                                stroke-width="2"
+                                            >
+                                                <path d="m5 12 4 4L19 6"></path>
+                                            </svg>
+                                        </span>
+                                        <div class="delivery-copy">
+                                            <strong>comment.created · dly_92db</strong>
+                                            <span>202 Accepted · 428 ms</span>
+                                        </div>
+                                    </div>
+                                    <span class="delivery-time">8 分钟前</span>
+                                </div>
+                                <div class="delivery">
+                                    <div class="delivery-main">
+                                        <span class="delivery-icon">
+                                            <svg
+                                                width="14"
+                                                height="14"
+                                                viewBox="0 0 24 24"
+                                                fill="none"
+                                                stroke="currentColor"
+                                                stroke-width="2"
+                                            >
+                                                <path d="m5 12 4 4L19 6"></path>
+                                            </svg>
+                                        </span>
+                                        <div class="delivery-copy">
+                                            <strong>issue.created · dly_2f51</strong>
+                                            <span>200 OK · 第 2 次尝试</span>
+                                        </div>
+                                    </div>
+                                    <span class="delivery-time">18 分钟前</span>
+                                </div>
+                                <div class="delivery">
+                                    <div class="delivery-main">
+                                        <span class="delivery-icon">
+                                            <svg
+                                                width="14"
+                                                height="14"
+                                                viewBox="0 0 24 24"
+                                                fill="none"
+                                                stroke="currentColor"
+                                                stroke-width="2"
+                                                aria-hidden="true"
+                                            >
+                                                <path d="m5 12 4 4L19 6"></path>
+                                            </svg>
+                                        </span>
+                                        <div class="delivery-copy">
+                                            <strong>issue.reopened · dly_a010</strong>
+                                            <span>202 Accepted · 311 ms</span>
+                                        </div>
+                                    </div>
+                                    <span class="delivery-time">昨天</span>
+                                </div>
+                            </div>
+                        </details>
+                    </div>
+                </div>
+            </section>
+
+            <section class="settings-view" id="runnersView">
+                <div class="settings-title">
+                    <div>
+                        <h1>AI 执行器</h1>
+                        <p>选择默认执行器，配置连接并验证可用性。</p>
+                    </div>
+                    <div class="runner-title-actions">
+                        <span id="runnerSaveState">全部更改已保存</span>
+                        <button class="button" type="button" id="saveRunnerSettings" disabled>
+                            <span id="saveRunnerLabel">已保存</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="recommendation hidden">
+                    <div class="recommendation-copy">
+                        <span class="recommendation-icon" aria-hidden="true">
+                            <svg
+                                width="18"
+                                height="18"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                            >
+                                <path d="m5 12 4 4L19 6"></path>
+                            </svg>
+                        </span>
+                        <div>
+                            <h2>当前阶段推荐：Cloudflare Workflows + GitHub Actions</h2>
+                            <p>
+                                代码已经托管在 GitHub，无需常驻一个自研 Agent 服务。Workflows
+                                负责可靠状态与等待人工回复，GitHub Actions 使用官方 Codex Action /
+                                Claude Code Action 启动临时 Runner，完成后调用工作台 Callback
+                                API。只有需要秒级流式进度和原生会话续接时，才升级到 SDK Runner。
+                            </p>
+                        </div>
+                    </div>
+                    <span class="badge green">最少自建</span>
+                </div>
+
+                <div class="stats hidden">
+                    <div class="stat-card">
+                        <div class="stat-header">
+                            <span>可靠编排</span>
+                            <span class="badge green">已选</span>
+                        </div>
+                        <div class="stat-value" style="font-size: 18px">Workflows</div>
+                        <div class="stat-foot">等待回复 · 自动重试 · 状态持久化</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-header">
+                            <span>默认运行环境</span>
+                            <span class="badge green">在线</span>
+                        </div>
+                        <div class="stat-value" style="font-size: 18px">GitHub Actions</div>
+                        <div class="stat-foot">按事件启动，无空跑与常驻成本</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-header">
+                            <span>已配置执行器</span>
+                            <span>2 个</span>
+                        </div>
+                        <div class="stat-value">2 / 2</div>
+                        <div class="stat-foot">Codex 默认 · Claude 备用</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-header">
+                            <span>等待人工</span>
+                            <span class="badge orange">1</span>
+                        </div>
+                        <div class="stat-value">1</div>
+                        <div class="stat-foot">回复后恢复对应 Workflow</div>
+                    </div>
+                </div>
+
+                <div class="runner-settings-grid">
+                    <div class="settings-column">
+                        <section class="settings-card">
+                            <div class="settings-card-head">
+                                <div>
+                                    <h2>执行器</h2>
+                                    <p>选择默认执行器，需要时再展开连接参数。</p>
+                                </div>
+                                <span class="badge green">2 个可用</span>
+                            </div>
+                            <div class="settings-card-body">
+                                <div class="provider-grid runner-provider-grid">
+                                    <article
+                                        class="provider-card selected"
+                                        data-provider-card="Codex"
+                                    >
+                                        <div class="provider-head">
+                                            <div class="provider-title">
+                                                <span class="provider-icon" aria-hidden="true">
+                                                    <svg
+                                                        width="17"
+                                                        height="17"
+                                                        viewBox="0 0 24 24"
+                                                        fill="none"
+                                                        stroke="currentColor"
+                                                        stroke-width="2"
+                                                    >
+                                                        <path d="M4 5h16v14H4z"></path>
+                                                        <path d="m8 10 2 2-2 2m4 0h4"></path>
+                                                    </svg>
+                                                </span>
+                                                <span>
+                                                    <strong>Codex</strong>
+                                                    <span>openai/codex-action@v1</span>
+                                                </span>
+                                            </div>
+                                            <span class="provider-state">
+                                                <span class="badge green" data-connection-badge
+                                                    >已连接</span
+                                                >
+                                                <span class="badge blue" data-default-badge
+                                                    >默认</span
+                                                >
+                                            </span>
+                                        </div>
+                                        <p class="provider-summary">
+                                            适合代码修改、测试、审查和 PR 交付。
+                                        </p>
+                                        <div class="provider-actions">
+                                            <span
+                                                class="connection-status success"
+                                                data-connection-status
+                                                role="status"
+                                                aria-live="polite"
+                                            >
+                                                <svg
+                                                    width="13"
+                                                    height="13"
+                                                    viewBox="0 0 24 24"
+                                                    fill="none"
+                                                    stroke="currentColor"
+                                                    stroke-width="2"
+                                                    aria-hidden="true"
+                                                >
+                                                    <path d="m5 12 4 4L19 6"></path>
+                                                </svg>
+                                                2 分钟前验证
+                                            </span>
+                                            <span class="provider-buttons">
+                                                <button
+                                                    class="button"
+                                                    type="button"
+                                                    data-default-provider="Codex"
+                                                    disabled
+                                                >
+                                                    当前默认
+                                                </button>
+                                                <button
+                                                    class="button"
+                                                    type="button"
+                                                    data-test-provider="Codex"
+                                                >
+                                                    测试连接
+                                                </button>
+                                            </span>
+                                        </div>
+                                        <details class="provider-config advanced-details">
+                                            <summary>
+                                                <span>连接配置</span>
+                                                <svg
+                                                    class="summary-chevron"
+                                                    width="18"
+                                                    height="18"
+                                                    viewBox="0 0 24 24"
+                                                    fill="none"
+                                                    stroke="currentColor"
+                                                    stroke-width="2"
+                                                    aria-hidden="true"
+                                                >
+                                                    <path d="m6 9 6 6 6-6"></path>
+                                                </svg>
+                                            </summary>
+                                            <div class="advanced-details-body">
+                                                <div class="field">
+                                                    <label for="codexResponsesEndpoint"
+                                                        >Responses API 地址</label
+                                                    >
+                                                    <input
+                                                        id="codexResponsesEndpoint"
+                                                        type="url"
+                                                        value="https://api.openai.com/v1/responses"
+                                                        data-runner-dirty
+                                                    />
+                                                    <span class="help" id="codexEndpointHelp">
+                                                        中转服务需兼容 Responses API，并填写完整
+                                                        <strong>/v1/responses</strong> 地址。
+                                                    </span>
+                                                </div>
+                                                <div class="runner-secret-row">
+                                                    <div>
+                                                        <span>凭据</span>
+                                                        <strong>OPENAI_API_KEY</strong>
+                                                    </div>
+                                                    <button
+                                                        class="button"
+                                                        type="button"
+                                                        data-manage-secrets
+                                                    >
+                                                        管理密钥
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </details>
+                                    </article>
+
+                                    <article
+                                        class="provider-card"
+                                        data-provider-card="Claude Agent"
+                                    >
+                                        <div class="provider-head">
+                                            <div class="provider-title">
+                                                <span class="provider-icon" aria-hidden="true">
+                                                    <svg
+                                                        width="17"
+                                                        height="17"
+                                                        viewBox="0 0 24 24"
+                                                        fill="none"
+                                                        stroke="currentColor"
+                                                        stroke-width="2"
+                                                    >
+                                                        <circle cx="12" cy="12" r="8"></circle>
+                                                        <path d="M8 12h8M12 8v8"></path>
+                                                    </svg>
+                                                </span>
+                                                <span>
+                                                    <strong>Claude Agent</strong>
+                                                    <span>claude-code-action@v1</span>
+                                                </span>
+                                            </div>
+                                            <span class="provider-state">
+                                                <span class="badge green" data-connection-badge
+                                                    >已连接</span
+                                                >
+                                                <span class="badge blue hidden" data-default-badge
+                                                    >默认</span
+                                                >
+                                            </span>
+                                        </div>
+                                        <p class="provider-summary">
+                                            适合长上下文分析或人工指定的任务。
+                                        </p>
+                                        <div class="provider-actions">
+                                            <span
+                                                class="connection-status success"
+                                                data-connection-status
+                                                role="status"
+                                                aria-live="polite"
+                                            >
+                                                <svg
+                                                    width="13"
+                                                    height="13"
+                                                    viewBox="0 0 24 24"
+                                                    fill="none"
+                                                    stroke="currentColor"
+                                                    stroke-width="2"
+                                                    aria-hidden="true"
+                                                >
+                                                    <path d="m5 12 4 4L19 6"></path>
+                                                </svg>
+                                                12 分钟前验证
+                                            </span>
+                                            <span class="provider-buttons">
+                                                <button
+                                                    class="button"
+                                                    type="button"
+                                                    data-default-provider="Claude Agent"
+                                                >
+                                                    设为默认
+                                                </button>
+                                                <button
+                                                    class="button"
+                                                    type="button"
+                                                    data-test-provider="Claude Agent"
+                                                >
+                                                    测试连接
+                                                </button>
+                                            </span>
+                                        </div>
+                                        <details class="provider-config advanced-details">
+                                            <summary>
+                                                <span>连接配置</span>
+                                                <svg
+                                                    class="summary-chevron"
+                                                    width="18"
+                                                    height="18"
+                                                    viewBox="0 0 24 24"
+                                                    fill="none"
+                                                    stroke="currentColor"
+                                                    stroke-width="2"
+                                                    aria-hidden="true"
+                                                >
+                                                    <path d="m6 9 6 6 6-6"></path>
+                                                </svg>
+                                            </summary>
+                                            <div class="advanced-details-body">
+                                                <div class="runner-secret-row">
+                                                    <div>
+                                                        <span>认证</span>
+                                                        <strong>WIF / ANTHROPIC_API_KEY</strong>
+                                                    </div>
+                                                    <button
+                                                        class="button"
+                                                        type="button"
+                                                        data-manage-secrets
+                                                    >
+                                                        管理密钥
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </details>
+                                    </article>
+                                </div>
+                            </div>
+                        </section>
+
+                        <section class="settings-card">
+                            <div class="settings-card-head">
+                                <div>
+                                    <h2>路由规则</h2>
+                                    <p>@mention 始终优先，未指定时使用默认执行器。</p>
+                                </div>
+                            </div>
+                            <div class="settings-card-body runner-route-form">
+                                <label class="runner-select-row" for="defaultRunnerSelect">
+                                    <span>
+                                        <strong>未指定执行器</strong>
+                                        <span>新 Issue 和普通回复</span>
+                                    </span>
+                                    <select id="defaultRunnerSelect" data-runner-dirty>
+                                        <option selected>Codex</option>
+                                        <option>Claude Agent</option>
+                                    </select>
+                                </label>
+                                <div class="runner-route-row">
+                                    <span class="mention-code">@codex-agent</span>
+                                    <strong>Codex</strong>
+                                </div>
+                                <div class="runner-route-row">
+                                    <span class="mention-code">@claude-agent</span>
+                                    <strong>Claude Agent</strong>
+                                </div>
+                                <div class="runner-route-row">
+                                    <span>
+                                        <strong>用户补充后继续原执行器</strong>
+                                        <small>保持同一 Workflow 与上下文</small>
+                                    </span>
+                                    <button
+                                        class="switch on"
+                                        type="button"
+                                        role="switch"
+                                        aria-checked="true"
+                                        aria-label="用户补充后继续原执行器"
+                                        data-runner-switch
+                                    ></button>
+                                </div>
+                            </div>
+                        </section>
+                    </div>
+
+                    <div class="settings-column">
+                        <section class="settings-card">
+                            <div class="settings-card-head compact">
+                                <h2>运行环境</h2>
+                                <span class="badge green">正常</span>
+                            </div>
+                            <div class="settings-card-body runner-health-list">
+                                <div>
+                                    <span>编排</span>
+                                    <strong>Cloudflare Workflows</strong>
+                                </div>
+                                <div>
+                                    <span>运行器</span>
+                                    <strong>GitHub-hosted</strong>
+                                </div>
+                                <div>
+                                    <span>Callback</span>
+                                    <strong class="inline-success">v1 · 已验证</strong>
+                                </div>
+                            </div>
+                        </section>
+
+                        <details class="settings-card runner-advanced-card">
+                            <summary>
+                                <span>
+                                    <strong>高级设置</strong>
+                                    <small>Callback、事件契约与 SDK</small>
+                                </span>
+                                <svg
+                                    class="summary-chevron"
+                                    width="18"
+                                    height="18"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    aria-hidden="true"
+                                >
+                                    <path d="m6 9 6 6 6-6"></path>
+                                </svg>
+                            </summary>
+                            <div class="settings-card-body">
+                                <div class="field">
+                                    <label for="runnerCallbackUrl">Callback URL</label>
+                                    <input
+                                        id="runnerCallbackUrl"
+                                        type="url"
+                                        value="https://feedback.example.com/api/agent/callback"
+                                        data-runner-dirty
+                                    />
+                                </div>
+                                <div class="runner-contract">
+                                    <span>事件契约</span>
+                                    <div>
+                                        <code>run.started</code>
+                                        <code>agent.message</code>
+                                        <code>waiting_human</code>
+                                        <code>artifact.created</code>
+                                        <code>run.completed</code>
+                                    </div>
+                                </div>
+                                <div class="policy-callout runner-sdk-note">
+                                    需要秒级流式进度、原生会话续接或私有环境时，再升级 SDK
+                                    Runner；Callback 契约保持不变。
+                                </div>
+                            </div>
+                        </details>
+                    </div>
+                </div>
+
+                <div class="settings-grid hidden">
+                    <div class="settings-column">
+                        <section class="settings-card">
+                            <div class="settings-card-head">
+                                <div>
+                                    <h2>推荐交互链路</h2>
+                                    <p>Hook 只创建可靠流程；编码工具在受控 Runner 内执行。</p>
+                                </div>
+                                <span class="badge blue">无需轮询</span>
+                            </div>
+                            <div class="settings-card-body">
+                                <div class="flow-grid" aria-label="AI 执行器完整交互链路">
+                                    <div class="flow-node">
+                                        <svg
+                                            width="22"
+                                            height="22"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="2"
+                                        >
+                                            <circle cx="12" cy="12" r="9"></circle>
+                                            <path d="M12 8v4m0 4h.01"></path>
+                                        </svg>
+                                        <strong>Issue 事件</strong>
+                                        <span>创建 / 回复 / @Agent</span>
+                                    </div>
+                                    <div class="flow-arrow">
+                                        <svg
+                                            width="16"
+                                            height="16"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="2"
+                                        >
+                                            <path d="m9 18 6-6-6-6"></path>
+                                        </svg>
+                                    </div>
+                                    <div class="flow-node highlight">
+                                        <svg
+                                            width="22"
+                                            height="22"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="2"
+                                        >
+                                            <path d="M4 6h16v12H4z"></path>
+                                            <path d="M8 10h8M8 14h5"></path>
+                                        </svg>
+                                        <strong>CF Workflows</strong>
+                                        <span>幂等 / 重试 / 等待人工</span>
+                                    </div>
+                                    <div class="flow-arrow">
+                                        <svg
+                                            width="16"
+                                            height="16"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="2"
+                                        >
+                                            <path d="m9 18 6-6-6-6"></path>
+                                        </svg>
+                                    </div>
+                                    <div class="flow-node">
+                                        <svg
+                                            width="22"
+                                            height="22"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="2"
+                                        >
+                                            <path d="M4 5h16v14H4z"></path>
+                                            <path d="m8 10 2 2-2 2m4 0h4"></path>
+                                        </svg>
+                                        <strong>GitHub Actions</strong>
+                                        <span>临时 Runner / 隔离工作区</span>
+                                    </div>
+                                    <div class="flow-arrow">
+                                        <svg
+                                            width="16"
+                                            height="16"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="2"
+                                        >
+                                            <path d="m9 18 6-6-6-6"></path>
+                                        </svg>
+                                    </div>
+                                    <div class="flow-node">
+                                        <svg
+                                            width="22"
+                                            height="22"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="2"
+                                        >
+                                            <path d="M12 2v4m0 12v4M5 5l3 3m8 8 3 3"></path>
+                                            <circle cx="12" cy="12" r="4"></circle>
+                                        </svg>
+                                        <strong>官方 AI Action</strong>
+                                        <span>Codex / Claude</span>
+                                    </div>
+                                    <div class="flow-arrow">
+                                        <svg
+                                            width="16"
+                                            height="16"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="2"
+                                        >
+                                            <path d="m9 18 6-6-6-6"></path>
+                                        </svg>
+                                    </div>
+                                    <div class="flow-node">
+                                        <svg
+                                            width="22"
+                                            height="22"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="2"
+                                        >
+                                            <path d="M20 6 9 17l-5-5"></path>
+                                        </svg>
+                                        <strong>Callback API</strong>
+                                        <span>进度 / 提问 / 产物 / 完成</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
+
+                        <section class="settings-card">
+                            <div class="settings-card-head">
+                                <div>
+                                    <h2>执行器连接</h2>
+                                    <p>优先选择官方 GitHub Action；SDK 模式作为后续升级项。</p>
+                                </div>
+                                <button class="button" type="button" id="configureSecrets">
+                                    管理密钥
+                                </button>
+                            </div>
+                            <div class="settings-card-body">
+                                <div class="provider-grid">
+                                    <article class="provider-card selected">
+                                        <div class="provider-head">
+                                            <div class="provider-title">
+                                                <span class="provider-icon" aria-hidden="true">
+                                                    <svg
+                                                        width="17"
+                                                        height="17"
+                                                        viewBox="0 0 24 24"
+                                                        fill="none"
+                                                        stroke="currentColor"
+                                                        stroke-width="2"
+                                                    >
+                                                        <path d="M4 5h16v14H4z"></path>
+                                                        <path d="m8 10 2 2-2 2m4 0h4"></path>
+                                                    </svg>
+                                                </span>
+                                                <span>
+                                                    <strong>Codex</strong>
+                                                    <span>默认编码执行器</span>
+                                                </span>
+                                            </div>
+                                            <span class="badge green">已连接</span>
+                                        </div>
+                                        <div class="provider-details">
+                                            <div class="provider-detail">
+                                                <span>官方集成</span>
+                                                <strong>openai/codex-action@v1</strong>
+                                            </div>
+                                            <div class="provider-detail">
+                                                <span>权限</span>
+                                                <strong>workspace-write</strong>
+                                            </div>
+                                            <div class="provider-detail">
+                                                <span>认证</span>
+                                                <strong>OPENAI_API_KEY</strong>
+                                            </div>
+                                            <div class="provider-detail">
+                                                <span>上下文</span>
+                                                <strong>Issue 完整时间线</strong>
+                                            </div>
+                                        </div>
+                                        <div class="provider-actions">
+                                            <span class="provider-note">最近测试：2 分钟前</span>
+                                            <button
+                                                class="button"
+                                                type="button"
+                                                data-test-provider="Codex"
+                                            >
+                                                测试
+                                            </button>
+                                        </div>
+                                    </article>
+
+                                    <article class="provider-card">
+                                        <div class="provider-head">
+                                            <div class="provider-title">
+                                                <span class="provider-icon" aria-hidden="true">
+                                                    <svg
+                                                        width="17"
+                                                        height="17"
+                                                        viewBox="0 0 24 24"
+                                                        fill="none"
+                                                        stroke="currentColor"
+                                                        stroke-width="2"
+                                                    >
+                                                        <circle cx="12" cy="12" r="8"></circle>
+                                                        <path d="M8 12h8M12 8v8"></path>
+                                                    </svg>
+                                                </span>
+                                                <span>
+                                                    <strong>Claude Agent</strong>
+                                                    <span>通过 Claude Code Action 执行</span>
+                                                </span>
+                                            </div>
+                                            <span class="badge green">已连接</span>
+                                        </div>
+                                        <div class="provider-details">
+                                            <div class="provider-detail">
+                                                <span>官方集成</span>
+                                                <strong>anthropics/claude-code-action@v1</strong>
+                                            </div>
+                                            <div class="provider-detail">
+                                                <span>权限</span>
+                                                <strong>allowed_tools</strong>
+                                            </div>
+                                            <div class="provider-detail">
+                                                <span>认证</span>
+                                                <strong>WIF / API Key</strong>
+                                            </div>
+                                            <div class="provider-detail">
+                                                <span>上下文</span>
+                                                <strong>Issue 完整时间线</strong>
+                                            </div>
+                                        </div>
+                                        <div class="provider-actions">
+                                            <span class="provider-note">最近测试：12 分钟前</span>
+                                            <button
+                                                class="button"
+                                                type="button"
+                                                data-test-provider="Claude Agent"
+                                            >
+                                                测试
+                                            </button>
+                                        </div>
+                                    </article>
+                                </div>
+                            </div>
+                        </section>
+
+                        <section class="settings-card">
+                            <div class="settings-card-head">
+                                <div>
+                                    <h2>@ 路由与会话规则</h2>
+                                    <p>由确定性规则选择执行器，不让模型自行决定权限与运行位置。</p>
+                                </div>
+                            </div>
+                            <div class="settings-card-body route-list">
+                                <div class="route-row">
+                                    <span class="mention-code">@codex-agent</span>
+                                    <div class="route-copy">
+                                        <strong>运行 Codex Action</strong>
+                                        <span>默认处理代码修改、测试、审查和 PR 产物。</span>
+                                    </div>
+                                    <span class="badge green">默认</span>
+                                </div>
+                                <div class="route-row">
+                                    <span class="mention-code">@claude-agent</span>
+                                    <div class="route-copy">
+                                        <strong>运行 Claude Code Action</strong>
+                                        <span>按需处理长上下文分析或人工指定的任务。</span>
+                                    </div>
+                                    <span class="badge">备用</span>
+                                </div>
+                                <div class="route-row">
+                                    <span class="mention-code">用户回复</span>
+                                    <div class="route-copy">
+                                        <strong>恢复原 Workflow</strong>
+                                        <span>带入新增回复和完整时间线，继续原执行器。</span>
+                                    </div>
+                                    <span class="badge blue">续接</span>
+                                </div>
+                            </div>
+                        </section>
+                    </div>
+
+                    <div class="settings-column">
+                        <section class="settings-card">
+                            <div class="settings-card-head">
+                                <div>
+                                    <h2>统一 Callback 契约</h2>
+                                    <p>两个执行器都回写同一种事件，工作台不感知 SDK 差异。</p>
+                                </div>
+                                <span class="badge green">v1</span>
+                            </div>
+                            <div class="settings-card-body contract-list">
+                                <div class="contract-row">
+                                    <span class="event-code">run.started</span>
+                                    <div class="contract-copy">
+                                        <strong>执行已开始</strong>
+                                        <span>记录 provider、runId、workflowId。</span>
+                                    </div>
+                                </div>
+                                <div class="contract-row">
+                                    <span class="event-code">agent.message</span>
+                                    <div class="contract-copy">
+                                        <strong>追加时间线回复</strong>
+                                        <span>摘要、进度和可见日志，不回传内部思维过程。</span>
+                                    </div>
+                                </div>
+                                <div class="contract-row">
+                                    <span class="event-code">waiting_human</span>
+                                    <div class="contract-copy">
+                                        <strong>等待用户补充</strong>
+                                        <span>Workflow 暂停，Issue 保持打开。</span>
+                                    </div>
+                                </div>
+                                <div class="contract-row">
+                                    <span class="event-code">artifact.created</span>
+                                    <div class="contract-copy">
+                                        <strong>关联交付物</strong>
+                                        <span>Commit、PR、补丁、截图或测试报告。</span>
+                                    </div>
+                                </div>
+                                <div class="contract-row">
+                                    <span class="event-code">run.completed</span>
+                                    <div class="contract-copy">
+                                        <strong>完成并建议关闭</strong>
+                                        <span>是否自动关闭由工作台策略决定。</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
+
+                        <section class="settings-card">
+                            <div class="settings-card-head">
+                                <div>
+                                    <h2>什么时候需要 SDK Runner</h2>
+                                    <p>不是第一版必需；仅在 Action 模式不够时升级。</p>
+                                </div>
+                            </div>
+                            <div class="settings-card-body">
+                                <div class="toggle-row">
+                                    <div class="toggle-copy">
+                                        <strong>秒级流式进度</strong>
+                                        <span>需要持续推送 tool / turn 事件时启用。</span>
+                                    </div>
+                                    <span class="badge">未启用</span>
+                                </div>
+                                <div class="toggle-row">
+                                    <div class="toggle-copy">
+                                        <strong>原生会话续接</strong>
+                                        <span>Codex threadId 或 Claude sessionId 跨回复保留。</span>
+                                    </div>
+                                    <span class="badge">未启用</span>
+                                </div>
+                                <div class="toggle-row">
+                                    <div class="toggle-copy">
+                                        <strong>本地私有环境</strong>
+                                        <span>用出站连接的 Runner 访问内网代码和工具。</span>
+                                    </div>
+                                    <span class="badge">未启用</span>
+                                </div>
+                                <div class="policy-callout">
+                                    升级时只增加一个 Node Runner：Codex 使用
+                                    <strong>@openai/codex-sdk</strong>，Claude Code 使用
+                                    <strong>Claude Agent SDK</strong>。仍复用同一 Callback
+                                    契约，不更改工作台页面。
+                                </div>
+                            </div>
+                        </section>
+
+                        <section class="settings-card">
+                            <div class="settings-card-head">
+                                <div>
+                                    <h2>最近一次端到端运行</h2>
+                                    <p>Issue #142 · run_01J7 · Codex</p>
+                                </div>
+                                <span class="badge orange">等待你</span>
+                            </div>
+                            <div class="settings-card-body run-list">
+                                <div class="run-row">
+                                    <span class="run-dot"></span>
+                                    <div class="run-copy">
+                                        <strong>Workflow 已创建</strong>
+                                        <span>幂等键 issue-142:comment-903</span>
+                                    </div>
+                                    <span class="run-time">10:31:02</span>
+                                </div>
+                                <div class="run-row">
+                                    <span class="run-dot"></span>
+                                    <div class="run-copy">
+                                        <strong>Codex Action 已完成分析</strong>
+                                        <span>运行 2m 14s · 生成方案与验证清单</span>
+                                    </div>
+                                    <span class="run-time">10:33:19</span>
+                                </div>
+                                <div class="run-row">
+                                    <span class="run-dot waiting"></span>
+                                    <div class="run-copy">
+                                        <strong>等待用户确认交互方案</strong>
+                                        <span>回复后由 waitForEvent 恢复，不创建轮询任务。</span>
+                                    </div>
+                                    <span class="run-time">10:33:21</span>
+                                </div>
+                            </div>
+                        </section>
+                    </div>
+                </div>
+            </section>
+        </div>
+
+        <div class="toast" id="toast" role="status" aria-live="polite">
+            <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+            >
+                <path d="m5 12 4 4L19 6"></path>
+            </svg>
+            <span id="toastText">操作已完成</span>
+        </div>
+
+        <script>
+            const issues = [
+                {
+                    id: 142,
+                    title: '反馈页面信息太杂，无法连续跟进',
+                    copy: '希望改成 GitHub Issue 时间线，并用 Hook 及时唤醒 Codex。',
+                    status: 'attention',
+                    statusText: '等你回复',
+                    type: '体验优化',
+                    age: '8 分钟前',
+                },
+                {
+                    id: 141,
+                    title: '甘特图层级依赖导致日期循环漂移',
+                    copy: 'Codex 已提交候选修复，等待确认回归证据后部署。',
+                    status: 'attention',
+                    statusText: '等你审核',
+                    type: 'Bug',
+                    age: '24 分钟前',
+                },
+                {
+                    id: 140,
+                    title: '导入后父子任务没有默认展开',
+                    copy: '正在复现 Excel 导入后的折叠状态问题。',
+                    status: 'active',
+                    statusText: '处理中',
+                    type: 'Bug',
+                    age: '41 分钟前',
+                },
+                {
+                    id: 139,
+                    title: '希望支持批量设置任务负责人',
+                    copy: '已完成需求分类，正在生成交互方案。',
+                    status: 'attention',
+                    statusText: '等你确认',
+                    type: '需求',
+                    age: '2 小时前',
+                },
+                {
+                    id: 138,
+                    title: 'AI 生成任务后日期偏移一天',
+                    copy: '已定位为时区归一化问题，回归测试运行中。',
+                    status: 'active',
+                    statusText: '测试中',
+                    type: 'Bug',
+                    age: '4 小时前',
+                },
+            ];
+
+            const issueList = document.getElementById('issueList');
+            const searchInput = document.getElementById('issueSearch');
+            const queuePanel = document.getElementById('queuePanel');
+            const issueView = document.getElementById('issueView');
+            const settingsView = document.getElementById('settingsView');
+            const runnersView = document.getElementById('runnersView');
+            const toast = document.getElementById('toast');
+            const toastText = document.getElementById('toastText');
+            const saveAutomationButton = document.getElementById('saveAutomation');
+            const saveAutomationLabel = document.getElementById('saveAutomationLabel');
+            const hookUrlInput = document.getElementById('hookUrl');
+            const hookTestStatus = document.getElementById('hookTestStatus');
+            const hookStatusBadge = document.getElementById('hookStatusBadge');
+            const saveRunnerButton = document.getElementById('saveRunnerSettings');
+            const saveRunnerLabel = document.getElementById('saveRunnerLabel');
+            const runnerSaveState = document.getElementById('runnerSaveState');
+            const defaultRunnerSelect = document.getElementById('defaultRunnerSelect');
+            const codexResponsesEndpoint = document.getElementById('codexResponsesEndpoint');
+            let currentFilter = 'attention';
+            let selectedId = 142;
+
+            const icons = {
+                issue: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v4m0 4h.01"></path></svg>',
+            };
+
+            function renderIssues() {
+                const query = searchInput.value.trim().toLowerCase();
+                const filtered = issues.filter((issue) => {
+                    const filterMatches = currentFilter === 'all' || issue.status === currentFilter;
+                    const queryMatches =
+                        !query ||
+                        issue.title.toLowerCase().includes(query) ||
+                        String(issue.id).includes(query);
+                    return filterMatches && queryMatches;
+                });
+
+                issueList.innerHTML = filtered
+                    .map(
+                        (issue) => `
+                            <button class="issue-item ${issue.id === selectedId ? 'active' : ''}" type="button" data-issue="${issue.id}">
+                                <div class="issue-item-title">
+                                    <span>${issue.title}</span>
+                                    <span class="badge ${issue.status === 'attention' ? 'orange' : 'blue'}">${issue.statusText}</span>
+                                </div>
+                                <div class="issue-item-copy">${issue.copy}</div>
+                                <div class="issue-item-meta">
+                                    <span class="inline" style="gap:5px">${icons.issue} #${issue.id} · ${issue.type}</span>
+                                    <span>${issue.age}</span>
+                                </div>
+                            </button>
+                        `
+                    )
+                    .join('');
+
+                if (!filtered.length) {
+                    issueList.innerHTML =
+                        '<div style="padding:28px 16px;text-align:center;color:var(--muted)">没有匹配的 Issue</div>';
+                }
+            }
+
+            function showToast(message) {
+                toastText.textContent = message;
+                toast.style.display = 'flex';
+                window.clearTimeout(showToast.timer);
+                showToast.timer = window.setTimeout(() => {
+                    toast.style.display = 'none';
+                }, 2600);
+            }
+
+            function markAutomationDirty() {
+                saveAutomationButton.disabled = false;
+                saveAutomationButton.classList.add('blue');
+                saveAutomationLabel.textContent = '保存更改';
+            }
+
+            function markRunnerDirty() {
+                saveRunnerButton.disabled = false;
+                saveRunnerButton.classList.add('blue');
+                saveRunnerLabel.textContent = '保存更改';
+                runnerSaveState.textContent = '有未保存的更改';
+            }
+
+            function setDefaultRunner(provider) {
+                document.querySelectorAll('[data-provider-card]').forEach((card) => {
+                    const isDefault = card.dataset.providerCard === provider;
+                    card.classList.toggle('selected', isDefault);
+                    card.querySelector('[data-default-badge]').classList.toggle(
+                        'hidden',
+                        !isDefault
+                    );
+                    const defaultButton = card.querySelector('[data-default-provider]');
+                    defaultButton.disabled = isDefault;
+                    defaultButton.textContent = isDefault ? '当前默认' : '设为默认';
+                });
+                defaultRunnerSelect.value = provider;
+                markRunnerDirty();
+            }
+
+            function hasValidResponsesEndpoint() {
+                if (!codexResponsesEndpoint.checkValidity()) {
+                    return false;
+                }
+                try {
+                    const endpoint = new URL(codexResponsesEndpoint.value);
+                    const path = endpoint.pathname.replace(/\/+$/, '');
+                    return (
+                        ['http:', 'https:'].includes(endpoint.protocol) &&
+                        path.endsWith('/v1/responses')
+                    );
+                } catch {
+                    return false;
+                }
+            }
+
+            function switchView(view) {
+                const supportedViews = ['issues', 'automations', 'runners'];
+                const activeView = supportedViews.includes(view) ? view : 'issues';
+                issueView.classList.toggle('hidden', activeView !== 'issues');
+                settingsView.classList.toggle('active', activeView === 'automations');
+                runnersView.classList.toggle('active', activeView === 'runners');
+                document.querySelectorAll('.top-tab').forEach((tab) => {
+                    tab.classList.toggle('active', tab.dataset.view === activeView);
+                });
+                const url = new URL(window.location.href);
+                url.searchParams.set('view', activeView);
+                window.history.replaceState({}, '', url);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            }
+
+            document.addEventListener('click', (event) => {
+                const viewButton = event.target.closest('[data-view]');
+                if (viewButton) {
+                    switchView(viewButton.dataset.view);
+                    return;
+                }
+
+                const issueButton = event.target.closest('[data-issue]');
+                if (issueButton) {
+                    selectedId = Number(issueButton.dataset.issue);
+                    const issue = issues.find((item) => item.id === selectedId);
+                    if (issue) {
+                        document.getElementById('issueTitle').innerHTML =
+                            `${issue.title} <span class="issue-number">#${issue.id}</span>`;
+                    }
+                    renderIssues();
+                    queuePanel.classList.remove('open');
+                    return;
+                }
+
+                const actionButton = event.target.closest('[data-action]');
+                if (actionButton) {
+                    const action = actionButton.dataset.action;
+                    if (action === 'approve') {
+                        showToast('已批准，issue.comment.created 已进入投递队列');
+                    } else if (action === 'supplement') {
+                        document.getElementById('replyInput').focus();
+                    } else if (action === 'close') {
+                        showToast('Issue 已关闭，并写入状态事件');
+                    }
+                }
+            });
+
+            document.querySelectorAll('.filter-chip').forEach((button) => {
+                button.addEventListener('click', () => {
+                    currentFilter = button.dataset.filter;
+                    document.querySelectorAll('.filter-chip').forEach((chip) => {
+                        chip.classList.toggle('active', chip === button);
+                    });
+                    renderIssues();
+                });
+            });
+
+            searchInput.addEventListener('input', renderIssues);
+
+            document.getElementById('mobileQueueButton').addEventListener('click', () => {
+                queuePanel.classList.toggle('open');
+            });
+
+            document.getElementById('mentionButton').addEventListener('click', () => {
+                const textarea = document.getElementById('replyInput');
+                const mention = '@codex-agent ';
+                if (!textarea.value.includes(mention)) {
+                    textarea.value = mention + textarea.value;
+                }
+                textarea.focus();
+            });
+
+            document.getElementById('replyForm').addEventListener('submit', (event) => {
+                event.preventDefault();
+                const input = document.getElementById('replyInput');
+                const mode = document.getElementById('replyMode').value;
+                if (!input.value.trim()) {
+                    input.focus();
+                    showToast('请先填写回复内容');
+                    return;
+                }
+                input.value = '';
+                document.getElementById('replySuccess').style.display = 'inline-flex';
+                const messages = {
+                    resume: '回复已发布，并立即唤醒 Codex Agent',
+                    record: '回复已发布，本次未触发 Agent',
+                    close: '回复已发布，Issue 已关闭',
+                };
+                showToast(messages[mode]);
+            });
+
+            document.getElementById('refreshButton').addEventListener('click', () => {
+                showToast('工作台已刷新，没有新的待处理事件');
+            });
+
+            document.getElementById('testHook').addEventListener('click', (event) => {
+                const button = event.currentTarget;
+                if (!hookUrlInput.checkValidity()) {
+                    hookUrlInput.reportValidity();
+                    showToast('请输入有效的 Hook URL');
+                    return;
+                }
+                button.disabled = true;
+                button.textContent = '测试中…';
+                hookTestStatus.classList.remove('success');
+                hookTestStatus.textContent = '正在连接';
+                window.setTimeout(() => {
+                    button.disabled = false;
+                    button.textContent = '测试连接';
+                    hookTestStatus.classList.add('success');
+                    hookTestStatus.innerHTML =
+                        '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m5 12 4 4L19 6"></path></svg>连接正常';
+                    hookStatusBadge.className = 'badge green';
+                    hookStatusBadge.textContent = '已连接';
+                    showToast('连接成功：202 Accepted · 384 ms');
+                }, 650);
+            });
+
+            hookUrlInput.addEventListener('input', () => {
+                hookTestStatus.classList.remove('success');
+                hookTestStatus.textContent = '待测试';
+                hookStatusBadge.className = 'badge';
+                hookStatusBadge.textContent = '待验证';
+                markAutomationDirty();
+            });
+
+            document
+                .querySelectorAll('#settingsView input[name="automationEvent"]')
+                .forEach((input) => {
+                    input.addEventListener('change', markAutomationDirty);
+                });
+
+            document.getElementById('regenerateHookSecret').addEventListener('click', () => {
+                document.getElementById('hookSecret').value =
+                    `feedback-${Date.now().toString(36)}-secret`;
+                markAutomationDirty();
+                showToast('已生成新签名密钥，保存后生效');
+            });
+
+            saveAutomationButton.addEventListener('click', () => {
+                saveAutomationButton.disabled = true;
+                saveAutomationLabel.textContent = '保存中…';
+                window.setTimeout(() => {
+                    saveAutomationButton.classList.remove('blue');
+                    saveAutomationLabel.textContent = '已保存';
+                    showToast('自动化设置已保存');
+                }, 500);
+            });
+
+            document.querySelectorAll('[data-manage-secrets]').forEach((button) => {
+                button.addEventListener('click', () => {
+                    showToast('密钥在 GitHub Secrets 中管理，不会保存到工作台');
+                });
+            });
+
+            document.querySelectorAll('[data-default-provider]').forEach((button) => {
+                button.addEventListener('click', () => {
+                    setDefaultRunner(button.dataset.defaultProvider);
+                });
+            });
+
+            defaultRunnerSelect.addEventListener('change', () => {
+                setDefaultRunner(defaultRunnerSelect.value);
+            });
+
+            codexResponsesEndpoint.addEventListener('input', () => {
+                const card = codexResponsesEndpoint.closest('[data-provider-card]');
+                const badge = card.querySelector('[data-connection-badge]');
+                const status = card.querySelector('[data-connection-status]');
+                badge.className = 'badge';
+                badge.textContent = '待验证';
+                status.className = 'connection-status';
+                status.textContent = '地址更改后请重新测试';
+                markRunnerDirty();
+            });
+
+            document
+                .querySelectorAll(
+                    '#runnersView [data-runner-dirty]:not(#codexResponsesEndpoint):not(#defaultRunnerSelect)'
+                )
+                .forEach((control) => {
+                    control.addEventListener('input', markRunnerDirty);
+                });
+
+            document
+                .querySelectorAll('.runner-settings-grid [data-test-provider]')
+                .forEach((button) => {
+                    button.addEventListener('click', () => {
+                        const provider = button.dataset.testProvider;
+                        const card = button.closest('[data-provider-card]');
+                        const badge = card.querySelector('[data-connection-badge]');
+                        const status = card.querySelector('[data-connection-status]');
+                        if (provider === 'Codex' && !hasValidResponsesEndpoint()) {
+                            badge.className = 'badge orange';
+                            badge.textContent = '需修正';
+                            status.className = 'connection-status error';
+                            status.textContent = '请填写完整的 /v1/responses 地址';
+                            codexResponsesEndpoint.focus();
+                            showToast('Codex 连接地址格式不正确');
+                            return;
+                        }
+                        button.disabled = true;
+                        button.textContent = '测试中…';
+                        badge.className = 'badge';
+                        badge.textContent = '测试中';
+                        status.className = 'connection-status';
+                        status.textContent = '正在检查端点与权限';
+                        window.setTimeout(() => {
+                            button.disabled = false;
+                            button.textContent = '测试连接';
+                            badge.className = 'badge green';
+                            badge.textContent = '已连接';
+                            status.className = 'connection-status success';
+                            status.textContent = '刚刚验证 · 权限正常';
+                            showToast(`${provider} 执行器连接正常 · 权限检查通过`);
+                        }, 700);
+                    });
+                });
+
+            saveRunnerButton.addEventListener('click', () => {
+                saveRunnerButton.disabled = true;
+                saveRunnerLabel.textContent = '保存中…';
+                runnerSaveState.textContent = '正在保存';
+                window.setTimeout(() => {
+                    saveRunnerButton.classList.remove('blue');
+                    saveRunnerLabel.textContent = '已保存';
+                    runnerSaveState.textContent = '全部更改已保存';
+                    showToast('AI 执行器设置已保存');
+                }, 500);
+            });
+
+            document.querySelectorAll('.switch').forEach((button) => {
+                button.setAttribute('aria-checked', String(button.classList.contains('on')));
+                button.addEventListener('click', () => {
+                    button.classList.toggle('on');
+                    button.setAttribute('aria-checked', String(button.classList.contains('on')));
+                    if (button.closest('#settingsView')) {
+                        markAutomationDirty();
+                    }
+                    if (button.closest('#runnersView')) {
+                        markRunnerDirty();
+                    }
+                });
+            });
+
+            const initialView = new URL(window.location.href).searchParams.get('view');
+            renderIssues();
+            switchView(initialView);
+        </script>
+    </body>
+</html>

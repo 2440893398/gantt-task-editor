@@ -9,10 +9,14 @@ export default defineConfig({
             enforce: 'pre',
             load(id) {
                 const filePath = id.split('?')[0];
-                if (
+                const isVendorReplayAsset =
                     filePath.includes('/src/features/feedback/vendor/rrweb-replay-') &&
-                    filePath.endsWith('.txt')
-                ) {
+                    filePath.endsWith('.txt');
+                // Wrangler loads `**/*.txt` as text modules; mirror that for the
+                // workbench stylesheet and client script.
+                const isWorkbenchAsset =
+                    filePath.includes('/workers/feedback-workbench') && filePath.endsWith('.txt');
+                if (isVendorReplayAsset || isWorkbenchAsset) {
                     return `export default ${JSON.stringify(readFileSync(filePath, 'utf8'))}`;
                 }
                 return null;
@@ -22,9 +26,6 @@ export default defineConfig({
     resolve: {
         alias: {
             'cloudflare:workers': fileURLToPath(
-                new URL('./tests/mocks/cloudflare-workers.js', import.meta.url)
-            ),
-            'cloudflare:workflows': fileURLToPath(
                 new URL('./tests/mocks/cloudflare-workers.js', import.meta.url)
             ),
         },

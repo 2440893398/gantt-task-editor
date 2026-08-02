@@ -21,6 +21,7 @@
     "test:ui": "vitest --ui",
     "test:coverage": "vitest --coverage",
     "test:e2e": "playwright test",
+    "test:e2e:workbench": "playwright test --config playwright.workbench.config.js",
     "smoke:prod": "node -e \"const{execSync}=require('child_process');execSync('npx playwright test tests/e2e/prod-smoke.spec.js --project=chromium',{stdio:'inherit',env:{...process.env,SMOKE_PROD_URL:process.env.SMOKE_PROD_URL||'https://gantt-task-editor.pages.dev'}})\"",
     "lint": "eslint src tests",
     "lint:fix": "eslint src tests --fix",

@@ -1,9 +1,9 @@
 # 反馈处理工作台 V2 — Issue 驱动的 AI 分析、实现与验证闭环
 
-> 状态：技术评审修订中；完成 Phase 0 可行性门禁后冻结
-> 版本：1.3
-> 日期：2026-07-28
-> 原型：[feedback-workbench-v2-prototype.html](./feedback-workbench-v2-prototype.html)
+> 状态：技术评审修订中；完成 Phase 0 可行性门禁后冻结  
+> 版本：1.3  
+> 日期：2026-07-28  
+> 原型：[feedback-workbench-v2-prototype.html](./feedback-workbench-v2-prototype.html)  
 > 业务场景合同：[tests/scenarios/feedback-workbench.md](../../../tests/scenarios/feedback-workbench.md)
 
 ## 1. 执行摘要

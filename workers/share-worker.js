@@ -5,9 +5,10 @@
  */
 
 import { WorkflowEntrypoint } from 'cloudflare:workers';
-import { NonRetryableError } from 'cloudflare:workflows';
 import rrwebReplayBrowserScript from '../src/features/feedback/vendor/rrweb-replay-2.0.0-alpha.20.umd.min.txt';
 import rrwebReplayBrowserStyles from '../src/features/feedback/vendor/rrweb-replay-2.0.0-alpha.20.style.min.txt';
+import { renderFeedbackWorkbenchPage } from './feedback-workbench-ui.js';
+import { evaluateDiffGate } from '../src/features/feedback/diff-gate.js';
 
 const TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
 const FEEDBACK_TTL_SECONDS = 180 * 24 * 60 * 60; // 180 days
@@ -22,7 +23,6 @@ const FEEDBACK_REPLAY_STYLE_PATH = '/feedback/assets/rrweb-replay-2.0.0-alpha.20
 const KEY_CHARS = 'abcdefghijklmnopqrstuvwxyz0123456789';
 const ADMIN_SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
 const FEEDBACK_ATTACHMENT_ACCESS_TTL_SECONDS = 5 * 60;
-const FEEDBACK_RUN_CAPABILITY_TTL_SECONDS = 30 * 60;
 const FEEDBACK_STATUSES = new Set([
     'open',
     'queued',
@@ -34,7 +34,191 @@ const FEEDBACK_STATUSES = new Set([
     'ready_for_deploy',
     'closed',
 ]);
+const FEEDBACK_TERMINAL_STATUSES = new Set(['resolved', 'closed']);
 const FEEDBACK_PRIORITIES = new Set(['low', 'medium', 'high', 'urgent']);
+// Workbench V2 (spec §12.2, §15.2, §19.4, §19.5)
+const FEEDBACK_AUTOMATION_EVENT_TYPES = [
+    'issue.created',
+    'comment.created',
+    'issue.reopened',
+    'status.changed',
+];
+const FEEDBACK_CALLBACK_EVENTS = [
+    'run.started',
+    'agent.message',
+    'waiting_human',
+    'artifact.created',
+    'run.completed',
+];
+const FEEDBACK_PROVIDERS = new Set(['codex', 'claude']);
+const FEEDBACK_PROVIDER_ACTIONS = {
+    codex: 'openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56',
+    claude: 'anthropics/claude-code-action@be7b93b1907a4abad570368f3c74b6fe3807510b',
+};
+const FEEDBACK_MENTION_ROUTES = {
+    '@codex-agent': 'codex',
+    '@claude-agent': 'claude',
+};
+const FEEDBACK_COMMENT_MODES = new Set(['resume', 'record', 'close']);
+// §19.5: `testing` covers the window between dispatching the minimal Action
+// smoke and its result callback. It is deliberately not `connected`, so §7.4
+// cannot read an in-flight smoke as proof of a healthy provider.
+const FEEDBACK_CONNECTION_STATES = new Set(['unverified', 'testing', 'connected', 'failed']);
+const FEEDBACK_DEFAULT_RESPONSES_ENDPOINT = 'https://api.openai.com/v1/responses';
+const FEEDBACK_SIGNATURE_HEADER = 'X-Feedback-Signature-256';
+const FEEDBACK_HOOK_TIMEOUT_MS = 10_000;
+const FEEDBACK_RECONCILE_JOB_ID = 'feedback-reconcile';
+// §17.3: `needs_human` waits up to 7 days, then the instance terminates while
+// the Issue stays open.
+const FEEDBACK_HUMAN_WAIT_TIMEOUT_SECONDS = 7 * 24 * 60 * 60;
+// Cloudflare Workflow event types only accept letters, digits, dashes and
+// underscores. The business event type stays inside the payload.
+const FEEDBACK_WORKFLOW_RESUME_EVENT_TYPE = 'feedback-resume';
+const FEEDBACK_WORKFLOW_RUN_RESULT_EVENT_TYPE = 'feedback-run-result';
+const FEEDBACK_RUN_TIMEOUTS = Object.freeze({
+    analyze: '30 minutes',
+    implement: '45 minutes',
+    implement_and_verify: '60 minutes',
+    review: '30 minutes',
+    local_required: '120 minutes',
+});
+const FEEDBACK_RUN_TIMEOUT_MINUTES = Object.freeze({
+    analyze: 30,
+    implement: 45,
+    implement_and_verify: 60,
+    review: 30,
+    local_required: 120,
+});
+// Must match `[triggers] crons` in wrangler.toml.
+const FEEDBACK_RECONCILE_CRON = '0 3 * * *';
+const MAX_FEEDBACK_COMMENT_LENGTH = 12000;
+const FEEDBACK_EVENT_SPEC_VERSION = '1.0';
+// §17.2: at most 4 attempts (1 initial + 3 retries at 1/5/15 minutes).
+const FEEDBACK_DELIVERY_MAX_ATTEMPTS = 4;
+const FEEDBACK_DELIVERY_RETRY_DELAYS_MS = Object.freeze([60 * 1000, 5 * 60 * 1000, 15 * 60 * 1000]);
+// §17.1: only transport-level failures are retried. Auth, signature and schema
+// failures stop immediately so a rejected request never loops.
+const FEEDBACK_RETRYABLE_DELIVERY_CODES = new Set([
+    'HOOK_TIMEOUT',
+    'HOOK_UNREACHABLE',
+    'HTTP_408',
+    'HTTP_425',
+    'HTTP_429',
+    'HTTP_500',
+    'HTTP_502',
+    'HTTP_503',
+    'HTTP_504',
+]);
+const FEEDBACK_DAILY_DISPATCH_QUOTA = 20;
+const FEEDBACK_POLICIES = new Set([
+    'analyze',
+    'implement',
+    'implement_and_verify',
+    'review',
+    'local_required',
+]);
+const FEEDBACK_WRITE_POLICIES = new Set(['implement', 'implement_and_verify', 'local_required']);
+const FEEDBACK_AUTO_DELIVER_TRUSTED_ACTORS = new Set(['admin', 'system']);
+// §9.2: Run状态与 Issue 状态分开保存，Run 成功不等于 Issue 解决。
+const FEEDBACK_RUN_STATUSES = new Set([
+    'created',
+    'dispatched',
+    'queued',
+    'running',
+    'waiting_human',
+    'succeeded',
+    'failed',
+    'cancelled',
+    'timed_out',
+]);
+const FEEDBACK_RUN_TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'cancelled', 'timed_out']);
+// §15.2 normalized Callback contract. Provider-specific shapes are mapped onto
+// these before anything reaches storage or the UI.
+const FEEDBACK_CALLBACK_EVENT_TYPES = new Set([
+    'run.started',
+    'agent.message',
+    'agent.waiting_human',
+    'run.phase_changed',
+    'artifact.created',
+    'run.completed',
+    'run.failed',
+    'run.cancelled',
+]);
+const FEEDBACK_RUN_TOKEN_TTL_SECONDS = 4 * 60 * 60;
+// §13.3/§14.4 step 2: read-only policies get a profile without workspace write.
+const FEEDBACK_PERMISSION_PROFILES = {
+    analyze: 'feedback-readonly',
+    review: 'feedback-readonly',
+    implement: 'feedback-workspace',
+    implement_and_verify: 'feedback-workspace',
+    local_required: 'feedback-local',
+};
+const FEEDBACK_PROVIDER_WORKFLOW_FILES = {
+    codex: 'feedback-agent-codex.yml',
+    claude: 'feedback-agent-claude.yml',
+};
+const FEEDBACK_RELEASE_WORKFLOW_FILE = 'feedback-delivery.yml';
+const FEEDBACK_SMOKE_WORKFLOW_FILE = 'feedback-runner-smoke.yml';
+// A smoke that never reports back must not leave the provider stuck in
+// `testing` forever; §19.5 wants an observable outcome either way.
+const FEEDBACK_SMOKE_TIMEOUT_MS = 30 * 60 * 1000;
+// §9.3 Candidate and Release states.
+const FEEDBACK_CANDIDATE_STATUSES = new Set([
+    'created',
+    'implementing',
+    'verified',
+    'awaiting_review',
+    'approved',
+    'integrating',
+    'integrated',
+    'failed',
+    'abandoned',
+]);
+const FEEDBACK_RELEASE_ACTIVE_STATUSES = new Set([
+    'integrating',
+    'merged',
+    'deploying',
+    'smoke_testing',
+]);
+// §15.4 Release event contract.
+const FEEDBACK_RELEASE_EVENT_TYPES = new Set([
+    'integration.started',
+    'integration.rebased',
+    'integration.merged',
+    'integration.verification_completed',
+    'deployment.started',
+    'deployment.completed',
+    'smoke.completed',
+    'release.completed',
+    'release.failed',
+]);
+// §14.7: a Release may only complete once every stage its surface requires has
+// actually reported. This is what stops a premature `resolved`.
+const FEEDBACK_RELEASE_REQUIRED_STAGES = [
+    'integration.started',
+    'integration.merged',
+    'integration.verification_completed',
+];
+const FEEDBACK_RELEASE_DEPLOY_STAGES = ['deployment.completed', 'smoke.completed'];
+const FEEDBACK_HUMAN_ACTION_TYPES = new Set([
+    'need_reproduction',
+    'design_decision',
+    'review_required',
+    'developer_fix_required',
+    'confirm_design',
+    'review_candidate',
+    'blocked_external',
+    'confirm_policy',
+]);
+const FEEDBACK_HUMAN_ACTION_RETURN_STATES = Object.freeze({
+    need_reproduction: ['queued', 'closed'],
+    design_decision: ['queued', 'closed'],
+    review_required: ['ready_for_deploy', 'queued', 'closed'],
+    developer_fix_required: ['queued', 'closed'],
+    blocked_external: ['queued', 'closed'],
+    confirm_policy: ['queued', 'closed'],
+});
+const FEEDBACK_DESIGN_DECISIONS = new Set(['approve', 'revise', 'reject']);
 const FEEDBACK_SOURCE_TYPES = new Set(['manual', 'auto_error', 'admin']);
 const FEEDBACK_BUSINESS_TYPES = new Set(['bug', 'improvement', 'requirement', 'other', 'unclear']);
 const FEEDBACK_SCOPES = new Set(['small', 'medium', 'large', 'unclear']);
@@ -48,22 +232,6 @@ const FEEDBACK_AUTOMATION_DECISIONS = new Set([
     'close',
 ]);
 const FEEDBACK_AI_CONFIDENCE = new Set(['', 'low', 'medium', 'high']);
-const FEEDBACK_RUN_EVENT_TYPES = new Set([
-    'run.started',
-    'agent.message',
-    'agent.waiting_human',
-    'artifact.created',
-    'run.completed',
-    'run.failed',
-]);
-const FEEDBACK_RUN_POLICIES = new Set(['analyze', 'review', 'implement', 'implement_and_verify']);
-const FEEDBACK_RUNNER_TYPES = new Set(['github_hosted', 'local_required']);
-const FEEDBACK_RUN_PERMISSION_PROFILES = Object.freeze({
-    analyze: ':read-only',
-    review: ':read-only',
-    implement: 'feedback-workspace',
-    implement_and_verify: 'feedback-workspace',
-});
 const FEEDBACK_INLINE_ATTACHMENT_TYPES = new Set([
     'image/avif',
     'image/gif',
@@ -99,7 +267,7 @@ function corsHeaders() {
     return {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization, Idempotency-Key',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     };
 }
 
@@ -366,434 +534,424 @@ export class CloudDocDurableObject {
     }
 }
 
+function isFeedbackWorkflowTimeout(error) {
+    return String(error?.message || error)
+        .toLowerCase()
+        .includes('timeout');
+}
+
 export class FeedbackWorkflow extends WorkflowEntrypoint {
     async run(event, step) {
-        const payload = normalizeFeedbackWorkflowPayload(event.payload);
-        const { issueId, generation, runId } = payload;
-        const instanceId = String(event.instanceId || `${issueId}:${generation}`);
-        const workflowState = await step.do('record workflow start', async () => {
+        const releaseId = String(event.payload?.releaseId || '');
+        if (/^rel_[0-9a-f-]{36}$/i.test(releaseId)) {
+            return this.retryReleaseDispatch(step, releaseId);
+        }
+
+        const issueId = String(event.payload?.issueId || '');
+        const generation = Number(event.payload?.generation);
+        if (!issueId.startsWith('feedback:') || !Number.isInteger(generation) || generation < 1) {
+            throw new Error('INVALID_FEEDBACK_WORKFLOW_EVENT');
+        }
+
+        const instanceId = String(
+            event.instanceId || buildFeedbackWorkflowInstanceId(issueId, generation)
+        );
+        const started = await this.recordStart(step, { issueId, generation, instanceId, event });
+
+        // §13.1 steps 6–7. The Run and its scoped tokens are created here so a
+        // resumed generation reuses the same Workflow but gets a fresh Run.
+        //
+        // Deliberately ahead of the Hook delivery: the Hook is a notification
+        // side-channel, while the Run is the actual work. Delivering first would
+        // park the Agent behind up to ~21 minutes of delivery backoff (§17.2)
+        // whenever the subscriber is down.
+        let triggerEvent = event;
+        let cycle = 1;
+        let latestResult = { ...started, delivery: null, run: null };
+
+        // §6.1/§13.4: one business Workflow owns successive short-lived Runs.
+        // It hibernates between Runs, so waiting for a person consumes no Runner.
+        while (true) {
+            const stepSuffix = ` ${cycle}`;
+            const run = await step.do(
+                `create run${stepSuffix}`,
+                { sensitive: 'output' },
+                async () =>
+                    createFeedbackRun(this.env, {
+                        issueId,
+                        workflowId: instanceId,
+                        provider: String(triggerEvent.payload?.provider || ''),
+                        triggerEventId: String(triggerEvent.payload?.eventId || ''),
+                    })
+            );
+
+            if (run?.blocked) {
+                // §7.3/§9.2: a blocked Run is a human decision, not a silent drop.
+                await step.do(`record blocked run${stepSuffix}`, async () =>
+                    appendFeedbackSystemEvent(this.env, issueId, {
+                        type: 'automation.suppressed',
+                        visibility: 'admin',
+                        body: { reason: run.reason, policy: run.policy || null },
+                    })
+                );
+                latestResult = {
+                    ...started,
+                    delivery: await this.deliverConfiguredEvent(step, triggerEvent, stepSuffix),
+                    run,
+                };
+            } else if (run?.runId) {
+                // §13.1 step 8. Dispatch failure is recorded on the Run rather than
+                // thrown, so the workbench shows an un-started Run instead of a
+                // Run that looks alive but has no Job behind it.
+                const dispatch = await step.do(`dispatch run${stepSuffix}`, async () =>
+                    dispatchFeedbackRunToGitHub(this.env, {
+                        payload: run.dispatchPayload,
+                        provider: run.provider,
+                    })
+                );
+                await step.do(`record dispatch result${stepSuffix}`, async () =>
+                    recordFeedbackDispatchResult(this.env, run.runId, dispatch)
+                );
+                latestResult = {
+                    ...started,
+                    delivery: await this.deliverConfiguredEvent(step, triggerEvent, stepSuffix),
+                    run: { runId: run.runId, dispatched: dispatch.dispatched },
+                };
+            } else {
+                latestResult = {
+                    ...started,
+                    delivery: await this.deliverConfiguredEvent(step, triggerEvent, stepSuffix),
+                    run,
+                };
+            }
+
+            if (run?.blocked || !run?.runId) {
+                await this.recordTerminal(step, {
+                    issueId,
+                    instanceId,
+                    reason: run?.reason || 'run_not_created',
+                    stepSuffix,
+                });
+                return { ...latestResult, workflowStatus: 'terminated' };
+            }
+
+            await this.recordRunWaiting(step, {
+                issueId,
+                instanceId,
+                runId: run.runId,
+                policy: run.policy,
+                stepSuffix,
+            });
+
+            let runResult;
+            try {
+                runResult = await step.waitForEvent(`wait for run result${stepSuffix}`, {
+                    type: FEEDBACK_WORKFLOW_RUN_RESULT_EVENT_TYPE,
+                    timeout: FEEDBACK_RUN_TIMEOUTS[run.policy] || FEEDBACK_RUN_TIMEOUTS.analyze,
+                });
+            } catch (error) {
+                if (!isFeedbackWorkflowTimeout(error)) throw error;
+                await this.recordRunTimeout(step, {
+                    issueId,
+                    instanceId,
+                    runId: run.runId,
+                    stepSuffix,
+                });
+                return { ...latestResult, workflowStatus: 'terminated' };
+            }
+
+            if (String(runResult?.payload?.runId || '') !== run.runId) {
+                throw new Error('FEEDBACK_WORKFLOW_RUN_RESULT_MISMATCH');
+            }
+            const callbackType = String(runResult?.payload?.callbackType || '');
+            if (callbackType !== 'agent.waiting_human') {
+                if (!['run.completed', 'run.failed', 'run.cancelled'].includes(callbackType)) {
+                    throw new Error('FEEDBACK_WORKFLOW_RUN_RESULT_INVALID');
+                }
+                const workflowStatus =
+                    callbackType === 'run.completed' ? 'succeeded' : 'terminated';
+                await this.recordTerminal(step, {
+                    issueId,
+                    instanceId,
+                    reason: callbackType,
+                    status: workflowStatus,
+                    stepSuffix,
+                });
+                return { ...latestResult, workflowStatus };
+            }
+
+            await this.recordHumanWaiting(step, {
+                issueId,
+                instanceId,
+                runId: run.runId,
+                stepSuffix,
+            });
+            try {
+                const resumed = await step.waitForEvent(`wait for human response${stepSuffix}`, {
+                    type: FEEDBACK_WORKFLOW_RESUME_EVENT_TYPE,
+                    timeout: '7 days',
+                });
+                await this.recordResume(step, { instanceId, stepSuffix });
+                triggerEvent = {
+                    ...resumed,
+                    payload: {
+                        ...(resumed?.payload || {}),
+                        issueId,
+                        generation,
+                        contextVersion: Number(event.payload?.contextVersion) || 1,
+                    },
+                };
+                cycle += 1;
+            } catch (error) {
+                if (!isFeedbackWorkflowTimeout(error)) throw error;
+                await this.recordHumanTimeout(step, { issueId, instanceId, stepSuffix });
+                return { ...latestResult, workflowStatus: 'terminated' };
+            }
+        }
+    }
+
+    async retryReleaseDispatch(step, releaseId) {
+        const delays = ['1 minute', '5 minutes', '15 minutes'];
+        let latest = null;
+
+        for (let index = 0; index < delays.length; index += 1) {
+            await step.sleep(`wait to retry Release dispatch ${index + 1}`, delays[index]);
+            latest = await step.do(`retry Release dispatch ${index + 1}`, async () =>
+                resumeFeedbackReleaseDispatchById(this.env, releaseId)
+            );
+            if (latest?.dispatched || !latest?.resumable) break;
+        }
+
+        return { releaseId, ...latest };
+    }
+
+    /**
+     * §17.2: Webhook/Dispatch retries at 1/5/15 minutes, max 4 attempts.
+     * Workflow steps own the backoff so no high-frequency cron is needed
+     * (§4, §19.4) and the wait costs no Runner time. Returns null when no Hook
+     * subscribed to this event.
+     */
+    async deliverConfiguredEvent(step, event, stepSuffix = '') {
+        return this.deliverEvent(step, {
+            deliveryId: String(event.payload?.deliveryId || ''),
+            stepSuffix,
+        });
+    }
+
+    async deliverEvent(step, { deliveryId, stepSuffix = '' }) {
+        if (!deliveryId) return null;
+
+        try {
+            return await step.do(
+                `deliver issue event${stepSuffix}`,
+                {
+                    retries: {
+                        limit: FEEDBACK_DELIVERY_MAX_ATTEMPTS - 1,
+                        delay: '1 minute',
+                        backoff: 'exponential',
+                    },
+                    timeout: '2 minutes',
+                },
+                async () => {
+                    const result = await attemptFeedbackDelivery(this.env, deliveryId);
+                    // Throwing is what asks the Workflow for another attempt;
+                    // permanent failures return instead so they stop here.
+                    if (!result.ok && result.retryable) {
+                        throw new Error(result.errorCode || 'FEEDBACK_DELIVERY_RETRYABLE');
+                    }
+                    return result;
+                }
+            );
+        } catch (error) {
+            // §17.2: retries exhausted, park it in the DLQ for manual replay.
+            return await step.do(`record delivery dead letter${stepSuffix}`, async () =>
+                markFeedbackDeliveryDeadLettered(this.env, deliveryId, String(error?.message || ''))
+            );
+        }
+    }
+
+    async recordRunWaiting(step, { issueId, instanceId, runId, policy, stepSuffix }) {
+        return step.do(`record run wait${stepSuffix}`, async () => {
+            const database = this.env.FEEDBACK_DB;
+            const waitingUntil = new Date(
+                Date.now() +
+                    (FEEDBACK_RUN_TIMEOUT_MINUTES[policy] || FEEDBACK_RUN_TIMEOUT_MINUTES.analyze) *
+                        60 *
+                        1000
+            ).toISOString();
+            await database
+                .prepare(
+                    `UPDATE feedback_workflows
+                 SET status = 'running', active_run_id = ?,
+                     waiting_until = ?
+                 WHERE instance_id = ?`
+                )
+                .bind(runId, waitingUntil, instanceId)
+                .run();
+            return { issueId, instanceId, waitingUntil };
+        });
+    }
+
+    async recordHumanWaiting(step, { issueId, instanceId, runId, stepSuffix }) {
+        return step.do(`record human wait${stepSuffix}`, async () => {
+            const database = this.env.FEEDBACK_DB;
+            const waitingUntil = new Date(
+                Date.now() + FEEDBACK_HUMAN_WAIT_TIMEOUT_SECONDS * 1000
+            ).toISOString();
+            await database
+                .prepare(
+                    `UPDATE feedback_workflows
+                 SET status = 'waiting', active_run_id = ?, waiting_until = ?
+                 WHERE instance_id = ?`
+                )
+                .bind(runId, waitingUntil, instanceId)
+                .run();
+            return { issueId, instanceId, waitingUntil };
+        });
+    }
+
+    async recordResume(step, { instanceId, stepSuffix }) {
+        return step.do(`record workflow resume${stepSuffix}`, async () => {
+            const database = this.env.FEEDBACK_DB;
+            await database
+                .prepare(
+                    `UPDATE feedback_workflows
+                     SET status = 'running', waiting_until = NULL
+                     WHERE instance_id = ?`
+                )
+                .bind(instanceId)
+                .run();
+            return { instanceId, status: 'running' };
+        });
+    }
+
+    async recordTerminal(step, { issueId, instanceId, reason, status = 'terminated', stepSuffix }) {
+        return step.do(`record workflow terminal${stepSuffix}`, async () => {
+            const database = this.env.FEEDBACK_DB;
+            const finishedAt = new Date().toISOString();
+            await database.batch([
+                database
+                    .prepare(
+                        `UPDATE feedback_workflows
+                     SET status = ?, active_run_id = NULL, waiting_until = NULL,
+                         finished_at = ?, terminal_reason = ?
+                     WHERE instance_id = ?`
+                    )
+                    .bind(status, finishedAt, reason, instanceId),
+                database
+                    .prepare(
+                        `UPDATE feedback_issues SET active_workflow_id = NULL
+                     WHERE id = ? AND active_workflow_id = ?`
+                    )
+                    .bind(issueId, instanceId),
+            ]);
+            return { issueId, instanceId, status, finishedAt, reason };
+        });
+    }
+
+    async recordRunTimeout(step, { issueId, instanceId, runId, stepSuffix }) {
+        return step.do(`record run timeout${stepSuffix}`, async () => {
+            const database = this.env.FEEDBACK_DB;
+            const finishedAt = new Date().toISOString();
+            await database.batch([
+                database
+                    .prepare(
+                        `UPDATE feedback_runs
+                     SET status = 'timed_out', finished_at = ?, error_code = 'run_timeout'
+                     WHERE id = ?
+                       AND status NOT IN ('succeeded', 'failed', 'cancelled', 'timed_out')`
+                    )
+                    .bind(finishedAt, runId),
+                database
+                    .prepare(
+                        `UPDATE feedback_workflows
+                     SET status = 'terminated', active_run_id = NULL, waiting_until = NULL,
+                         finished_at = ?, terminal_reason = 'run_timeout'
+                     WHERE instance_id = ?`
+                    )
+                    .bind(finishedAt, instanceId),
+                database
+                    .prepare(
+                        `UPDATE feedback_issues SET active_workflow_id = NULL
+                     WHERE id = ? AND active_workflow_id = ?`
+                    )
+                    .bind(issueId, instanceId),
+            ]);
+            return { issueId, instanceId, runId, status: 'terminated', finishedAt };
+        });
+    }
+
+    async recordHumanTimeout(step, { issueId, instanceId, stepSuffix }) {
+        return step.do(`record human timeout${stepSuffix}`, async () => {
+            const database = this.env.FEEDBACK_DB;
+            const finishedAt = new Date().toISOString();
+            await database.batch([
+                database
+                    .prepare(
+                        `UPDATE feedback_workflows
+                     SET status = 'terminated', active_run_id = NULL,
+                         waiting_until = NULL, finished_at = ?,
+                         terminal_reason = 'human_timeout'
+                     WHERE instance_id = ?`
+                    )
+                    .bind(finishedAt, instanceId),
+                database
+                    .prepare(
+                        `UPDATE feedback_issues SET active_workflow_id = NULL
+                     WHERE id = ? AND active_workflow_id = ?`
+                    )
+                    .bind(issueId, instanceId),
+            ]);
+            return { issueId, instanceId, status: 'terminated', finishedAt };
+        });
+    }
+
+    async recordStart(step, { issueId, generation, instanceId, event }) {
+        return await step.do('record workflow start', async () => {
             const database = this.env.FEEDBACK_DB;
             const startedAt = new Date().toISOString();
+            await database
+                .prepare(
+                    `INSERT INTO feedback_workflows (
+                        issue_id, generation, instance_id, status, active_run_id,
+                        context_version, started_at, waiting_until, finished_at,
+                        terminal_reason
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(issue_id, generation) DO NOTHING`
+                )
+                .bind(
+                    issueId,
+                    generation,
+                    instanceId,
+                    'running',
+                    null,
+                    Number(event.payload?.contextVersion) || 1,
+                    startedAt,
+                    null,
+                    null,
+                    null
+                )
+                .run();
             const mapping = await database
                 .prepare(
-                    `SELECT issue_id, generation, instance_id, status, active_run_id,
-                            context_version, started_at
+                    `SELECT instance_id, status, started_at
                      FROM feedback_workflows
                      WHERE issue_id = ? AND generation = ?`
                 )
                 .bind(issueId, generation)
                 .first();
-            if (
-                !mapping ||
-                mapping.instance_id !== instanceId ||
-                mapping.active_run_id !== runId ||
-                Number(mapping.context_version) !== payload.contextVersion
-            ) {
-                throw new NonRetryableError('FEEDBACK_WORKFLOW_INSTANCE_CONFLICT');
+            if (!mapping || mapping.instance_id !== instanceId) {
+                throw new Error('FEEDBACK_WORKFLOW_INSTANCE_CONFLICT');
             }
-            await database
-                .prepare(
-                    `UPDATE feedback_workflows
-                     SET status = ?, active_run_id = ?, started_at = ?
-                     WHERE instance_id = ?
-                       AND status IN ('queued', 'running')`
-                )
-                .bind('running', runId, mapping.started_at || startedAt, instanceId)
-                .run();
 
             return {
                 issueId,
                 generation,
                 instanceId,
-                runId,
-                status: 'running',
-                startedAt: mapping.started_at || startedAt,
+                status: mapping.status,
+                startedAt: mapping.started_at,
             };
         });
-
-        let dispatch;
-        try {
-            dispatch = await step.do(
-                'dispatch github action',
-                {
-                    retries: {
-                        limit: 3,
-                        delay: '10 seconds',
-                        backoff: 'exponential',
-                    },
-                    timeout: '2 minutes',
-                },
-                async () => dispatchFeedbackGitHubWorkflow(this.env, instanceId, payload)
-            );
-        } catch (error) {
-            await step.do('record dispatch failure', async () => {
-                await recordFeedbackDispatchFailure(this.env, instanceId, payload, error);
-            });
-            console.error('[Feedback] GitHub dispatch failed', {
-                issueId,
-                workflowId: instanceId,
-                runId,
-                errorCode: getFeedbackDispatchErrorCode(error),
-            });
-            throw error;
-        }
-
-        const terminalEvent = await step.waitForEvent('wait for terminal callback', {
-            type: 'feedback-run-terminal',
-            timeout: '24 hours',
-        });
-
-        return {
-            ...workflowState,
-            dispatchStatus: dispatch.responseStatus,
-            terminalType: String(terminalEvent?.payload?.type || ''),
-        };
-    }
-}
-
-function normalizeFeedbackWorkflowPayload(value) {
-    const payload = value && typeof value === 'object' ? value : {};
-    const issueId = String(payload.issueId || '');
-    const generation = Number(payload.generation);
-    const contextVersion = Number(payload.contextVersion);
-    const runId = String(payload.runId || '');
-    const policy = String(payload.policy || '');
-    const provider = String(payload.provider || '');
-    const permissionProfile = String(payload.permissionProfile || '');
-    const baseCommit = String(payload.baseCommit || '');
-    const contextUrl = String(payload.contextUrl || '');
-    const callbackUrl = String(payload.callbackUrl || '');
-    const contextToken = String(payload.contextToken || '');
-    const callbackToken = String(payload.callbackToken || '');
-    let parsedContextUrl;
-    let parsedCallbackUrl;
-    try {
-        parsedContextUrl = new URL(contextUrl);
-        parsedCallbackUrl = new URL(callbackUrl);
-    } catch {
-        throw new NonRetryableError('INVALID_FEEDBACK_WORKFLOW_EVENT');
-    }
-
-    if (
-        !issueId.startsWith('feedback:') ||
-        !Number.isInteger(generation) ||
-        generation < 1 ||
-        !Number.isInteger(contextVersion) ||
-        contextVersion < 1 ||
-        !/^run_[a-zA-Z0-9_-]{8,120}$/.test(runId) ||
-        !FEEDBACK_RUN_POLICIES.has(policy) ||
-        provider !== 'codex' ||
-        permissionProfile !== FEEDBACK_RUN_PERMISSION_PROFILES[policy] ||
-        (baseCommit && !/^[a-f0-9]{7,64}$/i.test(baseCommit)) ||
-        parsedContextUrl.protocol !== 'https:' ||
-        parsedCallbackUrl.protocol !== 'https:' ||
-        !parsedContextUrl.pathname.endsWith(
-            `/api/feedback/runs/${encodeURIComponent(runId)}/context`
-        ) ||
-        !parsedCallbackUrl.pathname.endsWith(
-            `/api/feedback/runs/${encodeURIComponent(runId)}/events`
-        ) ||
-        contextToken.length < 16 ||
-        contextToken.length > 256 ||
-        callbackToken.length < 16 ||
-        callbackToken.length > 256 ||
-        contextToken === callbackToken
-    ) {
-        throw new NonRetryableError('INVALID_FEEDBACK_WORKFLOW_EVENT');
-    }
-
-    return {
-        issueId,
-        generation,
-        contextVersion,
-        runId,
-        policy,
-        provider,
-        permissionProfile,
-        baseCommit,
-        contextUrl,
-        callbackUrl,
-        contextToken,
-        callbackToken,
-    };
-}
-
-function readFeedbackGitHubDispatchConfig(env) {
-    const repository = String(env.FEEDBACK_GITHUB_REPOSITORY || '');
-    const ref = String(env.FEEDBACK_GITHUB_REF || '');
-    const workflow = String(env.FEEDBACK_GITHUB_WORKFLOW || '');
-    const apiVersion = String(env.FEEDBACK_GITHUB_API_VERSION || '2026-03-10');
-    const token = String(env.FEEDBACK_GITHUB_TOKEN || '');
-    if (
-        !/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(repository) ||
-        !ref ||
-        ref.length > 255 ||
-        !/^[a-zA-Z0-9_.-]+\.ya?ml$/.test(workflow) ||
-        !/^\d{4}-\d{2}-\d{2}$/.test(apiVersion) ||
-        !token
-    ) {
-        throw new NonRetryableError('GITHUB_DISPATCH_NOT_CONFIGURED');
-    }
-
-    return {
-        repository,
-        ref,
-        workflow,
-        apiVersion,
-        token,
-    };
-}
-
-async function readFeedbackDeliveryByWorkflow(env, workflowId) {
-    return env.FEEDBACK_DB.prepare(
-        `SELECT * FROM feedback_deliveries
-         WHERE workflow_instance_id = ?`
-    )
-        .bind(workflowId)
-        .first();
-}
-
-async function markFeedbackDeliveryAttempt(env, workflowId, updatedAt) {
-    await env.FEEDBACK_DB.prepare(
-        `UPDATE feedback_deliveries
-         SET status = ?, attempt_count = attempt_count + 1,
-             next_attempt_at = NULL, updated_at = ?
-         WHERE workflow_instance_id = ? AND status != 'dispatched'`
-    )
-        .bind('dispatching', updatedAt, workflowId)
-        .run();
-}
-
-async function markFeedbackDeliveryResult(
-    env,
-    workflowId,
-    status,
-    responseStatus,
-    errorCode,
-    nextAttemptAt
-) {
-    await env.FEEDBACK_DB.prepare(
-        `UPDATE feedback_deliveries
-         SET status = ?, response_status = ?, last_error = ?,
-             next_attempt_at = ?, updated_at = ?
-         WHERE workflow_instance_id = ?`
-    )
-        .bind(
-            status,
-            responseStatus,
-            errorCode,
-            nextAttemptAt,
-            new Date().toISOString(),
-            workflowId
-        )
-        .run();
-}
-
-async function dispatchFeedbackGitHubWorkflow(env, workflowId, payload) {
-    const existingDelivery = await readFeedbackDeliveryByWorkflow(env, workflowId);
-    if (!existingDelivery) {
-        throw new NonRetryableError('FEEDBACK_DELIVERY_NOT_FOUND');
-    }
-    if (existingDelivery.status === 'dispatched') {
-        return {
-            replayed: true,
-            responseStatus: Number(existingDelivery.response_status) || 200,
-        };
-    }
-
-    const config = readFeedbackGitHubDispatchConfig(env);
-    const now = new Date().toISOString();
-    await markFeedbackDeliveryAttempt(env, workflowId, now);
-    const dispatchUrl = `https://api.github.com/repos/${config.repository
-        .split('/')
-        .map(encodeURIComponent)
-        .join('/')}/actions/workflows/${encodeURIComponent(config.workflow)}/dispatches`;
-    const body = {
-        ref: config.ref,
-        inputs: {
-            issueId: payload.issueId,
-            issueVersion: String(payload.contextVersion),
-            workflowId,
-            runId: payload.runId,
-            policy: payload.policy,
-            provider: payload.provider,
-            permissionProfile: payload.permissionProfile,
-            baseCommit: payload.baseCommit,
-            contextUrl: payload.contextUrl,
-            callbackUrl: payload.callbackUrl,
-            contextToken: payload.contextToken,
-            callbackToken: payload.callbackToken,
-        },
-    };
-
-    let response;
-    try {
-        response = await fetch(dispatchUrl, {
-            method: 'POST',
-            headers: {
-                Accept: 'application/vnd.github+json',
-                Authorization: `Bearer ${config.token}`,
-                'Content-Type': 'application/json',
-                'X-GitHub-Api-Version': config.apiVersion,
-            },
-            body: JSON.stringify(body),
-        });
-    } catch {
-        const errorCode = 'GITHUB_DISPATCH_NETWORK_ERROR';
-        await markFeedbackDeliveryResult(
-            env,
-            workflowId,
-            'retrying',
-            null,
-            errorCode,
-            new Date(Date.now() + 10_000).toISOString()
-        );
-        throw new Error(errorCode);
-    }
-
-    if (response.status === 429 || response.status >= 500) {
-        const errorCode = `GITHUB_DISPATCH_RETRYABLE_${response.status}`;
-        await markFeedbackDeliveryResult(
-            env,
-            workflowId,
-            'retrying',
-            response.status,
-            errorCode,
-            new Date(Date.now() + 10_000).toISOString()
-        );
-        throw new Error(errorCode);
-    }
-    if (!response.ok) {
-        const errorCode = `GITHUB_DISPATCH_REJECTED_${response.status}`;
-        await markFeedbackDeliveryResult(
-            env,
-            workflowId,
-            'failed',
-            response.status,
-            errorCode,
-            null
-        );
-        throw new NonRetryableError(errorCode);
-    }
-
-    await env.FEEDBACK_DB.batch([
-        env.FEEDBACK_DB.prepare(
-            `UPDATE feedback_deliveries
-             SET status = ?, response_status = ?, last_error = NULL,
-                 next_attempt_at = NULL, updated_at = ?
-             WHERE workflow_instance_id = ?`
-        ).bind('dispatched', response.status, new Date().toISOString(), workflowId),
-        env.FEEDBACK_DB.prepare(
-            `UPDATE feedback_runs
-             SET status = ?, updated_at = ?
-             WHERE id = ? AND status IN ('created', 'queued')`
-        ).bind('dispatched', new Date().toISOString(), payload.runId),
-    ]);
-
-    return {
-        replayed: false,
-        responseStatus: response.status,
-    };
-}
-
-function getFeedbackDispatchErrorCode(error) {
-    const value = String(error?.message || '');
-    return /^[A-Z0-9_]+$/.test(value) ? value : 'GITHUB_DISPATCH_FAILED';
-}
-
-async function recordFeedbackDispatchFailure(env, workflowId, payload, error) {
-    const errorCode = getFeedbackDispatchErrorCode(error);
-    const finishedAt = new Date().toISOString();
-    const actionHash = await hashFeedbackValue(`${payload.runId}\u0000dispatch-failed`);
-    const actionId = `human_${actionHash.slice(0, 32)}`;
-    const actionEventId = `evt_human_${actionHash.slice(0, 32)}`;
-    const requestedAction =
-        'GitHub Actions 投递失败。请检查 Worker Secret、仓库权限和目标 Workflow 配置后重试。';
-    const delivery = await readFeedbackDeliveryByWorkflow(env, workflowId);
-    await markFeedbackDeliveryResult(
-        env,
-        workflowId,
-        'failed',
-        delivery?.response_status ?? null,
-        errorCode,
-        null
-    );
-    await env.FEEDBACK_DB.batch([
-        env.FEEDBACK_DB.prepare(
-            `UPDATE feedback_runs
-             SET status = ?, finished_at = ?, error_code = ?,
-                 context_token_hash = NULL, context_token_expires_at = NULL,
-                 callback_token_hash = NULL, callback_token_expires_at = NULL,
-                 updated_at = ?
-             WHERE id = ? AND status NOT IN ('succeeded', 'failed', 'cancelled', 'timed_out')`
-        ).bind('failed', finishedAt, errorCode, finishedAt, payload.runId),
-        env.FEEDBACK_DB.prepare(
-            `UPDATE feedback_workflows
-             SET status = ?, finished_at = ?, terminal_reason = ?
-             WHERE instance_id = ?
-               AND status NOT IN ('succeeded', 'failed', 'cancelled')`
-        ).bind('failed', finishedAt, errorCode, workflowId),
-        env.FEEDBACK_DB.prepare(
-            `INSERT INTO feedback_human_actions (
-                id, issue_id, workflow_id, run_id, candidate_id, design_id,
-                type, requested_action, evidence_json,
-                allowed_return_states_json, status, resolution_json,
-                created_at, resolved_at
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(id) DO NOTHING`
-        ).bind(
-            actionId,
-            payload.issueId,
-            workflowId,
-            payload.runId,
-            null,
-            null,
-            'blocked_external',
-            requestedAction,
-            JSON.stringify([{ errorCode }]),
-            JSON.stringify(['queued', 'closed']),
-            'active',
-            null,
-            finishedAt,
-            null
-        ),
-        env.FEEDBACK_DB.prepare(
-            `UPDATE feedback_issues
-             SET version = version + 1, status = ?,
-                 active_workflow_id = NULL, active_human_action_id = ?,
-                 updated_at = ?
-             WHERE id = ? AND active_workflow_id = ?`
-        ).bind('needs_human', actionId, finishedAt, payload.issueId, workflowId),
-    ]);
-
-    const run = await env.FEEDBACK_DB.prepare('SELECT * FROM feedback_runs WHERE id = ?')
-        .bind(payload.runId)
-        .first();
-    if (run) {
-        await appendFeedbackRunEvent(env, run, {
-            eventId: `evt_dispatch_${(await hashFeedbackValue(workflowId)).slice(0, 32)}`,
-            type: 'run.failed',
-            occurredAt: finishedAt,
-            bodyJson: JSON.stringify({
-                errorCode,
-                summary: 'GitHub workflow dispatch failed.',
-            }),
-            metadataJson: JSON.stringify({ phase: 'dispatch' }),
-        });
-    }
-    const action = await env.FEEDBACK_DB.prepare(
-        'SELECT * FROM feedback_human_actions WHERE id = ?'
-    )
-        .bind(actionId)
-        .first();
-    if (action) {
-        await appendFeedbackHumanActionCreatedEvent(
-            env,
-            action,
-            actionEventId,
-            finishedAt,
-            'dispatch.failed'
-        );
     }
 }
 
@@ -893,6 +1051,19 @@ async function signValue(value, secret) {
     const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(value));
 
     return base64UrlEncode(new Uint8Array(signature));
+}
+
+async function signValueHex(value, secret) {
+    const key = await crypto.subtle.importKey(
+        'raw',
+        new TextEncoder().encode(secret),
+        { name: 'HMAC', hash: 'SHA-256' },
+        false,
+        ['sign']
+    );
+    const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(value));
+
+    return bytesToHex(new Uint8Array(signature));
 }
 
 function getAdminSecret(env) {
@@ -1152,724 +1323,6 @@ async function hashFeedbackValue(value) {
     return bytesToHex(digest);
 }
 
-async function readAuthorizedFeedbackRun(request, env, runId, scope) {
-    if (!env.FEEDBACK_DB) return null;
-
-    const token = getBearerToken(request);
-    if (!token) return null;
-
-    const run = await env.FEEDBACK_DB.prepare('SELECT * FROM feedback_runs WHERE id = ?')
-        .bind(runId)
-        .first();
-    if (!run) return null;
-
-    const tokenHash = scope === 'context' ? run.context_token_hash : run.callback_token_hash;
-    const expiresAt =
-        scope === 'context' ? run.context_token_expires_at : run.callback_token_expires_at;
-    if (!tokenHash || !expiresAt || Date.parse(expiresAt) <= Date.now()) return null;
-
-    const candidateHash = await hashFeedbackValue(token);
-    return feedbackHashesMatch(candidateHash, tokenHash) ? run : null;
-}
-
-function normalizeFeedbackRunEvent(body) {
-    const eventId = String(body?.eventId || '').trim();
-    const type = String(body?.type || '').trim();
-    if (!/^evt_[a-zA-Z0-9_-]{8,120}$/.test(eventId)) {
-        throw new Error('INVALID_FEEDBACK_RUN_EVENT_ID');
-    }
-    if (!FEEDBACK_RUN_EVENT_TYPES.has(type)) {
-        throw new Error('INVALID_FEEDBACK_RUN_EVENT_TYPE');
-    }
-
-    const occurredAt = String(body?.occurredAt || '');
-    const normalizedOccurredAt = Number.isFinite(Date.parse(occurredAt))
-        ? new Date(occurredAt).toISOString()
-        : new Date().toISOString();
-    const eventBody =
-        body?.body && typeof body.body === 'object' && !Array.isArray(body.body) ? body.body : {};
-    const metadata =
-        body?.metadata && typeof body.metadata === 'object' && !Array.isArray(body.metadata)
-            ? body.metadata
-            : {};
-    const bodyJson = JSON.stringify(eventBody);
-    const metadataJson = JSON.stringify(metadata);
-    if (bodyJson.length > 64 * 1024 || metadataJson.length > 16 * 1024) {
-        throw new Error('FEEDBACK_RUN_EVENT_TOO_LARGE');
-    }
-
-    return {
-        eventId,
-        type,
-        occurredAt: normalizedOccurredAt,
-        bodyJson,
-        metadataJson,
-    };
-}
-
-async function appendFeedbackRunEvent(env, run, event) {
-    const result = await env.FEEDBACK_DB.prepare(
-        `INSERT INTO feedback_events (
-            id, issue_id, sequence, type, actor_type, actor_id, visibility,
-            run_id, occurred_at, body_json, metadata_json, legacy_hash
-        )
-        SELECT ?, r.issue_id,
-            COALESCE((
-                SELECT MAX(existing.sequence) + 1
-                FROM feedback_events existing
-                WHERE existing.issue_id = r.issue_id
-            ), 1),
-            ?, 'agent', ?, ?, r.id, ?, ?, ?, NULL
-        FROM feedback_runs r
-        WHERE r.id = ?
-        ON CONFLICT(id) DO NOTHING`
-    )
-        .bind(
-            event.eventId,
-            event.type,
-            run.provider,
-            'public',
-            event.occurredAt,
-            event.bodyJson,
-            event.metadataJson,
-            run.id
-        )
-        .run();
-
-    if (Number(result?.meta?.changes) > 0) {
-        return { replayed: false };
-    }
-
-    const existing = await env.FEEDBACK_DB.prepare(
-        'SELECT id, run_id FROM feedback_events WHERE id = ?'
-    )
-        .bind(event.eventId)
-        .first();
-    if (existing?.run_id === run.id) {
-        return { replayed: true };
-    }
-
-    throw new Error('FEEDBACK_RUN_EVENT_CONFLICT');
-}
-
-async function appendFeedbackHumanActionCreatedEvent(
-    env,
-    action,
-    eventId,
-    occurredAt,
-    source = 'run.completed'
-) {
-    await env.FEEDBACK_DB.prepare(
-        `INSERT INTO feedback_events (
-            id, issue_id, sequence, type, actor_type, actor_id, visibility,
-            run_id, occurred_at, body_json, metadata_json, legacy_hash
-         )
-         SELECT ?, action.issue_id,
-            COALESCE((
-                SELECT MAX(existing.sequence) + 1
-                FROM feedback_events existing
-                WHERE existing.issue_id = action.issue_id
-            ), 1),
-            ?, ?, ?, ?, ?, ?, ?, ?, ?
-         FROM feedback_human_actions action
-         WHERE action.id = ?
-         ON CONFLICT(id) DO NOTHING`
-    )
-        .bind(
-            eventId,
-            'human_action.created',
-            'system',
-            null,
-            'public',
-            action.run_id,
-            occurredAt,
-            JSON.stringify({
-                humanActionId: action.id,
-                type: action.type,
-                requestedAction: action.requested_action,
-            }),
-            JSON.stringify({ source }),
-            null,
-            action.id
-        )
-        .run();
-}
-
-async function projectFeedbackRunTerminalEvent(env, run, event) {
-    if (event.type !== 'run.completed' && event.type !== 'run.failed') return;
-
-    const isCompleted = event.type === 'run.completed';
-    const body = parseStoredJson(event.bodyJson, {});
-    const finishedAt = event.occurredAt;
-    const errorCode = isCompleted ? null : limitText(body.errorCode || 'AGENT_RUN_FAILED', 120);
-    const runStatus = isCompleted ? 'succeeded' : 'failed';
-    const workflowStatus = runStatus;
-    const issueStatus = isCompleted ? 'needs_human' : 'test_failed';
-    const actionHash = await hashFeedbackValue(`${run.id}\u0000${event.eventId}`);
-    const actionId = `human_${actionHash.slice(0, 32)}`;
-    const actionEventId = `evt_human_${actionHash.slice(0, 32)}`;
-    const requestedAction =
-        '请审查本次 Agent Run 的结果和交付证据，并决定继续交付、要求修改或关闭问题。';
-    const statements = [
-        env.FEEDBACK_DB.prepare(
-            `UPDATE feedback_runs
-             SET status = ?, finished_at = ?, error_code = ?,
-                 context_token_hash = NULL, context_token_expires_at = NULL,
-                 updated_at = ?
-             WHERE id = ?
-               AND status NOT IN ('succeeded', 'failed', 'cancelled', 'timed_out')`
-        ).bind(runStatus, finishedAt, errorCode, finishedAt, run.id),
-        env.FEEDBACK_DB.prepare(
-            `UPDATE feedback_workflows
-             SET status = ?, finished_at = ?, terminal_reason = ?
-             WHERE instance_id = ?
-               AND status NOT IN ('succeeded', 'failed', 'cancelled')`
-        ).bind(workflowStatus, finishedAt, event.type, run.workflow_id),
-    ];
-
-    if (isCompleted) {
-        statements.push(
-            env.FEEDBACK_DB.prepare(
-                `INSERT INTO feedback_human_actions (
-                    id, issue_id, workflow_id, run_id, candidate_id, design_id,
-                    type, requested_action, evidence_json,
-                    allowed_return_states_json, status, resolution_json,
-                    created_at, resolved_at
-                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                 ON CONFLICT(id) DO NOTHING`
-            ).bind(
-                actionId,
-                run.issue_id,
-                run.workflow_id,
-                run.id,
-                null,
-                null,
-                'run_result_review',
-                requestedAction,
-                JSON.stringify([{ eventId: event.eventId }]),
-                JSON.stringify(['queued', 'closed']),
-                'active',
-                null,
-                finishedAt,
-                null
-            ),
-            env.FEEDBACK_DB.prepare(
-                `UPDATE feedback_issues
-                 SET version = version + 1, status = ?,
-                     active_workflow_id = NULL, active_human_action_id = ?,
-                     updated_at = ?
-                 WHERE id = ? AND active_workflow_id = ?`
-            ).bind(issueStatus, actionId, finishedAt, run.issue_id, run.workflow_id)
-        );
-    } else {
-        statements.push(
-            env.FEEDBACK_DB.prepare(
-                `UPDATE feedback_issues
-                 SET version = version + 1, status = ?,
-                     active_workflow_id = NULL, updated_at = ?
-                 WHERE id = ? AND active_workflow_id = ?`
-            ).bind(issueStatus, finishedAt, run.issue_id, run.workflow_id)
-        );
-    }
-
-    await env.FEEDBACK_DB.batch(statements);
-    if (isCompleted) {
-        const action = await env.FEEDBACK_DB.prepare(
-            'SELECT * FROM feedback_human_actions WHERE id = ?'
-        )
-            .bind(actionId)
-            .first();
-        if (action) {
-            await appendFeedbackHumanActionCreatedEvent(env, action, actionEventId, finishedAt);
-        }
-    }
-}
-
-async function notifyFeedbackWorkflowOfTerminalEvent(env, run, event) {
-    if (
-        (event.type !== 'run.completed' && event.type !== 'run.failed') ||
-        !env.FEEDBACK_WORKFLOW ||
-        typeof env.FEEDBACK_WORKFLOW.get !== 'function'
-    ) {
-        return;
-    }
-
-    try {
-        const instance = await env.FEEDBACK_WORKFLOW.get(run.workflow_id);
-        if (!instance || typeof instance.sendEvent !== 'function') return;
-        await instance.sendEvent({
-            type: 'feedback-run-terminal',
-            payload: {
-                eventId: event.eventId,
-                runId: run.id,
-                type: event.type,
-            },
-        });
-    } catch (error) {
-        console.warn('[Feedback] Workflow terminal notification failed', {
-            issueId: run.issue_id,
-            workflowId: run.workflow_id,
-            runId: run.id,
-            eventId: event.eventId,
-            errorCode: limitText(error?.message || 'WORKFLOW_EVENT_FAILED', 120),
-        });
-    }
-}
-
-function normalizeFeedbackRunRequest(body) {
-    if (!body || typeof body !== 'object' || Array.isArray(body)) {
-        throw feedbackStorageError('INVALID_FEEDBACK_RUN_REQUEST');
-    }
-
-    const policy = String(body.policy || '').trim();
-    const provider = String(body.provider || 'codex').trim();
-    const runnerType = String(body.runnerType || 'github_hosted').trim();
-    const baseCommit = String(body.baseCommit || '').trim();
-    if (
-        !FEEDBACK_RUN_POLICIES.has(policy) ||
-        provider !== 'codex' ||
-        !FEEDBACK_RUNNER_TYPES.has(runnerType) ||
-        (baseCommit && !/^[a-f0-9]{7,64}$/i.test(baseCommit))
-    ) {
-        throw feedbackStorageError('INVALID_FEEDBACK_RUN_REQUEST');
-    }
-
-    return {
-        policy,
-        provider,
-        runnerType,
-        baseCommit: baseCommit || null,
-        permissionProfile: FEEDBACK_RUN_PERMISSION_PROFILES[policy],
-        deliveryMode:
-            policy === 'analyze' || policy === 'review' ? 'no_delivery' : 'candidate_review',
-    };
-}
-
-function readFeedbackRunIdempotencyKey(request) {
-    const key = String(request.headers.get('Idempotency-Key') || '').trim();
-    if (!/^[a-zA-Z0-9._:-]{8,120}$/.test(key)) {
-        throw feedbackStorageError('INVALID_FEEDBACK_IDEMPOTENCY_KEY');
-    }
-    return key;
-}
-
-function serializeFeedbackRun(run) {
-    return {
-        id: run.id,
-        issueId: run.issue_id,
-        workflowId: run.workflow_id,
-        policy: run.policy,
-        deliveryMode: run.delivery_mode,
-        provider: run.provider,
-        runnerType: run.runner_type,
-        runnerLabel: run.runner_label || '',
-        permissionProfile: run.permission_profile,
-        status: run.status,
-        attempt: Number(run.attempt) || 1,
-        baseCommit: run.base_commit || '',
-        startedAt: run.started_at || '',
-        finishedAt: run.finished_at || '',
-        errorCode: run.error_code || '',
-    };
-}
-
-async function findFeedbackRunByIdempotencyKey(env, idempotencyKey) {
-    return env.FEEDBACK_DB.prepare(
-        `SELECT r.*, d.id AS delivery_id
-         FROM feedback_deliveries d
-         JOIN feedback_runs r ON r.workflow_id = d.workflow_instance_id
-         WHERE d.idempotency_key = ?`
-    )
-        .bind(idempotencyKey)
-        .first();
-}
-
-function createFeedbackRunContextSnapshot(issue) {
-    return {
-        schemaVersion: 1,
-        issueId: issue.id,
-        issueVersion: Number(issue.version) || 1,
-        title: limitText(issue.title, FEEDBACK_CONTENT_LIMITS.title),
-        description: limitText(issue.description, FEEDBACK_CONTENT_LIMITS.description),
-        sourceType: issue.source_type || 'manual',
-        submittedType: issue.submitted_type || 'unclear',
-        businessType: issue.business_type || 'unclear',
-        scope: issue.scope || 'unclear',
-        priority: issue.priority || 'medium',
-        context: createFeedbackContextPreview(parseStoredJson(issue.context_json, {})),
-    };
-}
-
-async function reserveFeedbackRun(env, issueId, runRequest, idempotencyKey, apiOrigin) {
-    const replay = await findFeedbackRunByIdempotencyKey(env, idempotencyKey);
-    if (replay) {
-        if (replay.issue_id !== issueId) {
-            throw feedbackStorageError('FEEDBACK_IDEMPOTENCY_CONFLICT');
-        }
-        return {
-            replayed: true,
-            run: replay,
-            workflowParams: null,
-        };
-    }
-
-    const issue = await env.FEEDBACK_DB.prepare('SELECT * FROM feedback_issues WHERE id = ?')
-        .bind(issueId)
-        .first();
-    if (!issue) throw feedbackStorageError('FEEDBACK_ISSUE_NOT_FOUND');
-    if (issue.active_workflow_id || issue.active_human_action_id) {
-        throw feedbackStorageError('FEEDBACK_ACTIVE_WORK_CONFLICT');
-    }
-
-    const generation = Number(issue.workflow_generation) + 1;
-    const workflowId = `${issueId}:${generation}`;
-    if (workflowId.length > 100) {
-        throw feedbackStorageError('FEEDBACK_WORKFLOW_ID_TOO_LONG');
-    }
-
-    const now = new Date().toISOString();
-    const capabilityExpiresAt = new Date(
-        Date.now() + FEEDBACK_RUN_CAPABILITY_TTL_SECONDS * 1000
-    ).toISOString();
-    const runId = `run_${crypto.randomUUID()}`;
-    const eventId = `evt_${crypto.randomUUID()}`;
-    const deliveryId = `delivery_${crypto.randomUUID()}`;
-    const contextToken = createFeedbackCapability();
-    const callbackToken = createFeedbackCapability();
-    const contextSnapshotJson = JSON.stringify(createFeedbackRunContextSnapshot(issue));
-    const contextTokenHash = await hashFeedbackValue(contextToken);
-    const callbackTokenHash = await hashFeedbackValue(callbackToken);
-    const existingEvents = await env.FEEDBACK_DB.prepare(
-        'SELECT sequence FROM feedback_events WHERE issue_id = ? ORDER BY sequence'
-    )
-        .bind(issueId)
-        .all();
-    const sequence =
-        Math.max(0, ...(existingEvents.results || []).map((event) => Number(event.sequence) || 0)) +
-        1;
-    const statements = [
-        env.FEEDBACK_DB.prepare(
-            `UPDATE feedback_issues SET
-                version = version + 1,
-                workflow_generation = ?,
-                active_workflow_id = ?,
-                last_run_id = ?,
-                status = ?,
-                updated_at = ?
-             WHERE id = ? AND version = ?
-               AND active_workflow_id IS NULL
-               AND active_human_action_id IS NULL
-             RETURNING *`
-        ).bind(generation, workflowId, runId, 'queued', now, issueId, Number(issue.version)),
-        env.FEEDBACK_DB.prepare(
-            `INSERT INTO feedback_workflows (
-                issue_id, generation, instance_id, status, active_run_id,
-                context_version, started_at, waiting_until, finished_at,
-                terminal_reason
-             )
-             SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-             FROM feedback_issues issue
-             WHERE issue.id = ? AND issue.active_workflow_id = ?`
-        ).bind(
-            issueId,
-            generation,
-            workflowId,
-            'queued',
-            runId,
-            Number(issue.version),
-            now,
-            null,
-            null,
-            null,
-            issueId,
-            workflowId
-        ),
-        env.FEEDBACK_DB.prepare(
-            `INSERT INTO feedback_runs (
-                id, issue_id, workflow_id, candidate_id, policy, delivery_mode,
-                provider, runner_type, runner_label, status, attempt, base_commit,
-                change_commit, provider_session_id, started_at, finished_at,
-                error_code, permission_profile, context_snapshot_json,
-                context_token_hash, context_token_expires_at, callback_token_hash,
-                callback_token_expires_at, updated_at
-             )
-             SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-             FROM feedback_issues issue
-             WHERE issue.id = ? AND issue.last_run_id = ?`
-        ).bind(
-            runId,
-            issueId,
-            workflowId,
-            null,
-            runRequest.policy,
-            runRequest.deliveryMode,
-            runRequest.provider,
-            runRequest.runnerType,
-            'ubuntu-latest',
-            'queued',
-            1,
-            runRequest.baseCommit,
-            null,
-            null,
-            null,
-            null,
-            null,
-            runRequest.permissionProfile,
-            contextSnapshotJson,
-            contextTokenHash,
-            capabilityExpiresAt,
-            callbackTokenHash,
-            capabilityExpiresAt,
-            now,
-            issueId,
-            runId
-        ),
-        env.FEEDBACK_DB.prepare(
-            `INSERT INTO feedback_events (
-                id, issue_id, sequence, type, actor_type, actor_id, visibility,
-                run_id, occurred_at, body_json, metadata_json, legacy_hash
-             )
-             SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-             FROM feedback_issues issue
-             WHERE issue.id = ? AND issue.last_run_id = ?`
-        ).bind(
-            eventId,
-            issueId,
-            sequence,
-            'run.queued',
-            'admin',
-            null,
-            'public',
-            runId,
-            now,
-            JSON.stringify({
-                policy: runRequest.policy,
-                provider: runRequest.provider,
-                runnerType: runRequest.runnerType,
-            }),
-            JSON.stringify({
-                generation,
-                permissionProfile: runRequest.permissionProfile,
-            }),
-            null,
-            issueId,
-            runId
-        ),
-        env.FEEDBACK_DB.prepare(
-            `INSERT INTO feedback_deliveries (
-                id, event_id, destination, idempotency_key, workflow_instance_id,
-                status, attempt_count, next_attempt_at, response_status,
-                last_error, created_at, updated_at
-             )
-             SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-             FROM feedback_events event
-             WHERE event.id = ?`
-        ).bind(
-            deliveryId,
-            eventId,
-            'cloudflare-workflow',
-            idempotencyKey,
-            workflowId,
-            'pending',
-            0,
-            now,
-            null,
-            null,
-            now,
-            now,
-            eventId
-        ),
-    ];
-
-    let results;
-    try {
-        results = await env.FEEDBACK_DB.batch(statements);
-    } catch (error) {
-        const concurrent = await findFeedbackRunByIdempotencyKey(env, idempotencyKey);
-        if (concurrent?.issue_id === issueId) {
-            return {
-                replayed: true,
-                run: concurrent,
-                workflowParams: null,
-            };
-        }
-        if (concurrent) {
-            throw feedbackStorageError('FEEDBACK_IDEMPOTENCY_CONFLICT');
-        }
-        throw error;
-    }
-
-    if (Number(results[0]?.meta?.changes) !== 1) {
-        const concurrent = await findFeedbackRunByIdempotencyKey(env, idempotencyKey);
-        if (concurrent?.issue_id === issueId) {
-            return {
-                replayed: true,
-                run: concurrent,
-                workflowParams: null,
-            };
-        }
-        throw feedbackStorageError('FEEDBACK_ACTIVE_WORK_CONFLICT');
-    }
-
-    const run = await env.FEEDBACK_DB.prepare('SELECT * FROM feedback_runs WHERE id = ?')
-        .bind(runId)
-        .first();
-    return {
-        replayed: false,
-        run,
-        workflowParams: {
-            issueId,
-            generation,
-            contextVersion: Number(issue.version),
-            runId,
-            policy: runRequest.policy,
-            provider: runRequest.provider,
-            permissionProfile: runRequest.permissionProfile,
-            baseCommit: runRequest.baseCommit,
-            contextUrl: `${apiOrigin}/api/feedback/runs/${encodeURIComponent(runId)}/context`,
-            callbackUrl: `${apiOrigin}/api/feedback/runs/${encodeURIComponent(runId)}/events`,
-            contextToken,
-            callbackToken,
-        },
-    };
-}
-
-async function createLocalRequiredHumanAction(env, issueId, idempotencyKey) {
-    const actionHash = await hashFeedbackValue(`${issueId}\u0000${idempotencyKey}`);
-    const actionId = `human_${actionHash.slice(0, 32)}`;
-    const eventId = `evt_${actionHash.slice(0, 32)}`;
-    const existing = await env.FEEDBACK_DB.prepare(
-        'SELECT * FROM feedback_human_actions WHERE id = ?'
-    )
-        .bind(actionId)
-        .first();
-    if (existing) {
-        return {
-            replayed: true,
-            issueStatus: 'needs_human',
-            action: existing,
-        };
-    }
-
-    const issue = await env.FEEDBACK_DB.prepare('SELECT * FROM feedback_issues WHERE id = ?')
-        .bind(issueId)
-        .first();
-    if (!issue) throw feedbackStorageError('FEEDBACK_ISSUE_NOT_FOUND');
-    if (issue.active_workflow_id || issue.active_human_action_id) {
-        throw feedbackStorageError('FEEDBACK_ACTIVE_WORK_CONFLICT');
-    }
-
-    const now = new Date().toISOString();
-    const requestedAction =
-        '该任务需要本地环境、既有登录态或专用设备。请配置并批准受限的 Self-hosted Runner 后重试。';
-    const results = await env.FEEDBACK_DB.batch([
-        env.FEEDBACK_DB.prepare(
-            `UPDATE feedback_issues SET
-                version = version + 1,
-                active_human_action_id = ?,
-                status = ?,
-                updated_at = ?
-             WHERE id = ? AND version = ?
-               AND active_workflow_id IS NULL
-               AND active_human_action_id IS NULL
-             RETURNING *`
-        ).bind(actionId, 'needs_human', now, issueId, Number(issue.version)),
-        env.FEEDBACK_DB.prepare(
-            `INSERT INTO feedback_human_actions (
-                id, issue_id, workflow_id, run_id, candidate_id, design_id,
-                type, requested_action, evidence_json,
-                allowed_return_states_json, status, resolution_json,
-                created_at, resolved_at
-             )
-             SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-             FROM feedback_issues issue
-             WHERE issue.id = ? AND issue.active_human_action_id = ?`
-        ).bind(
-            actionId,
-            issueId,
-            null,
-            null,
-            null,
-            null,
-            'local_execution_required',
-            requestedAction,
-            '[]',
-            JSON.stringify(['queued', 'closed']),
-            'active',
-            null,
-            now,
-            null,
-            issueId,
-            actionId
-        ),
-        env.FEEDBACK_DB.prepare(
-            `INSERT INTO feedback_events (
-                id, issue_id, sequence, type, actor_type, actor_id, visibility,
-                run_id, occurred_at, body_json, metadata_json, legacy_hash
-             )
-             SELECT ?, action.issue_id,
-                COALESCE((
-                    SELECT MAX(existing.sequence) + 1
-                    FROM feedback_events existing
-                    WHERE existing.issue_id = action.issue_id
-                ), 1),
-                ?, ?, ?, ?, ?, ?, ?, ?, ?
-             FROM feedback_human_actions action
-             WHERE action.id = ?`
-        ).bind(
-            eventId,
-            'human_action.created',
-            'admin',
-            null,
-            'public',
-            null,
-            now,
-            JSON.stringify({
-                humanActionId: actionId,
-                type: 'local_execution_required',
-                requestedAction,
-            }),
-            JSON.stringify({ runnerType: 'local_required' }),
-            null,
-            actionId
-        ),
-    ]);
-
-    if (Number(results[0]?.meta?.changes) !== 1) {
-        const concurrent = await env.FEEDBACK_DB.prepare(
-            'SELECT * FROM feedback_human_actions WHERE id = ?'
-        )
-            .bind(actionId)
-            .first();
-        if (concurrent) {
-            return {
-                replayed: true,
-                issueStatus: 'needs_human',
-                action: concurrent,
-            };
-        }
-        throw feedbackStorageError('FEEDBACK_ACTIVE_WORK_CONFLICT');
-    }
-
-    return {
-        replayed: false,
-        issueStatus: 'needs_human',
-        action: await env.FEEDBACK_DB.prepare('SELECT * FROM feedback_human_actions WHERE id = ?')
-            .bind(actionId)
-            .first(),
-    };
-}
-
-function serializeFeedbackHumanAction(action) {
-    return {
-        id: action.id,
-        type: action.type,
-        status: action.status,
-        requestedAction: action.requested_action,
-        createdAt: action.created_at,
-    };
-}
-
 function createFeedbackContextPreview(context) {
     if (!context || typeof context !== 'object' || Array.isArray(context)) return {};
 
@@ -1965,7 +1418,7 @@ async function hydrateFeedbackContext(env, contextJson) {
         expectedByteLength < 0 ||
         expectedByteLength > MAX_FEEDBACK_BYTES
     ) {
-        console.warn('[Feedback] Stored context size metadata is invalid');
+        logFeedback('warn', 'Stored context size metadata is invalid');
         return storedContext;
     }
 
@@ -1973,7 +1426,7 @@ async function hydrateFeedbackContext(env, contextJson) {
         const object = await env.FEEDBACK_ARTIFACTS.get(storage.objectKey);
         if (!object) return storedContext;
         if (Number.isFinite(object.size) && object.size !== expectedByteLength) {
-            console.warn('[Feedback] Stored context object size does not match metadata');
+            logFeedback('warn', 'Stored context object size does not match metadata');
             return storedContext;
         }
 
@@ -1983,12 +1436,12 @@ async function hydrateFeedbackContext(env, contextJson) {
             bytes.byteLength !== expectedByteLength ||
             (await hashFeedbackValue(bytes)) !== storage.sha256
         ) {
-            console.warn('[Feedback] Stored context integrity check failed');
+            logFeedback('warn', 'Stored context integrity check failed');
             return storedContext;
         }
         return parseStoredJson(fullContextJson, storedContext);
     } catch (error) {
-        console.warn('[Feedback] Stored context could not be restored', error);
+        logFeedback('warn', 'Stored context could not be restored', { error });
         return storedContext;
     }
 }
@@ -2539,6 +1992,7 @@ async function createD1FeedbackIssue(env, feedback) {
 
     return {
         issueId,
+        eventId,
         ownerCapability,
         ownerCapabilityExpiresAt,
     };
@@ -2771,7 +2225,7 @@ async function readFeedbackIssue(env, key) {
     try {
         await backfillLegacyFeedbackIssue(env, issue);
     } catch (error) {
-        console.warn('[Feedback] Legacy D1 backfill deferred; KV remains authoritative', error);
+        logFeedback('warn', 'Legacy D1 backfill deferred; KV remains authoritative', { error });
     }
     return issue;
 }
@@ -2918,7 +2372,7 @@ async function backfillLegacyFeedbackList(env) {
         try {
             parsed = JSON.parse(value);
         } catch (error) {
-            console.warn('[Feedback] Skipped unreadable legacy feedback record', error);
+            logFeedback('warn', 'Skipped unreadable legacy feedback record', { error });
             continue;
         }
 
@@ -2928,7 +2382,7 @@ async function backfillLegacyFeedbackList(env) {
         } catch (error) {
             if (!isDeferredLegacyFeedbackBackfill(error)) throw error;
             fallbackIssues.push(issue);
-            console.warn('[Feedback] Legacy list backfill deferred; KV remains authoritative');
+            logFeedback('warn', 'Legacy list backfill deferred; KV remains authoritative');
         }
     }
 
@@ -3126,7 +2580,14 @@ function buildWorkflowHistoryItem(before, after, workflowPatch, contentChanges) 
 
 async function updateD1FeedbackIssue(env, key, patch) {
     const issue = await readFeedbackIssue(env, key);
-    if (!issue) return null;
+    const issueState = issue
+        ? await env.FEEDBACK_DB.prepare(
+              'SELECT active_workflow_id FROM feedback_issues WHERE id = ?'
+          )
+              .bind(key)
+              .first()
+        : null;
+    if (!issue || !issueState) return null;
 
     const workflowPatch = patch.workflow || {};
     const contentPatch = patch.content || {};
@@ -3195,7 +2656,15 @@ async function updateD1FeedbackIssue(env, key, patch) {
             : afterWorkflow.status === 'closed'
               ? issue.resolvedAt || null
               : null;
+    const isTerminalTransition =
+        FEEDBACK_TERMINAL_STATUSES.has(afterWorkflow.status) &&
+        !FEEDBACK_TERMINAL_STATUSES.has(beforeWorkflow.status);
+    const activeWorkflowId = isTerminalTransition ? issueState.active_workflow_id || '' : '';
     const splitInternalNote = mainVisibility === 'public' && historyItem.internalNote;
+    // §21.4: a status change and a public note are two separate timeline facts.
+    // Folding the note into `status.changed` hides the admin's message, so it
+    // gets its own `comment.created` event.
+    const splitPublicNote = eventType === 'status.changed' && Boolean(historyItem.publicNote);
     const eventEntries = [
         {
             id: eventId,
@@ -3203,11 +2672,24 @@ async function updateD1FeedbackIssue(env, key, patch) {
             visibility: mainVisibility,
             body: {
                 changes: historyItem.changes,
-                publicNote: historyItem.publicNote,
+                publicNote: splitPublicNote ? '' : historyItem.publicNote,
                 internalNote: splitInternalNote ? '' : historyItem.internalNote,
             },
         },
     ];
+    if (splitPublicNote) {
+        eventEntries.push({
+            id: `evt_${crypto.randomUUID()}`,
+            type: 'comment.created',
+            visibility: 'public',
+            body: {
+                changes: {},
+                publicNote: historyItem.publicNote,
+                text: historyItem.publicNote,
+                internalNote: '',
+            },
+        });
+    }
     if (splitInternalNote) {
         eventEntries.push({
             id: `evt_${crypto.randomUUID()}`,
@@ -3249,6 +2731,12 @@ async function updateD1FeedbackIssue(env, key, patch) {
             expectedVersion
         )
     );
+    const workflowTerminationStatement = prepareFeedbackTerminalWorkflowStatement(env, {
+        instanceId: activeWorkflowId,
+        occurredAt: updatedAt,
+        reason: afterWorkflow.status === 'resolved' ? 'issue_resolved' : 'issue_closed',
+    });
+    if (workflowTerminationStatement) statements.push(workflowTerminationStatement);
     statements.push(
         env.FEEDBACK_DB.prepare(
             `UPDATE feedback_issues SET
@@ -3256,6 +2744,7 @@ async function updateD1FeedbackIssue(env, key, patch) {
                 business_type = ?, scope = ?, automation_decision = ?,
                 ai_confidence = ?, ai_classified_at = ?, status = ?, priority = ?,
                 assignee = ?, legacy_public_note = ?, legacy_internal_note = ?,
+                active_workflow_id = CASE WHEN ? THEN NULL ELSE active_workflow_id END,
                 updated_at = ?, resolved_at = ?, version = version + 1
              WHERE id = ? AND version = ?
                AND EXISTS (
@@ -3278,6 +2767,7 @@ async function updateD1FeedbackIssue(env, key, patch) {
             afterWorkflow.assignee,
             afterWorkflow.publicNote,
             afterWorkflow.internalNote,
+            isTerminalTransition ? 1 : 0,
             updatedAt,
             resolvedAt,
             key,
@@ -3292,6 +2782,10 @@ async function updateD1FeedbackIssue(env, key, patch) {
         throw feedbackStorageError('FEEDBACK_VERSION_CONFLICT');
     }
 
+    if (activeWorkflowId) {
+        await terminateFeedbackWorkflowInstance(env, activeWorkflowId);
+    }
+
     return readD1FeedbackIssue(env, key);
 }
 
@@ -3301,6 +2795,4592 @@ async function updateFeedbackIssue(env, key, patch) {
     }
 
     throw feedbackStorageError('FEEDBACK_DB_REQUIRED');
+}
+
+// ---------------------------------------------------------------------------
+// Workbench V2 — settings, timeline, comments and human actions
+// ---------------------------------------------------------------------------
+
+function defaultAutomationSettings() {
+    return {
+        hookUrl: '',
+        subscribedEvents: ['issue.created', 'comment.created', 'issue.reopened'],
+        retryEnabled: true,
+        deadLetterEnabled: true,
+        dailyReconcileEnabled: true,
+        reconcileJobId: FEEDBACK_RECONCILE_JOB_ID,
+        connectionState: 'unverified',
+        lastTestedAt: '',
+        lastTestResult: null,
+    };
+}
+
+function defaultRunnerSettings() {
+    return {
+        defaultProvider: 'codex',
+        resumeSameWorkflow: true,
+        callbackUrl: '',
+        providers: {
+            codex: {
+                responsesEndpoint: FEEDBACK_DEFAULT_RESPONSES_ENDPOINT,
+                connectionState: 'unverified',
+                lastTestedAt: '',
+                lastTestResult: null,
+            },
+            claude: {
+                connectionState: 'unverified',
+                lastTestedAt: '',
+                lastTestResult: null,
+            },
+        },
+    };
+}
+
+function normalizeAutomationSettings(raw) {
+    const defaults = defaultAutomationSettings();
+    const value = raw && typeof raw === 'object' ? raw : {};
+    const events = Array.isArray(value.subscribedEvents)
+        ? value.subscribedEvents.filter((item) => FEEDBACK_AUTOMATION_EVENT_TYPES.includes(item))
+        : defaults.subscribedEvents;
+
+    return {
+        hookUrl: limitText(value.hookUrl, 500) || defaults.hookUrl,
+        subscribedEvents: Array.from(new Set(events)),
+        retryEnabled: value.retryEnabled !== false,
+        deadLetterEnabled: value.deadLetterEnabled !== false,
+        dailyReconcileEnabled: value.dailyReconcileEnabled !== false,
+        reconcileJobId: FEEDBACK_RECONCILE_JOB_ID,
+        connectionState: FEEDBACK_CONNECTION_STATES.has(value.connectionState)
+            ? value.connectionState
+            : defaults.connectionState,
+        lastTestedAt: limitText(value.lastTestedAt, 40),
+        lastTestResult:
+            value.lastTestResult && typeof value.lastTestResult === 'object'
+                ? value.lastTestResult
+                : null,
+    };
+}
+
+/** Drops the server-owned health fields from caller-supplied provider input. */
+function stripFeedbackProviderHealth(raw) {
+    if (!raw || typeof raw !== 'object') return {};
+    const { connectionState, lastTestedAt, lastTestResult, pendingSmoke, ...rest } = raw;
+    return rest;
+}
+
+function normalizeRunnerProvider(raw, provider) {
+    const value = raw && typeof raw === 'object' ? raw : {};
+    const normalized = {
+        connectionState: FEEDBACK_CONNECTION_STATES.has(value.connectionState)
+            ? value.connectionState
+            : 'unverified',
+        lastTestedAt: limitText(value.lastTestedAt, 40),
+        lastTestResult:
+            value.lastTestResult && typeof value.lastTestResult === 'object'
+                ? value.lastTestResult
+                : null,
+        // The in-flight smoke this provider is waiting on, so a late or replayed
+        // result can be matched to the exact dispatch that asked for it.
+        pendingSmoke:
+            value.pendingSmoke && typeof value.pendingSmoke === 'object'
+                ? {
+                      smokeId: limitText(value.pendingSmoke.smokeId, 60),
+                      dispatchedAt: limitText(value.pendingSmoke.dispatchedAt, 40),
+                  }
+                : null,
+    };
+    if (provider === 'codex') {
+        normalized.responsesEndpoint =
+            limitText(value.responsesEndpoint, 500) || FEEDBACK_DEFAULT_RESPONSES_ENDPOINT;
+    }
+    return normalized;
+}
+
+function normalizeRunnerSettings(raw) {
+    const defaults = defaultRunnerSettings();
+    const value = raw && typeof raw === 'object' ? raw : {};
+    const providers = value.providers && typeof value.providers === 'object' ? value.providers : {};
+
+    return {
+        defaultProvider: FEEDBACK_PROVIDERS.has(value.defaultProvider)
+            ? value.defaultProvider
+            : defaults.defaultProvider,
+        resumeSameWorkflow: value.resumeSameWorkflow !== false,
+        callbackUrl: limitText(value.callbackUrl, 500),
+        providers: {
+            codex: normalizeRunnerProvider(providers.codex, 'codex'),
+            claude: normalizeRunnerProvider(providers.claude, 'claude'),
+        },
+        autoDeliver: normalizeFeedbackAutoDeliverSettings(value.autoDeliver),
+    };
+}
+
+/**
+ * §20.1 metrics. Everything here is derived from records the pipeline already
+ * writes, so the numbers cannot drift from what actually happened. Counters the
+ * spec targets at zero (`commitMismatches`, `emptyRuns`) are always reported.
+ */
+async function collectFeedbackMetrics(env) {
+    if (!env.FEEDBACK_DB) {
+        throw feedbackStorageError('FEEDBACK_DB_REQUIRED');
+    }
+
+    const rowsOf = async (sql) => {
+        const result = await env.FEEDBACK_DB.prepare(sql).all();
+        return result?.results || [];
+    };
+
+    const [runs, deliveries, issues, humanActions, candidates, releases, usage, events] =
+        await Promise.all([
+            rowsOf(
+                `SELECT policy, provider, runner_type, status, delivery_mode, attempt,
+                        started_at, finished_at, error_code, change_commit
+                 FROM feedback_runs`
+            ),
+            rowsOf('SELECT status, attempt_count FROM feedback_deliveries'),
+            rowsOf('SELECT status FROM feedback_issues'),
+            rowsOf('SELECT type, status FROM feedback_human_actions'),
+            rowsOf('SELECT status FROM feedback_candidates'),
+            rowsOf('SELECT status, error_code FROM feedback_releases'),
+            rowsOf('SELECT run_count, estimated_cost FROM feedback_usage_daily'),
+            rowsOf('SELECT type FROM feedback_events'),
+        ]);
+
+    const tally = (rows, key) =>
+        rows.reduce((counts, row) => {
+            const value = String(row[key] || '') || 'unknown';
+            counts[value] = (counts[value] || 0) + 1;
+            return counts;
+        }, {});
+    const count = (rows, predicate) => rows.filter(predicate).length;
+
+    const durations = runs
+        .filter((run) => run.started_at && run.finished_at)
+        .map((run) => Date.parse(run.finished_at) - Date.parse(run.started_at))
+        .filter((value) => Number.isFinite(value) && value >= 0);
+    const succeeded = count(runs, (run) => run.status === 'succeeded');
+    const failed = count(runs, (run) => run.status === 'failed');
+    const autoDeliverRuns = count(runs, (run) => run.delivery_mode === 'auto_deliver');
+
+    return {
+        generatedAt: new Date().toISOString(),
+        issues: {
+            total: issues.length,
+            byStatus: tally(issues, 'status'),
+            needsHuman: count(issues, (issue) => issue.status === 'needs_human'),
+        },
+        events: { total: events.length, byType: tally(events, 'type') },
+        runs: {
+            total: runs.length,
+            succeeded,
+            failed,
+            successRate: runs.length ? succeeded / runs.length : 0,
+            averageDurationMs: durations.length
+                ? Math.round(durations.reduce((sum, value) => sum + value, 0) / durations.length)
+                : 0,
+            retries: runs.reduce((sum, run) => sum + Math.max(0, Number(run.attempt) - 1), 0),
+            byProvider: tally(runs, 'provider'),
+            byPolicy: tally(runs, 'policy'),
+            byRunnerType: tally(runs, 'runner_type'),
+            // §20.1 targets zero: a write Run that finished without producing a
+            // change commit did work that reached nothing.
+            emptyRuns: count(
+                runs,
+                (run) =>
+                    run.status === 'succeeded' &&
+                    FEEDBACK_WRITE_POLICIES.has(run.policy) &&
+                    !run.change_commit
+            ),
+        },
+        humanActions: {
+            total: humanActions.length,
+            active: count(humanActions, (action) => action.status === 'active'),
+            byType: tally(humanActions, 'type'),
+        },
+        delivery: {
+            total: deliveries.length,
+            deadLetter: count(deliveries, (delivery) => delivery.status === 'dead_letter'),
+            pending: count(deliveries, (delivery) => delivery.status === 'pending'),
+            retries: deliveries.reduce(
+                (sum, delivery) => sum + Math.max(0, Number(delivery.attempt_count) - 1),
+                0
+            ),
+        },
+        security: {
+            // Both diff-gate enforcement points fail the Run with this code.
+            diffGateBlocked: count(runs, (run) => run.error_code === 'security_policy_violation'),
+            suppressed: count(events, (event) => event.type === 'automation.suppressed'),
+        },
+        candidates: { total: candidates.length, byStatus: tally(candidates, 'status') },
+        release: {
+            total: releases.length,
+            byStatus: tally(releases, 'status'),
+            succeeded: count(releases, (release) => release.status === 'succeeded'),
+            failed: count(releases, (release) => release.status === 'failed'),
+            // §20.1 targets zero.
+            commitMismatches: count(
+                releases,
+                (release) => release.error_code === 'integration_commit_mismatch'
+            ),
+        },
+        autonomy: {
+            autoDeliverRuns,
+            candidateReviewRuns: count(runs, (run) => run.delivery_mode === 'candidate_review'),
+            downgradeRate: autoDeliverRuns
+                ? count(humanActions, (action) => action.type === 'review_required') /
+                  autoDeliverRuns
+                : 0,
+        },
+        cost: {
+            runCount: usage.reduce((sum, row) => sum + (Number(row.run_count) || 0), 0),
+            estimatedCost: usage.reduce((sum, row) => sum + (Number(row.estimated_cost) || 0), 0),
+        },
+    };
+}
+
+/**
+ * §19.5 graded autonomy block. `enabled` is only meaningful together with a
+ * passing preflight, so both travel in the same record and the switch carries
+ * the reason it is off.
+ */
+function normalizeFeedbackAutoDeliverSettings(raw) {
+    const value = raw && typeof raw === 'object' ? raw : {};
+    const preflight = value.preflight && typeof value.preflight === 'object' ? value.preflight : {};
+
+    return {
+        enabled: value.enabled === true,
+        blockedReason: limitText(value.blockedReason, 60),
+        actorAllowlist: Array.isArray(value.actorAllowlist)
+            ? value.actorAllowlist
+                  .map((item) => limitText(item, 120))
+                  .filter(Boolean)
+                  .slice(0, 50)
+            : [],
+        preflight: {
+            ok: preflight.ok === true,
+            checkedAt: limitText(preflight.checkedAt, 40),
+            checks: Array.isArray(preflight.checks)
+                ? preflight.checks.slice(0, 20).map((check) => ({
+                      id: limitText(check?.id, 40),
+                      label: limitText(check?.label, 80),
+                      ok: check?.ok === true,
+                      reason: limitText(check?.reason, 160),
+                  }))
+                : [],
+        },
+    };
+}
+
+/**
+ * §19.5: enabling autonomous delivery requires GitHub merge, deployment and
+ * production smoke prerequisites to be present. These are existence checks on
+ * server-held configuration — deliberately not a claim that a deploy succeeded.
+ */
+function evaluateFeedbackAutoDeliverPreflight(env) {
+    const has = (name) => Boolean(String(env[name] || '').trim());
+
+    // Provider health is deliberately absent here: §7.4 re-checks it per Run for
+    // the provider that Run actually uses, which is stricter than a snapshot.
+    const checks = [
+        {
+            id: 'github_dispatch',
+            label: 'GitHub 派发凭据',
+            ok: has('FEEDBACK_GITHUB_REPOSITORY') && has('FEEDBACK_GITHUB_TOKEN'),
+            reason: '缺少 FEEDBACK_GITHUB_REPOSITORY 或 FEEDBACK_GITHUB_TOKEN',
+        },
+        {
+            id: 'callback_origin',
+            label: 'Callback origin',
+            ok: has('FEEDBACK_CALLBACK_ORIGIN'),
+            reason: '缺少 FEEDBACK_CALLBACK_ORIGIN',
+        },
+        {
+            id: 'merge_credentials',
+            label: 'GitHub merge 凭据',
+            ok: has('FEEDBACK_MERGE_TOKEN'),
+            reason: '缺少 FEEDBACK_MERGE_TOKEN，无法完成干净集成',
+        },
+        {
+            id: 'release_token',
+            label: 'Release token secret',
+            ok: has('FEEDBACK_RELEASE_TOKEN_SECRET'),
+            reason: '缺少 FEEDBACK_RELEASE_TOKEN_SECRET',
+        },
+        {
+            id: 'deployment_credentials',
+            label: 'Worker/Pages 部署凭据',
+            ok: has('FEEDBACK_DEPLOY_TOKEN') || has('CLOUDFLARE_API_TOKEN'),
+            reason: '缺少 FEEDBACK_DEPLOY_TOKEN 或 CLOUDFLARE_API_TOKEN',
+        },
+        {
+            id: 'production_smoke',
+            label: '生产 smoke 目标',
+            ok: has('FEEDBACK_PRODUCTION_ORIGIN') && has('FEEDBACK_PRODUCTION_API_URL'),
+            reason: '缺少 FEEDBACK_PRODUCTION_ORIGIN 或 FEEDBACK_PRODUCTION_API_URL',
+        },
+    ].map((check) => ({ ...check, reason: check.ok ? '' : check.reason }));
+
+    return {
+        ok: checks.every((check) => check.ok),
+        checkedAt: new Date().toISOString(),
+        checks,
+    };
+}
+
+const FEEDBACK_SETTINGS_NORMALIZERS = {
+    automation: normalizeAutomationSettings,
+    runners: normalizeRunnerSettings,
+};
+
+async function readFeedbackSettings(env, name) {
+    const normalize = FEEDBACK_SETTINGS_NORMALIZERS[name];
+    if (!env.FEEDBACK_DB) {
+        throw feedbackStorageError('FEEDBACK_DB_REQUIRED');
+    }
+
+    const row = await env.FEEDBACK_DB.prepare(
+        'SELECT value_json, version, updated_at FROM feedback_settings WHERE name = ?'
+    )
+        .bind(name)
+        .first();
+
+    return {
+        settings: normalize(row ? parseStoredJson(row.value_json, {}) : {}),
+        version: Number(row?.version) || 0,
+        updatedAt: row?.updated_at || '',
+    };
+}
+
+async function writeFeedbackSettings(env, name, nextSettings, expectedVersion) {
+    if (!env.FEEDBACK_DB) {
+        throw feedbackStorageError('FEEDBACK_DB_REQUIRED');
+    }
+
+    const updatedAt = new Date().toISOString();
+    const valueJson = JSON.stringify(nextSettings);
+
+    if (expectedVersion === 0) {
+        const inserted = await env.FEEDBACK_DB.prepare(
+            `INSERT INTO feedback_settings (name, value_json, version, updated_at, updated_by)
+             VALUES (?, ?, 1, ?, 'admin')
+             ON CONFLICT(name) DO NOTHING
+             RETURNING version`
+        )
+            .bind(name, valueJson, updatedAt)
+            .first();
+        if (!inserted) throw feedbackStorageError('FEEDBACK_VERSION_CONFLICT');
+        return { settings: nextSettings, version: Number(inserted.version), updatedAt };
+    }
+
+    const updated = await env.FEEDBACK_DB.prepare(
+        `UPDATE feedback_settings
+         SET value_json = ?, version = version + 1, updated_at = ?, updated_by = 'admin'
+         WHERE name = ? AND version = ?
+         RETURNING version`
+    )
+        .bind(valueJson, updatedAt, name, expectedVersion)
+        .first();
+    if (!updated) throw feedbackStorageError('FEEDBACK_VERSION_CONFLICT');
+
+    return { settings: nextSettings, version: Number(updated.version), updatedAt };
+}
+
+function getFeedbackWebhookSecret(env) {
+    return env.FEEDBACK_WEBHOOK_SECRET || env.FEEDBACK_WEBHOOK_TOKEN || '';
+}
+
+function serializeAutomationSettings(env, stored) {
+    return {
+        ...stored.settings,
+        version: stored.version,
+        updatedAt: stored.updatedAt,
+        // §18.2/§19.4: only a controlled reference is exposed, never the signing key.
+        signing: {
+            algorithm: 'HMAC-SHA256',
+            header: FEEDBACK_SIGNATURE_HEADER,
+            secretRef: 'FEEDBACK_WEBHOOK_SECRET',
+            configured: Boolean(getFeedbackWebhookSecret(env)),
+            rotationHint: 'npx wrangler secret put FEEDBACK_WEBHOOK_SECRET',
+        },
+    };
+}
+
+function serializeRunnerSettings(env, stored) {
+    const settings = stored.settings;
+    return {
+        defaultProvider: settings.defaultProvider,
+        resumeSameWorkflow: settings.resumeSameWorkflow,
+        callbackUrl: settings.callbackUrl,
+        version: stored.version,
+        updatedAt: stored.updatedAt,
+        callbackContract: FEEDBACK_CALLBACK_EVENTS,
+        autoDeliver: {
+            ...settings.autoDeliver,
+            // §7.4 scope is a server-side constant, not an editable field: the
+            // UI shows what auto delivery is allowed to cover.
+            allowedScope: {
+                actor: 'trusted',
+                issueScope: 'small',
+                businessTypes: ['bug', 'improvement'],
+                maxQualityTier: 2,
+            },
+        },
+        providers: {
+            codex: {
+                ...settings.providers.codex,
+                id: 'codex',
+                label: 'Codex',
+                action: FEEDBACK_PROVIDER_ACTIONS.codex,
+                mention: '@codex-agent',
+                secretRef: 'OPENAI_API_KEY',
+                secretConfigured: Boolean(env.FEEDBACK_CODEX_SMOKE_TOKEN || env.GITHUB_TOKEN),
+            },
+            claude: {
+                ...settings.providers.claude,
+                id: 'claude',
+                label: 'Claude Agent',
+                action: FEEDBACK_PROVIDER_ACTIONS.claude,
+                mention: '@claude-agent',
+                secretRef: 'WIF / ANTHROPIC_API_KEY',
+                secretConfigured: Boolean(env.FEEDBACK_CLAUDE_SMOKE_TOKEN || env.GITHUB_TOKEN),
+            },
+        },
+        runtime: {
+            orchestrator: 'Cloudflare Workflows',
+            orchestratorBound: Boolean(env.FEEDBACK_WORKFLOW),
+            runner: 'GitHub-hosted',
+            dispatchConfigured: Boolean(env.FEEDBACK_GITHUB_DISPATCH_URL),
+        },
+    };
+}
+
+/**
+ * §19.5: the Codex endpoint must be a full `/v1/responses` URL. `/v1` and
+ * `/v1/chat/completions` are rejected before any connection test runs.
+ */
+function validateResponsesEndpoint(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return { valid: false, code: 'ENDPOINT_REQUIRED' };
+
+    let endpoint;
+    try {
+        endpoint = new URL(raw);
+    } catch {
+        return { valid: false, code: 'ENDPOINT_INVALID_URL' };
+    }
+    if (!['http:', 'https:'].includes(endpoint.protocol)) {
+        return { valid: false, code: 'ENDPOINT_INVALID_PROTOCOL' };
+    }
+
+    const path = endpoint.pathname.replace(/\/+$/, '');
+    if (path.endsWith('/chat/completions')) {
+        return { valid: false, code: 'ENDPOINT_CHAT_COMPLETIONS' };
+    }
+    if (!path.endsWith('/v1/responses')) {
+        return { valid: false, code: 'ENDPOINT_NOT_RESPONSES' };
+    }
+
+    return { valid: true, code: '' };
+}
+
+async function signFeedbackDelivery(secret, timestamp, rawBody) {
+    // §12.3: the signed payload is `timestamp + "." + rawBody`, not the body alone.
+    return `sha256=${await signValueHex(`${timestamp}.${rawBody}`, secret)}`;
+}
+
+async function postFeedbackHook(env, hookUrl, payload) {
+    const secret = getFeedbackWebhookSecret(env);
+    const rawBody = JSON.stringify(payload);
+    const timestamp = String(Math.floor(Date.now() / 1000));
+    const requestHeaders = {
+        'Content-Type': 'application/json',
+        'X-Feedback-Timestamp': timestamp,
+        'X-Feedback-Event': payload.type,
+        'X-Feedback-Delivery': payload.deliveryId,
+    };
+    if (secret) {
+        requestHeaders[FEEDBACK_SIGNATURE_HEADER] = await signFeedbackDelivery(
+            secret,
+            timestamp,
+            rawBody
+        );
+    }
+
+    const startedAt = Date.now();
+    try {
+        const response = await fetch(hookUrl, {
+            method: 'POST',
+            headers: requestHeaders,
+            body: rawBody,
+            signal: AbortSignal.timeout(FEEDBACK_HOOK_TIMEOUT_MS),
+        });
+        return {
+            ok: response.ok,
+            responseStatus: response.status,
+            latencyMs: Date.now() - startedAt,
+            signed: Boolean(secret),
+            errorCode: response.ok ? '' : `HTTP_${response.status}`,
+        };
+    } catch (error) {
+        return {
+            ok: false,
+            responseStatus: 0,
+            latencyMs: Date.now() - startedAt,
+            signed: Boolean(secret),
+            errorCode: error?.name === 'TimeoutError' ? 'HOOK_TIMEOUT' : 'HOOK_UNREACHABLE',
+        };
+    }
+}
+
+/**
+ * §12.1 event envelope. The full Issue body is deliberately not copied in —
+ * the Workflow reads a consistent snapshot by `issue.id + version`.
+ */
+function buildFeedbackEventEnvelope({ event, issue, delivery, attempt }) {
+    return {
+        specVersion: FEEDBACK_EVENT_SPEC_VERSION,
+        eventId: event.id,
+        eventType: event.type,
+        occurredAt: event.occurredAt,
+        issue: {
+            id: issue.id,
+            version: issue.version,
+            status: issue.status,
+        },
+        actor: {
+            type: event.actorType,
+            id: event.actorId || null,
+        },
+        trigger: {
+            mention: event.mention || null,
+            requestedPolicy: null,
+        },
+        delivery: {
+            deliveryId: delivery.id,
+            attempt,
+            idempotencyKey: delivery.idempotency_key,
+        },
+    };
+}
+
+/**
+ * Sends one delivery attempt and records the outcome. Retry scheduling belongs
+ * to the Workflow (§17.2) — this only reports whether another attempt is worth
+ * making, so auth and schema failures stop immediately (§17.1).
+ */
+async function attemptFeedbackDelivery(env, deliveryId) {
+    if (!env.FEEDBACK_DB) {
+        throw feedbackStorageError('FEEDBACK_DB_REQUIRED');
+    }
+
+    const row = await env.FEEDBACK_DB.prepare(
+        `SELECT d.*, e.type AS event_type, e.actor_type, e.actor_id, e.occurred_at,
+                e.body_json, e.issue_id, i.version AS issue_version, i.status AS issue_status
+         FROM feedback_deliveries d
+         JOIN feedback_events e ON e.id = d.event_id
+         JOIN feedback_issues i ON i.id = e.issue_id
+         WHERE d.id = ?`
+    )
+        .bind(deliveryId)
+        .first();
+    if (!row) return { ok: false, retryable: false, errorCode: 'DELIVERY_NOT_FOUND' };
+    if (row.status === 'succeeded') {
+        return { ok: true, retryable: false, deliveryId, alreadyDelivered: true };
+    }
+
+    const attempt = (Number(row.attempt_count) || 0) + 1;
+    const body = parseStoredJson(row.body_json, {});
+    const envelope = buildFeedbackEventEnvelope({
+        event: {
+            id: row.event_id,
+            type: row.event_type,
+            occurredAt: row.occurred_at,
+            actorType: row.actor_type,
+            actorId: row.actor_id,
+            mention: body.mention || '',
+        },
+        issue: {
+            id: row.issue_id,
+            version: Number(row.issue_version) || 1,
+            status: row.issue_status,
+        },
+        delivery: row,
+        attempt,
+    });
+
+    const result = await postFeedbackHook(env, row.destination, {
+        ...envelope,
+        type: row.event_type,
+        deliveryId,
+    });
+    const now = new Date().toISOString();
+    const retryable = !result.ok && FEEDBACK_RETRYABLE_DELIVERY_CODES.has(result.errorCode);
+    const exhausted = attempt >= FEEDBACK_DELIVERY_MAX_ATTEMPTS;
+    const status = result.ok
+        ? 'succeeded'
+        : retryable && !exhausted
+          ? 'pending'
+          : retryable
+            ? 'dead_letter'
+            : 'failed';
+
+    await env.FEEDBACK_DB.prepare(
+        `UPDATE feedback_deliveries
+         SET status = ?, attempt_count = ?, response_status = ?, last_error = ?,
+             next_attempt_at = ?, updated_at = ?
+         WHERE id = ?`
+    )
+        .bind(
+            status,
+            attempt,
+            result.responseStatus || null,
+            result.ok ? null : result.errorCode,
+            status === 'pending' ? now : null,
+            now,
+            deliveryId
+        )
+        .run();
+
+    return {
+        ok: result.ok,
+        retryable: retryable && !exhausted,
+        deliveryId,
+        attempt,
+        status,
+        responseStatus: result.responseStatus,
+        latencyMs: result.latencyMs,
+        errorCode: result.errorCode,
+    };
+}
+
+async function markFeedbackDeliveryDeadLettered(env, deliveryId, lastError) {
+    if (!env.FEEDBACK_DB) return null;
+
+    const now = new Date().toISOString();
+    await env.FEEDBACK_DB.prepare(
+        `UPDATE feedback_deliveries
+         SET status = 'dead_letter', next_attempt_at = NULL, last_error = ?, updated_at = ?
+         WHERE id = ? AND status != 'succeeded'`
+    )
+        .bind(limitText(lastError, 500) || 'RETRIES_EXHAUSTED', now, deliveryId)
+        .run();
+
+    return { deliveryId, status: 'dead_letter' };
+}
+
+/**
+ * §18.2/§12.2: automatic dispatch is capped per Issue per day. Exceeding the
+ * quota records `automation.suppressed` and creates no Workflow, Run or Job.
+ */
+async function checkFeedbackDispatchQuota(env, issueId) {
+    const usageDate = new Date().toISOString().slice(0, 10);
+    const row = await env.FEEDBACK_DB.prepare(
+        `SELECT run_count FROM feedback_usage_daily
+         WHERE usage_date = ? AND scope_type = 'issue' AND scope_id = ?`
+    )
+        .bind(usageDate, issueId)
+        .first();
+
+    const used = Number(row?.run_count) || 0;
+    return {
+        allowed: used < FEEDBACK_DAILY_DISPATCH_QUOTA,
+        used,
+        limit: FEEDBACK_DAILY_DISPATCH_QUOTA,
+        usageDate,
+    };
+}
+
+async function recordFeedbackDispatchUsage(env, issueId, usageDate) {
+    await env.FEEDBACK_DB.prepare(
+        `INSERT INTO feedback_usage_daily (usage_date, scope_type, scope_id, run_count, estimated_cost)
+         VALUES (?, 'issue', ?, 1, 0)
+         ON CONFLICT(usage_date, scope_type, scope_id)
+         DO UPDATE SET run_count = run_count + 1`
+    )
+        .bind(usageDate, issueId)
+        .run();
+}
+
+async function appendFeedbackSystemEvent(env, issueId, { type, visibility, body }) {
+    const eventId = `evt_${crypto.randomUUID()}`;
+    await env.FEEDBACK_DB.prepare(
+        `INSERT INTO feedback_events (
+            id, issue_id, sequence, type, actor_type, actor_id, visibility,
+            run_id, occurred_at, body_json, metadata_json, legacy_hash
+        )
+        SELECT
+            ?, id,
+            (SELECT COALESCE(MAX(sequence), 0) + 1
+             FROM feedback_events WHERE issue_id = feedback_issues.id),
+            ?, 'system', NULL, ?, NULL, ?, ?, '{}', NULL
+        FROM feedback_issues
+        WHERE id = ?`
+    )
+        .bind(
+            eventId,
+            type,
+            visibility,
+            new Date().toISOString(),
+            JSON.stringify(body || {}),
+            issueId
+        )
+        .run();
+
+    return eventId;
+}
+
+/**
+ * §13.1 steps 3–4 and §13.4: at most one non-terminal Workflow per Issue.
+ * A reply that answers the current wait resumes `issueId:generation` via
+ * `sendEvent`; anything else compare-and-set bumps the generation and creates
+ * a fresh instance. `eventId` is never used as the instance ID.
+ */
+async function ensureFeedbackWorkflowForEvent(env, issueId, { deliveryId, eventId, eventType }) {
+    if (!env.FEEDBACK_WORKFLOW || !env.FEEDBACK_DB) return null;
+
+    const active = await env.FEEDBACK_DB.prepare(
+        `SELECT instance_id, generation, status FROM feedback_workflows
+         WHERE issue_id = ? AND status IN ('queued', 'running', 'waiting')`
+    )
+        .bind(issueId)
+        .first();
+
+    if (active) {
+        if (active.status !== 'waiting') {
+            return {
+                instanceId: active.instance_id,
+                generation: Number(active.generation),
+                resumed: false,
+                error: 'WORKFLOW_NOT_WAITING',
+            };
+        }
+        try {
+            const instance = await env.FEEDBACK_WORKFLOW.get(active.instance_id);
+            await instance.sendEvent({
+                type: FEEDBACK_WORKFLOW_RESUME_EVENT_TYPE,
+                payload: { issueId, eventId, deliveryId, eventType },
+            });
+            return {
+                instanceId: active.instance_id,
+                generation: Number(active.generation),
+                resumed: true,
+            };
+        } catch (error) {
+            logFeedback('warn', 'Could not resume Workflow instance', {
+                issueId,
+                workflowId: active.instance_id,
+                workflowGeneration: active.generation,
+                error,
+            });
+            return { instanceId: active.instance_id, resumed: false, error: 'RESUME_FAILED' };
+        }
+    }
+
+    const issue = await env.FEEDBACK_DB.prepare(
+        'SELECT version, workflow_generation FROM feedback_issues WHERE id = ?'
+    )
+        .bind(issueId)
+        .first();
+    if (!issue) return null;
+
+    const generation = (Number(issue.workflow_generation) || 0) + 1;
+    const instanceId = buildFeedbackWorkflowInstanceId(issueId, generation);
+    const claimed = await env.FEEDBACK_DB.prepare(
+        `UPDATE feedback_issues
+         SET workflow_generation = ?, active_workflow_id = ?
+         WHERE id = ? AND workflow_generation = ?
+         RETURNING id`
+    )
+        .bind(generation, instanceId, issueId, Number(issue.workflow_generation) || 0)
+        .first();
+    if (!claimed) return { resumed: false, error: 'GENERATION_CONFLICT' };
+
+    try {
+        await env.FEEDBACK_WORKFLOW.create({
+            id: instanceId,
+            params: {
+                issueId,
+                generation,
+                eventId,
+                deliveryId,
+                eventType,
+                contextVersion: Number(issue.version) || 1,
+            },
+        });
+    } catch (error) {
+        // §13.4: a reserved/duplicate custom ID must be reconciled against the
+        // D1 mapping, never silently replaced or blind-sent to.
+        const mapping = await env.FEEDBACK_DB.prepare(
+            'SELECT instance_id FROM feedback_workflows WHERE issue_id = ? AND generation = ?'
+        )
+            .bind(issueId, generation)
+            .first();
+        if (!mapping || mapping.instance_id !== instanceId) {
+            await appendFeedbackSystemEvent(env, issueId, {
+                type: 'security.blocked',
+                visibility: 'internal',
+                body: {
+                    reason: 'WORKFLOW_INSTANCE_MISMATCH',
+                    instanceId,
+                    error: String(error?.message || error),
+                },
+            });
+            return { instanceId, resumed: false, error: 'WORKFLOW_INSTANCE_MISMATCH' };
+        }
+    }
+
+    return { instanceId, generation, resumed: false };
+}
+
+/**
+ * §7.2 decision matrix. Routing is code, not model output (§7.3) — the Agent
+ * may suggest a different policy but only through `agent.waiting_human`.
+ */
+function resolveFeedbackPolicy({ businessType, scope, automationDecision, approvedDesign }) {
+    const policy = (() => {
+        if (automationDecision === 'review_required') return 'review';
+        if (automationDecision === 'need_reproduction') return 'analyze';
+        // §16.4: an explicit gate, a requirement, a large scope, or a
+        // non-small improvement cannot become write-capable until the exact
+        // current Design revision is approved.
+        const requiresDesign =
+            automationDecision === 'design_required' ||
+            businessType === 'requirement' ||
+            scope === 'large' ||
+            (businessType === 'improvement' && scope !== 'small');
+        if (requiresDesign) return approvedDesign ? 'implement_and_verify' : 'analyze';
+        if (businessType === 'bug') {
+            return scope === 'unclear' ? 'analyze' : 'implement_and_verify';
+        }
+        if (businessType === 'improvement') {
+            return scope === 'small' ? 'implement_and_verify' : 'analyze';
+        }
+        return 'analyze';
+    })();
+
+    // The matrix must never yield a policy the dispatcher cannot route; falling
+    // back to the read-only default is safer than dispatching an unknown one.
+    return FEEDBACK_POLICIES.has(policy) ? policy : 'analyze';
+}
+
+function isTrustedFeedbackAutoDeliveryActor(env, trigger, autoDeliver) {
+    if (FEEDBACK_AUTO_DELIVER_TRUSTED_ACTORS.has(trigger?.actor_type)) return true;
+    const actorId = String(trigger?.actor_id || '').trim();
+    if (!actorId) return false;
+
+    // The allowlist lives in admin-saved settings (§19.5); the environment
+    // variable stays supported so an operator can pin it outside the UI.
+    const allowlist = [
+        ...(autoDeliver?.actorAllowlist || []),
+        ...String(env.FEEDBACK_AUTO_DELIVER_ACTOR_ALLOWLIST || '')
+            .split(/[\n,]/)
+            .map((item) => item.trim())
+            .filter(Boolean),
+    ];
+    return allowlist.includes(actorId);
+}
+
+/**
+ * §7.4: delivery authority is fixed before dispatch from server-owned facts.
+ * A model cannot opt itself into auto delivery, and the default is always the
+ * review path when any prerequisite is absent or unverified.
+ */
+async function resolveFeedbackDeliveryMode(
+    env,
+    { issue, policy, provider, triggerEventId, approvedDesign, runnerSettings }
+) {
+    if (!FEEDBACK_WRITE_POLICIES.has(policy)) return 'no_delivery';
+
+    const trigger = triggerEventId
+        ? await env.FEEDBACK_DB.prepare(
+              'SELECT actor_type, actor_id FROM feedback_events WHERE id = ? AND issue_id = ?'
+          )
+              .bind(triggerEventId, issue.id)
+              .first()
+        : null;
+    const providerHealth = runnerSettings.providers[provider];
+    const credentialsReady = Boolean(
+        env.FEEDBACK_GITHUB_REPOSITORY &&
+        env.FEEDBACK_GITHUB_TOKEN &&
+        env.FEEDBACK_CALLBACK_ORIGIN &&
+        env.FEEDBACK_RELEASE_TOKEN_SECRET
+    );
+    // §19.5: autonomy is switched on by an admin save backed by a passing
+    // preflight. The environment flags remain an outer kill switch, so removing
+    // either one still deterministically forces the review path.
+    const autoDeliver = runnerSettings.autoDeliver;
+    const envAllows =
+        String(env.FEEDBACK_AUTO_DELIVER_ENABLED || '').toLowerCase() !== 'false' &&
+        String(env.FEEDBACK_AUTO_DELIVER_PREFLIGHT_OK || '').toLowerCase() !== 'false';
+    const eligible =
+        envAllows &&
+        autoDeliver?.enabled === true &&
+        autoDeliver?.preflight?.ok === true &&
+        credentialsReady &&
+        isTrustedFeedbackAutoDeliveryActor(env, trigger, autoDeliver) &&
+        issue.scope === 'small' &&
+        ['bug', 'improvement'].includes(issue.business_type) &&
+        issue.automation_decision === 'auto_fix' &&
+        !approvedDesign &&
+        providerHealth?.connectionState === 'connected' &&
+        providerHealth?.lastTestResult?.ok === true;
+
+    return eligible ? 'auto_deliver' : 'candidate_review';
+}
+
+/**
+ * §13.4 describes the Workflow instance as `issueId:generation`, but that is
+ * conceptual notation: Cloudflare rejects `:` in an instance ID ("Workflow
+ * instance has invalid id"). This derives the same one-per-generation identity
+ * in an accepted character set. The D1 mapping stores whatever this returns, so
+ * the conflict check in §13.4 still compares like for like.
+ */
+function buildFeedbackWorkflowInstanceId(issueId, generation) {
+    return `${String(issueId).replace(/[^a-zA-Z0-9_-]/g, '-')}-g${generation}`;
+}
+
+function getFeedbackRunTokenSecret(env) {
+    return String(env.FEEDBACK_RUN_TOKEN_SECRET || getAdminSecret(env));
+}
+
+function getFeedbackReleaseTokenSecret(env) {
+    return String(env.FEEDBACK_RELEASE_TOKEN_SECRET || getFeedbackRunTokenSecret(env));
+}
+
+/**
+ * §18.1/§21.3: Context and Callback tokens carry a distinct `aud` so one can
+ * never be replayed as the other, and both are bound to a single runId.
+ */
+async function createFeedbackRunToken(env, { runId, audience, provider }) {
+    const expiresAt = Date.now() + FEEDBACK_RUN_TOKEN_TTL_SECONDS * 1000;
+    const payload = base64UrlEncode(
+        JSON.stringify({ aud: audience, runId, provider, exp: expiresAt })
+    );
+    const signature = await signValue(payload, getFeedbackRunTokenSecret(env));
+
+    return { token: `${payload}.${signature}`, expiresAt: new Date(expiresAt).toISOString() };
+}
+
+async function verifyFeedbackRunToken(request, env, { runId, audience }) {
+    const token = getBearerToken(request);
+    if (!token) return null;
+
+    const [payload, signature] = token.split('.');
+    if (!payload || !signature) return null;
+
+    const expected = await signValue(payload, getFeedbackRunTokenSecret(env));
+    if (!feedbackHashesMatch(expected, signature)) return null;
+
+    try {
+        const parsed = JSON.parse(base64UrlDecode(payload));
+        if (parsed.aud !== audience) return null;
+        if (parsed.runId !== runId) return null;
+        if (!(Number(parsed.exp) > Date.now())) return null;
+        return parsed;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * §13.1 steps 6–7: the Workflow derives policy/provider/runner deterministically
+ * and creates the Run plus its short-lived, run-scoped tokens. §7.3 allows at
+ * most one write-capable Run per Issue, enforced by compare-and-set.
+ */
+async function createFeedbackRun(env, { issueId, workflowId, provider, triggerEventId = '' }) {
+    if (!env.FEEDBACK_DB) {
+        throw feedbackStorageError('FEEDBACK_DB_REQUIRED');
+    }
+
+    const issue = await env.FEEDBACK_DB.prepare(
+        `SELECT id, version, business_type, scope, automation_decision, status, last_run_id,
+                current_design_id
+         FROM feedback_issues WHERE id = ?`
+    )
+        .bind(issueId)
+        .first();
+    if (!issue) return null;
+
+    const design = issue.current_design_id
+        ? await env.FEEDBACK_DB.prepare(
+              `SELECT * FROM feedback_designs
+               WHERE id = ? AND issue_id = ? AND status = 'approved'`
+          )
+              .bind(issue.current_design_id, issueId)
+              .first()
+        : null;
+
+    const policy = resolveFeedbackPolicy({
+        businessType: issue.business_type,
+        scope: issue.scope,
+        automationDecision: issue.automation_decision,
+        approvedDesign: Boolean(design),
+    });
+    const runnerSettings = (await readFeedbackSettings(env, 'runners')).settings;
+    const resolvedProvider = FEEDBACK_PROVIDERS.has(provider)
+        ? provider
+        : runnerSettings.defaultProvider;
+    const deliveryMode = await resolveFeedbackDeliveryMode(env, {
+        issue,
+        policy,
+        provider: resolvedProvider,
+        triggerEventId,
+        approvedDesign: Boolean(design),
+        runnerSettings,
+    });
+
+    if (FEEDBACK_WRITE_POLICIES.has(policy)) {
+        const conflicting = await env.FEEDBACK_DB.prepare(
+            `SELECT id FROM feedback_runs
+             WHERE issue_id = ? AND status NOT IN
+                 ('succeeded', 'failed', 'cancelled', 'timed_out')
+               AND policy IN ('implement', 'implement_and_verify', 'local_required')`
+        )
+            .bind(issueId)
+            .first();
+        if (conflicting) {
+            return { blocked: true, reason: 'WRITE_RUN_ALREADY_ACTIVE', runId: conflicting.id };
+        }
+    }
+
+    // §9.2/§18.1: local_required never dispatches automatically; it becomes a
+    // human decision instead (Phase 4 gate).
+    if (policy === 'local_required') {
+        return { blocked: true, reason: 'LOCAL_RUNNER_NOT_ENABLED', policy };
+    }
+
+    const runId = `run_${crypto.randomUUID()}`;
+    const now = new Date().toISOString();
+    await env.FEEDBACK_DB.prepare(
+        `INSERT INTO feedback_runs (
+            id, issue_id, workflow_id, candidate_id, design_id, policy, delivery_mode, provider,
+            runner_type, runner_label, status, attempt, base_commit, change_commit,
+            provider_session_id, started_at, finished_at, error_code
+        ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, 'github_hosted', NULL, 'created', 1,
+                  NULL, NULL, NULL, ?, NULL, NULL)`
+    )
+        .bind(
+            runId,
+            issueId,
+            workflowId,
+            design?.id || null,
+            policy,
+            deliveryMode,
+            resolvedProvider,
+            now
+        )
+        .run();
+    await env.FEEDBACK_DB.prepare('UPDATE feedback_issues SET last_run_id = ? WHERE id = ?')
+        .bind(runId, issueId)
+        .run();
+    await env.FEEDBACK_DB.prepare(
+        'UPDATE feedback_workflows SET active_run_id = ? WHERE instance_id = ?'
+    )
+        .bind(runId, workflowId)
+        .run();
+
+    const [contextToken, callbackToken] = await Promise.all([
+        createFeedbackRunToken(env, { runId, audience: 'context', provider: resolvedProvider }),
+        createFeedbackRunToken(env, { runId, audience: 'callback', provider: resolvedProvider }),
+    ]);
+
+    const origin = String(env.FEEDBACK_CALLBACK_ORIGIN || '').replace(/\/+$/, '');
+    return {
+        runId,
+        issueId,
+        workflowId,
+        policy,
+        deliveryMode,
+        designId: design?.id || null,
+        provider: resolvedProvider,
+        runnerType: 'github_hosted',
+        contextToken,
+        callbackToken,
+        // §13.2: tokens travel as separate Action inputs, not inside the
+        // payload document that ends up in Job logs.
+        dispatchPayload: {
+            issueId,
+            issueVersion: Number(issue.version) || 1,
+            workflowId,
+            runId,
+            policy,
+            deliveryMode,
+            provider: resolvedProvider,
+            permissionProfile: FEEDBACK_PERMISSION_PROFILES[policy] || 'feedback-readonly',
+            responsesEndpoint:
+                resolvedProvider === 'codex'
+                    ? runnerSettings.providers.codex.responsesEndpoint
+                    : '',
+            contextUrl: `${origin}/api/feedback/runs/${encodeURIComponent(runId)}/context`,
+            callbackUrl: `${origin}/api/feedback/runs/${encodeURIComponent(runId)}/events`,
+            contextToken: contextToken.token,
+            callbackToken: callbackToken.token,
+            baseCommit: '',
+        },
+    };
+}
+
+/**
+ * Projects the dispatch outcome onto the Run.
+ *
+ * A Run that could not be handed to GitHub stays in the non-terminal `created`
+ * state when the cause is retryable or a missing configuration: §17.1 wants
+ * those retryable by an admin, and a terminal Run would also release the
+ * one-write-Run-per-Issue lock (§7.3) while nothing is actually running. Only a
+ * permanent rejection is terminal.
+ */
+async function recordFeedbackDispatchResult(env, runId, dispatch) {
+    const permanentFailure =
+        !dispatch.dispatched &&
+        dispatch.errorCode !== 'GITHUB_DISPATCH_NOT_CONFIGURED' &&
+        !dispatch.retryable;
+    const status = dispatch.dispatched ? 'dispatched' : permanentFailure ? 'failed' : 'created';
+    await env.FEEDBACK_DB.prepare(
+        `UPDATE feedback_runs
+         SET status = ?, error_code = ?,
+             finished_at = CASE WHEN ? = 'failed' THEN ? ELSE finished_at END
+         WHERE id = ?`
+    )
+        .bind(
+            status,
+            dispatch.dispatched ? null : dispatch.errorCode,
+            status,
+            new Date().toISOString(),
+            runId
+        )
+        .run();
+
+    if (!dispatch.dispatched) {
+        const run = await env.FEEDBACK_DB.prepare('SELECT issue_id FROM feedback_runs WHERE id = ?')
+            .bind(runId)
+            .first();
+        if (run) {
+            await appendFeedbackSystemEvent(env, run.issue_id, {
+                type: 'automation.suppressed',
+                visibility: 'admin',
+                body: { reason: dispatch.errorCode, runId, retryable: Boolean(dispatch.retryable) },
+            });
+        }
+    }
+
+    return { runId, status, errorCode: dispatch.errorCode || null };
+}
+
+/**
+ * §19.5: the connection test is a real minimal Action smoke, not an HTTP ping.
+ * The result therefore cannot be known synchronously — the workflow reports back
+ * through a smoke-scoped callback. Until it does, the provider is `testing`.
+ */
+async function dispatchFeedbackRunnerSmoke(env, { provider, smokeId, settings }) {
+    const repository = String(env.FEEDBACK_GITHUB_REPOSITORY || '');
+    const githubToken = String(env.FEEDBACK_GITHUB_TOKEN || '');
+    const callbackOrigin = String(env.FEEDBACK_CALLBACK_ORIGIN || '');
+    if (!repository || !githubToken || !callbackOrigin) {
+        return { dispatched: false, errorCode: 'ACTION_SMOKE_NOT_CONFIGURED' };
+    }
+
+    const { token } = await createFeedbackSmokeToken(env, { smokeId, provider });
+    const endpointMode =
+        provider === 'codex' &&
+        settings.providers.codex.responsesEndpoint !== FEEDBACK_DEFAULT_RESPONSES_ENDPOINT
+            ? 'relay'
+            : 'official';
+    const payload = {
+        smokeId,
+        provider,
+        action: FEEDBACK_PROVIDER_ACTIONS[provider],
+        endpointMode,
+        responsesEndpoint: provider === 'codex' ? settings.providers.codex.responsesEndpoint : '',
+        callbackUrl: `${callbackOrigin.replace(/\/+$/, '')}/api/feedback/runners/smoke/${smokeId}/result`,
+        callbackToken: token,
+    };
+
+    const ref = String(env.FEEDBACK_GITHUB_REF || 'master');
+    const url = `https://api.github.com/repos/${repository}/actions/workflows/${FEEDBACK_SMOKE_WORKFLOW_FILE}/dispatches`;
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                Accept: 'application/vnd.github+json',
+                Authorization: `Bearer ${githubToken}`,
+                'X-GitHub-Api-Version': '2022-11-28',
+                'Content-Type': 'application/json',
+                'User-Agent': 'gantt-feedback-workbench',
+            },
+            body: JSON.stringify({ ref, inputs: { payload: JSON.stringify(payload) } }),
+            signal: AbortSignal.timeout(FEEDBACK_HOOK_TIMEOUT_MS),
+        });
+        if (!response.ok) {
+            return { dispatched: false, errorCode: `GITHUB_HTTP_${response.status}` };
+        }
+        return { dispatched: true, endpointMode };
+    } catch (error) {
+        return {
+            dispatched: false,
+            errorCode: error?.name === 'TimeoutError' ? 'GITHUB_TIMEOUT' : 'GITHUB_UNREACHABLE',
+        };
+    }
+}
+
+/**
+ * §19.5/§20.2: a smoke reports a *code*, not a provider message. Runner output
+ * routinely quotes the failing request, so anything past the leading token is
+ * dropped rather than trusted to be secret-free.
+ */
+function normalizeFeedbackSmokeErrorCode(value) {
+    const first = String(value || '')
+        .trim()
+        .split(/\s+/)[0]
+        .toUpperCase()
+        .replace(/[^A-Z0-9_]/g, '');
+    return first.slice(0, 60) || 'ACTION_SMOKE_FAILED';
+}
+
+async function createFeedbackSmokeToken(env, { smokeId, provider }) {
+    const expiresAt = Date.now() + FEEDBACK_SMOKE_TIMEOUT_MS;
+    const payload = base64UrlEncode(
+        JSON.stringify({ aud: 'runner_smoke', smokeId, provider, exp: expiresAt })
+    );
+    const signature = await signValue(payload, getFeedbackRunTokenSecret(env));
+
+    return { token: `${payload}.${signature}`, expiresAt: new Date(expiresAt).toISOString() };
+}
+
+/**
+ * §21.3: a smoke token proves one thing only — that this exact smoke may report
+ * its own result. It is never an admin token and never covers another smoke.
+ */
+async function verifyFeedbackSmokeToken(request, env, { smokeId }) {
+    const token = getBearerToken(request);
+    if (!token) return null;
+
+    const [payload, signature] = token.split('.');
+    if (!payload || !signature) return null;
+
+    const expected = await signValue(payload, getFeedbackRunTokenSecret(env));
+    if (!feedbackHashesMatch(expected, signature)) return null;
+
+    try {
+        const claims = JSON.parse(base64UrlDecode(payload));
+        if (claims.aud !== 'runner_smoke') return null;
+        if (claims.smokeId !== smokeId) return null;
+        if (!(Number(claims.exp) > Date.now())) return null;
+        return claims;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * §13.1 step 8: hands the Run to GitHub Actions. Returns a structured reason
+ * instead of throwing when dispatch is not configured, so the Run is visibly
+ * un-started rather than silently assumed to be running.
+ */
+async function dispatchFeedbackRunToGitHub(env, { payload, provider }) {
+    const repository = String(env.FEEDBACK_GITHUB_REPOSITORY || '');
+    const token = String(env.FEEDBACK_GITHUB_TOKEN || '');
+    const workflowFile = FEEDBACK_PROVIDER_WORKFLOW_FILES[provider];
+    if (!repository || !token || !workflowFile) {
+        return { dispatched: false, errorCode: 'GITHUB_DISPATCH_NOT_CONFIGURED' };
+    }
+
+    const ref = String(env.FEEDBACK_GITHUB_REF || 'master');
+    let dispatchPayload = payload;
+    if (!/^[0-9a-f]{40,64}$/i.test(String(dispatchPayload.baseCommit || ''))) {
+        const commitUrl = `https://api.github.com/repos/${repository}/commits/${encodeURIComponent(ref)}`;
+        try {
+            const commitResponse = await fetch(commitUrl, {
+                headers: {
+                    Accept: 'application/vnd.github+json',
+                    Authorization: `Bearer ${token}`,
+                    'X-GitHub-Api-Version': '2022-11-28',
+                    'User-Agent': 'gantt-feedback-workbench',
+                },
+                signal: AbortSignal.timeout(FEEDBACK_HOOK_TIMEOUT_MS),
+            });
+            if (!commitResponse.ok) {
+                return {
+                    dispatched: false,
+                    errorCode: `GITHUB_HTTP_${commitResponse.status}`,
+                    retryable: commitResponse.status === 429 || commitResponse.status >= 500,
+                };
+            }
+            const commit = await commitResponse.json();
+            const baseCommit = String(commit?.sha || '');
+            if (!/^[0-9a-f]{40,64}$/i.test(baseCommit)) {
+                return {
+                    dispatched: false,
+                    errorCode: 'GITHUB_BASE_COMMIT_INVALID',
+                    retryable: false,
+                };
+            }
+            dispatchPayload = { ...dispatchPayload, baseCommit };
+            await env.FEEDBACK_DB.prepare(
+                'UPDATE feedback_runs SET base_commit = ? WHERE id = ?'
+            )
+                .bind(baseCommit, dispatchPayload.runId)
+                .run();
+        } catch (error) {
+            return {
+                dispatched: false,
+                errorCode:
+                    error?.name === 'TimeoutError' ? 'GITHUB_TIMEOUT' : 'GITHUB_UNREACHABLE',
+                retryable: true,
+            };
+        }
+    }
+    const url = `https://api.github.com/repos/${repository}/actions/workflows/${workflowFile}/dispatches`;
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                Accept: 'application/vnd.github+json',
+                Authorization: `Bearer ${token}`,
+                'X-GitHub-Api-Version': '2022-11-28',
+                'Content-Type': 'application/json',
+                'User-Agent': 'gantt-feedback-workbench',
+            },
+            // workflow_dispatch inputs are strings; the payload travels as one
+            // JSON document so the template does not need per-field plumbing.
+            body: JSON.stringify({ ref, inputs: { payload: JSON.stringify(dispatchPayload) } }),
+            signal: AbortSignal.timeout(FEEDBACK_HOOK_TIMEOUT_MS),
+        });
+        if (!response.ok) {
+            return {
+                dispatched: false,
+                errorCode: `GITHUB_HTTP_${response.status}`,
+                retryable: response.status === 429 || response.status >= 500,
+            };
+        }
+        return { dispatched: true, ref, workflowFile };
+    } catch (error) {
+        return {
+            dispatched: false,
+            errorCode: error?.name === 'TimeoutError' ? 'GITHUB_TIMEOUT' : 'GITHUB_UNREACHABLE',
+            retryable: true,
+        };
+    }
+}
+
+/**
+ * §14.4 step 3, second enforcement point. The Runner already ran the same rule
+ * table, but a compromised or buggy Runner could lie, so `run.completed` is
+ * re-checked here before anything is projected as success.
+ */
+async function verifyRunCompletionManifest({ env, run, payload }) {
+    const manifest = payload.diffManifest || payload;
+    const changedFiles = Array.isArray(manifest.changedFiles) ? manifest.changedFiles : [];
+    const writeAllowed = FEEDBACK_WRITE_POLICIES.has(run.policy);
+
+    if (writeAllowed) {
+        // §15.3: a write Run must identify exactly what it produced.
+        if (!manifest.baseCommit || !manifest.changeCommit || !manifest.diffManifestSha256) {
+            return {
+                allowed: false,
+                errorCode: 'security_policy_violation',
+                violations: [{ code: 'DIFF_MANIFEST_MISSING' }],
+            };
+        }
+
+        const expectedRepository = String(env.FEEDBACK_GITHUB_REPOSITORY || '').trim();
+        const expectedBaseRef = String(env.FEEDBACK_GITHUB_REF || 'master');
+        const expectedCandidateRef = `feedback/candidate/${String(run.id).replace(
+            /[^a-zA-Z0-9_-]/g,
+            '-'
+        )}`;
+        const identityChecks = [
+            {
+                code: 'DIFF_MANIFEST_REPOSITORY_MISMATCH',
+                actual: String(manifest.repository || '').toLowerCase(),
+                expected: expectedRepository.toLowerCase(),
+                required: Boolean(expectedRepository),
+            },
+            {
+                code: 'DIFF_MANIFEST_BASE_REF_MISMATCH',
+                actual: String(manifest.baseRef || ''),
+                expected: expectedBaseRef,
+                required: true,
+            },
+            {
+                code: 'DIFF_MANIFEST_BASE_COMMIT_MISMATCH',
+                actual: String(manifest.baseCommit || '').toLowerCase(),
+                expected: String(run.base_commit || '').toLowerCase(),
+                required: Boolean(run.base_commit),
+            },
+            {
+                code: 'DIFF_MANIFEST_CANDIDATE_REF_MISMATCH',
+                actual: String(manifest.candidateRef || ''),
+                expected: expectedCandidateRef,
+                required: true,
+            },
+        ];
+        const mismatch = identityChecks.find(
+            (check) => check.required && check.actual !== check.expected
+        );
+        if (mismatch) {
+            return {
+                allowed: false,
+                errorCode: 'security_policy_violation',
+                violations: [{ code: mismatch.code }],
+            };
+        }
+    }
+
+    const claimedHash = String(manifest.diffManifestSha256 || '');
+    if (claimedHash) {
+        const unsignedManifest = { ...manifest };
+        delete unsignedManifest.diffManifestSha256;
+        const actualHash = await hashFeedbackValue(JSON.stringify(unsignedManifest));
+        if (!feedbackHashesMatch(actualHash, claimedHash)) {
+            return {
+                allowed: false,
+                errorCode: 'security_policy_violation',
+                violations: [{ code: 'DIFF_MANIFEST_HASH_MISMATCH' }],
+            };
+        }
+    }
+
+    return evaluateDiffGate({
+        changedFiles,
+        approvedPaths: Array.isArray(payload.approvedPaths) ? payload.approvedPaths : [],
+        contractRunApproved: payload.contractRunApproved === true,
+        scnId: limitText(payload.scnId, 40),
+        writeAllowed,
+    });
+}
+
+/**
+ * §13.1 step 5: the minimal, immutable snapshot a Runner is allowed to read.
+ * PII (`contact`), attachment bodies and admin notes are deliberately absent.
+ */
+async function readFeedbackRunContext(env, runId) {
+    const row = await env.FEEDBACK_DB.prepare(
+        `SELECT r.id AS run_id, r.policy, r.provider, r.runner_type, r.status AS run_status,
+                r.base_commit, r.design_id, i.id AS issue_id, i.version, i.title, i.description,
+                i.business_type, i.scope, i.status AS issue_status
+         FROM feedback_runs r
+         JOIN feedback_issues i ON i.id = r.issue_id
+         WHERE r.id = ?`
+    )
+        .bind(runId)
+        .first();
+    if (!row) return null;
+
+    const events = await env.FEEDBACK_DB.prepare(
+        `SELECT type, actor_type, occurred_at, body_json FROM feedback_events
+         WHERE issue_id = ? AND visibility = 'public' ORDER BY sequence`
+    )
+        .bind(row.issue_id)
+        .all();
+    const design = row.design_id
+        ? await env.FEEDBACK_DB.prepare('SELECT * FROM feedback_designs WHERE id = ?')
+              .bind(row.design_id)
+              .first()
+        : null;
+
+    return {
+        runId: row.run_id,
+        policy: row.policy,
+        provider: row.provider,
+        runnerType: row.runner_type,
+        runStatus: row.run_status,
+        baseCommit: row.base_commit || null,
+        design: design ? serializeFeedbackDesign(design) : null,
+        issue: {
+            id: row.issue_id,
+            version: Number(row.version) || 1,
+            status: row.issue_status,
+            title: row.title,
+            // §18.2: untrusted reporter text is labelled so the prompt can
+            // separate data from instructions.
+            description: { untrustedUserContent: row.description },
+            businessType: row.business_type,
+            scope: row.scope,
+        },
+        timeline: (events.results || []).map((event) => {
+            const body = parseStoredJson(event.body_json, {});
+            return {
+                type: event.type,
+                actorType: event.actor_type,
+                occurredAt: event.occurred_at,
+                text: limitText(body.text || body.publicNote, 4000),
+            };
+        }),
+    };
+}
+
+/**
+ * Records a delivery for an event and starts (or resumes) the Workflow that
+ * owns its retries. Returns a suppression result instead of dispatching when
+ * the event is not subscribed or the Issue is over quota (§12.2).
+ */
+async function dispatchFeedbackEvent(
+    env,
+    { eventId, eventType, issueId, bypassQuota = false, orchestrate = true }
+) {
+    if (!env.FEEDBACK_DB) return null;
+
+    const stored = await readFeedbackSettings(env, 'automation');
+    const settings = stored.settings;
+    // The external Hook is only one consumer of an event. Orchestration must
+    // still start, or a project that runs GitHub Actions without any external
+    // agent service would never get a Run (§6, §13.1).
+    const deliverToHook =
+        Boolean(settings.hookUrl) && settings.subscribedEvents.includes(eventType);
+
+    const quota = bypassQuota ? null : await checkFeedbackDispatchQuota(env, issueId);
+    if (quota && !quota.allowed) {
+        await appendFeedbackSystemEvent(env, issueId, {
+            type: 'automation.suppressed',
+            visibility: 'admin',
+            body: {
+                reason: 'DAILY_QUOTA_EXCEEDED',
+                eventId,
+                eventType,
+                used: quota.used,
+                limit: quota.limit,
+            },
+        });
+        return { suppressed: true, reason: 'DAILY_QUOTA_EXCEEDED', quota };
+    }
+
+    const now = new Date().toISOString();
+    // §13.1 step 2: the idempotency key is per event, so a replay of the same
+    // event never creates a second delivery or Run.
+    const idempotencyKey = `${issueId}:event:${eventId}`;
+    const deliveryId = `dly_${crypto.randomUUID()}`;
+    if (deliverToHook) {
+        const inserted = await env.FEEDBACK_DB.prepare(
+            `INSERT INTO feedback_deliveries (
+                id, event_id, destination, idempotency_key, workflow_instance_id,
+                status, attempt_count, next_attempt_at, response_status, last_error,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, 'pending', 0, ?, NULL, NULL, ?, ?)
+            ON CONFLICT(idempotency_key) DO NOTHING
+            RETURNING id`
+        )
+            .bind(deliveryId, eventId, settings.hookUrl, idempotencyKey, null, now, now, now)
+            .first();
+
+        if (!inserted) {
+            // The event was already dispatched; returning the existing delivery
+            // keeps a replay from producing a second Workflow or Run.
+            const existing = await env.FEEDBACK_DB.prepare(
+                'SELECT id, status FROM feedback_deliveries WHERE idempotency_key = ?'
+            )
+                .bind(idempotencyKey)
+                .first();
+            return {
+                deliveryId: existing?.id || null,
+                duplicate: true,
+                status: existing?.status || 'unknown',
+            };
+        }
+    }
+
+    if (quota) await recordFeedbackDispatchUsage(env, issueId, quota.usageDate);
+    const workflow = orchestrate
+        ? await ensureFeedbackWorkflowForEvent(env, issueId, {
+              deliveryId: deliverToHook ? deliveryId : null,
+              eventId,
+              eventType,
+          })
+        : null;
+    if (deliverToHook && workflow?.instanceId) {
+        await env.FEEDBACK_DB.prepare(
+            'UPDATE feedback_deliveries SET workflow_instance_id = ? WHERE id = ?'
+        )
+            .bind(workflow.instanceId, deliveryId)
+            .run();
+    }
+
+    return {
+        deliveryId: deliverToHook ? deliveryId : null,
+        hookDelivery: deliverToHook,
+        issueId,
+        eventType,
+        destination: deliverToHook ? settings.hookUrl : null,
+        workflow,
+    };
+}
+
+/**
+ * §9.2: a Callback never writes an Issue status directly. This is the only
+ * place Run outcomes are projected, and `run.completed` alone can never make an
+ * Issue `resolved` — that requires a successful Release.
+ */
+function projectRunEventToIssue({ type, policy, payload }) {
+    if (type === 'run.started') return { runStatus: 'running', issueStatus: 'in_progress' };
+    if (type === 'run.phase_changed') {
+        return {
+            runStatus: 'running',
+            issueStatus: payload.phase === 'testing' ? 'testing' : null,
+        };
+    }
+    if (type === 'agent.waiting_human') {
+        return { runStatus: 'waiting_human', issueStatus: 'needs_human' };
+    }
+    if (type === 'run.failed') {
+        // §17.1: a failed verification is a business outcome (`test_failed`);
+        // infrastructure failures keep the Issue where it is for a retry.
+        return {
+            runStatus: 'failed',
+            issueStatus: payload.errorCode === 'verification_failed' ? 'test_failed' : null,
+        };
+    }
+    if (type === 'run.cancelled') return { runStatus: 'cancelled', issueStatus: 'open' };
+    if (type === 'run.completed') {
+        if (policy === 'analyze' || policy === 'review') {
+            return { runStatus: 'succeeded', issueStatus: 'needs_human' };
+        }
+        // Write policies stop at review; only an approved Candidate plus a
+        // successful Release can resolve the Issue.
+        return { runStatus: 'succeeded', issueStatus: 'needs_human' };
+    }
+    return { runStatus: null, issueStatus: null };
+}
+
+function normalizeCallbackEvent(body) {
+    const type = String(body?.type || '');
+    if (!FEEDBACK_CALLBACK_EVENT_TYPES.has(type)) {
+        throw feedbackStorageError('FEEDBACK_CALLBACK_TYPE_UNSUPPORTED');
+    }
+
+    const eventId = limitText(body.eventId, 120);
+    if (!eventId) throw feedbackStorageError('FEEDBACK_CALLBACK_EVENT_ID_REQUIRED');
+
+    const payload = body.payload && typeof body.payload === 'object' ? body.payload : {};
+    return {
+        eventId,
+        type,
+        sequence: Number(body.sequence) || 0,
+        occurredAt: limitText(body.occurredAt, 40) || new Date().toISOString(),
+        provider: limitText(body.provider, 40),
+        providerSessionId: limitText(body.providerSessionId, 200),
+        // §15.3: the provider's own status is metadata only; it never drives UI.
+        providerRawStatus: limitText(body.providerRawStatus || payload.status, 80),
+        payload,
+    };
+}
+
+/**
+ * Appends one normalized Callback event. Idempotent on `runId + eventId`
+ * (§15.3) so a retried Callback returns 200 without duplicating anything.
+ */
+async function appendFeedbackCallbackEvent(env, runId, body) {
+    if (!env.FEEDBACK_DB) {
+        throw feedbackStorageError('FEEDBACK_DB_REQUIRED');
+    }
+
+    const callback = normalizeCallbackEvent(body);
+    const run = await env.FEEDBACK_DB.prepare(
+        `SELECT id, issue_id, workflow_id, policy, provider, delivery_mode, status
+         FROM feedback_runs WHERE id = ?`
+    )
+        .bind(runId)
+        .first();
+    if (!run) return null;
+
+    const eventId = `evt_cb_${runId}_${callback.eventId}`;
+    const existing = await env.FEEDBACK_DB.prepare('SELECT id FROM feedback_events WHERE id = ?')
+        .bind(eventId)
+        .first();
+    if (existing) {
+        const candidate =
+            callback.type === 'run.completed' && run.delivery_mode === 'auto_deliver'
+                ? await env.FEEDBACK_DB.prepare(
+                      'SELECT * FROM feedback_candidates WHERE run_id = ?'
+                  )
+                      .bind(run.id)
+                      .first()
+                : null;
+        const autoDelivery = candidate
+            ? await resumeFeedbackAutoDeliveryCandidate(env, { run, candidate })
+            : null;
+        return {
+            duplicate: true,
+            eventId,
+            runStatus: run.status,
+            candidateId: candidate?.id || null,
+            deliveryMode: run.delivery_mode || 'candidate_review',
+            autoDelivery,
+            workflowNotification: await notifyFeedbackWorkflowRunResult(env, run, {
+                eventId,
+                callbackType: callback.type,
+            }),
+        };
+    }
+    if (FEEDBACK_RUN_TERMINAL_STATUSES.has(run.status)) {
+        throw feedbackStorageError('FEEDBACK_RUN_ALREADY_TERMINAL');
+    }
+
+    const normalizedActionType =
+        callback.type === 'agent.waiting_human'
+            ? normalizeFeedbackHumanActionType(callback.payload.actionType)
+            : '';
+    const pendingDesign =
+        normalizedActionType === 'design_decision'
+            ? normalizeFeedbackDesignPayload(callback.payload.design)
+            : null;
+
+    // §14.4/§15.3: a `run.completed` claim is verified against the same rule
+    // table the Runner used before it is allowed to project success.
+    let gate = null;
+    let completionManifest = {};
+    if (callback.type === 'run.completed') {
+        completionManifest = callback.payload.diffManifest || callback.payload;
+        gate = await verifyRunCompletionManifest({
+            env,
+            run,
+            payload: callback.payload,
+        });
+        if (!gate.allowed) {
+            callback.type = 'run.failed';
+            callback.payload = {
+                ...callback.payload,
+                errorCode: gate.errorCode,
+                summary: '交付被质量门禁阻断：变更触及未批准路径或削弱了验证。',
+                violations: gate.violations,
+            };
+        }
+    }
+
+    const projection = projectRunEventToIssue({
+        type: callback.type,
+        policy: run.policy,
+        payload: callback.payload,
+    });
+    if (projection.runStatus && !FEEDBACK_RUN_STATUSES.has(projection.runStatus)) {
+        throw feedbackStorageError('FEEDBACK_RUN_STATUS_INVALID');
+    }
+    if (projection.issueStatus && !FEEDBACK_STATUSES.has(projection.issueStatus)) {
+        throw feedbackStorageError('FEEDBACK_RUN_STATUS_INVALID');
+    }
+    // §10.2: agent chatter and artifacts are public; phase noise stays internal.
+    const visibility =
+        callback.type === 'agent.message' ||
+        callback.type === 'agent.waiting_human' ||
+        callback.type === 'artifact.created' ||
+        callback.type === 'run.completed' ||
+        callback.type === 'run.failed'
+            ? 'public'
+            : 'internal';
+
+    // A waiting callback is only durable when the thing a person can answer is
+    // durable too. Prepare Design/HumanAction statements up front so D1.batch
+    // can roll the Event and projections back if any of them fails.
+    let preparedDesign = null;
+    let preparedAction = null;
+    if (callback.type === 'agent.waiting_human') {
+        if (pendingDesign) {
+            preparedDesign = await prepareFeedbackDesign(env, {
+                issueId: run.issue_id,
+                runId,
+                value: pendingDesign,
+            });
+        }
+        preparedAction = prepareFeedbackHumanAction(env, {
+            issueId: run.issue_id,
+            runId,
+            payload: callback.payload,
+            designId: preparedDesign?.designId || null,
+        });
+    }
+
+    const statements = [
+        env.FEEDBACK_DB.prepare(
+            `INSERT INTO feedback_events (
+                id, issue_id, sequence, type, actor_type, actor_id, visibility,
+                run_id, occurred_at, body_json, metadata_json, legacy_hash
+            )
+            SELECT
+                ?, id,
+                (SELECT COALESCE(MAX(sequence), 0) + 1
+                 FROM feedback_events WHERE issue_id = feedback_issues.id),
+                ?, 'agent', ?, ?, ?, ?, ?, ?, NULL
+            FROM feedback_issues
+            WHERE id = ?`
+        ).bind(
+            eventId,
+            callback.type,
+            run.provider,
+            visibility,
+            runId,
+            callback.occurredAt,
+            JSON.stringify({
+                text: limitText(callback.payload.summary || callback.payload.message, 12000),
+                artifact: callback.payload.artifact || null,
+                phase: callback.payload.phase || '',
+                errorCode: limitText(callback.payload.errorCode, 80),
+            }),
+            JSON.stringify({
+                callbackEventId: callback.eventId,
+                callbackSequence: callback.sequence,
+                providerRawStatus: callback.providerRawStatus,
+            }),
+            run.issue_id
+        ),
+    ];
+
+    if (projection.runStatus) {
+        // §20.1 counts a succeeded write Run with no change commit as an empty
+        // run, so the Run records the commits it actually produced.
+        statements.push(
+            env.FEEDBACK_DB.prepare(
+                `UPDATE feedback_runs
+                 SET status = ?, provider_session_id = COALESCE(?, provider_session_id),
+                     finished_at = CASE WHEN ? IN ('succeeded', 'failed', 'cancelled', 'timed_out')
+                                        THEN ? ELSE finished_at END,
+                     error_code = COALESCE(?, error_code),
+                     base_commit = COALESCE(?, base_commit),
+                     change_commit = COALESCE(?, change_commit)
+                 WHERE id = ?`
+            ).bind(
+                projection.runStatus,
+                callback.providerSessionId || null,
+                projection.runStatus,
+                callback.occurredAt,
+                limitText(callback.payload.errorCode, 80) || null,
+                limitText(completionManifest.baseCommit, 80) || null,
+                limitText(completionManifest.changeCommit, 80) || null,
+                runId
+            )
+        );
+    }
+    if (projection.issueStatus) {
+        statements.push(
+            env.FEEDBACK_DB.prepare(
+                `UPDATE feedback_issues
+                 SET status = ?, updated_at = ?, version = version + 1
+                 WHERE id = ?`
+            ).bind(projection.issueStatus, callback.occurredAt, run.issue_id)
+        );
+    }
+
+    if (preparedDesign) statements.push(...preparedDesign.statements);
+    if (preparedAction) statements.push(...preparedAction.statements);
+
+    try {
+        await env.FEEDBACK_DB.batch(statements);
+    } catch (error) {
+        const message = String(error?.message || error);
+        if (
+            message.includes('feedback_human_actions_one_active_issue_idx') ||
+            message.includes('active feedback_human_actions')
+        ) {
+            throw feedbackStorageError('FEEDBACK_HUMAN_ACTION_ALREADY_ACTIVE');
+        }
+        throw feedbackStorageError('FEEDBACK_CALLBACK_PERSIST_FAILED');
+    }
+
+    // §14.5: a write Run that produced a clean change set registers a
+    // Candidate; without one there is nothing an approval could point at.
+    let candidate = null;
+    let deliveryMode = run.delivery_mode || 'candidate_review';
+    let autoDelivery = null;
+    let routedHumanActionId = null;
+    if (
+        callback.type === 'run.completed' &&
+        gate?.allowed &&
+        FEEDBACK_WRITE_POLICIES.has(run.policy)
+    ) {
+        candidate = await registerFeedbackCandidate(env, {
+            issueId: run.issue_id,
+            runId,
+            workflowId: null,
+            manifest: callback.payload.diffManifest || callback.payload,
+            verification: callback.payload.verification || {},
+        });
+        if (candidate && run.delivery_mode === 'auto_deliver') {
+            const routed = await routeFeedbackAutoDeliveryCandidate(env, {
+                run,
+                candidate,
+                gate,
+                verification: callback.payload.verification || {},
+            });
+            deliveryMode = routed.deliveryMode;
+            autoDelivery = routed.autoDelivery;
+            routedHumanActionId = routed.autoDelivery?.humanActionId || null;
+        } else if (candidate && run.delivery_mode === 'candidate_review') {
+            routedHumanActionId = await markFeedbackCandidateForReview(env, {
+                run,
+                candidateId: candidate.candidateId,
+                reason: 'DELIVERY_MODE_REQUIRES_REVIEW',
+                recordSuppression: false,
+            });
+        }
+    }
+    if (callback.type === 'artifact.created' && callback.payload.artifact) {
+        await recordFeedbackArtifact(env, {
+            issueId: run.issue_id,
+            runId,
+            artifact: callback.payload.artifact,
+        });
+    }
+
+    const workflowNotification = await notifyFeedbackWorkflowRunResult(env, run, {
+        eventId,
+        callbackType: callback.type,
+    });
+
+    return {
+        eventId,
+        runStatus: projection.runStatus || run.status,
+        issueStatus: projection.issueStatus,
+        humanActionId: preparedAction?.actionId || routedHumanActionId,
+        designId: preparedDesign?.designId || null,
+        candidateId: candidate?.candidateId || null,
+        deliveryMode,
+        autoDelivery,
+        gate: gate ? { allowed: gate.allowed, violations: gate.violations } : null,
+        workflowNotification,
+    };
+}
+
+async function notifyFeedbackWorkflowRunResult(env, run, { eventId, callbackType }) {
+    if (
+        !['agent.waiting_human', 'run.completed', 'run.failed', 'run.cancelled'].includes(
+            callbackType
+        )
+    ) {
+        return null;
+    }
+    const instanceId = String(run.workflow_id || '');
+    if (!instanceId) {
+        return { instanceId: '', sent: false, error: 'WORKFLOW_INSTANCE_NOT_BOUND' };
+    }
+    if (!env.FEEDBACK_WORKFLOW) {
+        return { instanceId, sent: false, error: 'WORKFLOW_BINDING_NOT_CONFIGURED' };
+    }
+
+    const issue = await env.FEEDBACK_DB.prepare(
+        'SELECT active_workflow_id, last_run_id FROM feedback_issues WHERE id = ?'
+    )
+        .bind(run.issue_id)
+        .first();
+    if (issue?.active_workflow_id !== instanceId || issue?.last_run_id !== run.id) {
+        return { instanceId, sent: false, error: 'WORKFLOW_RUN_NOT_ACTIVE' };
+    }
+
+    const workflow = await env.FEEDBACK_DB.prepare(
+        'SELECT status, active_run_id FROM feedback_workflows WHERE instance_id = ?'
+    )
+        .bind(instanceId)
+        .first();
+    if (workflow?.status !== 'running' || workflow?.active_run_id !== run.id) {
+        return {
+            instanceId,
+            sent: false,
+            error: 'WORKFLOW_RUN_NOT_AWAITING_RESULT',
+        };
+    }
+
+    try {
+        const instance = await env.FEEDBACK_WORKFLOW.get(instanceId);
+        await instance.sendEvent({
+            type: FEEDBACK_WORKFLOW_RUN_RESULT_EVENT_TYPE,
+            payload: {
+                issueId: run.issue_id,
+                runId: run.id,
+                eventId,
+                callbackType,
+            },
+        });
+        return { instanceId, sent: true };
+    } catch (error) {
+        return {
+            instanceId,
+            sent: false,
+            error: 'WORKFLOW_RUN_RESULT_SEND_FAILED',
+            detail: limitText(error?.message, 500),
+        };
+    }
+}
+
+function normalizeFeedbackHumanActionType(value) {
+    const type = String(value || '');
+    if (type === 'confirm_design') return 'design_decision';
+    if (type === 'review_candidate') return 'review_required';
+    return FEEDBACK_HUMAN_ACTION_TYPES.has(type) ? type : 'need_reproduction';
+}
+
+function prepareFeedbackHumanAction(env, { issueId, runId, payload, designId = null }) {
+    const type = normalizeFeedbackHumanActionType(payload.actionType);
+    const allowed = FEEDBACK_HUMAN_ACTION_RETURN_STATES[type] || ['queued', 'closed'];
+    const actionId = `hac_${crypto.randomUUID()}`;
+
+    const statement = env.FEEDBACK_DB.prepare(
+        `INSERT INTO feedback_human_actions (
+            id, issue_id, workflow_id, run_id, candidate_id, design_id, type,
+            requested_action, evidence_json, allowed_return_states_json, status,
+            resolution_json, created_at, resolved_at
+        ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, 'active', NULL, ?, NULL)`
+    ).bind(
+        actionId,
+        issueId,
+        runId,
+        payload.candidateId || null,
+        designId,
+        type,
+        limitText(payload.requestedAction || payload.question, 2000) || '需要你补充信息',
+        JSON.stringify(Array.isArray(payload.evidence) ? payload.evidence : []),
+        JSON.stringify(allowed),
+        new Date().toISOString()
+    );
+
+    return {
+        actionId,
+        statements: [
+            statement,
+            env.FEEDBACK_DB.prepare(
+                'UPDATE feedback_issues SET active_human_action_id = ? WHERE id = ?'
+            ).bind(actionId, issueId),
+        ],
+    };
+}
+
+/**
+ * §14.5: every write Run that produced reviewable changes registers a
+ * Candidate. Identity is repository + commits + signed manifest — never a
+ * Runner worktree path, which disappears with the Runner (§9.3).
+ */
+async function registerFeedbackCandidate(
+    env,
+    { issueId, runId, workflowId, manifest, verification }
+) {
+    const repository =
+        limitText(manifest.repository, 200) || String(env.FEEDBACK_GITHUB_REPOSITORY || '');
+    if (!repository || !manifest.baseCommit || !manifest.changeCommit) return null;
+
+    const candidateId = `cnd_${crypto.randomUUID()}`;
+    const now = new Date().toISOString();
+    // §14.5: the server-owned Issue pointer names the Candidate being replaced;
+    // creation time is never an identity selector.
+    const issueState = await env.FEEDBACK_DB.prepare(
+        'SELECT active_candidate_id FROM feedback_issues WHERE id = ?'
+    )
+        .bind(issueId)
+        .first();
+    const parent = issueState?.active_candidate_id
+        ? await env.FEEDBACK_DB.prepare(
+              `SELECT id FROM feedback_candidates
+               WHERE id = ? AND issue_id = ? AND status NOT IN ('abandoned', 'integrated')`
+          )
+              .bind(issueState.active_candidate_id, issueId)
+              .first()
+        : null;
+
+    const inserted = await env.FEEDBACK_DB.prepare(
+        `INSERT INTO feedback_candidates (
+            id, issue_id, workflow_id, run_id, parent_candidate_id, repository,
+            base_ref, base_commit, candidate_ref, change_commit, changed_files_json,
+            diff_manifest_sha256, patch_artifact_id, verification_json,
+            evidence_artifact_ids_json, review_focus, candidate_worktree, status,
+            created_at, verified_at, approved_at, integrated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, '[]', ?, NULL,
+                  'verified', ?, ?, NULL, NULL)
+        ON CONFLICT(issue_id, repository, base_commit, change_commit) DO NOTHING
+        RETURNING id`
+    )
+        .bind(
+            candidateId,
+            issueId,
+            workflowId,
+            runId,
+            parent?.id || null,
+            repository,
+            limitText(manifest.baseRef, 200) || 'master',
+            manifest.baseCommit,
+            limitText(manifest.candidateRef, 200) || `feedback/${runId}`,
+            manifest.changeCommit,
+            JSON.stringify(Array.isArray(manifest.changedFiles) ? manifest.changedFiles : []),
+            limitText(manifest.diffManifestSha256, 100),
+            JSON.stringify(verification || {}),
+            limitText(manifest.reviewFocus, 500),
+            now,
+            now
+        )
+        .first();
+    if (!inserted) return null;
+
+    if (parent?.id) {
+        await env.FEEDBACK_DB.batch([
+            env.FEEDBACK_DB.prepare(
+                "UPDATE feedback_candidates SET status = 'abandoned' WHERE id = ?"
+            ).bind(parent.id),
+            env.FEEDBACK_DB.prepare(
+                `UPDATE feedback_human_actions
+                 SET status = 'resolved', resolved_at = ?
+                 WHERE candidate_id = ? AND status = 'active'`
+            ).bind(now, parent.id),
+        ]);
+    }
+    await env.FEEDBACK_DB.prepare('UPDATE feedback_issues SET active_candidate_id = ? WHERE id = ?')
+        .bind(candidateId, issueId)
+        .run();
+
+    return {
+        candidateId,
+        parentCandidateId: parent?.id || null,
+        repository,
+        changedFiles: Array.isArray(manifest.changedFiles) ? manifest.changedFiles : [],
+    };
+}
+
+function feedbackVerificationPassed(value) {
+    if (value === true || value === 'passed') return true;
+    return Boolean(value && typeof value === 'object' && value.passed === true);
+}
+
+/**
+ * §7.4 second decision point. The pre-Run route only decides whether a Run may
+ * attempt autonomous delivery. The resulting diff and fresh evidence can still
+ * force an exact Candidate review; the Agent cannot lower its own quality tier.
+ */
+function evaluateFeedbackAutoDeliveryEvidence({ gate, verification }) {
+    if (Number(gate.qualityTier) > 2) {
+        return { allowed: false, reason: 'QUALITY_TIER_REQUIRES_REVIEW' };
+    }
+    if (gate.requiresCandidateReview?.length) {
+        return { allowed: false, reason: 'PROTECTED_PATH_REQUIRES_REVIEW' };
+    }
+
+    const visualEvidence = verification.visualEvidence;
+    if (
+        (gate.visualEvidenceRequired || visualEvidence?.required === true) &&
+        visualEvidence?.present !== true
+    ) {
+        return { allowed: false, reason: 'VISUAL_EVIDENCE_REQUIRED' };
+    }
+    if (!feedbackVerificationPassed(verification.targetedTests)) {
+        return { allowed: false, reason: 'TARGETED_TEST_EVIDENCE_REQUIRED' };
+    }
+    if (!feedbackVerificationPassed(verification.build)) {
+        return { allowed: false, reason: 'BUILD_EVIDENCE_REQUIRED' };
+    }
+    if (
+        verification.playwright?.required === true &&
+        !feedbackVerificationPassed(verification.playwright)
+    ) {
+        return { allowed: false, reason: 'PLAYWRIGHT_EVIDENCE_REQUIRED' };
+    }
+    if (!gate.autoDeliverAllowed) {
+        return { allowed: false, reason: 'DIFF_GATE_REQUIRES_REVIEW' };
+    }
+    return { allowed: true, reason: '' };
+}
+
+async function markFeedbackCandidateForReview(
+    env,
+    { run, candidateId, reason, recordSuppression = true }
+) {
+    const now = new Date().toISOString();
+    const preparedAction = prepareFeedbackHumanAction(env, {
+        issueId: run.issue_id,
+        runId: run.id,
+        payload: {
+            actionType: 'review_required',
+            candidateId,
+            requestedAction: '请审核自动交付降级后的准确 Candidate，再决定是否进入交付。',
+            evidence: [{ reason, candidateId }],
+        },
+    });
+
+    await env.FEEDBACK_DB.batch([
+        ...preparedAction.statements,
+        env.FEEDBACK_DB.prepare(
+            "UPDATE feedback_candidates SET status = 'awaiting_review' WHERE id = ?"
+        ).bind(candidateId),
+        env.FEEDBACK_DB.prepare(
+            `UPDATE feedback_issues
+             SET status = 'needs_human', updated_at = ?, version = version + 1
+             WHERE id = ?`
+        ).bind(now, run.issue_id),
+    ]);
+
+    if (recordSuppression) {
+        await appendFeedbackSystemEvent(env, run.issue_id, {
+            type: 'automation.suppressed',
+            visibility: 'admin',
+            body: { reason, runId: run.id, candidateId, deliveryMode: 'candidate_review' },
+        });
+    }
+    return preparedAction.actionId;
+}
+
+async function dispatchFeedbackReleaseToGitHub(env, { release, candidate }) {
+    const repository = String(candidate.repository || env.FEEDBACK_GITHUB_REPOSITORY || '');
+    const token = String(env.FEEDBACK_GITHUB_TOKEN || '');
+    const callbackOrigin = String(env.FEEDBACK_CALLBACK_ORIGIN || '').replace(/\/$/, '');
+    if (!repository || !token || !callbackOrigin) {
+        return { dispatched: false, errorCode: 'GITHUB_RELEASE_DISPATCH_NOT_CONFIGURED' };
+    }
+
+    const ref = String(env.FEEDBACK_GITHUB_REF || 'master');
+    const url = `https://api.github.com/repos/${repository}/actions/workflows/${FEEDBACK_RELEASE_WORKFLOW_FILE}/dispatches`;
+    const payload = {
+        releaseId: release.releaseId,
+        issueId: release.issueId,
+        candidateId: release.candidateId,
+        repository,
+        baseRef: candidate.base_ref,
+        baseCommit: candidate.base_commit,
+        candidateRef: candidate.candidate_ref,
+        changeCommit: candidate.change_commit,
+        changedFiles: parseStoredJson(candidate.changed_files_json, []),
+        diffManifestSha256: candidate.diff_manifest_sha256,
+        deploymentRequired: release.deploymentRequired,
+        deploymentTarget: release.deploymentTarget,
+        productionOrigin: String(env.FEEDBACK_PRODUCTION_ORIGIN || '').replace(/\/$/, ''),
+        smokeUrls: Array.isArray(release.smokeUrls) ? release.smokeUrls : [],
+    };
+
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                Accept: 'application/vnd.github+json',
+                Authorization: `Bearer ${token}`,
+                'X-GitHub-Api-Version': '2022-11-28',
+                'Content-Type': 'application/json',
+                'User-Agent': 'gantt-feedback-workbench',
+            },
+            body: JSON.stringify({ ref, inputs: { payload: JSON.stringify(payload) } }),
+            signal: AbortSignal.timeout(FEEDBACK_HOOK_TIMEOUT_MS),
+        });
+        if (!response.ok) {
+            return {
+                dispatched: false,
+                errorCode: `GITHUB_HTTP_${response.status}`,
+                retryable: response.status === 429 || response.status >= 500,
+            };
+        }
+        return { dispatched: true, ref, workflowFile: FEEDBACK_RELEASE_WORKFLOW_FILE };
+    } catch (error) {
+        return {
+            dispatched: false,
+            errorCode: error?.name === 'TimeoutError' ? 'GITHUB_TIMEOUT' : 'GITHUB_UNREACHABLE',
+            retryable: true,
+        };
+    }
+}
+
+async function dispatchFeedbackCreatedRelease(env, { release, candidate, run }) {
+    const dispatch = await dispatchFeedbackReleaseToGitHub(env, {
+        release,
+        candidate,
+    });
+    if (!dispatch.dispatched) {
+        const failure = await recordFeedbackReleaseDispatchFailure(env, {
+            run,
+            candidateId: candidate.id,
+            releaseId: release.releaseId,
+            dispatch,
+        });
+        const retryWorkflow =
+            failure.resumable && failure.attemptCount === 1
+                ? await scheduleFeedbackReleaseRetryWorkflow(env, release.releaseId)
+                : null;
+        return {
+            dispatched: false,
+            reason: dispatch.errorCode,
+            retryable: Boolean(dispatch.retryable),
+            resumable: failure.resumable,
+            releaseId: release.releaseId,
+            humanActionId: failure.humanActionId,
+            retryWorkflow,
+        };
+    }
+
+    await env.FEEDBACK_DB.prepare('UPDATE feedback_releases SET error_code = NULL WHERE id = ?')
+        .bind(release.releaseId)
+        .run();
+    return {
+        dispatched: true,
+        releaseId: release.releaseId,
+        workflowFile: dispatch.workflowFile,
+    };
+}
+
+async function scheduleFeedbackReleaseRetryWorkflow(env, releaseId) {
+    if (!env.FEEDBACK_WORKFLOW) {
+        return { scheduled: false, reason: 'WORKFLOW_BINDING_NOT_CONFIGURED' };
+    }
+
+    const instanceId = `feedback-release-retry-${releaseId}`;
+    try {
+        await env.FEEDBACK_WORKFLOW.create({
+            id: instanceId,
+            params: { releaseId },
+        });
+        return { scheduled: true, instanceId };
+    } catch (error) {
+        return {
+            scheduled: false,
+            instanceId,
+            reason: limitText(error?.message || error, 160) || 'WORKFLOW_CREATE_FAILED',
+        };
+    }
+}
+
+async function resumeFeedbackReleaseDispatchById(env, releaseId) {
+    const releaseRow = await env.FEEDBACK_DB.prepare(
+        `SELECT * FROM feedback_releases
+         WHERE id = ? AND status IN ('integrating', 'merged', 'deploying', 'smoke_testing')`
+    )
+        .bind(releaseId)
+        .first();
+    if (!releaseRow) return { dispatched: false, resumable: false, reason: 'RELEASE_NOT_ACTIVE' };
+
+    const candidate = await env.FEEDBACK_DB.prepare(
+        'SELECT * FROM feedback_candidates WHERE id = ?'
+    )
+        .bind(releaseRow.candidate_id)
+        .first();
+    if (!candidate) {
+        return { dispatched: false, resumable: false, reason: 'CANDIDATE_NOT_FOUND' };
+    }
+    const run = candidate.run_id
+        ? await env.FEEDBACK_DB.prepare('SELECT * FROM feedback_runs WHERE id = ?')
+              .bind(candidate.run_id)
+              .first()
+        : null;
+
+    return dispatchFeedbackCreatedRelease(env, {
+        release: feedbackReleaseFromRow(releaseRow),
+        candidate,
+        run: run || { id: '', issue_id: releaseRow.issue_id },
+    });
+}
+
+async function recordFeedbackReleaseDispatchFailure(
+    env,
+    { run, candidateId, releaseId, dispatch }
+) {
+    const now = new Date().toISOString();
+    const reason = dispatch.errorCode || 'GITHUB_RELEASE_DISPATCH_FAILED';
+    const release = await env.FEEDBACK_DB.prepare(
+        'SELECT verification_json FROM feedback_releases WHERE id = ?'
+    )
+        .bind(releaseId)
+        .first();
+    const verification = parseStoredJson(release?.verification_json, {});
+    const attemptCount = (Number(verification._dispatch?.attemptCount) || 0) + 1;
+    const exhausted = Boolean(dispatch.retryable) && attemptCount >= FEEDBACK_DELIVERY_MAX_ATTEMPTS;
+    const retryDelayMs = FEEDBACK_DELIVERY_RETRY_DELAYS_MS[attemptCount - 1] || 0;
+    const nextAttemptAt =
+        dispatch.retryable && !exhausted && retryDelayMs
+            ? new Date(new Date(now).getTime() + retryDelayMs).toISOString()
+            : null;
+    verification._dispatch = {
+        attemptCount,
+        maxAttempts: FEEDBACK_DELIVERY_MAX_ATTEMPTS,
+        lastAttemptAt: now,
+        nextAttemptAt,
+        lastError: reason,
+        exhausted,
+    };
+
+    if (dispatch.retryable && !exhausted) {
+        await env.FEEDBACK_DB.prepare(
+            'UPDATE feedback_releases SET error_code = ?, verification_json = ? WHERE id = ?'
+        )
+            .bind(reason, JSON.stringify(verification), releaseId)
+            .run();
+        await appendFeedbackSystemEvent(env, run.issue_id, {
+            type: 'automation.suppressed',
+            visibility: 'admin',
+            body: {
+                reason,
+                runId: run.id,
+                candidateId,
+                releaseId,
+                retryable: true,
+                attemptCount,
+                maxAttempts: FEEDBACK_DELIVERY_MAX_ATTEMPTS,
+            },
+        });
+        return { humanActionId: null, resumable: true, attemptCount, nextAttemptAt };
+    }
+
+    const preparedAction = prepareFeedbackHumanAction(env, {
+        issueId: run.issue_id,
+        runId: run.id,
+        payload: {
+            actionType: 'blocked_external',
+            candidateId,
+            requestedAction: 'Release 未能派发到 GitHub，请修复外部连接后重试。',
+            evidence: [
+                {
+                    reason,
+                    retryable: Boolean(dispatch.retryable),
+                    releaseId,
+                    attemptCount,
+                    maxAttempts: FEEDBACK_DELIVERY_MAX_ATTEMPTS,
+                    exhausted,
+                },
+            ],
+        },
+    });
+
+    await env.FEEDBACK_DB.batch([
+        ...preparedAction.statements,
+        env.FEEDBACK_DB.prepare(
+            "UPDATE feedback_candidates SET status = 'failed' WHERE id = ?"
+        ).bind(candidateId),
+        env.FEEDBACK_DB.prepare(
+            `UPDATE feedback_releases
+             SET status = 'failed', finished_at = ?, error_code = ?, verification_json = ?
+             WHERE id = ?`
+        ).bind(now, reason, JSON.stringify(verification), releaseId),
+        env.FEEDBACK_DB.prepare(
+            `UPDATE feedback_issues
+             SET status = 'needs_human', updated_at = ?, version = version + 1
+             WHERE id = ?`
+        ).bind(now, run.issue_id),
+    ]);
+
+    await appendFeedbackSystemEvent(env, run.issue_id, {
+        type: 'automation.suppressed',
+        visibility: 'admin',
+        body: {
+            reason,
+            runId: run.id,
+            candidateId,
+            releaseId,
+            retryable: Boolean(dispatch.retryable),
+            attemptCount,
+            maxAttempts: FEEDBACK_DELIVERY_MAX_ATTEMPTS,
+            exhausted,
+        },
+    });
+    return { humanActionId: preparedAction.actionId, resumable: false };
+}
+
+function isRetryableFeedbackReleaseDispatchError(errorCode) {
+    return (
+        errorCode === 'default_branch_drift' ||
+        errorCode === 'GITHUB_TIMEOUT' ||
+        errorCode === 'GITHUB_UNREACHABLE' ||
+        errorCode === 'GITHUB_HTTP_429' ||
+        /^GITHUB_HTTP_5\d\d$/.test(String(errorCode || ''))
+    );
+}
+
+function feedbackReleaseFromRow(row) {
+    return {
+        releaseId: row.id,
+        candidateId: row.candidate_id,
+        issueId: row.issue_id,
+        deploymentRequired: Number(row.deployment_required) === 1,
+        deploymentTarget: row.deployment_target || null,
+        smokeUrls: parseStoredJson(row.smoke_urls_json, []),
+    };
+}
+
+async function resumeFeedbackAutoDeliveryCandidate(env, { run, candidate }) {
+    let releaseRow = await env.FEEDBACK_DB.prepare(
+        `SELECT * FROM feedback_releases
+         WHERE candidate_id = ? ORDER BY started_at DESC LIMIT 1`
+    )
+        .bind(candidate.id || candidate.candidateId)
+        .first();
+    let release;
+
+    if (!releaseRow) {
+        try {
+            release = await deliverFeedbackCandidate(env, candidate.id || candidate.candidateId, {
+                actorType: 'system',
+            });
+        } catch (error) {
+            if (error?.code === 'FEEDBACK_DELIVERY_LOCK_HELD') {
+                return {
+                    dispatched: false,
+                    queued: true,
+                    resumable: true,
+                    reason: error.code,
+                };
+            }
+            throw error;
+        }
+        releaseRow = await env.FEEDBACK_DB.prepare('SELECT * FROM feedback_releases WHERE id = ?')
+            .bind(release.releaseId)
+            .first();
+    } else {
+        if (!releaseRow.error_code) {
+            return {
+                dispatched: true,
+                alreadyDispatched: true,
+                releaseId: releaseRow.id,
+                workflowFile: FEEDBACK_RELEASE_WORKFLOW_FILE,
+            };
+        }
+        if (!isRetryableFeedbackReleaseDispatchError(releaseRow.error_code)) {
+            return {
+                dispatched: false,
+                resumable: false,
+                reason: releaseRow.error_code,
+                releaseId: releaseRow.id,
+            };
+        }
+        release = {
+            ...feedbackReleaseFromRow(releaseRow),
+            releaseToken: await createFeedbackReleaseToken(env, releaseRow.id),
+        };
+    }
+
+    const candidateRow = await env.FEEDBACK_DB.prepare(
+        'SELECT * FROM feedback_candidates WHERE id = ?'
+    )
+        .bind(candidate.id || candidate.candidateId)
+        .first();
+    return dispatchFeedbackCreatedRelease(env, {
+        release,
+        candidate: candidateRow,
+        run,
+    });
+}
+
+async function retryBlockedFeedbackRelease(env, releaseId) {
+    if (!env.FEEDBACK_DB) throw feedbackStorageError('FEEDBACK_DB_REQUIRED');
+
+    const release = await env.FEEDBACK_DB.prepare('SELECT * FROM feedback_releases WHERE id = ?')
+        .bind(releaseId)
+        .first();
+    if (!release) return null;
+    if (
+        !FEEDBACK_RELEASE_ACTIVE_STATUSES.has(release.status) ||
+        release.error_code !== 'blocked_external'
+    ) {
+        throw feedbackStorageError('FEEDBACK_RELEASE_RETRY_NOT_ALLOWED');
+    }
+
+    const candidate = await env.FEEDBACK_DB.prepare(
+        'SELECT * FROM feedback_candidates WHERE id = ?'
+    )
+        .bind(release.candidate_id)
+        .first();
+    if (!candidate || candidate.status !== 'integrating') {
+        throw feedbackStorageError('FEEDBACK_RELEASE_RETRY_NOT_ALLOWED');
+    }
+    const activeAction = await env.FEEDBACK_DB.prepare(
+        `SELECT * FROM feedback_human_actions
+         WHERE issue_id = ? AND status = 'active'
+         ORDER BY created_at DESC LIMIT 1`
+    )
+        .bind(release.issue_id)
+        .first();
+    if (
+        !activeAction ||
+        activeAction.type !== 'blocked_external' ||
+        activeAction.candidate_id !== candidate.id
+    ) {
+        throw feedbackStorageError('FEEDBACK_RELEASE_RETRY_NOT_ALLOWED');
+    }
+
+    const run = candidate.run_id
+        ? await env.FEEDBACK_DB.prepare('SELECT * FROM feedback_runs WHERE id = ?')
+              .bind(candidate.run_id)
+              .first()
+        : null;
+    const now = new Date().toISOString();
+    await env.FEEDBACK_DB.batch([
+        env.FEEDBACK_DB.prepare(
+            `UPDATE feedback_human_actions
+             SET status = 'resolved', resolved_at = ?
+             WHERE candidate_id = ? AND status = 'active'`
+        ).bind(now, candidate.id),
+        env.FEEDBACK_DB.prepare(
+            `UPDATE feedback_issues
+             SET status = 'testing', active_human_action_id = NULL,
+                 updated_at = ?, version = version + 1
+             WHERE id = ?`
+        ).bind(now, release.issue_id),
+    ]);
+
+    const dispatch = await dispatchFeedbackCreatedRelease(env, {
+        release: feedbackReleaseFromRow(release),
+        candidate,
+        run: run || { id: '', issue_id: release.issue_id },
+    });
+    return { ...dispatch, candidateId: candidate.id };
+}
+
+async function routeFeedbackAutoDeliveryCandidate(env, { run, candidate, gate, verification }) {
+    const assessment = evaluateFeedbackAutoDeliveryEvidence({ gate, verification });
+    if (!assessment.allowed) {
+        const humanActionId = await markFeedbackCandidateForReview(env, {
+            run,
+            candidateId: candidate.candidateId,
+            reason: assessment.reason,
+        });
+        return {
+            deliveryMode: 'candidate_review',
+            autoDelivery: {
+                dispatched: false,
+                reason: assessment.reason,
+                humanActionId,
+            },
+        };
+    }
+
+    const deployment = resolveFeedbackDeploymentRequirement(candidate.changedFiles || []);
+    if (deployment.supported === false) {
+        const reason = 'FEEDBACK_MULTIPLE_DEPLOYMENT_TARGETS';
+        const humanActionId = await markFeedbackCandidateForReview(env, {
+            run,
+            candidateId: candidate.candidateId,
+            reason,
+        });
+        return {
+            deliveryMode: 'candidate_review',
+            autoDelivery: {
+                dispatched: false,
+                reason,
+                humanActionId,
+            },
+        };
+    }
+
+    const approvedAt = new Date().toISOString();
+    await env.FEEDBACK_DB.batch([
+        env.FEEDBACK_DB.prepare(
+            "UPDATE feedback_candidates SET status = 'approved', approved_at = ? WHERE id = ?"
+        ).bind(approvedAt, candidate.candidateId),
+        env.FEEDBACK_DB.prepare(
+            `UPDATE feedback_issues
+             SET status = 'ready_for_deploy', updated_at = ?, version = version + 1
+             WHERE id = ?`
+        ).bind(approvedAt, run.issue_id),
+    ]);
+
+    return {
+        deliveryMode: 'auto_deliver',
+        autoDelivery: await resumeFeedbackAutoDeliveryCandidate(env, {
+            run,
+            candidate: { id: candidate.candidateId },
+        }),
+    };
+}
+
+function serializeFeedbackCandidate(row, { includeTechnical }) {
+    const base = {
+        id: row.id,
+        issueId: row.issue_id,
+        runId: row.run_id || '',
+        parentCandidateId: row.parent_candidate_id || '',
+        status: row.status,
+        // §19.2: review leads with product effect and changed surface; branch
+        // and commit belong under technical detail.
+        changedFiles: parseStoredJson(row.changed_files_json, []),
+        verification: parseStoredJson(row.verification_json, {}),
+        reviewFocus: row.review_focus || '',
+        createdAt: row.created_at,
+        verifiedAt: row.verified_at || '',
+        approvedAt: row.approved_at || '',
+        integratedAt: row.integrated_at || '',
+    };
+    if (!includeTechnical) return base;
+
+    return {
+        ...base,
+        technical: {
+            repository: row.repository,
+            baseRef: row.base_ref,
+            baseCommit: row.base_commit,
+            candidateRef: row.candidate_ref,
+            changeCommit: row.change_commit,
+            diffManifestSha256: row.diff_manifest_sha256,
+        },
+    };
+}
+
+/**
+ * §19.2: `ready_for_deploy`/`testing` must show the exact candidateId,
+ * integration commit, deployment target and smoke progress — so the stage the
+ * Release is actually at is visible instead of a premature "已解决".
+ */
+function serializeFeedbackRelease(row) {
+    const stages = parseStoredJson(row.verification_json, {});
+    const reported = Object.keys(stages).filter((stage) => !stage.startsWith('_'));
+    const required = [...FEEDBACK_RELEASE_REQUIRED_STAGES];
+    if (Number(row.deployment_required) === 1) required.push(...FEEDBACK_RELEASE_DEPLOY_STAGES);
+
+    return {
+        id: row.id,
+        issueId: row.issue_id,
+        candidateId: row.candidate_id,
+        status: row.status,
+        repository: row.repository,
+        integrationCommit: row.integration_commit || '',
+        deploymentRequired: Number(row.deployment_required) === 1,
+        deploymentTarget: row.deployment_target || '',
+        deployedCommit: row.deployed_commit || '',
+        smokeUrls: parseStoredJson(row.smoke_urls_json, []),
+        smokeResult: parseStoredJson(row.smoke_result_json, {}),
+        stages: required.map((stage) => ({ stage, done: Boolean(stages[stage]) })),
+        remainingStages: required.filter((stage) => !stages[stage]),
+        reportedStages: reported,
+        startedAt: row.started_at,
+        mergedAt: row.merged_at || '',
+        deployedAt: row.deployed_at || '',
+        finishedAt: row.finished_at || '',
+        errorCode: row.error_code || '',
+    };
+}
+
+/**
+ * §21.4/§14.6 step 1: approving a Candidate creates the Release and takes the
+ * repository-level delivery lock, so two Issues cannot rewrite the default
+ * branch at the same time. The Release token is only minted here, after the
+ * exact candidateId has been verified as approved.
+ */
+async function deliverFeedbackCandidate(env, candidateId, { actorType }) {
+    if (!env.FEEDBACK_DB) {
+        throw feedbackStorageError('FEEDBACK_DB_REQUIRED');
+    }
+
+    const candidate = await env.FEEDBACK_DB.prepare(
+        'SELECT * FROM feedback_candidates WHERE id = ?'
+    )
+        .bind(candidateId)
+        .first();
+    if (!candidate) return null;
+    if (candidate.status === 'abandoned') {
+        throw feedbackStorageError('FEEDBACK_CANDIDATE_ABANDONED');
+    }
+    if (candidate.status !== 'approved') {
+        throw feedbackStorageError('FEEDBACK_CANDIDATE_NOT_APPROVED');
+    }
+
+    const issue = await env.FEEDBACK_DB.prepare('SELECT status FROM feedback_issues WHERE id = ?')
+        .bind(candidate.issue_id)
+        .first();
+    if (issue?.status !== 'ready_for_deploy') {
+        throw feedbackStorageError('FEEDBACK_ISSUE_NOT_READY_FOR_DEPLOY');
+    }
+
+    const remoteDefaultBranch = String(env.FEEDBACK_GITHUB_REF || 'master');
+    const active = await env.FEEDBACK_DB.prepare(
+        `SELECT id FROM feedback_releases
+         WHERE repository = ? AND remote_default_branch = ?
+           AND status IN ('integrating', 'merged', 'deploying', 'smoke_testing')`
+    )
+        .bind(candidate.repository, remoteDefaultBranch)
+        .first();
+    if (active) {
+        // §14.6 step 6: Candidates are serialized by the lock, not rejected.
+        throw feedbackStorageError('FEEDBACK_DELIVERY_LOCK_HELD');
+    }
+
+    const releaseId = `rel_${crypto.randomUUID()}`;
+    const now = new Date().toISOString();
+    const changedFiles = parseStoredJson(candidate.changed_files_json, []);
+    const deployment = resolveFeedbackDeploymentRequirement(changedFiles);
+    if (deployment.supported === false) {
+        const preparedAction = prepareFeedbackHumanAction(env, {
+            issueId: candidate.issue_id,
+            runId: candidate.run_id,
+            payload: {
+                actionType: 'review_required',
+                candidateId,
+                requestedAction:
+                    '该 Candidate 同时涉及 Worker 与 Pages，请拆分为可独立验证的交付后重新审核。',
+                evidence: [
+                    {
+                        reason: 'FEEDBACK_MULTIPLE_DEPLOYMENT_TARGETS',
+                        candidateId,
+                        changedFiles,
+                    },
+                ],
+            },
+        });
+        await env.FEEDBACK_DB.batch([
+            ...preparedAction.statements,
+            env.FEEDBACK_DB.prepare(
+                "UPDATE feedback_candidates SET status = 'awaiting_review' WHERE id = ?"
+            ).bind(candidateId),
+            env.FEEDBACK_DB.prepare(
+                `UPDATE feedback_issues
+                 SET status = 'needs_human', updated_at = ?, version = version + 1
+                 WHERE id = ?`
+            ).bind(now, candidate.issue_id),
+        ]);
+        await appendFeedbackSystemEvent(env, candidate.issue_id, {
+            type: 'automation.suppressed',
+            visibility: 'admin',
+            body: {
+                reason: 'FEEDBACK_MULTIPLE_DEPLOYMENT_TARGETS',
+                candidateId,
+                humanActionId: preparedAction.actionId,
+            },
+        });
+        throw feedbackStorageError('FEEDBACK_MULTIPLE_DEPLOYMENT_TARGETS');
+    }
+
+    await env.FEEDBACK_DB.batch([
+        env.FEEDBACK_DB.prepare(
+            `INSERT INTO feedback_releases (
+                id, issue_id, candidate_id, workflow_id, repository, status,
+                integration_strategy, integration_commit, remote_default_branch,
+                deployment_required, deployment_target, deployment_id, deployed_commit,
+                verification_json, artifact_hashes_json, smoke_urls_json, smoke_result_json,
+                started_at, merged_at, deployed_at, finished_at, error_code
+            ) VALUES (?, ?, ?, ?, ?, 'integrating', 'rebase', NULL, ?, ?, ?, NULL, NULL,
+                      '{}', '{}', ?, '{}', ?, NULL, NULL, NULL, NULL)`
+        ).bind(
+            releaseId,
+            candidate.issue_id,
+            candidateId,
+            candidate.workflow_id,
+            candidate.repository,
+            remoteDefaultBranch,
+            deployment.required ? 1 : 0,
+            deployment.target,
+            JSON.stringify(deployment.smokeUrls),
+            now
+        ),
+        env.FEEDBACK_DB.prepare(
+            "UPDATE feedback_candidates SET status = 'integrating' WHERE id = ?"
+        ).bind(candidateId),
+        env.FEEDBACK_DB.prepare(
+            `UPDATE feedback_issues
+             SET status = 'testing', active_release_id = ?, updated_at = ?, version = version + 1
+             WHERE id = ?`
+        ).bind(releaseId, now, candidate.issue_id),
+    ]);
+
+    await appendFeedbackSystemEvent(env, candidate.issue_id, {
+        type: 'status.changed',
+        visibility: 'public',
+        body: {
+            changes: { status: ['ready_for_deploy', 'testing'] },
+            candidateId,
+            releaseId,
+            actorType,
+        },
+    });
+
+    const releaseToken = await createFeedbackReleaseToken(env, releaseId);
+    return {
+        releaseId,
+        candidateId,
+        issueId: candidate.issue_id,
+        deploymentRequired: deployment.required,
+        deploymentTarget: deployment.target,
+        smokeUrls: deployment.smokeUrls,
+        releaseToken,
+    };
+}
+
+/**
+ * §14.7: what has to be deployed follows the changed surface, so a docs-only
+ * fix is not forced through a Worker deploy it does not need.
+ */
+function resolveFeedbackDeploymentRequirement(changedFiles) {
+    const files = changedFiles.map((file) => String(file || ''));
+    const touchesWorker = files.some(
+        (file) => file.startsWith('workers/') || file.startsWith('wrangler.')
+    );
+    const touchesFrontend = files.some(
+        (file) =>
+            file.startsWith('src/') || file.startsWith('index.html') || file.startsWith('vite.')
+    );
+    const onlyTestsOrDocs = files.every(
+        (file) => file.startsWith('tests/') || file.startsWith('doc/') || file.endsWith('.md')
+    );
+
+    if (onlyTestsOrDocs && files.length) {
+        return { required: false, target: null, smokeUrls: [], reason: 'tests_or_docs_only' };
+    }
+    if (touchesWorker && touchesFrontend) {
+        return {
+            required: true,
+            target: null,
+            smokeUrls: [],
+            reason: 'multiple_deployment_targets',
+            supported: false,
+        };
+    }
+    if (touchesWorker) {
+        return {
+            required: true,
+            target: 'worker',
+            smokeUrls: ['/feedback', '/api/feedback/issues'],
+            reason: 'worker_surface_changed',
+        };
+    }
+    if (touchesFrontend) {
+        return {
+            required: true,
+            target: 'pages',
+            smokeUrls: ['/'],
+            reason: 'frontend_surface_changed',
+        };
+    }
+    return { required: false, target: null, smokeUrls: [], reason: 'no_deployable_surface' };
+}
+
+async function createFeedbackReleaseToken(env, releaseId) {
+    const expiresAt = Date.now() + FEEDBACK_RUN_TOKEN_TTL_SECONDS * 1000;
+    const payload = base64UrlEncode(JSON.stringify({ aud: 'release', releaseId, exp: expiresAt }));
+    const signature = await signValue(payload, getFeedbackReleaseTokenSecret(env));
+
+    return { token: `${payload}.${signature}`, expiresAt: new Date(expiresAt).toISOString() };
+}
+
+async function verifyFeedbackReleaseToken(request, env, releaseId) {
+    const token = getBearerToken(request);
+    if (!token) return null;
+
+    const [payload, signature] = token.split('.');
+    if (!payload || !signature) return null;
+    const expected = await signValue(payload, getFeedbackReleaseTokenSecret(env));
+    if (!feedbackHashesMatch(expected, signature)) return null;
+
+    try {
+        const parsed = JSON.parse(base64UrlDecode(payload));
+        if (parsed.aud !== 'release' || parsed.releaseId !== releaseId) return null;
+        if (!(Number(parsed.exp) > Date.now())) return null;
+        return parsed;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * §15.4: appends a Release event. Only a `release.completed` whose commits are
+ * consistent and whose required stages have all reported can resolve the Issue
+ * (§14.7) — a Run succeeding is never enough.
+ */
+async function appendFeedbackReleaseEvent(env, releaseId, body) {
+    if (!env.FEEDBACK_DB) {
+        throw feedbackStorageError('FEEDBACK_DB_REQUIRED');
+    }
+
+    const type = String(body?.type || '');
+    if (!FEEDBACK_RELEASE_EVENT_TYPES.has(type)) {
+        throw feedbackStorageError('FEEDBACK_RELEASE_TYPE_UNSUPPORTED');
+    }
+    const eventId = limitText(body.eventId, 120);
+    if (!eventId) throw feedbackStorageError('FEEDBACK_CALLBACK_EVENT_ID_REQUIRED');
+
+    const release = await env.FEEDBACK_DB.prepare('SELECT * FROM feedback_releases WHERE id = ?')
+        .bind(releaseId)
+        .first();
+    if (!release) return null;
+    const timelineId = `evt_rel_${releaseId}_${eventId}`;
+    const existing = await env.FEEDBACK_DB.prepare('SELECT id FROM feedback_events WHERE id = ?')
+        .bind(timelineId)
+        .first();
+    if (existing) return { duplicate: true, eventId: timelineId, status: release.status };
+    if (!FEEDBACK_RELEASE_ACTIVE_STATUSES.has(release.status)) {
+        throw feedbackStorageError('FEEDBACK_RELEASE_ALREADY_TERMINAL');
+    }
+
+    const payload = body.payload && typeof body.payload === 'object' ? body.payload : {};
+    if (!payload.candidateId || payload.candidateId !== release.candidate_id) {
+        throw feedbackStorageError('FEEDBACK_CANDIDATE_ID_MISMATCH');
+    }
+    if (type === 'integration.started') {
+        const candidate = await env.FEEDBACK_DB.prepare(
+            'SELECT * FROM feedback_candidates WHERE id = ?'
+        )
+            .bind(release.candidate_id)
+            .first();
+        if (!candidate) throw feedbackStorageError('FEEDBACK_RELEASE_IDENTITY_MISMATCH');
+
+        const expectedIdentity = {
+            repository: candidate.repository,
+            baseRef: candidate.base_ref,
+            baseCommit: candidate.base_commit,
+            candidateRef: candidate.candidate_ref,
+            changeCommit: candidate.change_commit,
+            diffManifestSha256: candidate.diff_manifest_sha256,
+            deploymentRequired: Number(release.deployment_required) === 1,
+            deploymentTarget: release.deployment_target || '',
+        };
+        const identityMismatch = Object.entries(expectedIdentity).some(
+            ([key, expected]) => payload[key] !== expected
+        );
+        if (identityMismatch) {
+            throw feedbackStorageError('FEEDBACK_RELEASE_IDENTITY_MISMATCH');
+        }
+    }
+
+    const stages = parseStoredJson(release.verification_json, {});
+    stages[type] = { at: new Date().toISOString(), ...payload };
+    const integrationCommit = payload.integrationCommit || release.integration_commit || null;
+    const retryableReleaseFailure =
+        type === 'release.failed' && payload.errorCode === 'default_branch_drift';
+    const blockedExternalFailure =
+        type === 'release.failed' && payload.errorCode === 'blocked_external';
+    const reviewRequiredFailure =
+        type === 'release.failed' && payload.errorCode === 'review_required';
+    const resumableReleaseFailure = retryableReleaseFailure || blockedExternalFailure;
+
+    if (type === 'release.completed') {
+        const check = verifyFeedbackReleaseCompletion({
+            release,
+            stages,
+            payload,
+            integrationCommit,
+        });
+        if (!check.allowed) {
+            throw feedbackStorageError(check.errorCode);
+        }
+    }
+    if (
+        payload.deployedCommit &&
+        integrationCommit &&
+        payload.deployedCommit !== integrationCommit
+    ) {
+        // §14.7: deploying anything other than the merged commit is a hard stop.
+        throw feedbackStorageError('FEEDBACK_DEPLOYED_COMMIT_MISMATCH');
+    }
+
+    const nextStatus = resumableReleaseFailure
+        ? release.status
+        : resolveFeedbackReleaseStatus(type, release.status);
+    const now = new Date().toISOString();
+    const issueState =
+        type === 'release.completed'
+            ? await env.FEEDBACK_DB.prepare(
+                  'SELECT active_workflow_id FROM feedback_issues WHERE id = ?'
+              )
+                  .bind(release.issue_id)
+                  .first()
+            : null;
+    const activeWorkflowId = issueState?.active_workflow_id || '';
+    const failureAction =
+        blockedExternalFailure || reviewRequiredFailure
+            ? prepareFeedbackHumanAction(env, {
+                  issueId: release.issue_id,
+                  runId: null,
+                  payload: {
+                      actionType: blockedExternalFailure ? 'blocked_external' : 'review_required',
+                      candidateId: release.candidate_id,
+                      requestedAction: blockedExternalFailure
+                          ? 'Release 被外部凭据或部署连接阻断，请修复连接后重新排队。'
+                          : 'Candidate 无法安全集成到当前基线，请审核准确候选和冲突证据。',
+                      evidence: [
+                          {
+                              releaseId,
+                              candidateId: release.candidate_id,
+                              errorCode: payload.errorCode,
+                          },
+                      ],
+                  },
+              })
+            : null;
+    const statements = [
+        env.FEEDBACK_DB.prepare(
+            `UPDATE feedback_releases
+             SET status = ?, verification_json = ?, integration_commit = COALESCE(?, integration_commit),
+                 deployed_commit = COALESCE(?, deployed_commit),
+                 deployment_id = COALESCE(?, deployment_id),
+                 smoke_result_json = ?,
+                 merged_at = COALESCE(?, merged_at), deployed_at = COALESCE(?, deployed_at),
+                 finished_at = COALESCE(?, finished_at), error_code = COALESCE(?, error_code)
+             WHERE id = ?`
+        ).bind(
+            nextStatus,
+            JSON.stringify(stages),
+            integrationCommit,
+            payload.deployedCommit || null,
+            payload.deploymentId || null,
+            JSON.stringify(stages['smoke.completed'] || {}),
+            type === 'integration.merged' ? now : null,
+            type === 'deployment.completed' ? now : null,
+            type === 'release.completed' || (type === 'release.failed' && !resumableReleaseFailure)
+                ? now
+                : null,
+            type === 'release.failed' ? limitText(payload.errorCode, 80) || 'release_failed' : null,
+            releaseId
+        ),
+    ];
+
+    // §14.7: the resolution summary is public; command output stays internal.
+    statements.push(
+        env.FEEDBACK_DB.prepare(
+            `INSERT INTO feedback_events (
+                id, issue_id, sequence, type, actor_type, actor_id, visibility,
+                run_id, occurred_at, body_json, metadata_json, legacy_hash
+            )
+            SELECT
+                ?, id,
+                (SELECT COALESCE(MAX(sequence), 0) + 1
+                 FROM feedback_events WHERE issue_id = feedback_issues.id),
+                ?, 'system', NULL, ?, NULL, ?, ?, '{}', NULL
+            FROM feedback_issues
+            WHERE id = ?`
+        ).bind(
+            timelineId,
+            type,
+            type === 'release.completed' || type === 'release.failed' ? 'public' : 'internal',
+            now,
+            JSON.stringify({
+                releaseId,
+                candidateId: release.candidate_id,
+                integrationCommit,
+                deployedCommit: payload.deployedCommit || null,
+                text: limitText(payload.summary, 4000),
+            }),
+            release.issue_id
+        )
+    );
+
+    if (type === 'release.completed') {
+        statements.push(
+            env.FEEDBACK_DB.prepare(
+                "UPDATE feedback_candidates SET status = 'integrated', integrated_at = ? WHERE id = ?"
+            ).bind(now, release.candidate_id)
+        );
+        statements.push(
+            prepareFeedbackTerminalWorkflowStatement(env, {
+                instanceId: activeWorkflowId,
+                occurredAt: now,
+                reason: 'issue_resolved',
+            })
+        );
+        statements.push(
+            env.FEEDBACK_DB.prepare(
+                `UPDATE feedback_issues
+                 SET status = 'resolved', active_workflow_id = NULL,
+                     resolved_at = ?, updated_at = ?, version = version + 1
+                 WHERE id = ?`
+            ).bind(now, now, release.issue_id)
+        );
+    }
+    if (type === 'release.failed' && !resumableReleaseFailure) {
+        statements.push(
+            env.FEEDBACK_DB.prepare('UPDATE feedback_candidates SET status = ? WHERE id = ?').bind(
+                reviewRequiredFailure ? 'awaiting_review' : 'failed',
+                release.candidate_id
+            )
+        );
+        if (!reviewRequiredFailure) {
+            statements.push(
+                env.FEEDBACK_DB.prepare(
+                    `UPDATE feedback_issues
+                     SET status = 'test_failed', updated_at = ?, version = version + 1
+                     WHERE id = ?`
+                ).bind(now, release.issue_id)
+            );
+        }
+    }
+    if (blockedExternalFailure || reviewRequiredFailure) {
+        statements.push(...failureAction.statements);
+        statements.push(
+            env.FEEDBACK_DB.prepare(
+                `UPDATE feedback_issues
+                 SET status = 'needs_human', updated_at = ?, version = version + 1
+                 WHERE id = ?`
+            ).bind(now, release.issue_id)
+        );
+    }
+
+    await env.FEEDBACK_DB.batch(statements.filter(Boolean));
+    const workflowTermination = activeWorkflowId
+        ? await terminateFeedbackWorkflowInstance(env, activeWorkflowId)
+        : null;
+
+    return {
+        eventId: timelineId,
+        releaseStatus: nextStatus,
+        issueStatus:
+            type === 'release.completed'
+                ? 'resolved'
+                : type === 'release.failed'
+                  ? blockedExternalFailure
+                      ? 'needs_human'
+                      : reviewRequiredFailure
+                        ? 'needs_human'
+                        : retryableReleaseFailure
+                          ? 'testing'
+                          : 'test_failed'
+                  : null,
+        workflowTermination,
+        humanActionId: failureAction?.actionId || null,
+    };
+}
+
+function resolveFeedbackReleaseStatus(type, current) {
+    const map = {
+        'integration.started': 'integrating',
+        'integration.rebased': 'integrating',
+        'integration.merged': 'merged',
+        'integration.verification_completed': 'merged',
+        'deployment.started': 'deploying',
+        'deployment.completed': 'deploying',
+        'smoke.completed': 'smoke_testing',
+        'release.completed': 'succeeded',
+        'release.failed': 'failed',
+    };
+    return map[type] || current;
+}
+
+/** §14.7: every stage the changed surface requires must have reported. */
+function verifyFeedbackReleaseCompletion({ release, stages, payload, integrationCommit }) {
+    if (!integrationCommit) {
+        return { allowed: false, errorCode: 'FEEDBACK_RELEASE_MISSING_INTEGRATION_COMMIT' };
+    }
+    for (const stage of FEEDBACK_RELEASE_REQUIRED_STAGES) {
+        if (!stages[stage]) {
+            return { allowed: false, errorCode: 'FEEDBACK_RELEASE_STAGE_MISSING' };
+        }
+    }
+    if (stages['integration.verification_completed']?.passed !== true) {
+        return { allowed: false, errorCode: 'FEEDBACK_RELEASE_VERIFICATION_FAILED' };
+    }
+    if (Number(release.deployment_required) === 1) {
+        for (const stage of FEEDBACK_RELEASE_DEPLOY_STAGES) {
+            if (!stages[stage]) {
+                return { allowed: false, errorCode: 'FEEDBACK_RELEASE_STAGE_MISSING' };
+            }
+        }
+        if (stages['smoke.completed']?.passed !== true) {
+            return { allowed: false, errorCode: 'FEEDBACK_RELEASE_SMOKE_FAILED' };
+        }
+        const deployment = stages['deployment.completed'];
+        if (
+            deployment?.deploymentTarget !== release.deployment_target ||
+            !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+                String(deployment?.deploymentId || '')
+            ) ||
+            deployment?.deployedCommit !== integrationCommit
+        ) {
+            return { allowed: false, errorCode: 'FEEDBACK_DEPLOYMENT_EVIDENCE_INVALID' };
+        }
+        const smoke = stages['smoke.completed'];
+        if (
+            smoke.deploymentTarget !== release.deployment_target ||
+            smoke.deploymentId !== deployment.deploymentId ||
+            smoke.deployedCommit !== integrationCommit ||
+            !verifyFeedbackSmokeChecks(release, smoke.checks)
+        ) {
+            return { allowed: false, errorCode: 'FEEDBACK_SMOKE_EVIDENCE_INVALID' };
+        }
+    }
+    if (payload.passed !== true) {
+        return { allowed: false, errorCode: 'FEEDBACK_RELEASE_VERIFICATION_FAILED' };
+    }
+
+    return { allowed: true };
+}
+
+function verifyFeedbackSmokeChecks(release, checks) {
+    const expectedPaths = parseStoredJson(release.smoke_urls_json, []);
+    if (!Array.isArray(checks) || checks.length !== expectedPaths.length) return false;
+
+    const byPath = new Map();
+    for (const check of checks) {
+        const path = String(check?.path || '');
+        if (!path || byPath.has(path)) return false;
+        byPath.set(path, check);
+    }
+
+    return expectedPaths.every((path) => {
+        const check = byPath.get(path);
+        const status = Number(check?.status);
+        if (!Number.isInteger(status)) return false;
+        if (status >= 200 && status < 300) return check.assertion === 'status_2xx';
+        return (
+            path === '/api/feedback/issues' &&
+            (status === 401 || status === 403) &&
+            check.assertion === 'protected_auth_required'
+        );
+    });
+}
+
+/** §18.2/§14: artifacts default to private and are never public by default. */
+async function recordFeedbackArtifact(env, { issueId, runId, artifact }) {
+    const artifactId = `art_${crypto.randomUUID()}`;
+    await env.FEEDBACK_DB.prepare(
+        `INSERT INTO feedback_artifacts (
+            id, issue_id, run_id, candidate_id, release_id, type, name, url,
+            object_key, sha256, size, visibility, created_at, expires_at
+        ) VALUES (?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, 'private', ?, ?)`
+    )
+        .bind(
+            artifactId,
+            issueId,
+            runId,
+            limitText(artifact.type, 60) || 'log',
+            limitText(artifact.name, 200) || 'artifact',
+            limitText(artifact.url, 1000) || null,
+            limitText(artifact.objectKey, 400) || null,
+            limitText(artifact.sha256, 80) || null,
+            Number(artifact.size) || 0,
+            new Date().toISOString(),
+            new Date(Date.now() + FEEDBACK_TTL_SECONDS * 1000).toISOString()
+        )
+        .run()
+        .catch((error) => {
+            logFeedback('warn', 'Artifact insert failed', { error });
+        });
+    return artifactId;
+}
+
+function serializeTimelineEvent(row) {
+    const body = parseStoredJson(row.body_json, {});
+    const changes = body.changes && typeof body.changes === 'object' ? body.changes : {};
+
+    return {
+        id: row.id,
+        sequence: Number(row.sequence) || 0,
+        type: row.type,
+        actorType: row.actor_type || 'system',
+        actorId: row.actor_id || '',
+        visibility: row.visibility,
+        runId: row.run_id || '',
+        occurredAt: row.occurred_at,
+        title: limitText(body.title, 240),
+        text: limitText(
+            body.text || (row.visibility === 'internal' ? body.internalNote : body.publicNote),
+            MAX_FEEDBACK_COMMENT_LENGTH
+        ),
+        mention: limitText(body.mention, 40),
+        provider: limitText(body.provider, 40),
+        changes,
+    };
+}
+
+async function listFeedbackTimeline(env, issueId, { includeInternal }) {
+    if (!env.FEEDBACK_DB) {
+        throw feedbackStorageError('FEEDBACK_DB_REQUIRED');
+    }
+
+    const statement = includeInternal
+        ? env.FEEDBACK_DB.prepare(
+              'SELECT * FROM feedback_events WHERE issue_id = ? ORDER BY sequence'
+          ).bind(issueId)
+        : env.FEEDBACK_DB.prepare(
+              `SELECT * FROM feedback_events
+               WHERE issue_id = ? AND visibility = 'public' ORDER BY sequence`
+          ).bind(issueId);
+
+    const result = await statement.all();
+    return (result.results || []).map(serializeTimelineEvent);
+}
+
+function serializeHumanAction(row) {
+    return {
+        id: row.id,
+        issueId: row.issue_id,
+        runId: row.run_id || '',
+        candidateId: row.candidate_id || '',
+        designId: row.design_id || '',
+        type: row.type,
+        requestedAction: row.requested_action,
+        evidence: parseStoredJson(row.evidence_json, []),
+        allowedReturnStates: parseStoredJson(row.allowed_return_states_json, []),
+        status: row.status,
+        createdAt: row.created_at,
+        resolvedAt: row.resolved_at || '',
+    };
+}
+
+async function readActiveHumanAction(env, issueId) {
+    if (!env.FEEDBACK_DB) return null;
+
+    const row = await env.FEEDBACK_DB.prepare(
+        `SELECT * FROM feedback_human_actions
+         WHERE issue_id = ? AND status = 'active'`
+    )
+        .bind(issueId)
+        .first();
+    return row ? serializeHumanAction(row) : null;
+}
+
+async function listHumanActions(env, issueId) {
+    if (!env.FEEDBACK_DB) return [];
+
+    const result = await env.FEEDBACK_DB.prepare(
+        'SELECT * FROM feedback_human_actions WHERE issue_id = ? ORDER BY created_at DESC'
+    )
+        .bind(issueId)
+        .all();
+    return (result.results || []).map(serializeHumanAction);
+}
+
+function normalizeFeedbackDesignPayload(value) {
+    const design = value && typeof value === 'object' ? value : null;
+    const acceptanceCriteria = Array.isArray(design?.acceptanceCriteria)
+        ? design.acceptanceCriteria.map((item) => limitText(item, 1000)).filter(Boolean)
+        : [];
+    if (!design || !limitText(design.problem, 4000) || !acceptanceCriteria.length) {
+        throw feedbackStorageError('FEEDBACK_DESIGN_INVALID');
+    }
+
+    const stringList = (items, limit = 1000) =>
+        (Array.isArray(items) ? items : []).map((item) => limitText(item, limit)).filter(Boolean);
+
+    return {
+        problem: limitText(design.problem, 4000),
+        currentBehavior: limitText(design.currentBehavior, 4000),
+        proposedChange: limitText(design.proposedChange, 8000),
+        userValue: limitText(design.userValue, 4000),
+        affectedAreas: stringList(design.affectedAreas),
+        acceptanceCriteria,
+        risks: stringList(design.risks),
+        implementationOutline: limitText(design.implementationOutline, 8000),
+        verificationPlan: stringList(design.verificationPlan),
+        decision: limitText(design.decision, 4000),
+    };
+}
+
+function serializeFeedbackDesign(row, { includeTechnical = true } = {}) {
+    const design = {
+        id: row.id,
+        issueId: row.issue_id,
+        revision: Number(row.revision) || 1,
+        status: row.status,
+        problem: row.problem || '',
+        currentBehavior: row.current_behavior || '',
+        proposedChange: row.proposed_change || '',
+        userValue: row.user_value || '',
+        affectedAreas: parseStoredJson(row.affected_areas_json, []),
+        acceptanceCriteria: parseStoredJson(row.acceptance_criteria_json, []),
+        risks: parseStoredJson(row.risks_json, []),
+        decision: row.decision || '',
+        createdAt: row.created_at,
+        decidedAt: row.decided_at || '',
+    };
+
+    if (!includeTechnical) return design;
+    return {
+        ...design,
+        createdByRunId: row.created_by_run_id || '',
+        implementationOutline: row.implementation_outline || '',
+        verificationPlan: parseStoredJson(row.verification_plan_json, []),
+    };
+}
+
+async function listFeedbackDesigns(env, issueId, { includeTechnical = true } = {}) {
+    if (!env.FEEDBACK_DB) return [];
+
+    const result = await env.FEEDBACK_DB.prepare(
+        'SELECT * FROM feedback_designs WHERE issue_id = ? ORDER BY revision DESC'
+    )
+        .bind(issueId)
+        .all();
+    return (result.results || []).map((row) => serializeFeedbackDesign(row, { includeTechnical }));
+}
+
+/** §16.4: prepare an immutable numbered revision tied to its Run. */
+async function prepareFeedbackDesign(env, { issueId, runId, value }) {
+    const design = normalizeFeedbackDesignPayload(value);
+    const latest = await env.FEEDBACK_DB.prepare(
+        'SELECT COALESCE(MAX(revision), 0) AS revision FROM feedback_designs WHERE issue_id = ?'
+    )
+        .bind(issueId)
+        .first();
+    const revision = (Number(latest?.revision) || 0) + 1;
+    const designId = `dsn_${crypto.randomUUID()}`;
+    const occurredAt = new Date().toISOString();
+    const eventId = `evt_${crypto.randomUUID()}`;
+
+    const statements = [
+        env.FEEDBACK_DB.prepare(
+            `INSERT INTO feedback_designs (
+                id, issue_id, revision, status, created_by_run_id, problem,
+                current_behavior, proposed_change, user_value, affected_areas_json,
+                acceptance_criteria_json, risks_json, implementation_outline,
+                verification_plan_json, decision, created_at, decided_at
+            ) VALUES (?, ?, ?, 'awaiting_decision', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`
+        ).bind(
+            designId,
+            issueId,
+            revision,
+            runId,
+            design.problem,
+            design.currentBehavior,
+            design.proposedChange,
+            design.userValue,
+            JSON.stringify(design.affectedAreas),
+            JSON.stringify(design.acceptanceCriteria),
+            JSON.stringify(design.risks),
+            design.implementationOutline,
+            JSON.stringify(design.verificationPlan),
+            design.decision,
+            occurredAt
+        ),
+        env.FEEDBACK_DB.prepare(
+            `INSERT INTO feedback_events (
+                id, issue_id, sequence, type, actor_type, actor_id, visibility,
+                run_id, occurred_at, body_json, metadata_json, legacy_hash
+            )
+            SELECT ?, id,
+                (SELECT COALESCE(MAX(sequence), 0) + 1
+                 FROM feedback_events WHERE issue_id = feedback_issues.id),
+                'design.created', 'agent', NULL, 'admin', ?, ?, ?, '{}', NULL
+            FROM feedback_issues WHERE id = ?`
+        ).bind(
+            eventId,
+            runId,
+            occurredAt,
+            JSON.stringify({
+                designId,
+                revision,
+                text: `已生成方案 v${revision}，等待确认。`,
+            }),
+            issueId
+        ),
+        env.FEEDBACK_DB.prepare(
+            `UPDATE feedback_issues
+             SET current_design_id = ?, updated_at = ?, version = version + 1
+             WHERE id = ?`
+        ).bind(designId, occurredAt, issueId),
+    ];
+
+    return { designId, revision, statements };
+}
+
+function parseFeedbackMention(text) {
+    const normalized = String(text || '').toLowerCase();
+    for (const [mention, provider] of Object.entries(FEEDBACK_MENTION_ROUTES)) {
+        if (normalized.includes(mention)) return { mention, provider };
+    }
+    return { mention: '', provider: '' };
+}
+
+/**
+ * Appends a public comment event and returns the refreshed issue.
+ *
+ * Actor rules follow §21.3: an owner may only record; the wake path is limited
+ * to answering the Issue's current `needs_human` wait. Provider/policy is never
+ * taken from the request body — it comes from the mention route or the stored
+ * default (§7.3, §8).
+ */
+async function appendFeedbackComment(env, issueId, { actorType, body, mode, expectedVersion }) {
+    if (!env.FEEDBACK_DB) {
+        throw feedbackStorageError('FEEDBACK_DB_REQUIRED');
+    }
+
+    const text = limitText(body, MAX_FEEDBACK_COMMENT_LENGTH).trim();
+    if (!text) throw feedbackStorageError('FEEDBACK_COMMENT_EMPTY');
+
+    const issue = await readFeedbackIssue(env, issueId);
+    if (!issue) return null;
+    if (Number(issue.version) !== Number(expectedVersion)) {
+        throw feedbackStorageError('FEEDBACK_VERSION_CONFLICT');
+    }
+
+    const status = issue.workflow.status;
+    const activeHumanAction = await readActiveHumanAction(env, issueId);
+    const runnerSettings = (await readFeedbackSettings(env, 'runners')).settings;
+    const { mention, provider: mentionProvider } = parseFeedbackMention(text);
+    const isOwner = actorType === 'user';
+
+    // §21.3: owners can only resume the wait they were asked to answer.
+    const canResume = isOwner
+        ? status === 'needs_human' && Boolean(activeHumanAction)
+        : !FEEDBACK_TERMINAL_STATUSES.has(status);
+    let effectiveMode = FEEDBACK_COMMENT_MODES.has(mode) ? mode : 'record';
+    if (isOwner && effectiveMode === 'close') effectiveMode = 'record';
+    if (effectiveMode === 'resume' && !canResume) effectiveMode = 'record';
+
+    const nextStatus =
+        effectiveMode === 'close' ? 'closed' : effectiveMode === 'resume' ? 'queued' : status;
+    const isTerminalTransition =
+        FEEDBACK_TERMINAL_STATUSES.has(nextStatus) && !FEEDBACK_TERMINAL_STATUSES.has(status);
+    const issueState = isTerminalTransition
+        ? await env.FEEDBACK_DB.prepare(
+              'SELECT active_workflow_id FROM feedback_issues WHERE id = ?'
+          )
+              .bind(issueId)
+              .first()
+        : null;
+    const activeWorkflowId = issueState?.active_workflow_id || '';
+    const provider = mentionProvider || runnerSettings.defaultProvider;
+    const occurredAt = new Date().toISOString();
+    const commentEventId = `evt_${crypto.randomUUID()}`;
+    const nextVersion = Number(expectedVersion) + 1;
+    const statements = [
+        env.FEEDBACK_DB.prepare(
+            `INSERT INTO feedback_events (
+                id, issue_id, sequence, type, actor_type, actor_id, visibility,
+                run_id, occurred_at, body_json, metadata_json, legacy_hash
+            )
+            SELECT
+                ?, id,
+                (SELECT COALESCE(MAX(sequence), 0) + 1
+                 FROM feedback_events WHERE issue_id = feedback_issues.id),
+                'comment.created', ?, ?, 'public', NULL, ?, ?, ?, NULL
+            FROM feedback_issues
+            WHERE id = ? AND version = ?`
+        ).bind(
+            commentEventId,
+            actorType,
+            null,
+            occurredAt,
+            JSON.stringify({
+                text,
+                publicNote: text,
+                mention,
+                provider: effectiveMode === 'resume' ? provider : '',
+                mode: effectiveMode,
+            }),
+            JSON.stringify({ expectedVersion, resultingVersion: nextVersion }),
+            issueId,
+            expectedVersion
+        ),
+    ];
+
+    if (nextStatus !== status) {
+        statements.push(
+            env.FEEDBACK_DB.prepare(
+                `INSERT INTO feedback_events (
+                    id, issue_id, sequence, type, actor_type, actor_id, visibility,
+                    run_id, occurred_at, body_json, metadata_json, legacy_hash
+                )
+                SELECT
+                    ?, id,
+                    (SELECT COALESCE(MAX(sequence), 0) + 1
+                     FROM feedback_events WHERE issue_id = feedback_issues.id),
+                    'status.changed', ?, ?, 'public', NULL, ?, ?, ?, NULL
+                FROM feedback_issues
+                WHERE id = ? AND version = ?`
+            ).bind(
+                `evt_${crypto.randomUUID()}`,
+                actorType,
+                null,
+                occurredAt,
+                JSON.stringify({ changes: { status: [status, nextStatus] }, publicNote: '' }),
+                JSON.stringify({ expectedVersion, resultingVersion: nextVersion }),
+                issueId,
+                expectedVersion
+            )
+        );
+    }
+
+    const workflowTerminationStatement = prepareFeedbackTerminalWorkflowStatement(env, {
+        instanceId: activeWorkflowId,
+        occurredAt,
+        reason: nextStatus === 'resolved' ? 'issue_resolved' : 'issue_closed',
+    });
+    if (workflowTerminationStatement) statements.push(workflowTerminationStatement);
+    statements.push(
+        env.FEEDBACK_DB.prepare(
+            `UPDATE feedback_issues
+             SET status = ?,
+                 active_workflow_id = CASE WHEN ? THEN NULL ELSE active_workflow_id END,
+                 updated_at = ?, version = version + 1,
+                 resolved_at = CASE WHEN ? = 'closed' THEN resolved_at ELSE resolved_at END
+             WHERE id = ? AND version = ?
+               AND EXISTS (
+                   SELECT 1 FROM feedback_events
+                   WHERE id = ? AND issue_id = feedback_issues.id
+               )
+             RETURNING id`
+        ).bind(
+            nextStatus,
+            isTerminalTransition ? 1 : 0,
+            occurredAt,
+            nextStatus,
+            issueId,
+            expectedVersion,
+            commentEventId
+        )
+    );
+
+    const results = await env.FEEDBACK_DB.batch(statements);
+    if (!results[results.length - 1]?.results?.[0]) {
+        throw feedbackStorageError('FEEDBACK_VERSION_CONFLICT');
+    }
+
+    const workflowTermination = activeWorkflowId
+        ? await terminateFeedbackWorkflowInstance(env, activeWorkflowId)
+        : null;
+
+    if (effectiveMode === 'resume' && isOwner && activeHumanAction) {
+        await env.FEEDBACK_DB.prepare(
+            `UPDATE feedback_human_actions
+             SET status = 'resolved', resolved_at = ?, resolution_json = ?
+             WHERE id = ? AND status = 'active'`
+        )
+            .bind(
+                occurredAt,
+                JSON.stringify({ decision: 'supplied_information', via: 'comment' }),
+                activeHumanAction.id
+            )
+            .run();
+    }
+
+    const delivery = await dispatchFeedbackEvent(env, {
+        eventId: commentEventId,
+        eventType: 'comment.created',
+        issueId,
+        bypassQuota: effectiveMode === 'resume',
+        orchestrate: effectiveMode === 'resume',
+    });
+
+    return {
+        issue: await readD1FeedbackIssue(env, issueId),
+        eventId: commentEventId,
+        mode: effectiveMode,
+        provider: effectiveMode === 'resume' ? provider : '',
+        mention,
+        requestedMode: mode,
+        workflowTermination,
+        delivery,
+    };
+}
+
+async function reopenFeedbackIssue(env, issueId, { actorType, expectedVersion }) {
+    if (!env.FEEDBACK_DB) {
+        throw feedbackStorageError('FEEDBACK_DB_REQUIRED');
+    }
+
+    const issue = await readFeedbackIssue(env, issueId);
+    if (!issue) return null;
+    if (Number(issue.version) !== Number(expectedVersion)) {
+        throw feedbackStorageError('FEEDBACK_VERSION_CONFLICT');
+    }
+    if (!FEEDBACK_TERMINAL_STATUSES.has(issue.workflow.status)) {
+        throw feedbackStorageError('FEEDBACK_ISSUE_NOT_TERMINAL');
+    }
+
+    const occurredAt = new Date().toISOString();
+    const eventId = `evt_${crypto.randomUUID()}`;
+    const results = await env.FEEDBACK_DB.batch([
+        env.FEEDBACK_DB.prepare(
+            `INSERT INTO feedback_events (
+                id, issue_id, sequence, type, actor_type, actor_id, visibility,
+                run_id, occurred_at, body_json, metadata_json, legacy_hash
+            )
+            SELECT
+                ?, id,
+                (SELECT COALESCE(MAX(sequence), 0) + 1
+                 FROM feedback_events WHERE issue_id = feedback_issues.id),
+                'issue.reopened', ?, NULL, 'public', NULL, ?, ?, '{}', NULL
+            FROM feedback_issues
+            WHERE id = ? AND version = ?`
+        ).bind(
+            eventId,
+            actorType,
+            occurredAt,
+            JSON.stringify({ changes: { status: [issue.workflow.status, 'open'] } }),
+            issueId,
+            expectedVersion
+        ),
+        env.FEEDBACK_DB.prepare(
+            `UPDATE feedback_issues
+             SET status = 'open', resolved_at = NULL, updated_at = ?, version = version + 1
+             WHERE id = ? AND version = ?
+               AND EXISTS (
+                   SELECT 1 FROM feedback_events
+                   WHERE id = ? AND issue_id = feedback_issues.id
+               )
+             RETURNING id`
+        ).bind(occurredAt, issueId, expectedVersion, eventId),
+    ]);
+
+    if (!results[results.length - 1]?.results?.[0]) {
+        throw feedbackStorageError('FEEDBACK_VERSION_CONFLICT');
+    }
+
+    const delivery = await dispatchFeedbackEvent(env, {
+        eventId,
+        eventType: 'issue.reopened',
+        issueId,
+    });
+
+    return { issue: await readD1FeedbackIssue(env, issueId), eventId, delivery };
+}
+
+/** §13.4: persist the terminal side of the Issue/Workflow lifecycle atomically. */
+function prepareFeedbackTerminalWorkflowStatement(
+    env,
+    { instanceId, occurredAt, reason, actionGuard = null }
+) {
+    if (!instanceId) return null;
+
+    const guard = actionGuard
+        ? ` AND EXISTS (
+                SELECT 1 FROM feedback_human_actions
+                WHERE id = ? AND resolution_json = ?
+            )`
+        : '';
+    const statement = env.FEEDBACK_DB.prepare(
+        `UPDATE feedback_workflows
+         SET status = 'terminated', active_run_id = NULL, waiting_until = NULL,
+             finished_at = ?, terminal_reason = ?
+         WHERE instance_id = ? AND status IN ('queued', 'running', 'waiting')${guard}`
+    );
+    const values = [occurredAt, reason, instanceId];
+    if (actionGuard) values.push(actionGuard.actionId, actionGuard.resolutionJson);
+    return statement.bind(...values);
+}
+
+async function terminateFeedbackWorkflowInstance(env, instanceId) {
+    if (!instanceId) {
+        return { instanceId: '', terminated: false, error: 'WORKFLOW_INSTANCE_NOT_ACTIVE' };
+    }
+    if (!env.FEEDBACK_WORKFLOW) {
+        return { instanceId, terminated: false, error: 'WORKFLOW_BINDING_NOT_CONFIGURED' };
+    }
+
+    try {
+        const instance = await env.FEEDBACK_WORKFLOW.get(instanceId);
+        await instance.terminate();
+        return { instanceId, terminated: true };
+    } catch {
+        // The D1 lifecycle is already terminal and the mapping is cleared. The
+        // 7-day wait will still self-terminate if the control-plane call is
+        // unavailable, and this result keeps that failure visible to callers.
+        return { instanceId, terminated: false, error: 'WORKFLOW_TERMINATION_FAILED' };
+    }
+}
+
+/**
+ * §21.4: a HumanAction may only return a state it declared, and approving a
+ * candidate has to name the exact candidateId — it can never be a bare PATCH.
+ */
+async function respondToHumanAction(
+    env,
+    actionId,
+    { actorType, decision, candidateId, designId, designDecision, note }
+) {
+    if (!env.FEEDBACK_DB) {
+        throw feedbackStorageError('FEEDBACK_DB_REQUIRED');
+    }
+
+    const row = await env.FEEDBACK_DB.prepare('SELECT * FROM feedback_human_actions WHERE id = ?')
+        .bind(actionId)
+        .first();
+    if (!row) return null;
+
+    const action = serializeHumanAction(row);
+    if (action.status !== 'active') {
+        throw feedbackStorageError('FEEDBACK_HUMAN_ACTION_RESOLVED');
+    }
+    if (!action.allowedReturnStates.includes(decision)) {
+        throw feedbackStorageError('FEEDBACK_HUMAN_ACTION_STATE_NOT_ALLOWED');
+    }
+    let approvedCandidate = null;
+    if (decision === 'ready_for_deploy') {
+        if (!candidateId) {
+            throw feedbackStorageError('FEEDBACK_CANDIDATE_ID_REQUIRED');
+        }
+        if (action.candidateId && action.candidateId !== candidateId) {
+            throw feedbackStorageError('FEEDBACK_CANDIDATE_ID_MISMATCH');
+        }
+        // §9.3: approval binds to a specific, still-live Candidate. A superseded
+        // one must not be revivable by approving an old HumanAction.
+        approvedCandidate = await env.FEEDBACK_DB.prepare(
+            'SELECT id, status FROM feedback_candidates WHERE id = ?'
+        )
+            .bind(candidateId)
+            .first();
+        if (!approvedCandidate) {
+            throw feedbackStorageError('FEEDBACK_CANDIDATE_ID_MISMATCH');
+        }
+        if (!FEEDBACK_CANDIDATE_STATUSES.has(approvedCandidate.status)) {
+            throw feedbackStorageError('FEEDBACK_CANDIDATE_ID_MISMATCH');
+        }
+        if (['abandoned', 'integrated', 'failed'].includes(approvedCandidate.status)) {
+            throw feedbackStorageError('FEEDBACK_CANDIDATE_ABANDONED');
+        }
+    }
+
+    let decidedDesign = null;
+    let designStatus = '';
+    if (action.type === 'design_decision' || action.type === 'confirm_design') {
+        if (!designId) throw feedbackStorageError('FEEDBACK_DESIGN_ID_REQUIRED');
+        if (action.designId && action.designId !== designId) {
+            throw feedbackStorageError('FEEDBACK_DESIGN_ID_MISMATCH');
+        }
+        if (!FEEDBACK_DESIGN_DECISIONS.has(designDecision)) {
+            throw feedbackStorageError('FEEDBACK_DESIGN_DECISION_INVALID');
+        }
+
+        const expectedState = designDecision === 'reject' ? 'closed' : 'queued';
+        if (decision !== expectedState) {
+            throw feedbackStorageError('FEEDBACK_HUMAN_ACTION_STATE_NOT_ALLOWED');
+        }
+
+        decidedDesign = await env.FEEDBACK_DB.prepare(
+            'SELECT * FROM feedback_designs WHERE id = ? AND issue_id = ?'
+        )
+            .bind(designId, action.issueId)
+            .first();
+        if (!decidedDesign || decidedDesign.status !== 'awaiting_decision') {
+            throw feedbackStorageError('FEEDBACK_DESIGN_ID_MISMATCH');
+        }
+        designStatus =
+            designDecision === 'approve'
+                ? 'approved'
+                : designDecision === 'revise'
+                  ? 'revision_requested'
+                  : 'rejected';
+    }
+
+    const [issue, issueState] = await Promise.all([
+        readFeedbackIssue(env, action.issueId),
+        env.FEEDBACK_DB.prepare(
+            'SELECT active_workflow_id, last_run_id FROM feedback_issues WHERE id = ?'
+        )
+            .bind(action.issueId)
+            .first(),
+    ]);
+    if (!issue || !issueState) return null;
+
+    const occurredAt = new Date().toISOString();
+    const eventId = `evt_${crypto.randomUUID()}`;
+    const responseId = `har_${crypto.randomUUID()}`;
+    const previousStatus = issue.workflow.status;
+    const designEventType = designStatus ? `design.${designStatus}` : '';
+    const resolutionJson = JSON.stringify({
+        responseId,
+        decision,
+        candidateId: candidateId || '',
+        designId: designId || '',
+        designDecision: designDecision || '',
+        note: limitText(note, 2000),
+        actorType,
+    });
+    const statements = [
+        env.FEEDBACK_DB.prepare(
+            `UPDATE feedback_human_actions
+             SET status = 'resolved', resolved_at = ?, resolution_json = ?
+             WHERE id = ? AND status = 'active'
+               AND EXISTS (
+                   SELECT 1 FROM feedback_issues
+                   WHERE id = feedback_human_actions.issue_id
+                     AND status = 'needs_human'
+                     AND active_human_action_id = feedback_human_actions.id
+                     AND (? = '' OR current_design_id = ?)
+               )
+               AND (
+                   ? = '' OR EXISTS (
+                       SELECT 1 FROM feedback_designs
+                       WHERE id = ?
+                         AND issue_id = feedback_human_actions.issue_id
+                         AND status = 'awaiting_decision'
+                   )
+               )
+             RETURNING id`
+        ).bind(
+            occurredAt,
+            resolutionJson,
+            actionId,
+            designId || '',
+            designId || '',
+            designId || '',
+            designId || ''
+        ),
+    ];
+
+    if (decidedDesign) {
+        statements.push(
+            env.FEEDBACK_DB.prepare(
+                `UPDATE feedback_designs SET status = ?, decided_at = ?
+                 WHERE id = ? AND status = 'awaiting_decision'
+                   AND EXISTS (
+                       SELECT 1 FROM feedback_human_actions
+                       WHERE id = ? AND resolution_json = ?
+                   )`
+            ).bind(designStatus, occurredAt, designId, actionId, resolutionJson),
+            env.FEEDBACK_DB.prepare(
+                `INSERT INTO feedback_events (
+                    id, issue_id, sequence, type, actor_type, actor_id, visibility,
+                    run_id, occurred_at, body_json, metadata_json, legacy_hash
+                )
+                SELECT ?, id,
+                    (SELECT COALESCE(MAX(sequence), 0) + 1
+                     FROM feedback_events WHERE issue_id = feedback_issues.id),
+                    ?, ?, NULL, 'admin', ?, ?, ?, '{}', NULL
+                FROM feedback_issues WHERE id = ?
+                  AND EXISTS (
+                      SELECT 1 FROM feedback_human_actions
+                      WHERE id = ? AND resolution_json = ?
+                  )`
+            ).bind(
+                `evt_${crypto.randomUUID()}`,
+                designEventType,
+                actorType,
+                action.runId || null,
+                occurredAt,
+                JSON.stringify({
+                    designId,
+                    revision: Number(decidedDesign.revision) || 1,
+                    decision: designDecision,
+                    status: designStatus,
+                    text:
+                        designDecision === 'approve'
+                            ? `方案 v${decidedDesign.revision} 已批准。`
+                            : designDecision === 'revise'
+                              ? `方案 v${decidedDesign.revision} 需要修订。`
+                              : `方案 v${decidedDesign.revision} 已拒绝。`,
+                }),
+                action.issueId,
+                actionId,
+                resolutionJson
+            )
+        );
+    }
+
+    statements.push(
+        env.FEEDBACK_DB.prepare(
+            `INSERT INTO feedback_events (
+                id, issue_id, sequence, type, actor_type, actor_id, visibility,
+                run_id, occurred_at, body_json, metadata_json, legacy_hash
+            )
+            SELECT
+                ?, id,
+                (SELECT COALESCE(MAX(sequence), 0) + 1
+                 FROM feedback_events WHERE issue_id = feedback_issues.id),
+                'status.changed', ?, NULL, 'public', ?, ?, ?, '{}', NULL
+            FROM feedback_issues
+            WHERE id = ?
+              AND EXISTS (
+                  SELECT 1 FROM feedback_human_actions
+                  WHERE id = ? AND resolution_json = ?
+              )`
+        ).bind(
+            eventId,
+            actorType,
+            action.runId || null,
+            occurredAt,
+            JSON.stringify({
+                changes: { status: [previousStatus, decision] },
+                publicNote: limitText(note, 2000),
+                humanActionId: actionId,
+                candidateId: candidateId || '',
+            }),
+            action.issueId,
+            actionId,
+            resolutionJson
+        )
+    );
+
+    const isDesignRejection = designStatus === 'rejected';
+    const isTerminalDecision = FEEDBACK_TERMINAL_STATUSES.has(decision);
+    const terminalReason = isDesignRejection
+        ? 'design_rejected'
+        : decision === 'resolved'
+          ? 'issue_resolved'
+          : 'issue_closed';
+    const activeRunId = action.runId || issueState.last_run_id || '';
+    const activeWorkflowId = issueState.active_workflow_id || '';
+    if (isTerminalDecision && activeRunId) {
+        statements.push(
+            env.FEEDBACK_DB.prepare(
+                `UPDATE feedback_runs
+                 SET status = 'cancelled', finished_at = ?, error_code = ?
+                 WHERE id = ?
+                   AND status NOT IN ('succeeded', 'failed', 'cancelled', 'timed_out')
+                   AND EXISTS (
+                       SELECT 1 FROM feedback_human_actions
+                       WHERE id = ? AND resolution_json = ?
+                   )`
+            ).bind(occurredAt, terminalReason, activeRunId, actionId, resolutionJson)
+        );
+    }
+    const workflowTerminationStatement = prepareFeedbackTerminalWorkflowStatement(env, {
+        instanceId: isTerminalDecision ? activeWorkflowId : '',
+        occurredAt,
+        reason: terminalReason,
+        actionGuard: { actionId, resolutionJson },
+    });
+    if (workflowTerminationStatement) statements.push(workflowTerminationStatement);
+
+    statements.push(
+        env.FEEDBACK_DB.prepare(
+            `UPDATE feedback_issues
+             SET status = ?, active_human_action_id = NULL,
+                 active_candidate_id = COALESCE(?, active_candidate_id),
+                 current_design_id = COALESCE(?, current_design_id),
+                 active_workflow_id = CASE WHEN ? THEN NULL ELSE active_workflow_id END,
+                 updated_at = ?, version = version + 1
+             WHERE id = ?
+               AND EXISTS (
+                   SELECT 1 FROM feedback_human_actions
+                   WHERE id = ? AND resolution_json = ?
+               )
+             RETURNING id`
+        ).bind(
+            decision,
+            candidateId || null,
+            decidedDesign?.id || null,
+            isTerminalDecision ? 1 : 0,
+            occurredAt,
+            action.issueId,
+            actionId,
+            resolutionJson
+        )
+    );
+
+    const results = await env.FEEDBACK_DB.batch(statements);
+
+    if (!results[0]?.results?.[0]) {
+        throw feedbackStorageError('FEEDBACK_HUMAN_ACTION_RESOLVED');
+    }
+
+    if (approvedCandidate) {
+        await env.FEEDBACK_DB.prepare(
+            "UPDATE feedback_candidates SET status = 'approved', approved_at = ? WHERE id = ?"
+        )
+            .bind(occurredAt, candidateId)
+            .run();
+    }
+
+    const workflowTermination = isTerminalDecision
+        ? await terminateFeedbackWorkflowInstance(env, activeWorkflowId)
+        : null;
+
+    // §16.4: approving or requesting a revision resumes the waiting Workflow
+    // immediately. The status event is the durable trigger; no polling or
+    // synthetic success response stands in for the actual resume attempt.
+    const delivery =
+        decision === 'queued'
+            ? await dispatchFeedbackEvent(env, {
+                  eventId,
+                  eventType: 'status.changed',
+                  issueId: action.issueId,
+                  bypassQuota: true,
+              })
+            : null;
+    const resumeState =
+        decision !== 'queued'
+            ? 'not_applicable'
+            : delivery?.workflow && !delivery.workflow.error
+              ? delivery.workflow.resumed
+                  ? 'resumed'
+                  : 'started'
+              : 'pending';
+
+    return {
+        issue: await readD1FeedbackIssue(env, action.issueId),
+        action: { ...action, status: 'resolved', resolvedAt: occurredAt },
+        eventId,
+        approvedCandidateId: approvedCandidate ? candidateId : null,
+        decidedDesignId: decidedDesign ? designId : null,
+        designStatus,
+        workflowTermination,
+        delivery,
+        resumeState,
+    };
+}
+
+/** §9.2: cancelling an active Run returns the Issue to `open`. */
+async function cancelFeedbackRun(env, runId) {
+    if (!env.FEEDBACK_DB) {
+        throw feedbackStorageError('FEEDBACK_DB_REQUIRED');
+    }
+
+    const run = await env.FEEDBACK_DB.prepare(
+        'SELECT id, issue_id, status FROM feedback_runs WHERE id = ?'
+    )
+        .bind(runId)
+        .first();
+    if (!run) return null;
+    if (FEEDBACK_RUN_TERMINAL_STATUSES.has(run.status)) {
+        throw feedbackStorageError('FEEDBACK_RUN_ALREADY_TERMINAL');
+    }
+
+    const now = new Date().toISOString();
+    await env.FEEDBACK_DB.batch([
+        env.FEEDBACK_DB.prepare(
+            "UPDATE feedback_runs SET status = 'cancelled', finished_at = ? WHERE id = ?"
+        ).bind(now, runId),
+        env.FEEDBACK_DB.prepare(
+            `UPDATE feedback_issues SET status = 'open', updated_at = ?, version = version + 1
+             WHERE id = ?`
+        ).bind(now, run.issue_id),
+    ]);
+    await appendFeedbackSystemEvent(env, run.issue_id, {
+        type: 'status.changed',
+        visibility: 'public',
+        body: { changes: { status: [null, 'open'] }, cancelledRunId: runId },
+    });
+
+    return { runId, status: 'cancelled', issueId: run.issue_id, issueStatus: 'open' };
+}
+
+/**
+ * Daily `feedback-reconcile` sweep (§13.4, §17.2, §17.3).
+ *
+ * Deliberately narrow: it only touches things that are already stuck. It must
+ * never scan healthy Issues or create Agent Runs, which is what keeps
+ * SCN-FWB-002's "no periodic Agent polling" true — with nothing stuck it does
+ * no work and reports zero Runs.
+ */
+async function runFeedbackReconcile(env, now = new Date()) {
+    const summary = {
+        jobId: FEEDBACK_RECONCILE_JOB_ID,
+        ranAt: now.toISOString(),
+        resumedWorkflows: 0,
+        resumeFailures: 0,
+        resumedReleases: 0,
+        releaseResumeFailures: 0,
+        queuedReleases: 0,
+        expiredWaits: 0,
+        clearedWorkflowMappings: 0,
+        expiredArtifacts: 0,
+        deadLetterCount: 0,
+        runCount: 0,
+    };
+    if (!env.FEEDBACK_DB) return summary;
+
+    // A HumanAction response is durable before the control-plane send. If
+    // that send failed, the projection is `queued` while its Workflow is
+    // still waiting; retry exactly that mismatch without creating a Run here.
+    const pendingResumes = await env.FEEDBACK_DB.prepare(
+        `SELECT w.instance_id, w.issue_id FROM feedback_workflows w
+         JOIN feedback_issues i ON i.id = w.issue_id
+         WHERE w.status = 'waiting'
+           AND i.status = 'queued'
+           AND i.active_workflow_id = w.instance_id`
+    ).all();
+    for (const row of pendingResumes.results || []) {
+        try {
+            if (!env.FEEDBACK_WORKFLOW) throw new Error('WORKFLOW_BINDING_NOT_CONFIGURED');
+            const instance = await env.FEEDBACK_WORKFLOW.get(row.instance_id);
+            await instance.sendEvent({
+                type: FEEDBACK_WORKFLOW_RESUME_EVENT_TYPE,
+                payload: {
+                    issueId: row.issue_id,
+                    eventId: `reconcile:${row.instance_id}`,
+                    eventType: 'status.changed',
+                },
+            });
+            summary.resumedWorkflows += 1;
+        } catch {
+            summary.resumeFailures += 1;
+        }
+    }
+
+    // §17.2: a Candidate that lost the repository delivery lock remains
+    // approved/ready_for_deploy with no Release. Revisit only that durable
+    // mismatch, in the contract's candidate-review-before-auto-deliver order.
+    const pendingCandidates = await env.FEEDBACK_DB.prepare(
+        `SELECT c.* FROM feedback_candidates c
+         JOIN feedback_issues i ON i.id = c.issue_id
+         LEFT JOIN feedback_runs fr ON fr.id = c.run_id
+         WHERE c.status = 'approved'
+           AND i.status = 'ready_for_deploy'
+           AND NOT EXISTS (
+               SELECT 1 FROM feedback_releases rel WHERE rel.candidate_id = c.id
+           )
+         ORDER BY CASE fr.delivery_mode
+                    WHEN 'candidate_review' THEN 0
+                    WHEN 'auto_deliver' THEN 1
+                    ELSE 2
+                  END,
+                  COALESCE(c.approved_at, c.created_at), c.id
+         LIMIT 25`
+    ).all();
+    for (const candidate of pendingCandidates.results || []) {
+        const run = candidate.run_id
+            ? await env.FEEDBACK_DB.prepare('SELECT * FROM feedback_runs WHERE id = ?')
+                  .bind(candidate.run_id)
+                  .first()
+            : null;
+        try {
+            const result = await resumeFeedbackAutoDeliveryCandidate(env, {
+                run: run || { id: '', issue_id: candidate.issue_id },
+                candidate,
+            });
+            if (result.dispatched) summary.resumedReleases += 1;
+            else if (result.queued) summary.queuedReleases += 1;
+            else summary.releaseResumeFailures += 1;
+        } catch {
+            summary.releaseResumeFailures += 1;
+        }
+    }
+
+    const retryableCandidates = await env.FEEDBACK_DB.prepare(
+        `SELECT c.* FROM feedback_candidates c
+         JOIN feedback_releases rel ON rel.candidate_id = c.id
+         WHERE c.status = 'integrating'
+           AND rel.status IN ('integrating', 'merged', 'deploying', 'smoke_testing')
+           AND rel.error_code IS NOT NULL
+         ORDER BY rel.started_at, c.id
+         LIMIT 25`
+    ).all();
+    for (const candidate of retryableCandidates.results || []) {
+        const release = await env.FEEDBACK_DB.prepare(
+            `SELECT * FROM feedback_releases
+             WHERE candidate_id = ? ORDER BY started_at DESC LIMIT 1`
+        )
+            .bind(candidate.id)
+            .first();
+        if (!isRetryableFeedbackReleaseDispatchError(release?.error_code)) continue;
+        const dispatchState = parseStoredJson(release?.verification_json, {})._dispatch || {};
+        const nextAttemptAt = Date.parse(dispatchState.nextAttemptAt || '');
+        if (Number.isFinite(nextAttemptAt) && nextAttemptAt > now.getTime()) continue;
+
+        const run = candidate.run_id
+            ? await env.FEEDBACK_DB.prepare('SELECT * FROM feedback_runs WHERE id = ?')
+                  .bind(candidate.run_id)
+                  .first()
+            : null;
+        try {
+            const result = await resumeFeedbackAutoDeliveryCandidate(env, {
+                run: run || { id: '', issue_id: candidate.issue_id },
+                candidate,
+            });
+            if (result.dispatched) summary.resumedReleases += 1;
+            else if (result.queued) summary.queuedReleases += 1;
+            else summary.releaseResumeFailures += 1;
+        } catch {
+            summary.releaseResumeFailures += 1;
+        }
+    }
+
+    const waitDeadline = new Date(
+        now.getTime() - FEEDBACK_HUMAN_WAIT_TIMEOUT_SECONDS * 1000
+    ).toISOString();
+
+    // §17.3: a wait that ran past 7 days terminates the instance and clears the
+    // active Workflow, but the Issue stays `needs_human` and is never closed.
+    const expired = await env.FEEDBACK_DB.prepare(
+        `SELECT w.instance_id, w.issue_id FROM feedback_workflows w
+         JOIN feedback_issues i ON i.id = w.issue_id
+         WHERE w.status IN ('queued', 'running', 'waiting')
+           AND i.status = 'needs_human'
+           AND w.started_at < ?`
+    )
+        .bind(waitDeadline)
+        .all();
+
+    for (const row of expired.results || []) {
+        await env.FEEDBACK_DB.batch([
+            env.FEEDBACK_DB.prepare(
+                `UPDATE feedback_workflows
+                 SET status = 'terminated', finished_at = ?, terminal_reason = 'human_timeout'
+                 WHERE instance_id = ?`
+            ).bind(summary.ranAt, row.instance_id),
+            env.FEEDBACK_DB.prepare(
+                'UPDATE feedback_issues SET active_workflow_id = NULL WHERE id = ?'
+            ).bind(row.issue_id),
+        ]);
+        summary.expiredWaits += 1;
+        summary.clearedWorkflowMappings += 1;
+    }
+
+    // §18.2: artifacts past their retention are unreachable; drop the rows so
+    // the timeline stops offering links that can no longer be signed.
+    const artifacts = await env.FEEDBACK_DB.prepare(
+        'DELETE FROM feedback_artifacts WHERE expires_at IS NOT NULL AND expires_at < ? RETURNING id'
+    )
+        .bind(summary.ranAt)
+        .all();
+    summary.expiredArtifacts = (artifacts.results || []).length;
+
+    const dead = await env.FEEDBACK_DB.prepare(
+        "SELECT COUNT(*) AS total FROM feedback_deliveries WHERE status = 'dead_letter'"
+    ).first();
+    summary.deadLetterCount = Number(dead?.total) || 0;
+
+    return summary;
+}
+
+async function readAutomationHealth(env) {
+    if (!env.FEEDBACK_DB) {
+        throw feedbackStorageError('FEEDBACK_DB_REQUIRED');
+    }
+
+    const stored = await readFeedbackSettings(env, 'automation');
+    const [deliveryRows, counts, waiting] = await Promise.all([
+        env.FEEDBACK_DB.prepare(
+            `SELECT d.id, d.status, d.attempt_count, d.response_status, d.last_error,
+                    d.created_at, d.updated_at, e.type AS event_type
+             FROM feedback_deliveries d
+             LEFT JOIN feedback_events e ON e.id = d.event_id
+             ORDER BY d.created_at DESC
+             LIMIT 10`
+        ).all(),
+        env.FEEDBACK_DB.prepare(
+            `SELECT status, COUNT(*) AS total FROM feedback_deliveries GROUP BY status`
+        ).all(),
+        env.FEEDBACK_DB.prepare(
+            `SELECT COUNT(*) AS total FROM feedback_issues WHERE status = 'needs_human'`
+        ).first(),
+    ]);
+
+    const byStatus = {};
+    for (const row of counts.results || []) {
+        byStatus[row.status] = Number(row.total) || 0;
+    }
+    const deliveries = (deliveryRows.results || []).map((row) => ({
+        id: row.id,
+        eventType: row.event_type || 'unknown',
+        status: row.status,
+        attemptCount: Number(row.attempt_count) || 0,
+        responseStatus: Number(row.response_status) || 0,
+        lastError: row.last_error || '',
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+    }));
+    const lastSucceeded = deliveries.find((delivery) => delivery.status === 'succeeded');
+
+    return {
+        connectionState: stored.settings.connectionState,
+        hookConfigured: Boolean(stored.settings.hookUrl),
+        signingConfigured: Boolean(getFeedbackWebhookSecret(env)),
+        lastTestedAt: stored.settings.lastTestedAt,
+        lastSucceededAt: lastSucceeded?.updatedAt || '',
+        deliveries,
+        deliveryCounts: byStatus,
+        deadLetterCount: byStatus.dead_letter || 0,
+        pendingCount: byStatus.pending || 0,
+        needsHumanCount: Number(waiting?.total) || 0,
+        // §19.4: the daily sweep is identified separately so it is never read as
+        // a periodic Agent poll. With nothing stuck it produces zero Runs.
+        reconcile: {
+            jobId: FEEDBACK_RECONCILE_JOB_ID,
+            enabled: stored.settings.dailyReconcileEnabled,
+            // The Worker's one scheduled trigger. It is reported explicitly so
+            // the daily sweep is never mistaken for Agent polling (§19.4).
+            schedule: FEEDBACK_RECONCILE_CRON,
+            stuckCount: byStatus.dead_letter || 0,
+            runCount: 0,
+        },
+        // §4/§19.4: Issue processing is event-driven. The only cron is the
+        // daily reconcile above; no trigger polls for Agent work.
+        pollingCronConfigured: false,
+    };
+}
+
+const FEEDBACK_QUEUE_FILTERS = new Set(['attention', 'active', 'all']);
+// §19.1 admin ordering: approved-and-undelivered candidates first, then work
+// blocked on a human, then retryable failures, then ordinary new Issues.
+const FEEDBACK_QUEUE_RANKS = {
+    ready_for_deploy: 0,
+    needs_human: 1,
+    test_failed: 2,
+    open: 3,
+    queued: 4,
+    in_progress: 5,
+    testing: 6,
+    resolved: 7,
+    closed: 8,
+};
+const FEEDBACK_ATTENTION_STATUSES = new Set(['ready_for_deploy', 'needs_human', 'test_failed']);
+const FEEDBACK_ACTIVE_STATUSES = new Set(['queued', 'in_progress', 'testing']);
+
+function getFeedbackQueueRank(status) {
+    return Object.hasOwn(FEEDBACK_QUEUE_RANKS, status) ? FEEDBACK_QUEUE_RANKS[status] : 9;
+}
+
+function matchesFeedbackQueueFilter(issue, filter) {
+    if (filter === 'attention') return FEEDBACK_ATTENTION_STATUSES.has(issue.status);
+    if (filter === 'active') return FEEDBACK_ACTIVE_STATUSES.has(issue.status);
+    return true;
+}
+
+const FEEDBACK_ISSUE_SUB_ROUTES = new Set([
+    'events',
+    'comments',
+    'reopen',
+    'human-actions',
+    'designs',
+    'candidates',
+    'releases',
+]);
+
+function parseFeedbackIssueSubRoute(pathname) {
+    const prefix = '/api/feedback/issues/';
+    if (!pathname.startsWith(prefix)) return null;
+
+    const rest = pathname.slice(prefix.length);
+    const separator = rest.lastIndexOf('/');
+    if (separator <= 0) return null;
+
+    const segment = rest.slice(separator + 1);
+    if (!FEEDBACK_ISSUE_SUB_ROUTES.has(segment)) return null;
+
+    const key = decodeURIComponent(rest.slice(0, separator));
+    if (!key.startsWith('feedback:')) return null;
+
+    return { key, segment };
+}
+
+const FEEDBACK_ERROR_RESPONSES = {
+    FEEDBACK_DB_REQUIRED: [503, 'Feedback storage is unavailable'],
+    FEEDBACK_VERSION_CONFLICT: [409, 'Version conflict'],
+    FEEDBACK_COMMENT_EMPTY: [400, 'Comment body is required'],
+    FEEDBACK_ISSUE_NOT_TERMINAL: [409, 'Issue is not closed'],
+    FEEDBACK_HUMAN_ACTION_RESOLVED: [409, 'Human action is already resolved'],
+    FEEDBACK_HUMAN_ACTION_STATE_NOT_ALLOWED: [400, 'Return state is not allowed'],
+    FEEDBACK_CANDIDATE_ID_REQUIRED: [400, 'candidateId is required'],
+    FEEDBACK_CANDIDATE_ID_MISMATCH: [409, 'candidateId does not match the reviewed candidate'],
+    FEEDBACK_DESIGN_INVALID: [400, 'A structured Design with acceptance criteria is required'],
+    FEEDBACK_DESIGN_ID_REQUIRED: [400, 'designId is required'],
+    FEEDBACK_DESIGN_ID_MISMATCH: [409, 'designId does not match the reviewed revision'],
+    FEEDBACK_DESIGN_DECISION_INVALID: [400, 'Design decision is invalid'],
+    FEEDBACK_HUMAN_ACTION_ALREADY_ACTIVE: [409, 'Another human action is already active'],
+    FEEDBACK_CALLBACK_PERSIST_FAILED: [500, 'Callback persistence failed; retry the event'],
+    FEEDBACK_CALLBACK_TYPE_UNSUPPORTED: [400, 'Unsupported callback event type'],
+    FEEDBACK_CALLBACK_EVENT_ID_REQUIRED: [400, 'eventId is required'],
+    FEEDBACK_RUN_ALREADY_TERMINAL: [409, 'Run is already in a terminal state'],
+    FEEDBACK_RUN_STATUS_INVALID: [500, 'Run projection produced an invalid status'],
+    FEEDBACK_CANDIDATE_NOT_APPROVED: [409, 'Candidate has not been approved'],
+    FEEDBACK_CANDIDATE_ABANDONED: [409, 'Candidate has been superseded'],
+    FEEDBACK_ISSUE_NOT_READY_FOR_DEPLOY: [409, 'Issue is not ready for delivery'],
+    FEEDBACK_DELIVERY_LOCK_HELD: [409, 'Another release is integrating on this branch'],
+    FEEDBACK_MULTIPLE_DEPLOYMENT_TARGETS: [
+        409,
+        'Candidate requires separate Worker and Pages releases',
+    ],
+    FEEDBACK_RELEASE_TYPE_UNSUPPORTED: [400, 'Unsupported release event type'],
+    FEEDBACK_RELEASE_ALREADY_TERMINAL: [409, 'Release is already in a terminal state'],
+    FEEDBACK_RELEASE_RETRY_NOT_ALLOWED: [409, 'Release is not blocked at a retryable stage'],
+    FEEDBACK_RELEASE_IDENTITY_MISMATCH: [409, 'Release identity does not match its Candidate'],
+    FEEDBACK_RELEASE_STAGE_MISSING: [409, 'A required release stage has not reported'],
+    FEEDBACK_RELEASE_VERIFICATION_FAILED: [409, 'Release verification did not pass'],
+    FEEDBACK_RELEASE_SMOKE_FAILED: [409, 'Production smoke did not pass'],
+    FEEDBACK_DEPLOYMENT_EVIDENCE_INVALID: [409, 'Deployment evidence is incomplete or invalid'],
+    FEEDBACK_SMOKE_EVIDENCE_INVALID: [409, 'Production smoke evidence is incomplete or invalid'],
+    FEEDBACK_RELEASE_MISSING_INTEGRATION_COMMIT: [409, 'integrationCommit is required'],
+    FEEDBACK_DEPLOYED_COMMIT_MISMATCH: [409, 'deployedCommit does not match integrationCommit'],
+};
+
+/**
+ * §20.2: every workbench log line carries the same correlation keys, so one
+ * Issue can be traced across Workflow, Run, delivery and Release. The listed
+ * fields are always present — an absent id logs as empty rather than vanishing.
+ *
+ * Nothing else is copied in: tokens, Authorization headers, owner capabilities,
+ * source IPs, contact details and admin credentials must never reach a log, so
+ * the correlation record is built from an explicit allowlist instead of a spread.
+ */
+function logFeedback(level, message, context = {}) {
+    const value = (key) => limitText(context[key], 120);
+    const entry = {
+        issueId: value('issueId'),
+        eventId: value('eventId'),
+        workflowId: value('workflowId'),
+        runId: value('runId'),
+        deliveryId: value('deliveryId'),
+        provider: value('provider'),
+        policy: value('policy'),
+        actorType: value('actorType'),
+        workflowGeneration: Number(context.workflowGeneration) || 0,
+        candidateId: value('candidateId'),
+        releaseId: value('releaseId'),
+        integrationCommit: value('integrationCommit'),
+        deploymentId: value('deploymentId'),
+        // Errors are reduced to name/code/message; a stack can quote a URL that
+        // carries a scoped token.
+        errorCode: limitText(context.error?.code || context.errorCode, 80),
+        errorName: limitText(context.error?.name, 80),
+    };
+
+    const sink = level === 'error' ? console.error : level === 'info' ? console.log : console.warn;
+    sink(`[Feedback] ${message}`, entry);
+}
+
+function feedbackErrorResponse(error, headers) {
+    const mapped = FEEDBACK_ERROR_RESPONSES[error?.code];
+    if (mapped) return errorResponse(mapped[1], mapped[0], headers);
+
+    logFeedback('warn', 'Unhandled workbench error', { error });
+    return errorResponse('Invalid request', 400, headers);
 }
 
 function getFeedbackBoardApiBase(request, env) {
@@ -5368,7 +9448,7 @@ function renderFeedbackBoardPage(apiBase = '') {
 }
 
 export default {
-    async fetch(request, env) {
+    async fetch(request, env, ctx) {
         const url = new URL(request.url);
         const headers = corsHeaders(request.headers.get('Origin'));
 
@@ -5400,9 +9480,20 @@ export default {
             });
         }
 
-        if (request.method === 'GET' && url.pathname === '/feedback') {
+        // §19: the V2 workbench is the production UI; the V1 board stays
+        // reachable at /feedback/legacy until its replay/classification tools
+        // are ported into the workbench.
+        if (
+            request.method === 'GET' &&
+            (url.pathname === '/feedback' || url.pathname === '/feedback/legacy')
+        ) {
             const feedbackApiBase = getFeedbackBoardApiBase(request, env);
-            return new Response(renderFeedbackBoardPage(feedbackApiBase), {
+            const page =
+                url.pathname === '/feedback/legacy'
+                    ? renderFeedbackBoardPage(feedbackApiBase)
+                    : renderFeedbackWorkbenchPage(feedbackApiBase);
+
+            return new Response(page, {
                 headers: {
                     ...headers,
                     'Content-Type': 'text/html; charset=utf-8',
@@ -5532,59 +9623,6 @@ export default {
             }
         }
 
-        const feedbackRunContextMatch = url.pathname.match(
-            /^\/api\/feedback\/runs\/([^/]+)\/context$/
-        );
-        if (request.method === 'GET' && feedbackRunContextMatch) {
-            if (!env.FEEDBACK_DB) {
-                return errorResponse('Feedback storage is unavailable', 503, headers);
-            }
-
-            const runId = decodeURIComponent(feedbackRunContextMatch[1]);
-            const run = await readAuthorizedFeedbackRun(request, env, runId, 'context');
-            if (!run) return errorResponse('Unauthorized', 401, headers);
-
-            return jsonResponse(parseStoredJson(run.context_snapshot_json, {}), { headers });
-        }
-
-        const feedbackRunEventsMatch = url.pathname.match(
-            /^\/api\/feedback\/runs\/([^/]+)\/events$/
-        );
-        if (request.method === 'POST' && feedbackRunEventsMatch) {
-            if (!env.FEEDBACK_DB) {
-                return errorResponse('Feedback storage is unavailable', 503, headers);
-            }
-
-            const runId = decodeURIComponent(feedbackRunEventsMatch[1]);
-            const run = await readAuthorizedFeedbackRun(request, env, runId, 'callback');
-            if (!run) return errorResponse('Unauthorized', 401, headers);
-
-            try {
-                const event = normalizeFeedbackRunEvent(await request.json());
-                const result = await appendFeedbackRunEvent(env, run, event);
-                await projectFeedbackRunTerminalEvent(env, run, event);
-                if (!result.replayed) {
-                    await notifyFeedbackWorkflowOfTerminalEvent(env, run, event);
-                }
-                return jsonResponse(
-                    {
-                        accepted: true,
-                        eventId: event.eventId,
-                        replayed: result.replayed,
-                    },
-                    { headers }
-                );
-            } catch (error) {
-                if (error?.message === 'FEEDBACK_RUN_EVENT_CONFLICT') {
-                    return errorResponse('Event conflict', 409, headers);
-                }
-                if (error?.message === 'FEEDBACK_RUN_EVENT_TOO_LARGE') {
-                    return errorResponse('Event payload is too large', 413, headers);
-                }
-                return errorResponse('Invalid Run event', 400, headers);
-            }
-        }
-
         if (request.method === 'GET' && url.pathname === '/api/feedback/issues') {
             if (!(await isValidAdminToken(request, env))) {
                 return errorResponse('Unauthorized', 401, headers);
@@ -5595,15 +9633,38 @@ export default {
                 return errorResponse('Invalid status', 400, headers);
             }
 
+            const filter = url.searchParams.get('filter') || 'all';
+            if (!FEEDBACK_QUEUE_FILTERS.has(filter)) {
+                return errorResponse('Invalid filter', 400, headers);
+            }
+
             const result = await listFeedbackIssues(env, {
                 status,
                 limit: url.searchParams.get('limit'),
                 cursor: url.searchParams.get('cursor'),
             });
 
+            const issues = result.issues
+                .map(serializeAdminIssueSummary)
+                .map((issue) => ({
+                    ...issue,
+                    queueRank: getFeedbackQueueRank(issue.status),
+                    needsAttention: FEEDBACK_ATTENTION_STATUSES.has(issue.status),
+                }))
+                .filter((issue) => matchesFeedbackQueueFilter(issue, filter))
+                // §19.1: approved-and-undelivered, then human-blocked, then
+                // retryable failures, then ordinary new Issues.
+                .sort(
+                    (left, right) =>
+                        left.queueRank - right.queueRank ||
+                        String(right.updatedAt || '').localeCompare(String(left.updatedAt || ''))
+                );
+
             return jsonResponse(
                 {
-                    issues: result.issues.map(serializeAdminIssueSummary),
+                    issues,
+                    filter,
+                    attentionCount: issues.filter((issue) => issue.needsAttention).length,
                     cursor: result.cursor,
                     listComplete: result.listComplete,
                     legacyMigrationPending: Boolean(result.legacyMigrationPending),
@@ -5612,104 +9673,887 @@ export default {
             );
         }
 
-        const feedbackIssueRunMatch = url.pathname.match(
-            /^\/api\/feedback\/issues\/([^/]+)\/runs$/
-        );
-        if (request.method === 'POST' && feedbackIssueRunMatch) {
+        // --- Workbench V2 admin settings -----------------------------------
+        if (url.pathname === '/api/feedback/automation/settings') {
             if (!(await isValidAdminToken(request, env))) {
                 return errorResponse('Unauthorized', 401, headers);
             }
-            if (!env.FEEDBACK_DB) {
-                return errorResponse('Feedback storage is unavailable', 503, headers);
-            }
 
-            const issueId = decodeURIComponent(feedbackIssueRunMatch[1]);
-            if (!issueId.startsWith('feedback:')) {
-                return errorResponse('Invalid key', 400, headers);
+            try {
+                if (request.method === 'GET') {
+                    const stored = await readFeedbackSettings(env, 'automation');
+                    return jsonResponse(
+                        { settings: serializeAutomationSettings(env, stored) },
+                        { headers }
+                    );
+                }
+
+                if (request.method === 'PATCH') {
+                    const body = await request.json();
+                    const current = await readFeedbackSettings(env, 'automation');
+                    if (Number(body.expectedVersion) !== current.version) {
+                        return errorResponse('Version conflict', 409, headers);
+                    }
+
+                    const next = normalizeAutomationSettings({
+                        ...current.settings,
+                        ...body.settings,
+                    });
+                    // §19.4: changing the endpoint invalidates the verified state.
+                    if (next.hookUrl !== current.settings.hookUrl) {
+                        next.connectionState = 'unverified';
+                        next.lastTestedAt = '';
+                        next.lastTestResult = null;
+                    }
+                    const saved = await writeFeedbackSettings(
+                        env,
+                        'automation',
+                        next,
+                        current.version
+                    );
+                    return jsonResponse(
+                        { settings: serializeAutomationSettings(env, saved) },
+                        { headers }
+                    );
+                }
+            } catch (error) {
+                return feedbackErrorResponse(error, headers);
+            }
+        }
+
+        if (request.method === 'GET' && url.pathname === '/api/feedback/automation/health') {
+            if (!(await isValidAdminToken(request, env))) {
+                return errorResponse('Unauthorized', 401, headers);
             }
 
             try {
-                const idempotencyKey = readFeedbackRunIdempotencyKey(request);
-                const runRequest = normalizeFeedbackRunRequest(await request.json());
-                if (runRequest.runnerType === 'local_required') {
-                    const result = await createLocalRequiredHumanAction(
-                        env,
-                        issueId,
-                        idempotencyKey
-                    );
+                return jsonResponse({ health: await readAutomationHealth(env) }, { headers });
+            } catch (error) {
+                return feedbackErrorResponse(error, headers);
+            }
+        }
+
+        // §17.2: a manual DLQ replay reuses the original delivery row, so the
+        // same eventId/idempotencyKey can never produce a second Run.
+        if (
+            request.method === 'POST' &&
+            url.pathname.startsWith('/api/feedback/deliveries/') &&
+            url.pathname.endsWith('/replay')
+        ) {
+            if (!(await isValidAdminToken(request, env))) {
+                return errorResponse('Unauthorized', 401, headers);
+            }
+
+            const deliveryId = decodeURIComponent(
+                url.pathname.slice('/api/feedback/deliveries/'.length, -'/replay'.length)
+            );
+            try {
+                const result = await attemptFeedbackDelivery(env, deliveryId);
+                if (result.errorCode === 'DELIVERY_NOT_FOUND') {
+                    return errorResponse('Not found', 404, headers);
+                }
+
+                return jsonResponse({ result }, { headers });
+            } catch (error) {
+                return feedbackErrorResponse(error, headers);
+            }
+        }
+
+        if (request.method === 'POST' && url.pathname === '/api/feedback/automation/test') {
+            if (!(await isValidAdminToken(request, env))) {
+                return errorResponse('Unauthorized', 401, headers);
+            }
+
+            try {
+                const current = await readFeedbackSettings(env, 'automation');
+                const hookUrl = current.settings.hookUrl;
+                if (!hookUrl) {
                     return jsonResponse(
                         {
-                            replayed: result.replayed,
-                            dispatched: false,
-                            issueStatus: result.issueStatus,
-                            humanAction: serializeFeedbackHumanAction(result.action),
+                            result: {
+                                ok: false,
+                                errorCode: 'HOOK_URL_REQUIRED',
+                                message: '请先填写并保存 Hook URL',
+                            },
                         },
-                        { status: result.replayed ? 200 : 202, headers }
+                        { status: 400, headers }
                     );
                 }
 
-                if (!env.FEEDBACK_WORKFLOW) {
-                    return errorResponse('Feedback workflow is unavailable', 503, headers);
-                }
-
-                const reserved = await reserveFeedbackRun(
+                const testedAt = new Date().toISOString();
+                const result = await postFeedbackHook(env, hookUrl, {
+                    schemaVersion: 1,
+                    type: 'automation.test',
+                    deliveryId: `dly_test_${crypto.randomUUID()}`,
+                    occurredAt: testedAt,
+                    data: { reconcileJobId: FEEDBACK_RECONCILE_JOB_ID },
+                });
+                const saved = await writeFeedbackSettings(
                     env,
-                    issueId,
-                    runRequest,
-                    idempotencyKey,
-                    url.origin
+                    'automation',
+                    {
+                        ...current.settings,
+                        connectionState: result.ok ? 'connected' : 'failed',
+                        lastTestedAt: testedAt,
+                        lastTestResult: result,
+                    },
+                    current.version
                 );
-                if (!reserved.replayed) {
-                    try {
-                        await env.FEEDBACK_WORKFLOW.create({
-                            id: reserved.run.workflow_id,
-                            params: reserved.workflowParams,
-                        });
-                    } catch (error) {
-                        const retainedInstance =
-                            typeof env.FEEDBACK_WORKFLOW.get === 'function'
-                                ? await env.FEEDBACK_WORKFLOW.get(reserved.run.workflow_id)
-                                : null;
-                        if (!retainedInstance) {
-                            console.error(
-                                '[Feedback] Workflow dispatch failed',
-                                reserved.run.workflow_id,
-                                error
-                            );
-                            return errorResponse('Feedback workflow dispatch failed', 503, headers);
-                        }
-                    }
-                }
 
                 return jsonResponse(
                     {
-                        replayed: reserved.replayed,
-                        dispatched: true,
-                        run: serializeFeedbackRun(reserved.run),
+                        result: { ...result, testedAt },
+                        settings: serializeAutomationSettings(env, saved),
                     },
-                    { status: reserved.replayed ? 200 : 202, headers }
+                    { headers }
                 );
             } catch (error) {
-                if (error?.code === 'FEEDBACK_ISSUE_NOT_FOUND') {
-                    return errorResponse('Not found', 404, headers);
-                }
-                if (
-                    error?.code === 'FEEDBACK_ACTIVE_WORK_CONFLICT' ||
-                    error?.code === 'FEEDBACK_IDEMPOTENCY_CONFLICT'
-                ) {
-                    return errorResponse('Active work conflict', 409, headers);
-                }
-                if (
-                    error?.code === 'INVALID_FEEDBACK_RUN_REQUEST' ||
-                    error?.code === 'INVALID_FEEDBACK_IDEMPOTENCY_KEY' ||
-                    error?.code === 'FEEDBACK_WORKFLOW_ID_TOO_LONG' ||
-                    error instanceof SyntaxError
-                ) {
-                    return errorResponse('Invalid Run request', 400, headers);
-                }
-                console.error('[Feedback] Run reservation failed', error);
-                return errorResponse('Feedback Run could not be reserved', 503, headers);
+                return feedbackErrorResponse(error, headers);
             }
+        }
+
+        if (url.pathname === '/api/feedback/runners/settings') {
+            if (!(await isValidAdminToken(request, env))) {
+                return errorResponse('Unauthorized', 401, headers);
+            }
+
+            try {
+                if (request.method === 'GET') {
+                    const stored = await readFeedbackSettings(env, 'runners');
+                    return jsonResponse(
+                        { settings: serializeRunnerSettings(env, stored) },
+                        { headers }
+                    );
+                }
+
+                if (request.method === 'PATCH') {
+                    const body = await request.json();
+                    const current = await readFeedbackSettings(env, 'runners');
+                    if (Number(body.expectedVersion) !== current.version) {
+                        return errorResponse('Version conflict', 409, headers);
+                    }
+
+                    const patch = body.settings || {};
+                    const nextCodexEndpoint =
+                        patch.providers?.codex?.responsesEndpoint ??
+                        current.settings.providers.codex.responsesEndpoint;
+                    // §19.5: a malformed endpoint is blocked before it is stored,
+                    // so no run can ever be dispatched at a chat/completions URL.
+                    const endpointCheck = validateResponsesEndpoint(nextCodexEndpoint);
+                    if (!endpointCheck.valid) {
+                        return jsonResponse(
+                            {
+                                error: 'Invalid Responses API endpoint',
+                                field: 'providers.codex.responsesEndpoint',
+                                code: endpointCheck.code,
+                            },
+                            { status: 400, headers }
+                        );
+                    }
+
+                    // §7.4 authorizes autonomous delivery partly on provider
+                    // health, so health is server-owned: only a real Action smoke
+                    // may write it. An admin editing settings cannot vouch for a
+                    // provider by hand.
+                    const mergeProvider = (name) => ({
+                        ...current.settings.providers[name],
+                        ...stripFeedbackProviderHealth(patch.providers?.[name]),
+                        connectionState: current.settings.providers[name].connectionState,
+                        lastTestedAt: current.settings.providers[name].lastTestedAt,
+                        lastTestResult: current.settings.providers[name].lastTestResult,
+                        pendingSmoke: current.settings.providers[name].pendingSmoke,
+                    });
+                    // §19.5: the switch may only be turned on after a passing
+                    // preflight. The preflight result itself is server-owned.
+                    const currentAuto = current.settings.autoDeliver;
+                    const requestedAuto =
+                        patch.autoDeliver && typeof patch.autoDeliver === 'object'
+                            ? patch.autoDeliver
+                            : {};
+                    const wantsEnabled = Object.hasOwn(requestedAuto, 'enabled')
+                        ? requestedAuto.enabled === true
+                        : currentAuto.enabled;
+                    const preflightPassed = currentAuto.preflight.ok === true;
+                    const nextAuto = {
+                        ...currentAuto,
+                        actorAllowlist: Array.isArray(requestedAuto.actorAllowlist)
+                            ? requestedAuto.actorAllowlist
+                            : currentAuto.actorAllowlist,
+                        enabled: wantsEnabled && preflightPassed,
+                        blockedReason: wantsEnabled && !preflightPassed ? 'PREFLIGHT_REQUIRED' : '',
+                    };
+
+                    const next = normalizeRunnerSettings({
+                        ...current.settings,
+                        ...patch,
+                        providers: {
+                            codex: {
+                                ...mergeProvider('codex'),
+                                responsesEndpoint: nextCodexEndpoint,
+                            },
+                            claude: mergeProvider('claude'),
+                        },
+                        autoDeliver: nextAuto,
+                    });
+                    if (
+                        next.providers.codex.responsesEndpoint !==
+                        current.settings.providers.codex.responsesEndpoint
+                    ) {
+                        next.providers.codex.connectionState = 'unverified';
+                        next.providers.codex.lastTestedAt = '';
+                        next.providers.codex.lastTestResult = null;
+                    }
+
+                    const saved = await writeFeedbackSettings(
+                        env,
+                        'runners',
+                        next,
+                        current.version
+                    );
+                    return jsonResponse(
+                        { settings: serializeRunnerSettings(env, saved) },
+                        { headers }
+                    );
+                }
+            } catch (error) {
+                return feedbackErrorResponse(error, headers);
+            }
+        }
+
+        // §20.1: one admin-only aggregate over the tables that already record the
+        // work. Counters the spec targets at zero are always present, so "zero"
+        // is a measurement rather than a missing field.
+        if (request.method === 'GET' && url.pathname === '/api/feedback/observability/metrics') {
+            if (!(await isValidAdminToken(request, env))) {
+                return errorResponse('Unauthorized', 401, headers);
+            }
+
+            try {
+                return jsonResponse({ metrics: await collectFeedbackMetrics(env) }, { headers });
+            } catch (error) {
+                return feedbackErrorResponse(error, headers);
+            }
+        }
+
+        // §19.5: enabling graded autonomy requires an explicit, re-runnable
+        // preflight over merge, deployment and production smoke prerequisites.
+        if (
+            request.method === 'POST' &&
+            url.pathname === '/api/feedback/runners/auto-deliver/preflight'
+        ) {
+            if (!(await isValidAdminToken(request, env))) {
+                return errorResponse('Unauthorized', 401, headers);
+            }
+
+            try {
+                const current = await readFeedbackSettings(env, 'runners');
+                const preflight = evaluateFeedbackAutoDeliverPreflight(env);
+                const saved = await writeFeedbackSettings(
+                    env,
+                    'runners',
+                    {
+                        ...current.settings,
+                        autoDeliver: {
+                            ...current.settings.autoDeliver,
+                            preflight,
+                            // A failing re-check must switch autonomy back off
+                            // rather than leave a stale approval in place.
+                            enabled: current.settings.autoDeliver.enabled && preflight.ok,
+                            blockedReason:
+                                current.settings.autoDeliver.enabled && !preflight.ok
+                                    ? 'PREFLIGHT_REGRESSED'
+                                    : current.settings.autoDeliver.blockedReason,
+                        },
+                    },
+                    current.version
+                );
+
+                return jsonResponse(
+                    { preflight, settings: serializeRunnerSettings(env, saved) },
+                    { headers }
+                );
+            } catch (error) {
+                return feedbackErrorResponse(error, headers);
+            }
+        }
+
+        if (request.method === 'POST' && url.pathname === '/api/feedback/runners/test') {
+            if (!(await isValidAdminToken(request, env))) {
+                return errorResponse('Unauthorized', 401, headers);
+            }
+
+            try {
+                const body = await request.json();
+                const provider = String(body.provider || '');
+                if (!FEEDBACK_PROVIDERS.has(provider)) {
+                    return errorResponse('Invalid provider', 400, headers);
+                }
+
+                const current = await readFeedbackSettings(env, 'runners');
+                const testedAt = new Date().toISOString();
+                if (provider === 'codex') {
+                    const endpointCheck = validateResponsesEndpoint(
+                        current.settings.providers.codex.responsesEndpoint
+                    );
+                    if (!endpointCheck.valid) {
+                        return jsonResponse(
+                            {
+                                result: {
+                                    ok: false,
+                                    provider,
+                                    testedAt,
+                                    errorCode: endpointCheck.code,
+                                    field: 'providers.codex.responsesEndpoint',
+                                    message: '请填写完整的 /v1/responses 地址',
+                                },
+                            },
+                            { status: 400, headers }
+                        );
+                    }
+                }
+
+                // §19.5 requires a real minimal Action smoke run rather than an
+                // HTTP ping. Without dispatch credentials we report the gap
+                // instead of reporting a success we did not observe.
+                const smokeId = `smk_${crypto.randomUUID()}`;
+                const dispatch = await dispatchFeedbackRunnerSmoke(env, {
+                    provider,
+                    smokeId,
+                    settings: current.settings,
+                });
+
+                if (!dispatch.dispatched) {
+                    const result = {
+                        ok: false,
+                        provider,
+                        action: FEEDBACK_PROVIDER_ACTIONS[provider],
+                        endpointMode:
+                            provider === 'codex' &&
+                            current.settings.providers.codex.responsesEndpoint !==
+                                FEEDBACK_DEFAULT_RESPONSES_ENDPOINT
+                                ? 'relay'
+                                : 'official',
+                        testedAt,
+                        errorCode: dispatch.errorCode,
+                        message:
+                            dispatch.errorCode === 'ACTION_SMOKE_NOT_CONFIGURED'
+                                ? '端点格式校验通过；真实 Action 冒烟需要配置 FEEDBACK_GITHUB_REPOSITORY、FEEDBACK_GITHUB_TOKEN 和 FEEDBACK_CALLBACK_ORIGIN 后才能运行'
+                                : '真实 Action 冒烟派发失败，连接状态保持未验证',
+                    };
+                    const saved = await writeFeedbackSettings(
+                        env,
+                        'runners',
+                        {
+                            ...current.settings,
+                            providers: {
+                                ...current.settings.providers,
+                                [provider]: {
+                                    ...current.settings.providers[provider],
+                                    connectionState: 'unverified',
+                                    lastTestedAt: testedAt,
+                                    lastTestResult: result,
+                                    pendingSmoke: null,
+                                },
+                            },
+                        },
+                        current.version
+                    );
+
+                    return jsonResponse(
+                        { result, settings: serializeRunnerSettings(env, saved) },
+                        { status: 503, headers }
+                    );
+                }
+
+                // Dispatched, but nothing has been observed yet: the provider is
+                // `testing` until the smoke reports its own result (§19.5).
+                const result = {
+                    ok: false,
+                    status: 'running',
+                    smokeId,
+                    provider,
+                    action: FEEDBACK_PROVIDER_ACTIONS[provider],
+                    endpointMode: dispatch.endpointMode,
+                    testedAt,
+                    message: '已派发真实最小 Action 冒烟，等待运行结果回调',
+                };
+                const saved = await writeFeedbackSettings(
+                    env,
+                    'runners',
+                    {
+                        ...current.settings,
+                        providers: {
+                            ...current.settings.providers,
+                            [provider]: {
+                                ...current.settings.providers[provider],
+                                connectionState: 'testing',
+                                lastTestedAt: testedAt,
+                                lastTestResult: result,
+                                pendingSmoke: { smokeId, dispatchedAt: testedAt },
+                            },
+                        },
+                    },
+                    current.version
+                );
+
+                return jsonResponse(
+                    { result, settings: serializeRunnerSettings(env, saved) },
+                    { status: 202, headers }
+                );
+            } catch (error) {
+                return feedbackErrorResponse(error, headers);
+            }
+        }
+
+        // §19.5: the minimal Action smoke reports its own outcome here, using a
+        // token scoped to that one smoke. This is the only writer of provider
+        // health, so §7.4 reads a machine-observed fact rather than a claim.
+        if (
+            request.method === 'POST' &&
+            url.pathname.startsWith('/api/feedback/runners/smoke/') &&
+            url.pathname.endsWith('/result')
+        ) {
+            const smokeId = decodeURIComponent(
+                url.pathname.slice('/api/feedback/runners/smoke/'.length, -'/result'.length)
+            );
+            const claims = await verifyFeedbackSmokeToken(request, env, { smokeId });
+            if (!claims) return errorResponse('Unauthorized', 401, headers);
+
+            try {
+                const body = await request.json();
+                const provider = String(claims.provider || '');
+                if (!FEEDBACK_PROVIDERS.has(provider)) {
+                    return errorResponse('Invalid provider', 400, headers);
+                }
+
+                const current = await readFeedbackSettings(env, 'runners');
+                const stored = current.settings.providers[provider];
+                // Only the smoke this provider is actually waiting on may write
+                // its health; a replayed older smoke is accepted and ignored.
+                if (stored.pendingSmoke?.smokeId !== smokeId) {
+                    return jsonResponse(
+                        { stale: true, settings: serializeRunnerSettings(env, current) },
+                        { headers }
+                    );
+                }
+
+                const ok = body.ok === true;
+                const completedAt = limitText(body.completedAt, 40) || new Date().toISOString();
+                const result = {
+                    ok,
+                    smokeId,
+                    provider,
+                    action: FEEDBACK_PROVIDER_ACTIONS[provider],
+                    // §19.5 requires the exact Action commit that ran, so a later
+                    // version bump is visibly unverified rather than assumed good.
+                    actionCommit: limitText(body.actionCommit, 80),
+                    model: limitText(body.model, 80),
+                    endpointMode: body.endpointMode === 'relay' ? 'relay' : 'official',
+                    completedAt,
+                    // A provider error string can carry a key; keep the code only.
+                    errorCode: ok ? '' : normalizeFeedbackSmokeErrorCode(body.errorCode),
+                    runUrl: limitText(body.runUrl, 300),
+                };
+
+                const saved = await writeFeedbackSettings(
+                    env,
+                    'runners',
+                    {
+                        ...current.settings,
+                        providers: {
+                            ...current.settings.providers,
+                            [provider]: {
+                                ...stored,
+                                connectionState: ok ? 'connected' : 'failed',
+                                lastTestedAt: completedAt,
+                                lastTestResult: result,
+                                pendingSmoke: null,
+                            },
+                        },
+                    },
+                    current.version
+                );
+
+                return jsonResponse(
+                    { result, settings: serializeRunnerSettings(env, saved) },
+                    { headers }
+                );
+            } catch (error) {
+                return feedbackErrorResponse(error, headers);
+            }
+        }
+
+        // --- Workbench V2 Candidates and Releases --------------------------
+        if (url.pathname.startsWith('/api/feedback/candidates/')) {
+            const rest = url.pathname.slice('/api/feedback/candidates/'.length);
+            const isDeliver = rest.endsWith('/deliver');
+            const candidateId = decodeURIComponent(
+                isDeliver ? rest.slice(0, -'/deliver'.length) : rest
+            );
+            if (!candidateId) return errorResponse('Invalid candidate', 400, headers);
+
+            try {
+                if (request.method === 'POST' && isDeliver) {
+                    // §21.3: delivery is admin-only; an owner approval reaches
+                    // it through the HumanAction response instead.
+                    if (!(await isValidAdminToken(request, env))) {
+                        return errorResponse('Unauthorized', 401, headers);
+                    }
+
+                    const candidate = await env.FEEDBACK_DB?.prepare(
+                        'SELECT * FROM feedback_candidates WHERE id = ?'
+                    )
+                        .bind(candidateId)
+                        .first();
+                    if (!candidate) return errorResponse('Not found', 404, headers);
+                    const run = candidate.run_id
+                        ? await env.FEEDBACK_DB.prepare('SELECT * FROM feedback_runs WHERE id = ?')
+                              .bind(candidate.run_id)
+                              .first()
+                        : null;
+                    const release = await deliverFeedbackCandidate(env, candidateId, {
+                        actorType: 'admin',
+                    });
+                    const dispatch = await dispatchFeedbackCreatedRelease(env, {
+                        release,
+                        candidate,
+                        run: run || { id: '', issue_id: candidate.issue_id },
+                    });
+                    if (!dispatch.dispatched) {
+                        return jsonResponse(dispatch, {
+                            status: dispatch.retryable ? 503 : 502,
+                            headers,
+                        });
+                    }
+                    return jsonResponse({ ...release, ...dispatch }, { status: 201, headers });
+                }
+
+                if (request.method === 'GET' && !isDeliver) {
+                    const row = await env.FEEDBACK_DB?.prepare(
+                        'SELECT * FROM feedback_candidates WHERE id = ?'
+                    )
+                        .bind(candidateId)
+                        .first();
+                    if (!row) return errorResponse('Not found', 404, headers);
+
+                    const isAdmin = await isValidAdminToken(request, env);
+                    const isOwner =
+                        !isAdmin &&
+                        (await isValidFeedbackOwnerCapability(request, env, row.issue_id));
+                    if (!isAdmin && !isOwner) {
+                        return errorResponse('Unauthorized', 401, headers);
+                    }
+
+                    return jsonResponse(
+                        {
+                            candidate: serializeFeedbackCandidate(row, {
+                                includeTechnical: isAdmin,
+                            }),
+                        },
+                        { headers }
+                    );
+                }
+            } catch (error) {
+                return feedbackErrorResponse(error, headers);
+            }
+
+            return errorResponse('Not Found', 404, headers);
+        }
+
+        if (url.pathname.startsWith('/api/feedback/releases/')) {
+            const rest = url.pathname.slice('/api/feedback/releases/'.length);
+            const separator = rest.lastIndexOf('/');
+            const releaseId = separator > 0 ? decodeURIComponent(rest.slice(0, separator)) : '';
+            const segment = separator > 0 ? rest.slice(separator + 1) : '';
+
+            if (releaseId && segment === 'retry' && request.method === 'POST') {
+                if (!(await isValidAdminToken(request, env))) {
+                    return errorResponse('Unauthorized', 401, headers);
+                }
+
+                try {
+                    const result = await retryBlockedFeedbackRelease(env, releaseId);
+                    if (!result) return errorResponse('Not found', 404, headers);
+                    return jsonResponse(result, {
+                        status: result.dispatched ? 202 : result.retryable ? 503 : 502,
+                        headers,
+                    });
+                } catch (error) {
+                    return feedbackErrorResponse(error, headers);
+                }
+            }
+
+            if (releaseId && segment === 'events' && request.method === 'POST') {
+                // §21.3: only the matching Release token — not admin, not owner.
+                if (!(await verifyFeedbackReleaseToken(request, env, releaseId))) {
+                    return errorResponse('Unauthorized', 401, headers);
+                }
+
+                try {
+                    const result = await appendFeedbackReleaseEvent(
+                        env,
+                        releaseId,
+                        await request.json()
+                    );
+                    if (!result) return errorResponse('Not found', 404, headers);
+                    return jsonResponse(result, { status: result.duplicate ? 200 : 201, headers });
+                } catch (error) {
+                    return feedbackErrorResponse(error, headers);
+                }
+            }
+
+            return errorResponse('Not Found', 404, headers);
+        }
+
+        // --- Workbench V2 Run context and Callback -------------------------
+        if (url.pathname.startsWith('/api/feedback/runs/')) {
+            const rest = url.pathname.slice('/api/feedback/runs/'.length);
+            const separator = rest.lastIndexOf('/');
+            const runId = separator > 0 ? decodeURIComponent(rest.slice(0, separator)) : '';
+            const segment = separator > 0 ? rest.slice(separator + 1) : '';
+
+            if (runId && segment === 'context' && request.method === 'GET') {
+                // §21.3: only the matching Context token, never admin or owner.
+                if (!(await verifyFeedbackRunToken(request, env, { runId, audience: 'context' }))) {
+                    return errorResponse('Unauthorized', 401, headers);
+                }
+
+                try {
+                    const context = await readFeedbackRunContext(env, runId);
+                    if (!context) return errorResponse('Not found', 404, headers);
+                    return jsonResponse({ context }, { headers });
+                } catch (error) {
+                    return feedbackErrorResponse(error, headers);
+                }
+            }
+
+            if (runId && segment === 'events' && request.method === 'POST') {
+                if (
+                    !(await verifyFeedbackRunToken(request, env, { runId, audience: 'callback' }))
+                ) {
+                    return errorResponse('Unauthorized', 401, headers);
+                }
+
+                try {
+                    const result = await appendFeedbackCallbackEvent(
+                        env,
+                        runId,
+                        await request.json()
+                    );
+                    if (!result) return errorResponse('Not found', 404, headers);
+                    // §15.3: a repeated Callback is a 200, not a duplicate event.
+                    return jsonResponse(result, { status: result.duplicate ? 200 : 201, headers });
+                } catch (error) {
+                    return feedbackErrorResponse(error, headers);
+                }
+            }
+
+            if (runId && segment === 'cancel' && request.method === 'POST') {
+                if (!(await isValidAdminToken(request, env))) {
+                    return errorResponse('Unauthorized', 401, headers);
+                }
+
+                try {
+                    const cancelled = await cancelFeedbackRun(env, runId);
+                    if (!cancelled) return errorResponse('Not found', 404, headers);
+                    return jsonResponse(cancelled, { headers });
+                } catch (error) {
+                    return feedbackErrorResponse(error, headers);
+                }
+            }
+
+            return errorResponse('Not Found', 404, headers);
+        }
+
+        // --- Workbench V2 human actions ------------------------------------
+        if (
+            request.method === 'POST' &&
+            url.pathname.startsWith('/api/feedback/human-actions/') &&
+            url.pathname.endsWith('/respond')
+        ) {
+            const actionId = decodeURIComponent(
+                url.pathname.slice('/api/feedback/human-actions/'.length, -'/respond'.length)
+            );
+            if (!actionId) return errorResponse('Invalid human action', 400, headers);
+
+            try {
+                const body = await request.json();
+                const action = await env.FEEDBACK_DB?.prepare(
+                    'SELECT issue_id, type FROM feedback_human_actions WHERE id = ?'
+                )
+                    .bind(actionId)
+                    .first();
+                if (!action) return errorResponse('Not found', 404, headers);
+
+                const isAdmin = await isValidAdminToken(request, env);
+                const isOwner =
+                    !isAdmin &&
+                    (await isValidFeedbackOwnerCapability(request, env, action.issue_id));
+                if (!isAdmin && !isOwner) {
+                    return errorResponse('Unauthorized', 401, headers);
+                }
+                // §21.3: an owner capability can answer the current
+                // reproduction question, but it cannot approve Design,
+                // Candidate, protected-path or other privileged actions.
+                if (
+                    !isAdmin &&
+                    normalizeFeedbackHumanActionType(action.type) !== 'need_reproduction'
+                ) {
+                    return errorResponse('Forbidden', 403, headers);
+                }
+
+                const result = await respondToHumanAction(env, actionId, {
+                    actorType: isAdmin ? 'admin' : 'user',
+                    decision: String(body.decision || ''),
+                    candidateId: body.candidateId ? String(body.candidateId) : '',
+                    designId: body.designId ? String(body.designId) : '',
+                    designDecision: body.designDecision ? String(body.designDecision) : '',
+                    note: body.note,
+                });
+                if (!result) return errorResponse('Not found', 404, headers);
+
+                return jsonResponse(
+                    {
+                        action: result.action,
+                        delivery: result.delivery,
+                        resumeState: result.resumeState,
+                        workflowTermination: result.workflowTermination,
+                        issue: isAdmin
+                            ? serializeAdminIssue(result.issue)
+                            : serializePublicIssue(result.issue, true),
+                    },
+                    { headers }
+                );
+            } catch (error) {
+                return feedbackErrorResponse(error, headers);
+            }
+        }
+
+        // --- Workbench V2 issue sub-resources ------------------------------
+        const issueSubRoute = parseFeedbackIssueSubRoute(url.pathname);
+        if (issueSubRoute) {
+            const { key, segment } = issueSubRoute;
+            const isAdmin = await isValidAdminToken(request, env);
+            const isOwner = !isAdmin && (await isValidFeedbackOwnerCapability(request, env, key));
+            if (!isAdmin && !isOwner) {
+                return errorResponse('Unauthorized', 401, headers);
+            }
+
+            try {
+                if (request.method === 'GET' && segment === 'events') {
+                    const issue = await readFeedbackIssue(env, key);
+                    if (!issue) return errorResponse('Not found', 404, headers);
+
+                    return jsonResponse(
+                        {
+                            events: await listFeedbackTimeline(env, key, {
+                                includeInternal: isAdmin,
+                            }),
+                            version: Number(issue.version) || 1,
+                        },
+                        { headers }
+                    );
+                }
+
+                if (request.method === 'GET' && segment === 'human-actions') {
+                    return jsonResponse(
+                        { humanActions: await listHumanActions(env, key) },
+                        { headers }
+                    );
+                }
+
+                if (request.method === 'GET' && segment === 'designs') {
+                    return jsonResponse(
+                        {
+                            designs: await listFeedbackDesigns(env, key, {
+                                includeTechnical: isAdmin,
+                            }),
+                        },
+                        { headers }
+                    );
+                }
+
+                if (request.method === 'GET' && segment === 'candidates') {
+                    const rows = await env.FEEDBACK_DB.prepare(
+                        'SELECT * FROM feedback_candidates WHERE issue_id = ? ORDER BY created_at DESC'
+                    )
+                        .bind(key)
+                        .all();
+                    return jsonResponse(
+                        {
+                            candidates: (rows.results || []).map((row) =>
+                                // §19.2: owners see product effect and evidence;
+                                // branch/commit detail is admin-only.
+                                serializeFeedbackCandidate(row, { includeTechnical: isAdmin })
+                            ),
+                        },
+                        { headers }
+                    );
+                }
+
+                if (request.method === 'GET' && segment === 'releases') {
+                    const rows = await env.FEEDBACK_DB.prepare(
+                        'SELECT * FROM feedback_releases WHERE issue_id = ? ORDER BY started_at DESC'
+                    )
+                        .bind(key)
+                        .all();
+                    return jsonResponse(
+                        { releases: (rows.results || []).map(serializeFeedbackRelease) },
+                        { headers }
+                    );
+                }
+
+                if (request.method === 'POST' && segment === 'comments') {
+                    const body = await request.json();
+                    const result = await appendFeedbackComment(env, key, {
+                        actorType: isAdmin ? 'admin' : 'user',
+                        body: body.body,
+                        mode: body.mode,
+                        expectedVersion: Number(body.expectedVersion),
+                    });
+                    if (!result) return errorResponse('Not found', 404, headers);
+
+                    return jsonResponse(
+                        {
+                            eventId: result.eventId,
+                            mode: result.mode,
+                            requestedMode: result.requestedMode,
+                            provider: result.provider,
+                            mention: result.mention,
+                            delivery: result.delivery,
+                            workflowTermination: result.workflowTermination,
+                            issue: isAdmin
+                                ? serializeAdminIssue(result.issue)
+                                : serializePublicIssue(result.issue, true),
+                        },
+                        { status: 201, headers }
+                    );
+                }
+
+                if (request.method === 'POST' && segment === 'reopen') {
+                    const body = await request.json();
+                    const result = await reopenFeedbackIssue(env, key, {
+                        actorType: isAdmin ? 'admin' : 'user',
+                        expectedVersion: Number(body.expectedVersion),
+                    });
+                    if (!result) return errorResponse('Not found', 404, headers);
+
+                    return jsonResponse(
+                        {
+                            eventId: result.eventId,
+                            delivery: result.delivery,
+                            issue: isAdmin
+                                ? serializeAdminIssue(result.issue)
+                                : serializePublicIssue(result.issue, true),
+                        },
+                        { headers }
+                    );
+                }
+            } catch (error) {
+                return feedbackErrorResponse(error, headers);
+            }
+
+            return errorResponse('Not Found', 404, headers);
         }
 
         if (url.pathname.startsWith('/api/feedback/issues/')) {
@@ -5786,6 +10630,20 @@ export default {
                 }
 
                 const created = await createD1FeedbackIssue(env, feedback);
+                // §12.2/§17.3: the submitter must not wait on delivery, and the
+                // Hook contract only promises a 10s response on its own side.
+                const dispatch = dispatchFeedbackEvent(env, {
+                    eventId: created.eventId,
+                    eventType: 'issue.created',
+                    issueId: created.issueId,
+                }).catch((error) => {
+                    logFeedback('warn', 'issue.created dispatch failed', { error });
+                });
+                if (ctx?.waitUntil) {
+                    ctx.waitUntil(dispatch);
+                } else {
+                    await dispatch;
+                }
 
                 return jsonResponse(
                     {
@@ -5849,5 +10707,24 @@ export default {
         }
 
         return new Response('Not Found', { status: 404, headers });
+    },
+
+    /**
+     * The only scheduled trigger in this Worker. It runs once a day and only
+     * touches stuck work (§13.4, §17.2) — it is not, and must not become, an
+     * Agent polling loop.
+     */
+    async scheduled(event, env, ctx) {
+        const sweep = runFeedbackReconcile(env, new Date(event.scheduledTime || Date.now())).then(
+            (summary) => {
+                logFeedback('info', 'reconcile', { deliveryId: summary?.jobId });
+                return summary;
+            },
+            (error) => {
+                logFeedback('warn', 'reconcile failed', { error });
+            }
+        );
+        if (ctx?.waitUntil) ctx.waitUntil(sweep);
+        return sweep;
     },
 };
