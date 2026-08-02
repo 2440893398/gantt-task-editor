@@ -128,7 +128,8 @@ jobs:
           "$TRUSTED_NODE" -e '
             const context = require(process.env.RUNNER_TEMP + "/feedback-context.json").context;
             if (!context) throw new Error("empty context");
-            require("fs").writeFileSync(process.env.PROMPT_PATH, [
+            const fs = require("fs");
+            const prompt = [
               "# Feedback processing task",
               "",
               `Policy: ${context.policy}`,
@@ -150,7 +151,16 @@ jobs:
               context.issue.description.untrustedUserContent,
               "UNTRUSTED_USER_CONTENT",
               "",
-            ].join("\n"));
+            ].join("\n");
+            fs.writeFileSync(process.env.PROMPT_PATH, prompt);
+            let delimiter;
+            do {
+              delimiter = `FEEDBACK_PROMPT_${require("crypto").randomUUID()}`;
+            } while (prompt.includes(`\n${delimiter}\n`));
+            fs.appendFileSync(
+              process.env.GITHUB_ENV,
+              `FEEDBACK_PROMPT<<${delimiter}\n${prompt}\n${delimiter}\n`
+            );
           '
 
       - name: Install dependencies
@@ -158,11 +168,15 @@ jobs:
         run: npm ci
 
       - name: Run Claude Code
-        uses: anthropics/claude-code-action@v1
+        uses: anthropics/claude-code-action@be7b93b1907a4abad570368f3c74b6fe3807510b
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          prompt_file: ${{ runner.temp }}/feedback-prompt.md
-          allowed_tools: ${{ steps.payload.outputs.writeAllowed == 'true' && 'Read,Grep,Glob,Edit,Write,Bash' || 'Read,Grep,Glob' }}
+          prompt: ${{ env.FEEDBACK_PROMPT }}
+          claude_args: >-
+            --max-turns 20
+            --model claude-opus-4-6
+            --allowedTools
+            ${{ steps.payload.outputs.writeAllowed == 'true' && 'Read,Grep,Glob,Edit,Write,Bash' || 'Read,Grep,Glob' }}
 
       - name: Targeted tests
         id: tests

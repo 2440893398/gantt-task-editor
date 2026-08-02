@@ -176,6 +176,30 @@ function horizontalOverflow(page) {
     );
 }
 
+function describeHorizontalOverflow(page) {
+    return page.evaluate(() => {
+        const viewportWidth = document.documentElement.clientWidth;
+        return Array.from(document.body.querySelectorAll('*'))
+            .map((element) => {
+                const rect = element.getBoundingClientRect();
+                return {
+                    selector: element.id
+                        ? `#${element.id}`
+                        : `${element.tagName.toLowerCase()}.${Array.from(element.classList)
+                              .slice(0, 3)
+                              .join('.')}`,
+                    left: Math.round(rect.left),
+                    right: Math.round(rect.right),
+                    width: Math.round(rect.width),
+                    scrollWidth: element.scrollWidth,
+                };
+            })
+            .filter((entry) => entry.left < -1 || entry.right > viewportWidth + 1)
+            .sort((left, right) => right.right - left.right)
+            .slice(0, 10);
+    });
+}
+
 test.describe('[SCN-FWB-020] Design 版本审批', () => {
     test('[SCN-FWB-020] owner 只读 Design，管理员批准后启动绑定版本的实现 Run', async ({
         page,
@@ -506,7 +530,13 @@ test.describe('[SCN-FWB-015][SCN-FWB-016] 响应式与可访问性', () => {
                 for (const view of ['自动化', 'AI 执行器']) {
                     await scoped.getByRole('button', { name: view, exact: true }).click();
                     await expect(scoped.locator('.settings-view.active')).toBeVisible();
-                    expect(await horizontalOverflow(scoped)).toBeLessThanOrEqual(0);
+                    const overflow = await horizontalOverflow(scoped);
+                    const overflowDetails =
+                        overflow > 0 ? await describeHorizontalOverflow(scoped) : [];
+                    expect(
+                        overflow,
+                        `${viewport.name}/${view}: ${JSON.stringify(overflowDetails)}`
+                    ).toBeLessThanOrEqual(0);
                 }
             } finally {
                 await context.close();

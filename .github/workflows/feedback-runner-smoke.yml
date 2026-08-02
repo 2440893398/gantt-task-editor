@@ -78,45 +78,52 @@ jobs:
             fs.appendFileSync(process.env.GITHUB_ENV, `SMOKE_CALLBACK_TOKEN=${payload.callbackToken}\n`);
           '
 
-      # The pinned commit is what actually ran, and it is what the workbench
-      # records. Bumping the tag alone therefore shows up as unverified.
-      - name: Resolve pinned Action commit
+      - name: Validate pinned Action commit
         id: action_commit
         env:
           ACTION_REF: ${{ steps.payload.outputs.action }}
+          PROVIDER: ${{ steps.payload.outputs.provider }}
         run: |
           set -euo pipefail
-          repo="${ACTION_REF%@*}"
-          ref="${ACTION_REF##*@}"
-          commit="$(git ls-remote "https://github.com/${repo}.git" "refs/tags/${ref}" "refs/heads/${ref}" | head -n1 | cut -f1)"
-          if [ -z "$commit" ]; then
-            echo "could not resolve ${ACTION_REF}" >&2
-            exit 1
-          fi
-          echo "commit=${commit}" >> "$GITHUB_OUTPUT"
+          node -e '
+            const expected = {
+              codex: "openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56",
+              claude: "anthropics/claude-code-action@be7b93b1907a4abad570368f3c74b6fe3807510b",
+            };
+            if (process.env.ACTION_REF !== expected[process.env.PROVIDER]) {
+              throw new Error("unpinned or unexpected provider Action");
+            }
+            const commit = process.env.ACTION_REF.split("@").pop();
+            require("fs").appendFileSync(process.env.GITHUB_OUTPUT, `commit=${commit}\n`);
+          '
 
       - name: Run minimal Codex smoke
         id: codex_smoke
         if: steps.payload.outputs.provider == 'codex'
         continue-on-error: true
-        uses: openai/codex-action@v1
+        uses: openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56
         with:
-          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          openai-api-key: ${{ secrets.CODEX_API_KEY }}
           # A read-only, single-turn prompt: enough to prove credentials, model
           # routing and the Responses endpoint all work, and nothing more.
           prompt: 'Reply with exactly: FEEDBACK_SMOKE_OK'
-          permission-profile: read-only
-          openai-base-url: ${{ steps.payload.outputs.endpoint_mode == 'relay' && steps.payload.outputs.responses_endpoint || '' }}
+          responses-api-endpoint: ${{ steps.payload.outputs.responses_endpoint }}
+          model: ${{ vars.CODEX_MODEL || secrets.CODEX_MODEL }}
+          permission-profile: :read-only
+          safety-strategy: drop-sudo
 
       - name: Run minimal Claude Agent smoke
         id: claude_smoke
         if: steps.payload.outputs.provider == 'claude'
         continue-on-error: true
-        uses: anthropics/claude-code-action@v1
+        uses: anthropics/claude-code-action@be7b93b1907a4abad570368f3c74b6fe3807510b
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: 'Reply with exactly: FEEDBACK_SMOKE_OK'
-          claude_args: '--max-turns 1 --allowedTools ""'
+          claude_args: >-
+            --max-turns 1
+            --model claude-opus-4-6
+            --allowedTools ""
 
       # Always reports, so a failed smoke is recorded as failed rather than
       # leaving the provider stuck in "testing" until the token expires.
@@ -130,6 +137,7 @@ jobs:
           ACTION_COMMIT: ${{ steps.action_commit.outputs.commit }}
           CODEX_OUTCOME: ${{ steps.codex_smoke.outcome }}
           CLAUDE_OUTCOME: ${{ steps.claude_smoke.outcome }}
+          CODEX_MODEL: ${{ vars.CODEX_MODEL || secrets.CODEX_MODEL }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
@@ -140,7 +148,7 @@ jobs:
             const body = {
               ok,
               actionCommit: process.env.ACTION_COMMIT || "",
-              model: provider === "codex" ? "gpt-5-codex" : "claude-opus-4-6",
+              model: provider === "codex" ? process.env.CODEX_MODEL : "claude-opus-4-6",
               endpointMode: process.env.ENDPOINT_MODE,
               completedAt: new Date().toISOString(),
               runUrl: process.env.RUN_URL,

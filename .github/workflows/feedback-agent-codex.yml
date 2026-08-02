@@ -62,6 +62,15 @@ jobs:
             }
             const writeAllowed = ["implement", "implement_and_verify"].includes(payload.policy);
             if (writeAllowed && !baseCommit) throw new Error("write policy requires baseCommit");
+            const expectedProfile = writeAllowed ? "feedback-workspace" : "feedback-readonly";
+            if (payload.permissionProfile !== expectedProfile) {
+              throw new Error("permission profile does not match policy");
+            }
+            const responsesEndpoint = String(payload.responsesEndpoint || "");
+            const parsedEndpoint = new URL(responsesEndpoint);
+            if (!["http:", "https:"].includes(parsedEndpoint.protocol) || !parsedEndpoint.pathname.endsWith("/v1/responses")) {
+              throw new Error("invalid Responses API endpoint");
+            }
             const encodedRunId = encodeURIComponent(payload.runId);
             const out = {
               runId: payload.runId,
@@ -73,6 +82,8 @@ jobs:
               baseRef: process.env.GITHUB_REF_NAME || "master",
               candidateRef: `feedback/candidate/${payload.runId}`,
               writeAllowed,
+              permissionProfile: writeAllowed ? "feedback-workspace" : ":read-only",
+              responsesEndpoint,
             };
             const fs = require("fs");
             for (const [key, value] of Object.entries(out)) {
@@ -158,14 +169,32 @@ jobs:
         if: steps.payload.outputs.writeAllowed == 'true'
         run: npm ci
 
+      - name: Prepare Playwright dependencies
+        if: steps.payload.outputs.policy == 'implement_and_verify'
+        run: npx playwright install --with-deps chromium
+
+      - name: Configure Codex permission profile
+        env:
+          FEEDBACK_CODEX_HOME: ${{ runner.temp }}/feedback-codex-home
+        run: |
+          set -euo pipefail
+          mkdir -p "$FEEDBACK_CODEX_HOME"
+          printf '%s\n' \
+            '[permissions.feedback-workspace]' \
+            'description = "Feedback Workbench repository-only implementation"' \
+            'extends = ":workspace"' \
+            > "$FEEDBACK_CODEX_HOME/config.toml"
+
       - name: Run Codex
-        uses: openai/codex-action@v1
+        uses: openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56
         with:
           openai-api-key: ${{ secrets.CODEX_API_KEY }}
-          model: ${{ vars.CODEX_MODEL }}
+          responses-api-endpoint: ${{ steps.payload.outputs.responsesEndpoint }}
+          model: ${{ vars.CODEX_MODEL || secrets.CODEX_MODEL }}
           prompt-file: ${{ runner.temp }}/feedback-prompt.md
-          read-only: ${{ steps.payload.outputs.writeAllowed != 'true' }}
-          safety-strategy: ${{ steps.payload.outputs.writeAllowed == 'true' && 'workspace-write' || 'read-only' }}
+          codex-home: ${{ runner.temp }}/feedback-codex-home
+          permission-profile: ${{ steps.payload.outputs.permissionProfile }}
+          safety-strategy: drop-sudo
 
       - name: Targeted tests
         id: tests
@@ -180,9 +209,7 @@ jobs:
       - name: Playwright verification
         id: playwright
         if: steps.payload.outputs.policy == 'implement_and_verify'
-        run: |
-          npx playwright install --with-deps chromium
-          npm run test:e2e
+        run: npm run test:e2e
 
       - name: Package untrusted Agent output
         id: package

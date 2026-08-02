@@ -52,8 +52,8 @@ const FEEDBACK_CALLBACK_EVENTS = [
 ];
 const FEEDBACK_PROVIDERS = new Set(['codex', 'claude']);
 const FEEDBACK_PROVIDER_ACTIONS = {
-    codex: 'openai/codex-action@v1',
-    claude: 'anthropics/claude-code-action@v1',
+    codex: 'openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56',
+    claude: 'anthropics/claude-code-action@be7b93b1907a4abad570368f3c74b6fe3807510b',
 };
 const FEEDBACK_MENTION_ROUTES = {
     '@codex-agent': 'codex',
@@ -3907,6 +3907,10 @@ async function createFeedbackRun(env, { issueId, workflowId, provider, triggerEv
             deliveryMode,
             provider: resolvedProvider,
             permissionProfile: FEEDBACK_PERMISSION_PROFILES[policy] || 'feedback-readonly',
+            responsesEndpoint:
+                resolvedProvider === 'codex'
+                    ? runnerSettings.providers.codex.responsesEndpoint
+                    : '',
             contextUrl: `${origin}/api/feedback/runs/${encodeURIComponent(runId)}/context`,
             callbackUrl: `${origin}/api/feedback/runs/${encodeURIComponent(runId)}/events`,
             contextToken: contextToken.token,
@@ -4081,6 +4085,50 @@ async function dispatchFeedbackRunToGitHub(env, { payload, provider }) {
     }
 
     const ref = String(env.FEEDBACK_GITHUB_REF || 'master');
+    let dispatchPayload = payload;
+    if (!/^[0-9a-f]{40,64}$/i.test(String(dispatchPayload.baseCommit || ''))) {
+        const commitUrl = `https://api.github.com/repos/${repository}/commits/${encodeURIComponent(ref)}`;
+        try {
+            const commitResponse = await fetch(commitUrl, {
+                headers: {
+                    Accept: 'application/vnd.github+json',
+                    Authorization: `Bearer ${token}`,
+                    'X-GitHub-Api-Version': '2022-11-28',
+                    'User-Agent': 'gantt-feedback-workbench',
+                },
+                signal: AbortSignal.timeout(FEEDBACK_HOOK_TIMEOUT_MS),
+            });
+            if (!commitResponse.ok) {
+                return {
+                    dispatched: false,
+                    errorCode: `GITHUB_HTTP_${commitResponse.status}`,
+                    retryable: commitResponse.status === 429 || commitResponse.status >= 500,
+                };
+            }
+            const commit = await commitResponse.json();
+            const baseCommit = String(commit?.sha || '');
+            if (!/^[0-9a-f]{40,64}$/i.test(baseCommit)) {
+                return {
+                    dispatched: false,
+                    errorCode: 'GITHUB_BASE_COMMIT_INVALID',
+                    retryable: false,
+                };
+            }
+            dispatchPayload = { ...dispatchPayload, baseCommit };
+            await env.FEEDBACK_DB.prepare(
+                'UPDATE feedback_runs SET base_commit = ? WHERE id = ?'
+            )
+                .bind(baseCommit, dispatchPayload.runId)
+                .run();
+        } catch (error) {
+            return {
+                dispatched: false,
+                errorCode:
+                    error?.name === 'TimeoutError' ? 'GITHUB_TIMEOUT' : 'GITHUB_UNREACHABLE',
+                retryable: true,
+            };
+        }
+    }
     const url = `https://api.github.com/repos/${repository}/actions/workflows/${workflowFile}/dispatches`;
     try {
         const response = await fetch(url, {
@@ -4094,7 +4142,7 @@ async function dispatchFeedbackRunToGitHub(env, { payload, provider }) {
             },
             // workflow_dispatch inputs are strings; the payload travels as one
             // JSON document so the template does not need per-field plumbing.
-            body: JSON.stringify({ ref, inputs: { payload: JSON.stringify(payload) } }),
+            body: JSON.stringify({ ref, inputs: { payload: JSON.stringify(dispatchPayload) } }),
             signal: AbortSignal.timeout(FEEDBACK_HOOK_TIMEOUT_MS),
         });
         if (!response.ok) {
@@ -4152,6 +4200,12 @@ async function verifyRunCompletionManifest({ env, run, payload }) {
                 actual: String(manifest.baseRef || ''),
                 expected: expectedBaseRef,
                 required: true,
+            },
+            {
+                code: 'DIFF_MANIFEST_BASE_COMMIT_MISMATCH',
+                actual: String(manifest.baseCommit || '').toLowerCase(),
+                expected: String(run.base_commit || '').toLowerCase(),
+                required: Boolean(run.base_commit),
             },
             {
                 code: 'DIFF_MANIFEST_CANDIDATE_REF_MISMATCH',

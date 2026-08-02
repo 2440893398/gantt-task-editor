@@ -3,6 +3,8 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const projectRoot = resolve(import.meta.dirname, '../../..');
+const CODEX_ACTION_COMMIT = '52fe01ec70a42f454c9d2ebd47598f9fd6893d56';
+const CLAUDE_ACTION_COMMIT = 'be7b93b1907a4abad570368f3c74b6fe3807510b';
 
 function readProjectFile(path) {
     return readFileSync(resolve(projectRoot, path), 'utf8');
@@ -141,6 +143,62 @@ describe('[SCN-FWB-018] feedback V2 Worker infrastructure', () => {
 });
 
 describe('[SCN-FWB-022] feedback V2 autonomous delivery infrastructure', () => {
+    it('[SCN-FWB-016] runs pinned provider smoke with the official Action inputs', () => {
+        const workflow = readProjectFile('.github/workflows/feedback-runner-smoke.yml');
+        const workerSource = readProjectFile('workers/share-worker.js');
+
+        expect(workflow).toContain(`uses: openai/codex-action@${CODEX_ACTION_COMMIT}`);
+        expect(workflow).toContain(`uses: anthropics/claude-code-action@${CLAUDE_ACTION_COMMIT}`);
+        expect(workflow).toContain('openai-api-key: ${{ secrets.CODEX_API_KEY }}');
+        expect(workflow).toContain(
+            'responses-api-endpoint: ${{ steps.payload.outputs.responses_endpoint }}'
+        );
+        expect(workflow).toContain('permission-profile: :read-only');
+        expect(workflow).toContain('safety-strategy: drop-sudo');
+        expect(workflow).toContain('model: ${{ vars.CODEX_MODEL || secrets.CODEX_MODEL }}');
+        expect(workflow).toContain('CODEX_MODEL: ${{ vars.CODEX_MODEL || secrets.CODEX_MODEL }}');
+        expect(workflow).toContain('--model claude-opus-4-6');
+        expect(workflow).not.toContain('openai-base-url:');
+        expect(workflow).not.toContain('secrets.OPENAI_API_KEY');
+        expect(workflow).not.toContain('openai/codex-action@v1');
+        expect(workflow).not.toContain('anthropics/claude-code-action@v1');
+        expect(workerSource).toContain(`codex: 'openai/codex-action@${CODEX_ACTION_COMMIT}'`);
+        expect(workerSource).toContain(
+            `claude: 'anthropics/claude-code-action@${CLAUDE_ACTION_COMMIT}'`
+        );
+    });
+
+    it('[SCN-FWB-005] uses the pinned Codex Action with a controlled permission profile', () => {
+        const workflow = readProjectFile('.github/workflows/feedback-agent-codex.yml');
+
+        expect(workflow).toContain(`uses: openai/codex-action@${CODEX_ACTION_COMMIT}`);
+        expect(workflow).toContain(
+            'responses-api-endpoint: ${{ steps.payload.outputs.responsesEndpoint }}'
+        );
+        expect(workflow).toContain(
+            'permission-profile: ${{ steps.payload.outputs.permissionProfile }}'
+        );
+        expect(workflow).toContain('safety-strategy: drop-sudo');
+        expect(workflow).toContain('model: ${{ vars.CODEX_MODEL || secrets.CODEX_MODEL }}');
+        expect(workflow).toContain('[permissions.feedback-workspace]');
+        expect(workflow).toContain('extends = ":workspace"');
+        expect(workflow).not.toContain('openai/codex-action@v1');
+        expect(workflow).not.toContain('read-only:');
+        expect(workflow).not.toContain("'workspace-write' || 'read-only'");
+    });
+
+    it('[SCN-FWB-010] uses the pinned Claude v1 prompt and tool contract', () => {
+        const workflow = readProjectFile('.github/workflows/feedback-agent-claude.yml');
+
+        expect(workflow).toContain(`uses: anthropics/claude-code-action@${CLAUDE_ACTION_COMMIT}`);
+        expect(workflow).toContain('prompt: ${{ env.FEEDBACK_PROMPT }}');
+        expect(workflow).toContain('claude_args: >-');
+        expect(workflow).toContain('--allowedTools');
+        expect(workflow).not.toContain('anthropics/claude-code-action@v1');
+        expect(workflow).not.toContain('prompt_file:');
+        expect(workflow).not.toContain('allowed_tools:');
+    });
+
     it('publishes recoverable Candidate refs with structured quality evidence', () => {
         const gateScript = readProjectFile('scripts/feedback-diff-gate.mjs');
         expect(gateScript).toContain('qualityTier: result.qualityTier');

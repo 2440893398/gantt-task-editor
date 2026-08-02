@@ -1473,6 +1473,15 @@ async function json(response) {
     return response.json();
 }
 
+function mockSuccessfulGitHubRunDispatch(commit = 'a'.repeat(40)) {
+    return vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+        if (String(url).endsWith('/commits/master')) {
+            return Response.json({ sha: commit });
+        }
+        return new Response(null, { status: 204 });
+    });
+}
+
 function replayDataUrl(events = [{ type: 4, data: { width: 1280, height: 720 } }]) {
     const payload = JSON.stringify({
         kind: 'rrweb-replay',
@@ -4359,7 +4368,9 @@ describe('feedback workbench V2 routes', () => {
         expect(response.status).toBe(503);
         expect(payload.result.ok).toBe(false);
         expect(payload.result.errorCode).toBe('ACTION_SMOKE_NOT_CONFIGURED');
-        expect(payload.result.action).toBe('openai/codex-action@v1');
+        expect(payload.result.action).toBe(
+            'openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56'
+        );
         expect(payload.settings.providers.codex.connectionState).toBe('unverified');
     });
 
@@ -4394,7 +4405,9 @@ describe('feedback workbench V2 routes', () => {
             );
             const dispatched = JSON.parse(JSON.parse(init.body).inputs.payload);
             expect(dispatched.provider).toBe('codex');
-            expect(dispatched.action).toBe('openai/codex-action@v1');
+            expect(dispatched.action).toBe(
+                'openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56'
+            );
             expect(dispatched.smokeId).toBe(payload.result.smokeId);
             expect(dispatched.callbackUrl).toContain(payload.result.smokeId);
             expect(dispatched.callbackToken).toBeTruthy();
@@ -6333,9 +6346,7 @@ describe('feedback workbench V2 Run and Callback', () => {
         env.FEEDBACK_CALLBACK_ORIGIN = 'https://worker.test';
         env.FEEDBACK_GITHUB_REPOSITORY = 'acme/gantt-task-editor';
         env.FEEDBACK_GITHUB_TOKEN = 'ghp_test';
-        const fetchSpy = vi
-            .spyOn(globalThis, 'fetch')
-            .mockResolvedValue(new Response(null, { status: 204 }));
+        const fetchSpy = mockSuccessfulGitHubRunDispatch();
         let result;
         try {
             result = await runWorkflow(env, { issueId: feedbackKey });
@@ -6403,9 +6414,7 @@ describe('feedback workbench V2 Run and Callback', () => {
             FEEDBACK_GITHUB_TOKEN: 'ghp_test',
             FEEDBACK_RELEASE_TOKEN_SECRET: 'unit-test-secret',
         });
-        const fetchSpy = vi
-            .spyOn(globalThis, 'fetch')
-            .mockResolvedValue(new Response(null, { status: 204 }));
+        const fetchSpy = mockSuccessfulGitHubRunDispatch();
         try {
             await runWorkflow(env, { issueId: feedbackKey, eventId: triggerEventId });
         } finally {
@@ -6421,7 +6430,7 @@ describe('feedback workbench V2 Run and Callback', () => {
             repository: 'acme/gantt-task-editor',
             baseRef: 'master',
             candidateRef: `feedback/candidate/${runId.replace(/[^a-zA-Z0-9_-]/g, '-')}`,
-            baseCommit: 'base111',
+            baseCommit: 'a'.repeat(40),
             changeCommit: 'change222',
             changedFiles,
             requiresCandidateReview: [],
@@ -6572,9 +6581,7 @@ describe('feedback workbench V2 Run and Callback', () => {
             FEEDBACK_GITHUB_TOKEN: 'ghp_test',
             FEEDBACK_RELEASE_TOKEN_SECRET: 'unit-test-secret',
         });
-        const fetchSpy = vi
-            .spyOn(globalThis, 'fetch')
-            .mockResolvedValue(new Response(null, { status: 204 }));
+        const fetchSpy = mockSuccessfulGitHubRunDispatch();
         try {
             await runWorkflow(env, { issueId: feedbackKey, eventId: triggerEventId });
         } finally {
@@ -6686,9 +6693,7 @@ describe('feedback workbench V2 Run and Callback', () => {
                 FEEDBACK_RELEASE_TOKEN_SECRET: 'unit-test-secret',
                 FEEDBACK_AUTO_DELIVER_ACTOR_ALLOWLIST: testCase.allowlist || '',
             });
-            const fetchSpy = vi
-                .spyOn(globalThis, 'fetch')
-                .mockResolvedValue(new Response(null, { status: 204 }));
+            const fetchSpy = mockSuccessfulGitHubRunDispatch();
             try {
                 await runWorkflow(env, { issueId: feedbackKey, eventId: triggerEventId });
             } finally {
@@ -6893,7 +6898,7 @@ describe('feedback workbench V2 Run and Callback', () => {
                             repository: 'acme/gantt-task-editor',
                             baseRef: 'master',
                             candidateRef: `feedback/candidate/${run.id}`,
-                            baseCommit: 'abc123',
+                            baseCommit: run.base_commit,
                             changeCommit: 'def456',
                             changedFiles: ['src/features/gantt/domain/link-ops.js'],
                         }),
@@ -7625,9 +7630,7 @@ describe('feedback workbench V2 Run and Callback', () => {
         env.FEEDBACK_CALLBACK_ORIGIN = 'https://worker.test';
         env.FEEDBACK_GITHUB_REPOSITORY = 'acme/gantt-task-editor';
         env.FEEDBACK_GITHUB_TOKEN = 'ghp_test';
-        const fetchSpy = vi
-            .spyOn(globalThis, 'fetch')
-            .mockResolvedValue(new Response(null, { status: 204 }));
+        const fetchSpy = mockSuccessfulGitHubRunDispatch();
         try {
             await runWorkflow(env, { issueId: feedbackKey });
         } finally {
@@ -7742,9 +7745,7 @@ describe('feedback workbench V2 Run and Callback', () => {
             },
         };
 
-        const fetchSpy = vi
-            .spyOn(globalThis, 'fetch')
-            .mockResolvedValue(new Response(null, { status: 204 }));
+        const fetchSpy = mockSuccessfulGitHubRunDispatch();
         try {
             await new FeedbackWorkflow({}, env).run(
                 {
@@ -8012,6 +8013,9 @@ describe('feedback workbench V2 GitHub dispatch', () => {
         const calls = [];
         const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, options) => {
             calls.push({ url, options });
+            if (url.endsWith('/commits/master')) {
+                return Response.json({ sha: 'a'.repeat(40) });
+            }
             return new Response(null, { status: 204 });
         });
 
@@ -8019,18 +8023,23 @@ describe('feedback workbench V2 GitHub dispatch', () => {
             const result = await runWorkflow(env, { issueId: feedbackKey });
 
             expect(result.run.dispatched).toBe(true);
-            expect(calls).toHaveLength(1);
+            expect(calls).toHaveLength(2);
             expect(calls[0].url).toBe(
+                'https://api.github.com/repos/acme/gantt-task-editor/commits/master'
+            );
+            expect(calls[1].url).toBe(
                 'https://api.github.com/repos/acme/gantt-task-editor/actions/workflows/feedback-agent-codex.yml/dispatches'
             );
-            expect(calls[0].options.headers.Authorization).toBe('Bearer ghp_dispatch_token');
+            expect(calls[1].options.headers.Authorization).toBe('Bearer ghp_dispatch_token');
 
-            const body = JSON.parse(calls[0].options.body);
+            const body = JSON.parse(calls[1].options.body);
             expect(body.ref).toBe('master');
             const payload = JSON.parse(body.inputs.payload);
             expect(payload.runId).toBe(result.run.runId);
             expect(payload.policy).toBe('implement_and_verify');
             expect(payload.provider).toBe('codex');
+            expect(payload.baseCommit).toBe('a'.repeat(40));
+            expect(payload.responsesEndpoint).toBe('https://api.openai.com/v1/responses');
             // §14.4 step 2: the profile follows the policy, not the model.
             expect(payload.permissionProfile).toBe('feedback-workspace');
             expect(payload.contextUrl).toBe(
@@ -8041,13 +8050,13 @@ describe('feedback workbench V2 GitHub dispatch', () => {
             );
 
             // §13.2/§18.2: no Agent key, admin password or feedback body travels.
-            const raw = calls[0].options.body;
+            const raw = calls[1].options.body;
             expect(raw).not.toContain('admin-pass');
             expect(raw).not.toContain('unit-test-pii-key');
             expect(raw).not.toContain('D1 issue description');
-            expect(env.FEEDBACK_DB.tables.feedback_runs.get(payload.runId).status).toBe(
-                'dispatched'
-            );
+            const storedRun = env.FEEDBACK_DB.tables.feedback_runs.get(payload.runId);
+            expect(storedRun.status).toBe('dispatched');
+            expect(storedRun.base_commit).toBe('a'.repeat(40));
         } finally {
             fetchSpy.mockRestore();
         }
@@ -8059,12 +8068,15 @@ describe('feedback workbench V2 GitHub dispatch', () => {
         const calls = [];
         const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, options) => {
             calls.push({ url, options });
+            if (url.endsWith('/commits/master')) {
+                return Response.json({ sha: 'b'.repeat(40) });
+            }
             return new Response(null, { status: 204 });
         });
 
         try {
             await runWorkflow(env, { issueId: feedbackKey });
-            const payload = JSON.parse(JSON.parse(calls[0].options.body).inputs.payload);
+            const payload = JSON.parse(JSON.parse(calls[1].options.body).inputs.payload);
 
             expect(payload.policy).toBe('analyze');
             expect(payload.permissionProfile).toBe('feedback-readonly');
@@ -8120,9 +8132,7 @@ describe('feedback workbench V2 GitHub dispatch', () => {
 
     it('[SCN-FWB-012] re-checks the diff manifest before projecting run.completed', async () => {
         const env = createDispatchEnv();
-        const fetchSpy = vi
-            .spyOn(globalThis, 'fetch')
-            .mockResolvedValue(new Response(null, { status: 204 }));
+        const fetchSpy = mockSuccessfulGitHubRunDispatch();
         let runId;
         try {
             runId = (await runWorkflow(env, { issueId: feedbackKey })).run.runId;
@@ -8150,7 +8160,7 @@ describe('feedback workbench V2 GitHub dispatch', () => {
                             repository: 'acme/gantt-task-editor',
                             baseRef: 'master',
                             candidateRef: `feedback/candidate/${runId}`,
-                            baseCommit: 'abc123',
+                            baseCommit: 'a'.repeat(40),
                             changeCommit: 'def456',
                             changedFiles: [
                                 'src/features/gantt/domain/scheduler.js',
@@ -8180,9 +8190,7 @@ describe('feedback workbench V2 GitHub dispatch', () => {
 
     it('[SCN-FWB-012] rejects a write Run that reports no diff manifest', async () => {
         const env = createDispatchEnv();
-        const fetchSpy = vi
-            .spyOn(globalThis, 'fetch')
-            .mockResolvedValue(new Response(null, { status: 204 }));
+        const fetchSpy = mockSuccessfulGitHubRunDispatch();
         let runId;
         try {
             runId = (await runWorkflow(env, { issueId: feedbackKey })).run.runId;
@@ -8214,11 +8222,53 @@ describe('feedback workbench V2 GitHub dispatch', () => {
         expect(body.runStatus).toBe('failed');
     });
 
+    it('[SCN-FWB-005] rejects a write Run whose manifest reports another base commit', async () => {
+        const env = createDispatchEnv();
+        const fetchSpy = mockSuccessfulGitHubRunDispatch();
+        let runId;
+        try {
+            runId = (await runWorkflow(env, { issueId: feedbackKey })).run.runId;
+        } finally {
+            fetchSpy.mockRestore();
+        }
+
+        const body = await json(
+            await request(
+                `/api/feedback/runs/${encodeURIComponent(runId)}/events`,
+                {
+                    method: 'POST',
+                    headers: {
+                        Authorization: `Bearer ${await runToken(runId, 'callback')}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        eventId: 'cb_wrong_base',
+                        type: 'run.completed',
+                        payload: {
+                            diffManifest: await attachDiffManifestHash({
+                                specVersion: '1.0',
+                                repository: 'acme/gantt-task-editor',
+                                baseRef: 'master',
+                                candidateRef: `feedback/candidate/${runId}`,
+                                baseCommit: 'b'.repeat(40),
+                                changeCommit: 'c'.repeat(40),
+                                changedFiles: ['src/features/gantt/domain/link-ops.js'],
+                            }),
+                        },
+                    }),
+                },
+                env
+            )
+        );
+
+        expect(body.gate.allowed).toBe(false);
+        expect(body.gate.violations[0].code).toBe('DIFF_MANIFEST_BASE_COMMIT_MISMATCH');
+        expect(body.runStatus).toBe('failed');
+    });
+
     it('[SCN-FWB-005] accepts a clean manifest and projects the Run as succeeded', async () => {
         const env = createDispatchEnv();
-        const fetchSpy = vi
-            .spyOn(globalThis, 'fetch')
-            .mockResolvedValue(new Response(null, { status: 204 }));
+        const fetchSpy = mockSuccessfulGitHubRunDispatch();
         let runId;
         try {
             runId = (await runWorkflow(env, { issueId: feedbackKey })).run.runId;
@@ -8245,7 +8295,7 @@ describe('feedback workbench V2 GitHub dispatch', () => {
                                 repository: 'acme/gantt-task-editor',
                                 baseRef: 'master',
                                 candidateRef: `feedback/candidate/${runId}`,
-                                baseCommit: 'abc123',
+                                baseCommit: 'a'.repeat(40),
                                 changeCommit: 'def456',
                                 changedFiles: ['src/features/gantt/domain/link-ops.js'],
                             }),
@@ -8334,9 +8384,7 @@ describe('feedback workbench V2 Candidate and Release', () => {
                 throw new Error('WORKFLOW_TEST_STOP_AFTER_DISPATCH');
             },
         };
-        const fetchSpy = vi
-            .spyOn(globalThis, 'fetch')
-            .mockResolvedValue(new Response(null, { status: 204 }));
+        const fetchSpy = mockSuccessfulGitHubRunDispatch();
         try {
             await new FeedbackWorkflow({}, env).run(
                 {
@@ -8357,7 +8405,7 @@ describe('feedback workbench V2 Candidate and Release', () => {
             repository: 'acme/gantt-task-editor',
             baseRef: 'master',
             candidateRef: `feedback/candidate/${run.id}`,
-            baseCommit: 'base111',
+            baseCommit: run.base_commit,
             changeCommit: 'change222',
             changedFiles,
         });
@@ -8452,7 +8500,7 @@ describe('feedback workbench V2 Candidate and Release', () => {
         expect(candidate.status).toBe('awaiting_review');
         expect(candidate.run_id).toBe(run.id);
         expect(candidate.repository).toBe('acme/gantt-task-editor');
-        expect(candidate.base_commit).toBe('base111');
+        expect(candidate.base_commit).toBe(run.base_commit);
         expect(candidate.change_commit).toBe('change222');
         expect(candidate.diff_manifest_sha256).toBe(manifest.diffManifestSha256);
         // §9.3: identity is repository + commits, never a Runner worktree path.
@@ -8507,7 +8555,7 @@ describe('feedback workbench V2 Candidate and Release', () => {
                                 repository: 'acme/gantt-task-editor',
                                 baseRef: 'master',
                                 candidateRef: 'feedback/candidate/run_second',
-                                baseCommit: 'base111',
+                                baseCommit: run.base_commit,
                                 changeCommit: 'change333',
                                 changedFiles: ['src/features/gantt/domain/link-ops.js'],
                             }),
