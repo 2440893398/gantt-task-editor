@@ -24,7 +24,7 @@
 | SCN-FWB-013 | P1  | 投递失败自动重试并最终进入失败队列                           | 可重试错误按指数退避执行；达到上限后进入 DLQ；管理员重放同一 delivery 时不产生重复 Run；认证/参数错误不进行无意义重试                                                                                                                                                                                   | todo   |
 | SCN-FWB-014 | P1  | Agent 交付物在时间线中可追溯且默认私有                       | Commit、分支、PR、补丁、测试报告、截图和 Trace 使用结构化 artifact 记录并关联 `runId`；默认 `private`，只有 Issue owner/admin 可取短期签名 URL；过期后无法访问，大文件只保存受控对象键且按保留策略清理                                                                                                  | todo   |
 | SCN-FWB-015 | P1  | 自动化与执行器设置清晰展示策略、环境和健康状态               | 自动化页首屏不展示重复的成本/轮询对比指标，核心 Hook、订阅事件、可靠性和执行器操作可见；次要技术说明按需展示；测试、保存和开关均有即时状态反馈；375/768/1440 宽度无横向溢出                                                                                                                             | active |
-| SCN-FWB-016 | P1  | AI 执行器配置聚焦选择、连接与路由                            | 执行器页首屏只呈现默认/备用执行器、连接状态、确定性路由和保存操作；密钥、Callback 契约、policy→`permission-profile` 与 SDK 条件按需展开；Codex 自定义 Responses 端点按官方 Action `action.yml` 真实测试，切换、测试、修改和保存均有就地反馈；375/768/1440 无横向溢出                                    | todo   |
+| SCN-FWB-016 | P1  | AI 执行器配置聚焦选择、连接与路由                            | 执行器页首屏只呈现默认/备用执行器、连接状态、确定性路由和保存操作；密钥、Callback 契约、policy→`permission-profile` 与 SDK 条件按需展开；Codex 自定义 Responses 端点按官方 Action `action.yml` 真实测试，切换、测试、修改和保存均有就地反馈；375/768/1440 无横向溢出                                    | active |
 | SCN-FWB-017 | P0  | API 按 actor、Issue 归属与 token scope 隔离                  | 公共提交只返回 Issue capability；列表、Run、自动化测试和投递重放仅管理员可用；Issue 详情/事件/评论/重开仅 owner capability 或管理员可用；Context/Callback 仅匹配的 run-scoped token 可用；跨 Issue、过期或缺失 token 返回 401/403 且不泄露存在性                                                        | todo   |
 | SCN-FWB-018 | P0  | V2 在单一 Worker 中以 D1 作为元数据事实源                    | `gantt-share` Worker 配置 D1、Workflows 与私有 R2 绑定，Pages 项目不承接 V2 写路径；版本化 migration 可在本地/远端重复执行；新元数据只进 D1、附件/Artifact 内容只进 R2，`FEEDBACK_KV` 仅兼容读取，迁移重跑不重复事件或对象                                                                              | todo   |
 | SCN-FWB-019 | P1  | 联系方式、附件与上下文在等待人工和迁移期间受保护             | `contact/attachments/context` 迁移后不丢失且不进入匿名响应或 Agent 最小上下文之外；V2 首期不发送外部通知并在 UI 明示需凭 capability 链接回访；等待 7 天到期后实例终止、清除 active Workflow，Issue 保持 `needs_human`，后续有效回复创建新 generation                                                    | todo   |
@@ -50,7 +50,7 @@
 | 2026-08-01 | 开始 `SCN-FWB-022` 的分级自治实施批次              | 按 Spec §7.4 先机械判定 trusted actor、small scope、Tier 0～2、自动验证、视觉证据与健康预检，再决定 `auto_deliver/candidate_review`；场景仍为 `todo`，直到真实 Action 完成集成、必要部署、生产 smoke 并进入 `resolved`    |
 | 2026-08-01 | 补齐 `SCN-FWB-016/022` 的真实冒烟与自治开关批次 | 按 Spec §19.5 把「测试连接」改为派发真实最小 Action 冒烟并由 smoke-scoped 回调写入执行器健康（管理员不再能手工断言健康），并补上分级自治交付开关、允许范围、Release 健康与交付预检；`SCN-FWB-016` 仍为 `todo`，直到真实 Action 冒烟跑通 |
 | 2026-08-01 | 补齐 Spec §20 可观察性实施批次                     | 增加管理员专用 `/api/feedback/observability/metrics` 聚合 §20.1 指标，并将工作台日志统一到带 §20.2 关联字段、按白名单构造的结构化日志；不新增场景，验证点并入现有 `SCN-FWB-002/012/017`                                    |
-| 2026-08-03 | 扩展 `SCN-FWB-016` 的执行器冒烟历史 | 连接测试需按 `smokeId` 保留最近 50 次脱敏记录，并在折叠的「测试历史」中展示状态、Action commit、model、endpoint mode 与时间；`SCN-FWB-016` 仍为 `todo`，直到真实 Action 冒烟跑通 |
+| 2026-08-03 | `SCN-FWB-016` 由 `todo` 转 `active` | 连接测试按 `smokeId` 保留最近 50 次脱敏记录并在折叠的「测试历史」中展示；生产环境通过 pinned `openai/codex-action` 对第三方 Responses 端点完成真实 smoke，回调记录 model、endpoint mode、Action commit 与完成时间，历史计数由 1 增至 2 |
 
 ## 例外队列
 

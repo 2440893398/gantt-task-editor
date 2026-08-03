@@ -4680,6 +4680,7 @@ describe('feedback workbench V2 routes', () => {
                                 claude: {
                                     connectionState: 'connected',
                                     lastTestResult: { ok: true },
+                                    smokeHistory: [{ ok: true, smokeId: 'smk_forged' }],
                                 },
                             },
                         },
@@ -4691,6 +4692,7 @@ describe('feedback workbench V2 routes', () => {
 
         expect(payload.settings.providers.claude.connectionState).toBe('unverified');
         expect(payload.settings.providers.claude.lastTestResult).toBeNull();
+        expect(payload.settings.providers.claude.smokeHistory).toEqual([]);
     });
 
     it('[SCN-FWB-022] fails the auto-delivery preflight with a reason per missing credential', async () => {

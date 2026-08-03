@@ -2864,7 +2864,8 @@ function normalizeAutomationSettings(raw) {
 /** Drops the server-owned health fields from caller-supplied provider input. */
 function stripFeedbackProviderHealth(raw) {
     if (!raw || typeof raw !== 'object') return {};
-    const { connectionState, lastTestedAt, lastTestResult, pendingSmoke, ...rest } = raw;
+    const { connectionState, lastTestedAt, lastTestResult, smokeHistory, pendingSmoke, ...rest } =
+        raw;
     return rest;
 }
 
