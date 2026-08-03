@@ -50,6 +50,7 @@
 | 2026-08-01 | 开始 `SCN-FWB-022` 的分级自治实施批次              | 按 Spec §7.4 先机械判定 trusted actor、small scope、Tier 0～2、自动验证、视觉证据与健康预检，再决定 `auto_deliver/candidate_review`；场景仍为 `todo`，直到真实 Action 完成集成、必要部署、生产 smoke 并进入 `resolved`    |
 | 2026-08-01 | 补齐 `SCN-FWB-016/022` 的真实冒烟与自治开关批次 | 按 Spec §19.5 把「测试连接」改为派发真实最小 Action 冒烟并由 smoke-scoped 回调写入执行器健康（管理员不再能手工断言健康），并补上分级自治交付开关、允许范围、Release 健康与交付预检；`SCN-FWB-016` 仍为 `todo`，直到真实 Action 冒烟跑通 |
 | 2026-08-01 | 补齐 Spec §20 可观察性实施批次                     | 增加管理员专用 `/api/feedback/observability/metrics` 聚合 §20.1 指标，并将工作台日志统一到带 §20.2 关联字段、按白名单构造的结构化日志；不新增场景，验证点并入现有 `SCN-FWB-002/012/017`                                    |
+| 2026-08-03 | 扩展 `SCN-FWB-016` 的执行器冒烟历史 | 连接测试需按 `smokeId` 保留最近 50 次脱敏记录，并在折叠的「测试历史」中展示状态、Action commit、model、endpoint mode 与时间；`SCN-FWB-016` 仍为 `todo`，直到真实 Action 冒烟跑通 |
 
 ## 例外队列
 

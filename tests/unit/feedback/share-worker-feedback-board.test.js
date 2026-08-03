@@ -4471,6 +4471,107 @@ describe('feedback workbench V2 routes', () => {
         expect(provider.lastTestResult.completedAt).toBe('2026-08-01T10:00:00.000Z');
     });
 
+    it('[SCN-FWB-016] retains each Codex smoke result in provider history', async () => {
+        const env = createV2Env();
+        env.FEEDBACK_GITHUB_REPOSITORY = 'acme/gantt';
+        env.FEEDBACK_GITHUB_TOKEN = 'gh-token';
+        env.FEEDBACK_CALLBACK_ORIGIN = 'https://workbench.example.com';
+        const headers = await adminHeaders(env);
+        const fetchSpy = vi
+            .spyOn(globalThis, 'fetch')
+            .mockResolvedValue(new Response(null, { status: 204 }));
+
+        const smoke = [];
+        try {
+            for (const completedAt of ['2026-08-01T10:00:00.000Z', '2026-08-01T11:00:00.000Z']) {
+                const started = await json(
+                    await request(
+                        '/api/feedback/runners/test',
+                        { method: 'POST', headers, body: JSON.stringify({ provider: 'codex' }) },
+                        env
+                    )
+                );
+                const callbackToken = JSON.parse(
+                    JSON.parse(fetchSpy.mock.calls.at(-1)[1].body).inputs.payload
+                ).callbackToken;
+                const completed = await json(
+                    await request(
+                        `/api/feedback/runners/smoke/${started.result.smokeId}/result`,
+                        {
+                            method: 'POST',
+                            headers: { authorization: `Bearer ${callbackToken}` },
+                            body: JSON.stringify({
+                                ok: true,
+                                actionCommit: 'a'.repeat(40),
+                                model: 'gpt-5-codex',
+                                endpointMode: 'relay',
+                                completedAt,
+                            }),
+                        },
+                        env
+                    )
+                );
+                smoke.push(completed.result.smokeId);
+            }
+        } finally {
+            fetchSpy.mockRestore();
+        }
+
+        const settings = await json(
+            await request('/api/feedback/runners/settings', { headers }, env)
+        );
+        const provider = settings.settings.providers.codex;
+        expect(provider.smokeHistory).toHaveLength(2);
+        expect(provider.smokeHistory.map((entry) => entry.smokeId)).toEqual(smoke);
+        expect(provider.smokeHistory.map((entry) => entry.completedAt)).toEqual([
+            '2026-08-01T10:00:00.000Z',
+            '2026-08-01T11:00:00.000Z',
+        ]);
+        expect(provider.lastTestResult.smokeId).toBe(smoke[1]);
+    });
+
+    it('[SCN-FWB-016] backfills legacy latest smoke data into history', async () => {
+        const env = createV2Env(
+            {},
+            {
+                feedback_settings: [
+                    {
+                        name: 'runners',
+                        value_json: JSON.stringify({
+                            providers: {
+                                codex: {
+                                    connectionState: 'connected',
+                                    lastTestedAt: '2026-08-01T10:00:00.000Z',
+                                    lastTestResult: {
+                                        ok: true,
+                                        smokeId: 'smk_legacy',
+                                        model: 'gpt-5-codex',
+                                        completedAt: '2026-08-01T10:00:00.000Z',
+                                    },
+                                },
+                            },
+                        }),
+                        version: 1,
+                        updated_at: '2026-08-01T10:00:00.000Z',
+                        updated_by: 'admin',
+                    },
+                ],
+            }
+        );
+        const headers = await adminHeaders(env);
+
+        const payload = await json(
+            await request('/api/feedback/runners/settings', { headers }, env)
+        );
+
+        expect(payload.settings.providers.codex.smokeHistory).toEqual([
+            expect.objectContaining({
+                smokeId: 'smk_legacy',
+                completedAt: '2026-08-01T10:00:00.000Z',
+            }),
+        ]);
+    });
+
     it('[SCN-FWB-016] records a failing smoke without ever reporting connected', async () => {
         const env = createV2Env();
         env.FEEDBACK_GITHUB_REPOSITORY = 'acme/gantt';

@@ -1350,6 +1350,11 @@
         if (provider.connectionState === 'failed') {
             return '连接失败 · ' + ((provider.lastTestResult || {}).errorCode || '未知错误');
         }
+        // §19.5: a dispatched smoke is still running; saying "待验证" here would
+        // read as idle when an Action is actually in flight.
+        if (provider.connectionState === 'testing') {
+            return '冒烟运行中 · 等待 Action 回调';
+        }
         return provider.lastTestedAt ? '待验证 · 上次测试 ' + relativeTime(provider.lastTestedAt) : '待验证';
     }
 
@@ -1365,10 +1370,70 @@
         } else if (connectionState === 'failed') {
             node.className = 'badge red';
             node.textContent = '连接失败';
+        } else if (connectionState === 'testing') {
+            node.className = 'badge orange';
+            node.textContent = '测试中';
         } else {
             node.className = 'badge';
             node.textContent = '待验证';
         }
+    }
+
+    function smokeHistoryStatus(entry) {
+        if (entry.status === 'running') return '测试中';
+        if (entry.ok === true) return '成功';
+        return '失败 · ' + (entry.errorCode || '未知错误');
+    }
+
+    function renderProviderHistory(provider) {
+        var history = Array.isArray(provider.smokeHistory)
+            ? provider.smokeHistory.slice().reverse()
+            : [];
+        var rows = history.length
+            ? history
+                  .map(function (entry) {
+                      var testedAt = entry.completedAt || entry.testedAt || '';
+                      var commit = entry.actionCommit
+                          ? entry.actionCommit.slice(0, 12)
+                          : '未回写 Action commit';
+                      var model = entry.model || '未回写 model';
+                      return (
+                          '<div class="provider-history-row">' +
+                          '<div class="provider-history-head"><strong>' +
+                          escapeHtml(smokeHistoryStatus(entry)) +
+                          '</strong><span>' +
+                          escapeHtml(testedAt ? relativeTime(testedAt) : '时间未知') +
+                          '</span></div>' +
+                          '<div class="provider-history-meta"><span>Smoke ' +
+                          escapeHtml(entry.smokeId || '未命名') +
+                          '</span><span>' +
+                          escapeHtml(model) +
+                          '</span><span>' +
+                          escapeHtml(entry.endpointMode || 'official') +
+                          '</span></div>' +
+                          '<div class="provider-history-commit">Action commit · ' +
+                          escapeHtml(commit) +
+                          '</div>' +
+                          (entry.runUrl
+                              ? '<div class="provider-history-url">Run · ' +
+                                escapeHtml(entry.runUrl) +
+                                '</div>'
+                              : '') +
+                          '</div>'
+                      );
+                  })
+                  .join('')
+            : '<div class="provider-history-empty">暂无连接测试记录</div>';
+
+        return (
+            '<details class="provider-history" data-provider-history>' +
+            '<summary><span>测试历史</span><span class="provider-history-count">' +
+            history.length +
+            ' 次</span><svg class="summary-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg></summary>' +
+            '<div class="provider-history-body">' +
+            rows +
+            '</div></details>'
+        );
     }
 
     function renderRunners() {
@@ -1435,6 +1500,7 @@
                     '<button class="button" type="button" data-test-provider="' +
                     id +
                     '">测试连接</button></span></div>' +
+                    renderProviderHistory(provider) +
                     '<details class="provider-config advanced-details"><summary><span>连接配置</span>' +
                     '<svg class="summary-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>' +
                     '</summary><div class="advanced-details-body">' +

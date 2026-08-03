@@ -2870,15 +2870,28 @@ function stripFeedbackProviderHealth(raw) {
 
 function normalizeRunnerProvider(raw, provider) {
     const value = raw && typeof raw === 'object' ? raw : {};
+    const latestResult = normalizeFeedbackSmokeResult(value.lastTestResult, provider);
+    const smokeHistory = Array.isArray(value.smokeHistory)
+        ? value.smokeHistory
+              .map((entry) => normalizeFeedbackSmokeResult(entry, provider))
+              .filter(Boolean)
+        : [];
+    // Settings written before history existed still have one useful result. Keep
+    // it visible without duplicating it when the history field is already present.
+    if (latestResult) {
+        const latestIndex = latestResult.smokeId
+            ? smokeHistory.findIndex((entry) => entry.smokeId === latestResult.smokeId)
+            : -1;
+        if (latestIndex >= 0) smokeHistory[latestIndex] = latestResult;
+        else smokeHistory.push(latestResult);
+    }
     const normalized = {
         connectionState: FEEDBACK_CONNECTION_STATES.has(value.connectionState)
             ? value.connectionState
             : 'unverified',
         lastTestedAt: limitText(value.lastTestedAt, 40),
-        lastTestResult:
-            value.lastTestResult && typeof value.lastTestResult === 'object'
-                ? value.lastTestResult
-                : null,
+        lastTestResult: latestResult,
+        smokeHistory: smokeHistory.slice(-FEEDBACK_SMOKE_HISTORY_LIMIT),
         // The in-flight smoke this provider is waiting on, so a late or replayed
         // result can be matched to the exact dispatch that asked for it.
         pendingSmoke:
@@ -3131,6 +3144,49 @@ const FEEDBACK_SETTINGS_NORMALIZERS = {
     automation: normalizeAutomationSettings,
     runners: normalizeRunnerSettings,
 };
+
+const FEEDBACK_SMOKE_HISTORY_LIMIT = 50;
+
+function normalizeFeedbackSmokeResult(raw, provider) {
+    if (!raw || typeof raw !== 'object') return null;
+
+    const ok = raw.ok === true;
+    const status = raw.status === 'running' ? 'running' : ok ? 'succeeded' : 'failed';
+    return {
+        ok,
+        status,
+        smokeId: limitText(raw.smokeId, 60),
+        provider,
+        action: limitText(raw.action, 160) || FEEDBACK_PROVIDER_ACTIONS[provider],
+        actionCommit: limitText(raw.actionCommit, 80),
+        model: limitText(raw.model, 80),
+        endpointMode: raw.endpointMode === 'relay' ? 'relay' : 'official',
+        testedAt: limitText(raw.testedAt, 40),
+        completedAt: limitText(raw.completedAt, 40),
+        errorCode: ok || status === 'running' ? '' : normalizeFeedbackSmokeErrorCode(raw.errorCode),
+        runUrl: limitText(raw.runUrl, 300),
+    };
+}
+
+function appendFeedbackSmokeHistory(providerSettings, provider, rawResult) {
+    const result = normalizeFeedbackSmokeResult(rawResult, provider);
+    const history = Array.isArray(providerSettings?.smokeHistory)
+        ? providerSettings.smokeHistory
+              .map((entry) => normalizeFeedbackSmokeResult(entry, provider))
+              .filter(Boolean)
+        : [];
+    if (!result) return history.slice(-FEEDBACK_SMOKE_HISTORY_LIMIT);
+
+    const existingIndex = result.smokeId
+        ? history.findIndex((entry) => entry.smokeId === result.smokeId)
+        : -1;
+    if (existingIndex >= 0) {
+        history[existingIndex] = result;
+    } else {
+        history.push(result);
+    }
+    return history.slice(-FEEDBACK_SMOKE_HISTORY_LIMIT);
+}
 
 async function readFeedbackSettings(env, name) {
     const normalize = FEEDBACK_SETTINGS_NORMALIZERS[name];
@@ -4115,16 +4171,13 @@ async function dispatchFeedbackRunToGitHub(env, { payload, provider }) {
                 };
             }
             dispatchPayload = { ...dispatchPayload, baseCommit };
-            await env.FEEDBACK_DB.prepare(
-                'UPDATE feedback_runs SET base_commit = ? WHERE id = ?'
-            )
+            await env.FEEDBACK_DB.prepare('UPDATE feedback_runs SET base_commit = ? WHERE id = ?')
                 .bind(baseCommit, dispatchPayload.runId)
                 .run();
         } catch (error) {
             return {
                 dispatched: false,
-                errorCode:
-                    error?.name === 'TimeoutError' ? 'GITHUB_TIMEOUT' : 'GITHUB_UNREACHABLE',
+                errorCode: error?.name === 'TimeoutError' ? 'GITHUB_TIMEOUT' : 'GITHUB_UNREACHABLE',
                 retryable: true,
             };
         }
@@ -10025,6 +10078,7 @@ export default {
                 if (!dispatch.dispatched) {
                     const result = {
                         ok: false,
+                        status: 'failed',
                         provider,
                         action: FEEDBACK_PROVIDER_ACTIONS[provider],
                         endpointMode:
@@ -10052,6 +10106,11 @@ export default {
                                     connectionState: 'unverified',
                                     lastTestedAt: testedAt,
                                     lastTestResult: result,
+                                    smokeHistory: appendFeedbackSmokeHistory(
+                                        current.settings.providers[provider],
+                                        provider,
+                                        result
+                                    ),
                                     pendingSmoke: null,
                                 },
                             },
@@ -10089,6 +10148,11 @@ export default {
                                 connectionState: 'testing',
                                 lastTestedAt: testedAt,
                                 lastTestResult: result,
+                                smokeHistory: appendFeedbackSmokeHistory(
+                                    current.settings.providers[provider],
+                                    provider,
+                                    result
+                                ),
                                 pendingSmoke: { smokeId, dispatchedAt: testedAt },
                             },
                         },
@@ -10141,6 +10205,7 @@ export default {
                 const completedAt = limitText(body.completedAt, 40) || new Date().toISOString();
                 const result = {
                     ok,
+                    status: ok ? 'succeeded' : 'failed',
                     smokeId,
                     provider,
                     action: FEEDBACK_PROVIDER_ACTIONS[provider],
@@ -10149,6 +10214,7 @@ export default {
                     actionCommit: limitText(body.actionCommit, 80),
                     model: limitText(body.model, 80),
                     endpointMode: body.endpointMode === 'relay' ? 'relay' : 'official',
+                    testedAt: stored.pendingSmoke?.dispatchedAt || '',
                     completedAt,
                     // A provider error string can carry a key; keep the code only.
                     errorCode: ok ? '' : normalizeFeedbackSmokeErrorCode(body.errorCode),
@@ -10167,6 +10233,7 @@ export default {
                                 connectionState: ok ? 'connected' : 'failed',
                                 lastTestedAt: completedAt,
                                 lastTestResult: result,
+                                smokeHistory: appendFeedbackSmokeHistory(stored, provider, result),
                                 pendingSmoke: null,
                             },
                         },
