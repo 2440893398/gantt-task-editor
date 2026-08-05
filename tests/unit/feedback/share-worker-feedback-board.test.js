@@ -2778,6 +2778,106 @@ describe('feedback issue board Worker routes', () => {
         expect(d1Env.FEEDBACK_KV.putCalls).toEqual([]);
     });
 
+    it('[SCN-FWB-001] restores legacy history for D1 issues that already exist', async () => {
+        const legacyIssue = createIssue({
+            workflow: {
+                status: 'resolved',
+                priority: 'high',
+                assignee: 'codex',
+                publicNote: '已处理',
+                internalNote: 'private migration evidence',
+                updatedAt: '2026-06-10T09:00:00.000Z',
+                history: [
+                    {
+                        at: '2026-06-01T09:00:00.000Z',
+                        actor: 'admin',
+                        changes: {
+                            status: ['open', 'needs_human'],
+                            priority: ['medium', 'high'],
+                        },
+                        publicNote: '请补充复现',
+                    },
+                    {
+                        at: '2026-06-10T09:00:00.000Z',
+                        actor: 'agent',
+                        changes: {
+                            status: ['needs_human', 'resolved'],
+                        },
+                        publicNote: '已处理',
+                    },
+                ],
+            },
+        });
+        const d1Env = createV2Env(
+            {
+                [feedbackKey]: JSON.stringify(legacyIssue),
+            },
+            {
+                feedback_issues: [
+                    createD1IssueRow({
+                        title: 'D1 issue title',
+                        status: 'resolved',
+                        priority: 'high',
+                        assignee: 'codex',
+                        legacy_public_note: '已处理',
+                        legacy_internal_note: 'private migration evidence',
+                        legacy_kv_key: feedbackKey,
+                        updated_at: '2026-06-10T09:00:00.000Z',
+                        resolved_at: '2026-06-10T09:00:00.000Z',
+                    }),
+                ],
+            }
+        );
+
+        const sessionResponse = await request(
+            '/api/feedback/admin/session',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: 'admin-pass' }),
+            },
+            d1Env
+        );
+        const session = await json(sessionResponse);
+
+        const [detailResponse, eventsResponse] = await Promise.all([
+            request(
+                `/api/feedback/issues/${encodeURIComponent(feedbackKey)}`,
+                {
+                    headers: { Authorization: `Bearer ${session.token}` },
+                },
+                d1Env
+            ),
+            request(
+                `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/events`,
+                {
+                    headers: { Authorization: `Bearer ${session.token}` },
+                },
+                d1Env
+            ),
+        ]);
+        const detailBody = await json(detailResponse);
+        const eventsBody = await json(eventsResponse);
+
+        expect(detailResponse.status).toBe(200);
+        expect(eventsResponse.status).toBe(200);
+        expect(detailBody.issue.title).toBe('D1 issue title');
+        expect(detailBody.issue.workflow.history).toHaveLength(2);
+        expect(detailBody.issue.workflow.history[0]).toMatchObject({
+            at: '2026-06-01T09:00:00.000Z',
+            actor: 'admin',
+            publicNote: '请补充复现',
+        });
+        expect(eventsBody.events).toHaveLength(3);
+        expect(eventsBody.events.map((event) => event.type)).toEqual([
+            'issue.created',
+            'status.changed',
+            'status.changed',
+        ]);
+        expect(d1Env.FEEDBACK_DB.tables.feedback_events.size).toBe(3);
+        expect(d1Env.FEEDBACK_KV.putCalls).toEqual([]);
+    });
+
     it('[SCN-FWB-001] keeps oversized legacy context readable when R2 backfill is unavailable', async () => {
         const oversizedLog = 'historical-log-'.repeat(150000);
         const d1Env = createV2Env({

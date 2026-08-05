@@ -51,6 +51,7 @@
 | 2026-08-01 | 补齐 `SCN-FWB-016/022` 的真实冒烟与自治开关批次 | 按 Spec §19.5 把「测试连接」改为派发真实最小 Action 冒烟并由 smoke-scoped 回调写入执行器健康（管理员不再能手工断言健康），并补上分级自治交付开关、允许范围、Release 健康与交付预检；`SCN-FWB-016` 仍为 `todo`，直到真实 Action 冒烟跑通 |
 | 2026-08-01 | 补齐 Spec §20 可观察性实施批次                     | 增加管理员专用 `/api/feedback/observability/metrics` 聚合 §20.1 指标，并将工作台日志统一到带 §20.2 关联字段、按白名单构造的结构化日志；不新增场景，验证点并入现有 `SCN-FWB-002/012/017`                                    |
 | 2026-08-03 | `SCN-FWB-016` 由 `todo` 转 `active` | 连接测试按 `smokeId` 保留最近 50 次脱敏记录并在折叠的「测试历史」中展示；生产环境通过 pinned `openai/codex-action` 对第三方 Responses 端点完成真实 smoke，回调记录 model、endpoint mode、Action commit 与完成时间，历史计数由 1 增至 2 |
+| 2026-08-04 | 补齐 `SCN-FWB-001` 旧反馈历史回显 | D1 已存在的 legacy Issue 仍要恢复旧 KV 中的 `workflow.history`，保证过去已完成的问题在详情时间线里可见；仅补最小兼容，不改变现有事件模型 |
 
 ## 例外队列
 

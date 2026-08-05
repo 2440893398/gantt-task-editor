@@ -2022,6 +2022,48 @@ async function readLegacyFeedbackSource(env, rows, fallbackLegacyKey = '') {
     return value ? parseStoredJson(value, null) : null;
 }
 
+async function backfillLegacyFeedbackEvents(env, issueRow, legacySource) {
+    if (!env.FEEDBACK_DB || !issueRow?.id) return false;
+    if (!Array.isArray(legacySource?.workflow?.history) || !legacySource.workflow.history.length) {
+        return false;
+    }
+
+    const legacyIssue = normalizeStoredFeedback(issueRow.id, legacySource);
+    const events = await buildLegacyFeedbackEvents(legacyIssue);
+    if (!events.length) return false;
+
+    const statements = events.map((event) =>
+        env.FEEDBACK_DB.prepare(
+            `INSERT INTO feedback_events (
+                id, issue_id, sequence, type, actor_type, actor_id, visibility,
+                run_id, occurred_at, body_json, metadata_json, legacy_hash
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO NOTHING`
+        ).bind(
+            event.id,
+            issueRow.id,
+            event.sequence,
+            event.type,
+            event.actorType,
+            event.actorId,
+            event.visibility,
+            null,
+            event.occurredAt,
+            event.bodyJson,
+            event.metadataJson,
+            event.legacyHash
+        )
+    );
+
+    try {
+        await env.FEEDBACK_DB.batch(statements);
+        return true;
+    } catch (error) {
+        logFeedback('warn', 'Legacy feedback history backfill deferred', { error });
+        return false;
+    }
+}
+
 async function readD1FeedbackIssue(env, key) {
     if (!env.FEEDBACK_DB) return null;
 
@@ -2043,9 +2085,17 @@ async function readD1FeedbackIssue(env, key) {
             .bind(key)
             .all(),
     ]);
-    const eventRows = eventResult.results || [];
+    let eventRows = eventResult.results || [];
     const attachmentRows = attachmentResult.results || [];
     const legacySource = await readLegacyFeedbackSource(env, attachmentRows, row.legacy_kv_key);
+    if (!eventRows.length && (await backfillLegacyFeedbackEvents(env, row, legacySource))) {
+        const refreshedEvents = await env.FEEDBACK_DB.prepare(
+            'SELECT * FROM feedback_events WHERE issue_id = ? ORDER BY sequence'
+        )
+            .bind(key)
+            .all();
+        eventRows = refreshedEvents.results || [];
+    }
     const legacyAttachments = Array.isArray(legacySource?.attachments)
         ? legacySource.attachments
         : [];
