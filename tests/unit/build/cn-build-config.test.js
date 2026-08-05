@@ -1,13 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import fs from 'fs';
 import path from 'path';
-import { validateCloudflarePagesArtifacts } from '../../../scripts/prepare-cloudflare-pages.js';
+import {
+    prepareCloudflarePagesArtifacts,
+    validateCloudflarePagesArtifacts,
+} from '../../../scripts/prepare-cloudflare-pages.js';
 
 function readRootFile(fileName) {
     return fs.readFileSync(path.resolve(process.cwd(), fileName), 'utf8');
 }
 
 describe('CN build configuration', () => {
+    it('defaults feedback submissions to the dedicated production Worker', () => {
+        const configSource = readRootFile('vite.config.cn.js');
+
+        expect(configSource).toContain("'import.meta.env.VITE_FEEDBACK_API_URL'");
+        expect(configSource).toContain('https://gantt-share.ch451314.workers.dev');
+    });
+
     it('deploys the CN Pages build explicitly to the production branch', () => {
         const packageJson = JSON.parse(readRootFile('package.json'));
 
@@ -74,5 +84,60 @@ describe('CN build configuration', () => {
         await expect(validateCloudflarePagesArtifacts(outputDir)).rejects.toThrow(
             "Cloudflare Pages Worker is missing expected route: url.pathname === '/feedback'"
         );
+    });
+
+    it('rejects CN artifacts with missing local Worker modules', async () => {
+        const outputDir = path.join(
+            process.cwd(),
+            'node_modules/.tmp/cn-artifact-test-missing-module'
+        );
+        fs.rmSync(outputDir, { recursive: true, force: true });
+        fs.mkdirSync(outputDir, { recursive: true });
+        fs.writeFileSync(
+            path.join(outputDir, 'index.html'),
+            '<script src="/lib/dhtmlxgantt.js"></script><link href="/lib/dhtmlxgantt.css"><script src="/lib/locale_cn.js"></script>'
+        );
+        fs.writeFileSync(
+            path.join(outputDir, '_worker.js'),
+            [
+                "import { renderFeedbackWorkbenchPage } from './feedback-workbench-ui.js';",
+                "if (url.pathname === '/feedback') {}",
+                "if (url.pathname === '/api/feedback/issues') {}",
+                "if (url.pathname === '/api/feedback') {}",
+                'env.ASSETS?.fetch(request);',
+            ].join('\n')
+        );
+
+        await expect(validateCloudflarePagesArtifacts(outputDir)).rejects.toThrow(
+            'Cloudflare Pages Worker module is missing: feedback-workbench-ui.js'
+        );
+    });
+
+    it('copies the local Worker module graph into the CN artifact', async () => {
+        const outputDir = path.join(process.cwd(), 'node_modules/.tmp/cn-artifact-test-prepare');
+        fs.rmSync(outputDir, { recursive: true, force: true });
+        fs.mkdirSync(outputDir, { recursive: true });
+        fs.writeFileSync(
+            path.join(outputDir, 'index.html'),
+            '<script src="/lib/dhtmlxgantt.js"></script><link href="/lib/dhtmlxgantt.css"><script src="/lib/locale_cn.js"></script>'
+        );
+
+        await prepareCloudflarePagesArtifacts(outputDir);
+
+        expect(fs.existsSync(path.join(outputDir, 'feedback-workbench-ui.js'))).toBe(true);
+        expect(fs.existsSync(path.join(outputDir, 'feedback-workbench.css.txt'))).toBe(true);
+        expect(fs.existsSync(path.join(outputDir, 'feedback-workbench-client.js.txt'))).toBe(true);
+        expect(fs.existsSync(path.join(outputDir, 'feedback-diff-gate.js'))).toBe(true);
+        expect(
+            fs.existsSync(path.join(outputDir, 'feedback-rrweb-replay-2.0.0-alpha.20.umd.min.txt'))
+        ).toBe(true);
+        expect(
+            fs.existsSync(
+                path.join(outputDir, 'feedback-rrweb-replay-2.0.0-alpha.20.style.min.txt')
+            )
+        ).toBe(true);
+
+        const workerSource = fs.readFileSync(path.join(outputDir, '_worker.js'), 'utf8');
+        expect(workerSource).not.toContain("from '../src/");
     });
 });

@@ -1,4 +1,6 @@
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
+
+const DEFAULT_FEEDBACK_API_URL = 'https://gantt-share.ch451314.workers.dev';
 
 export function transformCnIndexHtml(html) {
     return html
@@ -26,28 +28,36 @@ export function transformCnIndexHtml(html) {
         );
 }
 
-export default defineConfig({
-    plugins: [
-        {
-            name: 'cn-html-assets',
-            transformIndexHtml: {
-                order: 'pre',
-                handler: transformCnIndexHtml,
-            },
+export default defineConfig(({ mode }) => {
+    const env = loadEnv(mode, process.cwd(), 'VITE_');
+    const feedbackApiUrl = env.VITE_FEEDBACK_API_URL || DEFAULT_FEEDBACK_API_URL;
+
+    return {
+        define: {
+            'import.meta.env.VITE_FEEDBACK_API_URL': JSON.stringify(feedbackApiUrl),
         },
-    ],
-    build: {
-        outDir: 'dist-cn',
-        assetsDir: 'assets',
-        sourcemap: false,
-        rollupOptions: {
-            input: 'index.html',
-            output: {
-                manualChunks: {
-                    vendor: ['dexie', 'exceljs', 'marked', 'quill', 'zod'],
-                    ai: ['ai', '@ai-sdk/openai'],
+        plugins: [
+            {
+                name: 'cn-html-assets',
+                transformIndexHtml: {
+                    order: 'pre',
+                    handler: transformCnIndexHtml,
+                },
+            },
+        ],
+        build: {
+            outDir: 'dist-cn',
+            assetsDir: 'assets',
+            sourcemap: false,
+            rollupOptions: {
+                input: 'index.html',
+                output: {
+                    manualChunks: {
+                        vendor: ['dexie', 'exceljs', 'marked', 'quill', 'zod'],
+                        ai: ['ai', '@ai-sdk/openai'],
+                    },
                 },
             },
         },
-    },
+    };
 });

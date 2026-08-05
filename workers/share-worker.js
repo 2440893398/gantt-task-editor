@@ -3684,11 +3684,27 @@ async function ensureFeedbackWorkflowForEvent(env, issueId, { deliveryId, eventI
     }
 
     const issue = await env.FEEDBACK_DB.prepare(
-        'SELECT version, workflow_generation FROM feedback_issues WHERE id = ?'
+        'SELECT version, workflow_generation, active_workflow_id FROM feedback_issues WHERE id = ?'
     )
         .bind(issueId)
         .first();
     if (!issue) return null;
+
+    if (issue.active_workflow_id) {
+        const reserved = await env.FEEDBACK_DB.prepare(
+            'SELECT status, generation FROM feedback_workflows WHERE instance_id = ?'
+        )
+            .bind(issue.active_workflow_id)
+            .first();
+        if (!reserved) {
+            return {
+                instanceId: issue.active_workflow_id,
+                generation: Number(issue.workflow_generation) || 0,
+                resumed: false,
+                error: 'WORKFLOW_STARTING',
+            };
+        }
+    }
 
     const generation = (Number(issue.workflow_generation) || 0) + 1;
     const instanceId = buildFeedbackWorkflowInstanceId(issueId, generation);
@@ -4713,7 +4729,12 @@ async function appendFeedbackCallbackEvent(env, runId, body) {
             callback.occurredAt,
             JSON.stringify({
                 text: limitText(callback.payload.summary || callback.payload.message, 12000),
-                artifact: callback.payload.artifact || null,
+                artifact: normalizeFeedbackTimelineArtifact(callback.payload.artifact),
+                resultEvidence: normalizeFeedbackResultEvidence(
+                    callback.type,
+                    completionManifest,
+                    callback.payload.verification
+                ),
                 phase: callback.payload.phase || '',
                 errorCode: limitText(callback.payload.errorCode, 80),
             }),
@@ -6226,6 +6247,58 @@ async function recordFeedbackArtifact(env, { issueId, runId, artifact }) {
     return artifactId;
 }
 
+function normalizeFeedbackTimelineArtifact(value) {
+    if (!value || typeof value !== 'object') return null;
+
+    const url = limitText(value.url, 1000);
+    return {
+        type: limitText(value.type, 60) || 'log',
+        name: limitText(value.name, 200) || '验证证据',
+        url,
+        size: Math.max(0, Number(value.size) || 0),
+        previewable:
+            /^https:\/\//i.test(url) && /\.(?:avif|gif|jpe?g|png|webp)(?:[?#]|$)/i.test(url),
+    };
+}
+
+function normalizeFeedbackVerificationStep(value, command) {
+    const step = value && typeof value === 'object' ? value : {};
+    return {
+        command: limitText(step.command, 300) || command,
+        required: step.required === true,
+        passed: step.passed === true,
+    };
+}
+
+function normalizeFeedbackResultEvidence(type, manifest, verification) {
+    if (!['run.completed', 'run.failed'].includes(type)) return null;
+
+    const safeManifest = manifest && typeof manifest === 'object' ? manifest : {};
+    const safeVerification = verification && typeof verification === 'object' ? verification : {};
+    return {
+        changedFiles: Array.isArray(safeManifest.changedFiles)
+            ? safeManifest.changedFiles.slice(0, 100).map((path) => limitText(path, 300))
+            : [],
+        changeCommit: limitText(safeManifest.changeCommit, 80),
+        candidateRef: limitText(safeManifest.candidateRef, 300),
+        verification: {
+            targetedTests: normalizeFeedbackVerificationStep(
+                safeVerification.targetedTests,
+                'npm test'
+            ),
+            build: normalizeFeedbackVerificationStep(safeVerification.build, 'npm run build'),
+            playwright: normalizeFeedbackVerificationStep(
+                safeVerification.playwright,
+                'npm run test:e2e'
+            ),
+            visualEvidence: {
+                required: safeVerification.visualEvidence?.required === true,
+                present: safeVerification.visualEvidence?.present === true,
+            },
+        },
+    };
+}
+
 function serializeTimelineEvent(row) {
     const body = parseStoredJson(row.body_json, {});
     const changes = body.changes && typeof body.changes === 'object' ? body.changes : {};
@@ -6246,6 +6319,11 @@ function serializeTimelineEvent(row) {
         ),
         mention: limitText(body.mention, 40),
         provider: limitText(body.provider, 40),
+        artifact: normalizeFeedbackTimelineArtifact(body.artifact),
+        resultEvidence:
+            body.resultEvidence && typeof body.resultEvidence === 'object'
+                ? body.resultEvidence
+                : null,
         changes,
     };
 }
@@ -6457,13 +6535,39 @@ function parseFeedbackMention(text) {
  * taken from the request body — it comes from the mention route or the stored
  * default (§7.3, §8).
  */
-async function appendFeedbackComment(env, issueId, { actorType, body, mode, expectedVersion }) {
+async function appendFeedbackComment(
+    env,
+    issueId,
+    { actorType, body, mode, expectedVersion, requestId }
+) {
     if (!env.FEEDBACK_DB) {
         throw feedbackStorageError('FEEDBACK_DB_REQUIRED');
     }
 
     const text = limitText(body, MAX_FEEDBACK_COMMENT_LENGTH).trim();
     if (!text) throw feedbackStorageError('FEEDBACK_COMMENT_EMPTY');
+
+    const normalizedRequestId = limitText(requestId, 160).trim();
+    const commentEventId = normalizedRequestId
+        ? `evt_comment_${(await hashFeedbackValue(`${issueId}:${normalizedRequestId}`)).slice(0, 48)}`
+        : `evt_${crypto.randomUUID()}`;
+    const existing = await env.FEEDBACK_DB.prepare('SELECT id FROM feedback_events WHERE id = ?')
+        .bind(commentEventId)
+        .first();
+    if (existing) {
+        const { mention } = parseFeedbackMention(text);
+        return {
+            duplicate: true,
+            issue: await readD1FeedbackIssue(env, issueId),
+            eventId: commentEventId,
+            mode: FEEDBACK_COMMENT_MODES.has(mode) ? mode : 'record',
+            provider: '',
+            mention,
+            requestedMode: mode,
+            workflowTermination: null,
+            delivery: null,
+        };
+    }
 
     const issue = await readFeedbackIssue(env, issueId);
     if (!issue) return null;
@@ -6476,6 +6580,23 @@ async function appendFeedbackComment(env, issueId, { actorType, body, mode, expe
     const runnerSettings = (await readFeedbackSettings(env, 'runners')).settings;
     const { mention, provider: mentionProvider } = parseFeedbackMention(text);
     const isOwner = actorType === 'user';
+    const issueState = await env.FEEDBACK_DB.prepare(
+        'SELECT active_workflow_id FROM feedback_issues WHERE id = ?'
+    )
+        .bind(issueId)
+        .first();
+    const activeWorkflowId = issueState?.active_workflow_id || '';
+    const activeWorkflow = activeWorkflowId
+        ? await env.FEEDBACK_DB.prepare(
+              'SELECT status, generation FROM feedback_workflows WHERE instance_id = ?'
+          )
+              .bind(activeWorkflowId)
+              .first()
+        : null;
+    const workflowIsStartingOrRunning = Boolean(
+        activeWorkflowId &&
+        (!activeWorkflow || ['queued', 'running'].includes(activeWorkflow.status))
+    );
 
     // §21.3: owners can only resume the wait they were asked to answer.
     const canResume = isOwner
@@ -6484,22 +6605,15 @@ async function appendFeedbackComment(env, issueId, { actorType, body, mode, expe
     let effectiveMode = FEEDBACK_COMMENT_MODES.has(mode) ? mode : 'record';
     if (isOwner && effectiveMode === 'close') effectiveMode = 'record';
     if (effectiveMode === 'resume' && !canResume) effectiveMode = 'record';
+    if (effectiveMode === 'resume' && workflowIsStartingOrRunning) effectiveMode = 'record';
 
     const nextStatus =
         effectiveMode === 'close' ? 'closed' : effectiveMode === 'resume' ? 'queued' : status;
     const isTerminalTransition =
         FEEDBACK_TERMINAL_STATUSES.has(nextStatus) && !FEEDBACK_TERMINAL_STATUSES.has(status);
-    const issueState = isTerminalTransition
-        ? await env.FEEDBACK_DB.prepare(
-              'SELECT active_workflow_id FROM feedback_issues WHERE id = ?'
-          )
-              .bind(issueId)
-              .first()
-        : null;
-    const activeWorkflowId = issueState?.active_workflow_id || '';
+    const terminalWorkflowId = isTerminalTransition ? activeWorkflowId : '';
     const provider = mentionProvider || runnerSettings.defaultProvider;
     const occurredAt = new Date().toISOString();
-    const commentEventId = `evt_${crypto.randomUUID()}`;
     const nextVersion = Number(expectedVersion) + 1;
     const statements = [
         env.FEEDBACK_DB.prepare(
@@ -6525,6 +6639,7 @@ async function appendFeedbackComment(env, issueId, { actorType, body, mode, expe
                 mention,
                 provider: effectiveMode === 'resume' ? provider : '',
                 mode: effectiveMode,
+                requestId: normalizedRequestId,
             }),
             JSON.stringify({ expectedVersion, resultingVersion: nextVersion }),
             issueId,
@@ -6560,7 +6675,7 @@ async function appendFeedbackComment(env, issueId, { actorType, body, mode, expe
     }
 
     const workflowTerminationStatement = prepareFeedbackTerminalWorkflowStatement(env, {
-        instanceId: activeWorkflowId,
+        instanceId: terminalWorkflowId,
         occurredAt,
         reason: nextStatus === 'resolved' ? 'issue_resolved' : 'issue_closed',
     });
@@ -6594,8 +6709,8 @@ async function appendFeedbackComment(env, issueId, { actorType, body, mode, expe
         throw feedbackStorageError('FEEDBACK_VERSION_CONFLICT');
     }
 
-    const workflowTermination = activeWorkflowId
-        ? await terminateFeedbackWorkflowInstance(env, activeWorkflowId)
+    const workflowTermination = terminalWorkflowId
+        ? await terminateFeedbackWorkflowInstance(env, terminalWorkflowId)
         : null;
 
     if (effectiveMode === 'resume' && isOwner && activeHumanAction) {
@@ -6621,6 +6736,7 @@ async function appendFeedbackComment(env, issueId, { actorType, body, mode, expe
     });
 
     return {
+        duplicate: false,
         issue: await readD1FeedbackIssue(env, issueId),
         eventId: commentEventId,
         mode: effectiveMode,
@@ -10628,12 +10744,14 @@ export default {
                         body: body.body,
                         mode: body.mode,
                         expectedVersion: Number(body.expectedVersion),
+                        requestId: body.requestId,
                     });
                     if (!result) return errorResponse('Not found', 404, headers);
 
                     return jsonResponse(
                         {
                             eventId: result.eventId,
+                            duplicate: result.duplicate,
                             mode: result.mode,
                             requestedMode: result.requestedMode,
                             provider: result.provider,
@@ -10644,7 +10762,7 @@ export default {
                                 ? serializeAdminIssue(result.issue)
                                 : serializePublicIssue(result.issue, true),
                         },
-                        { status: 201, headers }
+                        { status: result.duplicate ? 200 : 201, headers }
                     );
                 }
 

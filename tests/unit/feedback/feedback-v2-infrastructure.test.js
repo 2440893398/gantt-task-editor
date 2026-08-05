@@ -212,8 +212,59 @@ describe('[SCN-FWB-022] feedback V2 autonomous delivery infrastructure', () => {
             expect(workflow).toContain('name: Create recoverable Candidate');
             expect(workflow).toContain('FEEDBACK_CANDIDATE_TOKEN');
             expect(workflow).toContain('--candidate-ref');
-            expect(workflow).toContain('verification: {');
+            expect(workflow).toContain('const verificationReport = {');
+            expect(workflow).toContain('verification: verificationReport');
         }
+    });
+
+    it('keeps each verification outcome and publishes actionable completion evidence', () => {
+        for (const provider of ['codex', 'claude']) {
+            const workflow = readProjectFile(`.github/workflows/feedback-agent-${provider}.yml`);
+
+            expect(workflow).toContain('targeted_tests_outcome: ${{ steps.tests.outcome }}');
+            expect(workflow).toContain('build_outcome: ${{ steps.build.outcome }}');
+            expect(workflow).toContain('playwright_outcome: ${{ steps.playwright.outcome }}');
+            expect(workflow).toContain(
+                'TESTS_OUTCOME: ${{ needs.agent.outputs.targeted_tests_outcome }}'
+            );
+            expect(workflow).toContain('BUILD_OUTCOME: ${{ needs.agent.outputs.build_outcome }}');
+            expect(workflow).toContain(
+                'PLAYWRIGHT_OUTCOME: ${{ needs.agent.outputs.playwright_outcome }}'
+            );
+            expect(workflow).toContain('type: "artifact.created"');
+            expect(workflow).toContain('verificationReport');
+            expect(workflow).toContain('const visualEvidencePassed =');
+            expect(workflow).toContain('executionPassed && visualEvidencePassed');
+            expect(workflow).not.toContain('png|jpe?g|webp|zip|webm');
+            expect(workflow).not.toContain(
+                'Codex completed the Run and passed the project quality gates.'
+            );
+        }
+    });
+
+    it('[SCN-FWB-010] forwards timeline replies and requires a non-empty Agent message', () => {
+        const codex = readProjectFile('.github/workflows/feedback-agent-codex.yml');
+        const claude = readProjectFile('.github/workflows/feedback-agent-claude.yml');
+
+        for (const workflow of [codex, claude]) {
+            expect(workflow).toContain('context.timeline');
+            expect(workflow).toContain('agent-final.txt');
+            expect(workflow).toContain('type: "agent.message"');
+            expect(workflow).toContain('empty_agent_response');
+            expect(workflow).toContain('const agentMessage =');
+        }
+
+        expect(codex).toContain('id: run_codex');
+        expect(codex).toContain('output-file: ${{ runner.temp }}/feedback-agent-final.md');
+        expect(claude).toContain('id: run_claude');
+        expect(claude).toContain('steps.run_claude.outputs.execution_file');
+    });
+
+    it('[SCN-FWB-010] never renders an operational event as an empty Agent result', () => {
+        const client = readProjectFile('workers/feedback-workbench-client.js.txt');
+
+        expect(client).not.toContain('<p class="help">(无内容)</p>');
+        expect(client).toContain('eventStatusText(event)');
     });
 
     it('authenticates Agent dispatches before secrets and runs a base-pinned diff gate', () => {

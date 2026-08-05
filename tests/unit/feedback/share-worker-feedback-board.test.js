@@ -1717,6 +1717,88 @@ describe('feedback issue board Worker routes', () => {
         ).toBe(true);
     });
 
+    it('[SCN-FWB-006] renders changes, independent verification results, and visual evidence', async () => {
+        const routes = ownerWorkbenchRoutes({
+            status: 'needs_human',
+            events: [
+                {
+                    id: 'evt_created',
+                    sequence: 1,
+                    type: 'issue.created',
+                    actorType: 'user',
+                    visibility: 'public',
+                    occurredAt: '2026-08-05T08:00:00.000Z',
+                    text: '',
+                    changes: {},
+                },
+                {
+                    id: 'evt_artifact',
+                    sequence: 2,
+                    type: 'artifact.created',
+                    actorType: 'agent',
+                    visibility: 'public',
+                    occurredAt: '2026-08-05T08:05:00.000Z',
+                    text: '已保存验证截图与报告。',
+                    artifact: {
+                        type: 'verification-report',
+                        name: 'Playwright 截图与测试报告',
+                        url: 'https://example.test/evidence.png',
+                        previewable: true,
+                    },
+                    changes: {},
+                },
+                {
+                    id: 'evt_completed',
+                    sequence: 3,
+                    type: 'run.completed',
+                    actorType: 'agent',
+                    visibility: 'public',
+                    occurredAt: '2026-08-05T08:06:00.000Z',
+                    text: '已修复反馈结果缺少可核验证据的问题。',
+                    resultEvidence: {
+                        changedFiles: [
+                            'workers/feedback-workbench-client.js.txt',
+                            'workers/share-worker.js',
+                        ],
+                        changeCommit: 'def456',
+                        verification: {
+                            targetedTests: { command: 'npm test', required: true, passed: true },
+                            build: { command: 'npm run build', required: true, passed: true },
+                            playwright: {
+                                command: 'npm run test:e2e',
+                                required: true,
+                                passed: true,
+                            },
+                            visualEvidence: { required: true, present: true },
+                        },
+                    },
+                    changes: {},
+                },
+            ],
+        });
+        const dom = await openWorkbench(env, {
+            url: `https://worker.test/feedback#issue=${encodeURIComponent(
+                feedbackKey
+            )}&capability=owner-token`,
+            routes,
+        });
+
+        await waitFor(() => {
+            expect(dom.window.document.querySelector('[data-result-evidence]')).toBeTruthy();
+        });
+
+        const resultCard = dom.window.document.querySelector('[data-result-evidence]');
+        expect(resultCard.textContent).toContain('处理结果');
+        expect(resultCard.textContent).toContain('workers/share-worker.js');
+        expect(resultCard.textContent).toContain('npm test');
+        expect(resultCard.textContent).toContain('npm run build');
+        expect(resultCard.textContent).toContain('npm run test:e2e');
+        expect(resultCard.textContent).toContain('已通过');
+        const preview = dom.window.document.querySelector('[data-artifact-preview]');
+        expect(preview.getAttribute('src')).toBe('https://example.test/evidence.png');
+        expect(preview.getAttribute('alt')).toContain('Playwright 截图与测试报告');
+    });
+
     it('[SCN-FWB-019] tells the owner the link is the only way back, with no push notification', async () => {
         const dom = await openWorkbench(env, {
             url: `https://worker.test/feedback#issue=${encodeURIComponent(
@@ -6091,7 +6173,8 @@ describe('feedback workbench V2 event dispatch', () => {
         headers,
         expectedVersion,
         body = '触发一次投递',
-        mode = 'resume'
+        mode = 'resume',
+        requestId = `comment-${crypto.randomUUID()}`
     ) {
         return json(
             await request(
@@ -6099,7 +6182,7 @@ describe('feedback workbench V2 event dispatch', () => {
                 {
                     method: 'POST',
                     headers,
-                    body: JSON.stringify({ body, mode, expectedVersion }),
+                    body: JSON.stringify({ body, mode, expectedVersion, requestId }),
                 },
                 env
             )
@@ -6150,6 +6233,41 @@ describe('feedback workbench V2 event dispatch', () => {
                 payload: expect.objectContaining({ eventType: 'comment.created' }),
             })
         );
+    });
+
+    it('[SCN-FWB-007] returns the same comment event for a retried request', async () => {
+        const { env, headers } = await createDispatchEnv();
+        const requestId = 'comment-retry-1';
+
+        const first = await postComment(env, headers, 1, '同一条补充', 'resume', requestId);
+        const second = await postComment(env, headers, 1, '同一条补充', 'resume', requestId);
+
+        expect(second.eventId).toBe(first.eventId);
+        expect(second.duplicate).toBe(true);
+        expect(env.FEEDBACK_WORKFLOW.created).toHaveLength(1);
+        expect(
+            Array.from(env.FEEDBACK_DB.tables.feedback_events.values()).filter(
+                (event) => event.type === 'comment.created'
+            )
+        ).toHaveLength(1);
+    });
+
+    it('[SCN-FWB-007] records a reply without a second Run while a Workflow is starting', async () => {
+        const activeId = workflowInstanceId(feedbackKey, 1);
+        const { env, headers } = await createDispatchEnv({
+            issue: createD1IssueRow({
+                status: 'queued',
+                workflow_generation: 1,
+                active_workflow_id: activeId,
+            }),
+        });
+
+        const reply = await postComment(env, headers, 1, '追加说明', 'resume');
+
+        expect(reply.requestedMode).toBe('resume');
+        expect(reply.mode).toBe('record');
+        expect(reply.delivery.workflow).toBeNull();
+        expect(env.FEEDBACK_WORKFLOW.created).toHaveLength(0);
     });
 
     it('[SCN-FWB-007] uses generation + 1 once the previous instance is terminal', async () => {
@@ -7128,6 +7246,92 @@ describe('feedback workbench V2 Run and Callback', () => {
         expect(JSON.parse(events[1].metadata_json).providerRawStatus).toBe('in_progress');
         expect(events[0].visibility).toBe('internal');
         expect(events[1].visibility).toBe('public');
+    });
+
+    it('[SCN-FWB-006] preserves structured verification and artifact evidence in the timeline', async () => {
+        const { env, run } = await createRunEnv();
+        const token = await callbackTokenFor(env, run.id);
+        const manifest = await attachDiffManifestHash({
+            specVersion: '1.0',
+            repository: 'acme/gantt-task-editor',
+            baseRef: 'master',
+            candidateRef: `feedback/candidate/${run.id}`,
+            baseCommit: run.base_commit,
+            changeCommit: 'def456',
+            changedFiles: ['workers/share-worker.js'],
+        });
+
+        await postCallback(
+            env,
+            run.id,
+            {
+                eventId: 'cb_artifact',
+                type: 'artifact.created',
+                payload: {
+                    summary: '已保存验证截图与报告。',
+                    artifact: {
+                        type: 'verification-report',
+                        name: 'Playwright 截图与测试报告',
+                        url: 'https://example.test/evidence',
+                    },
+                },
+            },
+            token
+        );
+        await postCallback(
+            env,
+            run.id,
+            {
+                eventId: 'cb_completed',
+                type: 'run.completed',
+                payload: {
+                    summary: '已修复反馈结果缺少可核验证据的问题。',
+                    diffManifest: manifest,
+                    verification: {
+                        targetedTests: { command: 'npm test', required: true, passed: true },
+                        build: { command: 'npm run build', required: true, passed: true },
+                        playwright: {
+                            command: 'npm run test:e2e',
+                            required: true,
+                            passed: true,
+                        },
+                        visualEvidence: { required: false, present: true },
+                    },
+                },
+            },
+            token
+        );
+
+        const timeline = await json(
+            await request(
+                `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/events`,
+                { headers: await adminHeaders(env) },
+                env
+            )
+        );
+        const artifact = timeline.events.find((event) => event.type === 'artifact.created');
+        const completed = timeline.events.find((event) => event.type === 'run.completed');
+
+        expect(artifact.artifact).toMatchObject({
+            type: 'verification-report',
+            name: 'Playwright 截图与测试报告',
+            url: 'https://example.test/evidence',
+        });
+        expect(completed.resultEvidence).toEqual({
+            changedFiles: ['workers/share-worker.js'],
+            changeCommit: 'def456',
+            candidateRef: `feedback/candidate/${run.id}`,
+            verification: {
+                targetedTests: { command: 'npm test', required: true, passed: true },
+                build: { command: 'npm run build', required: true, passed: true },
+                playwright: {
+                    command: 'npm run test:e2e',
+                    required: true,
+                    passed: true,
+                },
+                visualEvidence: { required: false, present: true },
+            },
+        });
     });
 
     it('[SCN-FWB-003] returns 200 for a repeated Callback without appending twice', async () => {

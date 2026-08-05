@@ -726,6 +726,14 @@ export default {
         submit: '피드백 제출',
         submitting: '제출 중...',
         submitSuccess: '피드백이 제출되었습니다',
+        submitSuccessTitle: '피드백이 제출되었습니다',
+        submitSuccessDescription:
+            '중복 작업이 생성되지 않도록 후속 내용은 같은 피드백에서 추가하세요.',
+        ownerLinkAction: '처리 진행 상황 확인 및 내용 추가',
+        ownerLinkHint:
+            '이 링크는 진행 상황을 확인하고 내용을 추가할 수 있는 유일한 수단입니다. 안전하게 보관하세요.',
+        ownerLinkUnavailable:
+            '진행 상황 링크를 일시적으로 사용할 수 없습니다. 다시 제출하지 말고 나중에 관리자에게 문의하세요.',
         submitFailed: '제출 실패, 나중에 다시 시도하세요',
         attachmentTooLarge: '첨부 파일이 너무 큽니다',
         attachmentFailed: '첨부 파일을 읽을 수 없습니다',

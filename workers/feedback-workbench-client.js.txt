@@ -96,7 +96,8 @@
         runners: null,
         runnersDirty: false,
         health: null,
-        submitting: false
+        submitting: false,
+        replyRequestId: ''
     };
 
     /* ---------------------------------------------------------------- utils */
@@ -142,6 +143,14 @@
         return timestamp ? new Date(timestamp).toLocaleString('zh-CN') : '';
     }
 
+    function createCommentRequestId() {
+        var random =
+            window.crypto && typeof window.crypto.randomUUID === 'function'
+                ? window.crypto.randomUUID()
+                : Math.random().toString(36).slice(2) + Date.now().toString(36);
+        return 'comment-' + random;
+    }
+
     function formatBytes(size) {
         var bytes = Number(size) || 0;
         if (bytes < 1024) return bytes + ' B';
@@ -161,6 +170,16 @@
         if (!value) return '';
         try {
             return new URL(value).pathname;
+        } catch (error) {
+            return '';
+        }
+    }
+
+    function safeExternalUrl(value) {
+        if (!value) return '';
+        try {
+            var url = new URL(value);
+            return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : '';
         } catch (error) {
             return '';
         }
@@ -450,12 +469,17 @@
             ? '提交了反馈'
             : needsAttention
               ? '需要你补充信息'
+              : event.type === 'artifact.created'
+                ? '发布了验证证据'
               : isAgent
                 ? '发布了处理结果'
                 : '回复了';
         var bodyHtml = isCreation
             ? paragraphs(issue && issue.description) + attachmentsHtml(issue)
             : paragraphs(event.text || event.title);
+        var evidenceHtml =
+            resultEvidenceHtml(event.resultEvidence) + artifactEvidenceHtml(event.artifact);
+        var visibleBodyHtml = bodyHtml || paragraphs(eventStatusText(event));
 
         return (
             '<article class="timeline-entry"><div class="' +
@@ -476,11 +500,133 @@
             '</span></span>' +
             badge +
             '</div><div class="comment-body">' +
-            (bodyHtml || '<p class="help">(无内容)</p>') +
+            visibleBodyHtml +
+            evidenceHtml +
             (event.mention
                 ? '<p class="help">已唤醒 <code>' + escapeHtml(event.mention) + '</code></p>'
                 : '') +
             '</div></div></article>'
+        );
+    }
+
+    function eventStatusText(event) {
+        var labels = {
+            'run.started': '处理任务已启动，正在读取上下文并执行。',
+            'run.phase_changed': '处理任务已进入下一阶段。',
+            'run.completed': '处理任务已完成，请核对下方结果与验证证据。',
+            'run.failed': '处理任务未完成，请查看下方失败原因与验证结果。',
+            'agent.message': '处理者未返回可显示的回复。',
+            'waiting_human': '处理暂停，需要你补充信息后才能继续。',
+            'artifact.created': '已保存本次处理的验证证据。',
+            'automation.suppressed': '本次自动处理被规则或配额阻止。',
+            'security.blocked': '本次操作被安全策略阻止。'
+        };
+        return labels[event.type] || EVENT_FALLBACK_TEXT[event.type] || '该事件已记录。';
+    }
+
+    function verificationRowHtml(label, value) {
+        var step = value || {};
+        if (!step.required) {
+            return (
+                '<div class="result-check skipped"><span aria-hidden="true">—</span><div><strong>' +
+                escapeHtml(label) +
+                '</strong><code>' +
+                escapeHtml(step.command || '') +
+                '</code></div><span>不适用</span></div>'
+            );
+        }
+        return (
+            '<div class="result-check ' +
+            (step.passed ? 'passed' : 'failed') +
+            '"><span aria-hidden="true">' +
+            (step.passed ? ICON_CHECK : '×') +
+            '</span><div><strong>' +
+            escapeHtml(label) +
+            '</strong><code>' +
+            escapeHtml(step.command || '') +
+            '</code></div><span>' +
+            (step.passed ? '已通过' : '未通过') +
+            '</span></div>'
+        );
+    }
+
+    function resultEvidenceHtml(value) {
+        if (!value || typeof value !== 'object') return '';
+        var files = Array.isArray(value.changedFiles) ? value.changedFiles : [];
+        var verification = value.verification || {};
+        var visual = verification.visualEvidence || {};
+        var hasRequiredVerification = Boolean(
+            (verification.targetedTests || {}).required ||
+                (verification.build || {}).required ||
+                (verification.playwright || {}).required
+        );
+        var changeMeta = value.changeCommit
+            ? '<span>候选提交 <code>' + escapeHtml(String(value.changeCommit).slice(0, 12)) + '</code></span>'
+            : '';
+        var fileHtml = files.length
+            ? '<div class="result-files"><strong>变更文件（' +
+              files.length +
+              '）</strong><ul>' +
+              files
+                  .map(function (path) {
+                      return '<li><code>' + escapeHtml(path) + '</code></li>';
+                  })
+                  .join('') +
+              '</ul></div>'
+            : hasRequiredVerification
+              ? '<p class="result-warning">没有记录任何变更文件，不能据此判断问题已处理。</p>'
+              : '<p class="help">本次为只读分析，没有修改仓库文件。</p>';
+
+        return (
+            '<section class="result-evidence" data-result-evidence><div class="result-title"><strong>处理结果</strong>' +
+            changeMeta +
+            '</div>' +
+            fileHtml +
+            '<div class="result-checks">' +
+            verificationRowHtml('目标测试', verification.targetedTests) +
+            verificationRowHtml('构建', verification.build) +
+            verificationRowHtml('浏览器验证', verification.playwright) +
+            '</div>' +
+            (visual.required
+                ? '<p class="visual-status ' +
+                  (visual.present ? 'passed' : 'failed') +
+                  '">' +
+                  (visual.present ? '已附带视觉验证证据。' : '缺少必需的视觉验证证据。') +
+                  '</p>'
+                : '') +
+            '</section>'
+        );
+    }
+
+    function artifactEvidenceHtml(artifact) {
+        if (!artifact || typeof artifact !== 'object') return '';
+        var url = safeExternalUrl(artifact.url);
+        var name = artifact.name || '验证证据';
+        var preview =
+            url && artifact.previewable
+                ? '<a class="artifact-preview-link" href="' +
+                  escapeHtml(url) +
+                  '" target="_blank" rel="noopener noreferrer"><img data-artifact-preview src="' +
+                  escapeHtml(url) +
+                  '" alt="' +
+                  escapeHtml(name) +
+                  '" loading="lazy"></a>'
+                : '';
+        var link = url
+            ? '<a class="artifact-link" href="' +
+              escapeHtml(url) +
+              '" target="_blank" rel="noopener noreferrer">打开证据</a>'
+            : '<span class="help">证据链接不可用</span>';
+
+        return (
+            '<section class="artifact-evidence"><div><strong>' +
+            escapeHtml(name) +
+            '</strong><span>' +
+            escapeHtml(artifact.type || 'artifact') +
+            '</span></div>' +
+            link +
+            preview +
+            '</section>'
         );
     }
 
@@ -813,6 +959,7 @@
 
     function renderComposer() {
         var issue = state.issue;
+        state.replyRequestId = '';
         setHidden($('composer'), !issue || state.actor === 'anonymous');
         if (!issue) return;
 
@@ -821,13 +968,19 @@
         var canResume = isAdmin ? !isTerminal : issue.status === 'needs_human' && state.humanAction;
 
         var options = [];
-        if (canResume) {
+        if (!isAdmin && canResume) {
             options.push({
                 value: 'resume',
                 label: '回复并交给 ' + defaultProviderLabel() + ' 继续处理'
             });
         }
         options.push({ value: 'record', label: '仅记录回复，暂不触发' });
+        if (isAdmin && canResume) {
+            options.push({
+                value: 'resume',
+                label: '回复并交给 ' + defaultProviderLabel() + ' 继续处理'
+            });
+        }
         if (isAdmin && !isTerminal) options.push({ value: 'close', label: '回复并关闭 Issue' });
 
         var select = $('replyMode');
@@ -1766,6 +1919,10 @@
             if (input.value.indexOf(mentionButton.dataset.mention) === -1) {
                 input.value = mention + input.value;
             }
+            if ($('replyMode').querySelector('option[value="resume"]')) {
+                $('replyMode').value = 'resume';
+            }
+            state.replyRequestId = '';
             input.focus();
             updateRouteHint();
             return;
@@ -1932,8 +2089,14 @@
             });
     });
 
-    $('replyMode').addEventListener('change', updateRouteHint);
-    $('replyInput').addEventListener('input', updateRouteHint);
+    $('replyMode').addEventListener('change', function () {
+        state.replyRequestId = '';
+        updateRouteHint();
+    });
+    $('replyInput').addEventListener('input', function () {
+        if (!state.submitting) state.replyRequestId = '';
+        updateRouteHint();
+    });
 
     Array.prototype.forEach.call(document.querySelectorAll('[data-composer-tab]'), function (tab) {
         tab.addEventListener('click', function () {
@@ -1968,6 +2131,8 @@
         }
 
         var mode = $('replyMode').value;
+        var requestId = state.replyRequestId || createCommentRequestId();
+        state.replyRequestId = requestId;
         var submit = $('replySubmit');
         state.submitting = true;
         submit.disabled = true;
@@ -1975,9 +2140,15 @@
 
         request('/api/feedback/issues/' + encodeURIComponent(state.issue.key) + '/comments', {
             method: 'POST',
-            body: { body: body, mode: mode, expectedVersion: state.issue.version }
+            body: {
+                body: body,
+                mode: mode,
+                expectedVersion: state.issue.version,
+                requestId: requestId
+            }
         })
             .then(function (payload) {
+                state.replyRequestId = '';
                 input.value = '';
                 setHidden($('replyPreview'), true);
                 input.style.display = '';
@@ -1999,6 +2170,7 @@
             })
             .catch(function (error) {
                 if (error && error.status === 409) {
+                    state.replyRequestId = '';
                     toastTimer('该 Issue 已被更新，正在重新载入');
                     return selectIssue(state.issue.key);
                 }
