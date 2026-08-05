@@ -731,6 +731,13 @@ export default {
         submit: '送信',
         submitting: '送信中...',
         submitSuccess: 'フィードバックを送信しました',
+        submitSuccessTitle: 'フィードバックを送信しました',
+        submitSuccessDescription:
+            '重複タスクを作らないよう、追記は同じフィードバックから行ってください。',
+        ownerLinkAction: '進捗を確認して追記する',
+        ownerLinkHint: 'このリンクが進捗確認と追記の唯一の手段です。安全な場所に保管してください。',
+        ownerLinkUnavailable:
+            '進捗リンクを一時的に利用できません。再送信せず、後ほど管理者にお問い合わせください。',
         submitFailed: '送信に失敗しました。後でもう一度お試しください',
         attachmentTooLarge: '添付ファイルが大きすぎます',
         attachmentFailed: '添付ファイルを読み込めません',

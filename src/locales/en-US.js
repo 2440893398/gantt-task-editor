@@ -767,6 +767,14 @@ export default {
         submit: 'Submit feedback',
         submitting: 'Submitting...',
         submitSuccess: 'Feedback submitted',
+        submitSuccessTitle: 'Feedback submitted',
+        submitSuccessDescription:
+            'Return to this feedback for follow-ups so a duplicate task is not created.',
+        ownerLinkAction: 'View progress and add details',
+        ownerLinkHint:
+            'This link is the only way to view progress and continue the conversation. Keep it safe.',
+        ownerLinkUnavailable:
+            'The progress link is temporarily unavailable. Do not submit again; contact an administrator later.',
         submitFailed: 'Submit failed, please try again later',
         attachmentTooLarge: 'Attachment is too large',
         attachmentFailed: 'Could not read attachment',

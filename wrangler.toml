@@ -6,6 +6,15 @@ compatibility_flags = ["nodejs_compat"]
 [observability]
 enabled = true
 
+[vars]
+FEEDBACK_CALLBACK_ORIGIN = "https://gantt-share.ch451314.workers.dev"
+FEEDBACK_GITHUB_API_VERSION = "2026-03-10"
+FEEDBACK_GITHUB_REF = "master"
+FEEDBACK_GITHUB_REPOSITORY = "2440893398/gantt-task-editor"
+FEEDBACK_GITHUB_WORKFLOW = "feedback-agent-codex.yml"
+FEEDBACK_PRODUCTION_API_URL = "https://gantt-share.ch451314.workers.dev"
+FEEDBACK_PRODUCTION_ORIGIN = "https://gantt-task-editor.pages.dev"
+
 # Spec §13.4/§17.2: the single low-frequency `feedback-reconcile` sweep. Issue
 # processing is event-driven (§4), so there is deliberately no high-frequency
 # cron here — see SCN-FWB-002.

@@ -167,4 +167,54 @@ describe('FeedbackDialog', () => {
             })
         );
     });
+
+    it('[SCN-FWB-019] keeps the owner link visible so follow-ups stay on the same Issue', async () => {
+        mockSubmitFeedback.mockResolvedValue({
+            key: 'feedback:1',
+            ownerUrl: 'https://worker.test/feedback#issue=feedback%3A1&capability=owner-token',
+        });
+        const { openFeedbackDialog } =
+            await import('../../../src/features/feedback/FeedbackDialog.js');
+
+        openFeedbackDialog();
+        document.getElementById('feedback-title').value = 'One Issue only';
+        document.getElementById('feedback-form').dispatchEvent(new Event('submit'));
+        await Promise.resolve();
+        await Promise.resolve();
+
+        const modal = document.getElementById('feedback-dialog-modal');
+        const ownerLink = document.getElementById('feedback-owner-link');
+        expect(modal.open).toBe(true);
+        expect(document.getElementById('feedback-form')).toBeNull();
+        expect(ownerLink.href).toBe(
+            'https://worker.test/feedback#issue=feedback%3A1&capability=owner-token'
+        );
+        expect(ownerLink.textContent).toContain('查看处理进度');
+    });
+
+    it('[SCN-FWB-007] ignores a second submit while the first feedback request is pending', async () => {
+        let finishSubmit;
+        mockSubmitFeedback.mockReturnValue(
+            new Promise((resolve) => {
+                finishSubmit = resolve;
+            })
+        );
+        const { openFeedbackDialog } =
+            await import('../../../src/features/feedback/FeedbackDialog.js');
+
+        openFeedbackDialog();
+        document.getElementById('feedback-title').value = 'Do not duplicate';
+        const form = document.getElementById('feedback-form');
+        form.dispatchEvent(new Event('submit'));
+        form.dispatchEvent(new Event('submit'));
+        await Promise.resolve();
+
+        expect(mockSubmitFeedback).toHaveBeenCalledTimes(1);
+
+        finishSubmit({
+            ownerUrl: 'https://worker.test/feedback#issue=feedback%3A1&capability=owner-token',
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+    });
 });

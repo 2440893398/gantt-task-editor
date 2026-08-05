@@ -1,5 +1,5 @@
-import { copyFile, readdir, readFile, stat } from 'node:fs/promises';
-import { extname, relative, resolve } from 'node:path';
+import { copyFile, readdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { dirname, extname, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const rootDir = process.cwd();
@@ -36,6 +36,36 @@ const requiredWorkerRouteIncludes = [
     'env.ASSETS?.fetch',
 ];
 
+const workerModuleFiles = [
+    {
+        sourcePath: 'workers/feedback-workbench-ui.js',
+        outputName: 'feedback-workbench-ui.js',
+    },
+    {
+        sourcePath: 'workers/feedback-workbench.css.txt',
+        outputName: 'feedback-workbench.css.txt',
+    },
+    {
+        sourcePath: 'workers/feedback-workbench-client.js.txt',
+        outputName: 'feedback-workbench-client.js.txt',
+    },
+    {
+        sourcePath: 'src/features/feedback/diff-gate.js',
+        sourceImport: '../src/features/feedback/diff-gate.js',
+        outputName: 'feedback-diff-gate.js',
+    },
+    {
+        sourcePath: 'src/features/feedback/vendor/rrweb-replay-2.0.0-alpha.20.umd.min.txt',
+        sourceImport: '../src/features/feedback/vendor/rrweb-replay-2.0.0-alpha.20.umd.min.txt',
+        outputName: 'feedback-rrweb-replay-2.0.0-alpha.20.umd.min.txt',
+    },
+    {
+        sourcePath: 'src/features/feedback/vendor/rrweb-replay-2.0.0-alpha.20.style.min.txt',
+        sourceImport: '../src/features/feedback/vendor/rrweb-replay-2.0.0-alpha.20.style.min.txt',
+        outputName: 'feedback-rrweb-replay-2.0.0-alpha.20.style.min.txt',
+    },
+];
+
 async function assertFileExists(filePath) {
     const fileStat = await stat(filePath).catch(() => null);
 
@@ -62,6 +92,29 @@ async function findTextFiles(dirPath) {
     }
 
     return files;
+}
+
+async function validateLocalWorkerModules(modulePath, outputDir, visited = new Set()) {
+    if (visited.has(modulePath)) return;
+    visited.add(modulePath);
+
+    const moduleSource = await readFile(modulePath, 'utf8');
+    const localImportPattern = /(?:import|export)\s+(?:[^'";]+?\s+from\s+)?['"](\.[^'"]+)['"]/g;
+
+    for (const match of moduleSource.matchAll(localImportPattern)) {
+        const importedPath = resolve(dirname(modulePath), match[1]);
+        const importedStat = await stat(importedPath).catch(() => null);
+
+        if (!importedStat?.isFile()) {
+            throw new Error(
+                `Cloudflare Pages Worker module is missing: ${relative(outputDir, importedPath)}`
+            );
+        }
+
+        if (['.js', '.mjs'].includes(extname(importedPath))) {
+            await validateLocalWorkerModules(importedPath, outputDir, visited);
+        }
+    }
 }
 
 export async function validateCloudflarePagesArtifacts(outputDir = defaultOutputDir) {
@@ -92,6 +145,8 @@ export async function validateCloudflarePagesArtifacts(outputDir = defaultOutput
         }
     }
 
+    await validateLocalWorkerModules(workerPath, outputDir);
+
     const textFiles = await findTextFiles(outputDir);
 
     for (const filePath of textFiles) {
@@ -108,7 +163,23 @@ export async function validateCloudflarePagesArtifacts(outputDir = defaultOutput
 }
 
 export async function prepareCloudflarePagesArtifacts(outputDir = defaultOutputDir) {
-    await copyFile(resolve(rootDir, 'workers/share-worker.js'), resolve(outputDir, '_worker.js'));
+    let workerSource = await readFile(resolve(rootDir, 'workers/share-worker.js'), 'utf8');
+
+    for (const moduleFile of workerModuleFiles) {
+        if (moduleFile.sourceImport) {
+            workerSource = workerSource.replaceAll(
+                moduleFile.sourceImport,
+                `./${moduleFile.outputName}`
+            );
+        }
+    }
+
+    await Promise.all([
+        writeFile(resolve(outputDir, '_worker.js'), workerSource),
+        ...workerModuleFiles.map(({ sourcePath, outputName }) =>
+            copyFile(resolve(rootDir, sourcePath), resolve(outputDir, outputName))
+        ),
+    ]);
     await validateCloudflarePagesArtifacts(outputDir);
 }
 

@@ -339,11 +339,28 @@ test.describe('[SCN-FWB-016] AI 执行器页', () => {
         await expect(page.getByRole('button', { name: '测试连接' }).first()).toBeVisible();
         await expect(page.locator('#runnersView').getByText('@codex-agent')).toBeVisible();
         await expect(page.locator('#runnersView').getByText('@claude-agent')).toBeVisible();
+        await expect(
+            page.locator('[data-provider-card="codex"] [data-provider-history]')
+        ).toBeVisible();
         await expect(page.getByLabel('未指定执行器')).toBeVisible();
 
         // Connection parameters and the Callback contract stay collapsed.
         await expect(page.getByLabel('Responses API 地址')).toBeHidden();
         await expect(page.getByLabel('Callback URL')).toBeHidden();
+    });
+
+    test('[SCN-FWB-016] 测试历史默认折叠，展开后按次列出脱敏记录', async ({ page, request }) => {
+        await signInAsAdmin(page, await adminToken(request));
+        await page.goto('/feedback');
+        await page.getByRole('button', { name: 'AI 执行器', exact: true }).click();
+
+        const history = page.locator('[data-provider-card="codex"] [data-provider-history]');
+        // §19.5 keeps history as secondary detail, so it arrives collapsed.
+        await expect(history.locator('.provider-history-body')).toBeHidden();
+        await expect(history.locator('.provider-history-count')).toHaveText(/^\d+ 次$/);
+
+        await history.locator('summary').click();
+        await expect(history.locator('.provider-history-body')).toBeVisible();
     });
 
     test('[SCN-FWB-022] 分级自治交付默认关闭，预检失败时就地说明原因', async ({

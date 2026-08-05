@@ -18,6 +18,21 @@ function escapeHtml(value) {
         .replaceAll("'", '&#039;');
 }
 
+function safeHttpUrl(value) {
+    try {
+        const url = new URL(String(value || ''));
+        return ['http:', 'https:'].includes(url.protocol) ? url.href : '';
+    } catch {
+        return '';
+    }
+}
+
+function bindCloseButtons(modal) {
+    modal.querySelectorAll('[data-feedback-close]').forEach((button) => {
+        button.addEventListener('click', () => modal.close());
+    });
+}
+
 function getDraftFromModal(modal) {
     return {
         submittedType: modal.querySelector('#feedback-type')?.value || 'unclear',
@@ -157,9 +172,7 @@ function renderFeedbackDialog(modal, defaults) {
             .join('');
     };
 
-    modal.querySelectorAll('[data-feedback-close]').forEach((button) => {
-        button.addEventListener('click', () => modal.close());
-    });
+    bindCloseButtons(modal);
 
     fileInput.addEventListener('change', async () => {
         await addFiles(Array.from(fileInput.files || []), attachments, updateAttachmentList);
@@ -270,14 +283,17 @@ async function addFiles(files, attachments, updateAttachmentList) {
 }
 
 async function submitForm(modal, attachments) {
+    if (modal.dataset.submitting === 'true') return;
+
     const submitBtn = modal.querySelector('#feedback-submit-btn');
+    modal.dataset.submitting = 'true';
     submitBtn.disabled = true;
     const title = modal.querySelector('#feedback-title').value.trim();
     const description = modal.querySelector('#feedback-description').value.trim();
     submitBtn.textContent = i18n.t('feedback.submitting') || '提交中...';
 
     try {
-        await submitFeedback({
+        const result = await submitFeedback({
             submittedType: modal.querySelector('#feedback-type').value,
             title,
             description: description || title,
@@ -286,12 +302,55 @@ async function submitForm(modal, attachments) {
         });
 
         showToast(i18n.t('feedback.submitSuccess') || '反馈已提交', 'success');
-        modal.close();
+        renderFeedbackSuccess(modal, result?.ownerUrl);
     } catch (error) {
         console.error('[Feedback] Submit failed:', error);
         showToast(i18n.t('feedback.submitFailed') || '提交失败，请稍后重试', 'error');
     } finally {
+        delete modal.dataset.submitting;
         submitBtn.disabled = false;
         submitBtn.textContent = i18n.t('feedback.submit') || '提交反馈';
     }
+}
+
+function renderFeedbackSuccess(modal, ownerUrl) {
+    const safeOwnerUrl = safeHttpUrl(ownerUrl);
+    modal.innerHTML = `
+        <div class="modal-box w-[min(92vw,520px)] max-w-none overflow-hidden rounded-xl p-0 shadow-2xl">
+            <div class="flex items-start justify-between gap-4 border-b border-base-200 px-6 py-4">
+                <div class="min-w-0">
+                    <h3 class="text-base font-semibold leading-6">${i18n.t('feedback.submitSuccessTitle') || '反馈已提交'}</h3>
+                    <p class="mt-1 text-xs leading-5 text-base-content/60">${i18n.t('feedback.submitSuccessDescription') || '后续补充请回到同一条反馈，避免生成重复任务。'}</p>
+                </div>
+                <button class="btn btn-ghost btn-xs btn-circle shrink-0" type="button" data-feedback-close aria-label="${i18n.t('common.close') || '关闭'}">
+                    <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M18 6 6 18M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="space-y-4 px-6 py-5">
+                <div class="flex items-start gap-3 rounded-lg border border-success/20 bg-success/5 p-4">
+                    <svg class="mt-0.5 h-5 w-5 shrink-0 text-success" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M20 6 9 17l-5-5"/>
+                    </svg>
+                    <div class="min-w-0">
+                        <p class="text-sm font-medium">${i18n.t('feedback.submitSuccess') || '反馈已提交'}</p>
+                        <p class="mt-1 text-xs leading-5 text-base-content/60">${i18n.t('feedback.ownerLinkHint') || '此链接是查看处理进度和继续补充的唯一凭据，请妥善保存。'}</p>
+                    </div>
+                </div>
+                ${
+                    safeOwnerUrl
+                        ? `<a id="feedback-owner-link" class="btn btn-primary btn-sm h-9 min-h-9 w-full" href="${escapeHtml(safeOwnerUrl)}" target="_blank" rel="noopener noreferrer">
+                            ${i18n.t('feedback.ownerLinkAction') || '查看处理进度并继续补充'}
+                        </a>`
+                        : `<p class="rounded-lg border border-warning/20 bg-warning/5 p-3 text-xs leading-5 text-base-content/70">${i18n.t('feedback.ownerLinkUnavailable') || '处理进度链接暂不可用，请勿重复提交；稍后可联系管理员查询。'}</p>`
+                }
+                <div class="modal-action mt-1">
+                    <button class="btn btn-sm h-8 min-h-8 px-4" type="button" data-feedback-close>${i18n.t('common.close') || '关闭'}</button>
+                </div>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop"><button></button></form>
+    `;
+    bindCloseButtons(modal);
 }
