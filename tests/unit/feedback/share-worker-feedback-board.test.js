@@ -172,6 +172,13 @@ class MemoryD1 {
     }
 
     async batch(statements) {
+        if (this.beforeBatch) await this.beforeBatch();
+        const previousBatch = this.batchTail || Promise.resolve();
+        let releaseBatch;
+        this.batchTail = new Promise((resolve) => {
+            releaseBatch = resolve;
+        });
+        await previousBatch;
         const snapshots = Object.fromEntries(
             Object.entries(this.tables).map(([name, rows]) => [
                 name,
@@ -185,10 +192,13 @@ class MemoryD1 {
             }
             return results;
         } catch (error) {
+            this.lastBatchError = error;
             for (const [name, rows] of Object.entries(snapshots)) {
                 this.tables[name] = rows;
             }
             throw error;
+        } finally {
+            releaseBatch();
         }
     }
 
@@ -374,12 +384,24 @@ class MemoryD1 {
             return { success: true, results: [], meta: { changes: 1 } };
         }
 
-        const insert = normalized.match(
+        const valuesInsert = normalized.match(
             /^insert into ([a-z_]+)\s*\(([^)]+)\)\s*values\s*\((.+?)\)/
         );
+        const guardedSelectInsert = normalized.match(
+            /^insert into ([a-z_]+)\s*\(([^)]+)\)\s*select\s+(.+?)\s+where exists\s*\(\s*select 1 from feedback_events where id = \? and issue_id = \?\s*\)$/
+        );
+        const insert = valuesInsert || guardedSelectInsert;
         if (insert) {
             const [, tableName, rawColumns, rawValues] = insert;
             const columns = rawColumns.split(',').map((column) => column.trim());
+            const guarded = Boolean(guardedSelectInsert);
+            const rowValues = guarded ? values.slice(0, -2) : values;
+            if (guarded) {
+                const guardEvent = this.tables.feedback_events.get(values.at(-2));
+                if (!guardEvent || guardEvent.issue_id !== values.at(-1)) {
+                    return { success: true, results: [], meta: { changes: 0 } };
+                }
+            }
             // The VALUES tuple mixes placeholders with literals, so map each
             // column to its own slot instead of assuming a 1:1 zip.
             const tokens = rawValues.split(',').map((token) => token.trim());
@@ -388,7 +410,7 @@ class MemoryD1 {
             columns.forEach((column, index) => {
                 const token = tokens[index];
                 if (token === '?') {
-                    row[column] = values[cursor];
+                    row[column] = rowValues[cursor];
                     cursor += 1;
                 } else if (token === 'null' || token === undefined) {
                     row[column] = null;
@@ -594,6 +616,36 @@ class MemoryD1 {
             return ok([], changes);
         }
         if (normalized.startsWith('update feedback_human_actions')) {
+            if (this.failHumanActionResolutionOnce) {
+                this.failHumanActionResolutionOnce = false;
+                throw new Error('simulated human action resolution failure');
+            }
+            if (
+                normalized.includes('version = ?') &&
+                normalized.includes('active_human_action_id = ?')
+            ) {
+                const [resolvedAt, resolutionJson, actionId, issueId, expectedVersion, guardId] =
+                    values;
+                const current = this.tables.feedback_human_actions.get(actionId);
+                const issue = this.tables.feedback_issues.get(issueId);
+                if (
+                    !current ||
+                    current.status !== 'active' ||
+                    !issue ||
+                    issue.version !== expectedVersion ||
+                    issue.status !== 'needs_human' ||
+                    issue.active_human_action_id !== guardId
+                ) {
+                    return ok([]);
+                }
+                this.tables.feedback_human_actions.set(actionId, {
+                    ...current,
+                    status: 'resolved',
+                    resolved_at: resolvedAt,
+                    resolution_json: resolutionJson,
+                });
+                return ok([{ id: actionId }]);
+            }
             const [
                 resolvedAt,
                 resolutionJson,
@@ -867,16 +919,37 @@ class MemoryD1 {
         // --- append-only event inserts with literal event types ---
         const eventInsert = this.parseEventSelectInsert(normalized, values);
         if (eventInsert) {
-            const { row, issueId, expectedVersion, sequenceOffset, actionId, resolutionJson } =
-                eventInsert;
+            const {
+                row,
+                issueId,
+                expectedVersion,
+                sequenceOffset,
+                actionId,
+                resolutionJson,
+                runId,
+                guardEventId,
+                guardEventIssueId,
+            } = eventInsert;
             const issue = this.tables.feedback_issues.get(issueId);
             const action = actionId ? this.tables.feedback_human_actions.get(actionId) : null;
+            const run = runId ? this.tables.feedback_runs.get(runId) : null;
+            const guardEvent = guardEventId ? this.tables.feedback_events.get(guardEventId) : null;
             if (
                 !issue ||
                 (expectedVersion !== undefined && issue.version !== expectedVersion) ||
                 (actionId && action?.resolution_json !== resolutionJson) ||
+                (runId &&
+                    (!run ||
+                        ['succeeded', 'failed', 'cancelled', 'timed_out'].includes(run.status))) ||
+                (guardEventId && guardEvent?.issue_id !== guardEventIssueId) ||
                 this.tables.feedback_events.has(row.id)
             ) {
+                if (
+                    this.tables.feedback_events.has(row.id) &&
+                    !normalized.includes('on conflict')
+                ) {
+                    throw new Error('UNIQUE constraint failed: feedback_events.id');
+                }
                 return ok([], 0);
             }
 
@@ -891,7 +964,8 @@ class MemoryD1 {
                 issue_id: issueId,
                 sequence: maxSequence + sequenceOffset,
             });
-            return ok([], 1);
+            const returnedRows = normalized.includes('returning id') ? [{ id: row.id }] : [];
+            return ok(returnedRows, 1);
         }
 
         // --- feedback_runs ---
@@ -962,7 +1036,7 @@ class MemoryD1 {
                     : current.finished_at;
             }
             this.tables.feedback_runs.set(runId, next);
-            return ok([], 1);
+            return ok(normalized.includes('returning id') ? [{ id: runId }] : [], 1);
         }
 
         // --- reconcile sweep ---
@@ -1129,6 +1203,10 @@ class MemoryD1 {
             return ok(rows.slice(0, 1).map((row) => ({ ...row })));
         }
         if (normalized.startsWith('insert into feedback_candidates')) {
+            if (this.failCandidateInsertOnce) {
+                this.failCandidateInsertOnce = false;
+                throw new Error('simulated candidate insert failure');
+            }
             const row = this.parseInsertRow(normalized, values);
             const duplicate = Array.from(this.tables.feedback_candidates.values()).some(
                 (item) =>
@@ -1188,6 +1266,35 @@ class MemoryD1 {
             const row = this.tables.feedback_events.get(values[0]);
             return ok(row ? [{ id: row.id }] : []);
         }
+        if (normalized === 'select id, type, body_json from feedback_events where id = ?') {
+            const row = this.tables.feedback_events.get(values[0]);
+            return ok(row ? [{ id: row.id, type: row.type, body_json: row.body_json }] : []);
+        }
+        if (
+            normalized ===
+            "select body_json from feedback_events where id = ? and issue_id = ? and type = 'comment.created'"
+        ) {
+            const row = this.tables.feedback_events.get(values[0]);
+            return ok(
+                row && row.issue_id === values[1] && row.type === 'comment.created'
+                    ? [{ body_json: row.body_json }]
+                    : []
+            );
+        }
+        if (
+            normalized ===
+            "select body_json from feedback_events where issue_id = ? and run_id = ? and type = 'agent.message' order by sequence desc limit 1"
+        ) {
+            const row = Array.from(this.tables.feedback_events.values())
+                .filter(
+                    (event) =>
+                        event.issue_id === values[0] &&
+                        event.run_id === values[1] &&
+                        event.type === 'agent.message'
+                )
+                .sort((left, right) => right.sequence - left.sequence)[0];
+            return ok(row ? [{ body_json: row.body_json }] : []);
+        }
         if (
             normalized ===
             'select actor_type, actor_id from feedback_events where id = ? and issue_id = ?'
@@ -1231,7 +1338,12 @@ class MemoryD1 {
                     const placeholderCount = (expression.match(/\?/g) || []).length;
                     const condition = placeholderCount ? values[cursor] : 0;
                     cursor += placeholderCount;
-                    if (column === 'active_workflow_id' && condition) patch[column] = null;
+                    if (
+                        ['active_workflow_id', 'active_human_action_id'].includes(column) &&
+                        condition
+                    ) {
+                        patch[column] = null;
+                    }
                 }
             }
 
@@ -1314,13 +1426,25 @@ class MemoryD1 {
         const hasVersionGuard = tail.includes('version = ?');
         const expectedVersion = hasVersionGuard ? values[valueCursor++] : undefined;
         const hasActionGuard = tail.includes('from feedback_human_actions');
+        const actionId = hasActionGuard ? values[valueCursor++] : undefined;
+        const resolutionJson = hasActionGuard ? values[valueCursor++] : undefined;
+        const hasRunGuard = tail.includes('from feedback_runs');
+        const runId = hasRunGuard ? values[valueCursor++] : undefined;
+        const hasEventGuard = tail.includes(
+            'select 1 from feedback_events where id = ? and issue_id = ?'
+        );
+        const guardEventId = hasEventGuard ? values[valueCursor++] : undefined;
+        const guardEventIssueId = hasEventGuard ? values[valueCursor] : undefined;
         return {
             row,
             issueId: values[cursor],
             expectedVersion,
             sequenceOffset,
-            actionId: hasActionGuard ? values[valueCursor++] : undefined,
-            resolutionJson: hasActionGuard ? values[valueCursor] : undefined,
+            actionId,
+            resolutionJson,
+            runId,
+            guardEventId,
+            guardEventIssueId,
         };
     }
 }
@@ -1400,6 +1524,26 @@ function createD1IssueRow(overrides = {}) {
         active_workflow_id: null,
         created_at: '2026-07-28T08:00:00.000Z',
         updated_at: '2026-07-28T08:00:00.000Z',
+        resolved_at: null,
+        ...overrides,
+    };
+}
+
+function createHumanActionRow(overrides = {}) {
+    return {
+        id: 'hac_1',
+        issue_id: feedbackKey,
+        workflow_id: null,
+        run_id: null,
+        candidate_id: null,
+        design_id: null,
+        type: 'need_reproduction',
+        requested_action: 'Provide reproduction steps.',
+        evidence_json: '[]',
+        allowed_return_states_json: JSON.stringify(['queued', 'closed']),
+        status: 'active',
+        resolution_json: null,
+        created_at: '2026-08-05T08:00:00.000Z',
         resolved_at: null,
         ...overrides,
     };
@@ -1601,6 +1745,17 @@ describe('feedback issue board Worker routes', () => {
         expect(html).toContain('/feedback/assets/rrweb-replay-2.0.0-alpha.20.js');
         expect(html).not.toContain('cdn.jsdelivr.net');
         expect(html).not.toContain('rrweb-player@latest');
+    });
+
+    it('[SCN-FWB-014] allows the configured feedback origin to render signed evidence images', async () => {
+        env.FEEDBACK_API_URL = 'https://feedback-api.example.test';
+
+        const response = await request('/feedback', {}, env);
+
+        expect(response.status).toBe(200);
+        expect(response.headers.get('Content-Security-Policy')).toContain(
+            "img-src 'self' data: blob: https://feedback-api.example.test"
+        );
     });
 
     it('serves the pinned rrweb replay browser assets from the Worker origin', async () => {
@@ -5272,7 +5427,22 @@ describe('feedback workbench V2 routes', () => {
         expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe('in_progress');
 
         env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status = 'needs_human';
+        env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).active_workflow_id =
+            workflowInstanceId(feedbackKey, 1);
+        env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).active_human_action_id = 'hac_1';
         env.FEEDBACK_DB.tables.feedback_human_actions.set('hac_1', humanActionRow());
+        env.FEEDBACK_DB.tables.feedback_workflows.set(workflowInstanceId(feedbackKey, 1), {
+            issue_id: feedbackKey,
+            generation: 1,
+            instance_id: workflowInstanceId(feedbackKey, 1),
+            status: 'waiting',
+            active_run_id: null,
+            context_version: 1,
+            started_at: '2026-07-28T09:00:00.000Z',
+            waiting_until: null,
+            finished_at: null,
+            terminal_reason: null,
+        });
 
         const resumed = await json(
             await request(
@@ -5293,6 +5463,74 @@ describe('feedback workbench V2 routes', () => {
         expect(resumed.mode).toBe('resume');
         expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe('queued');
         expect(env.FEEDBACK_DB.tables.feedback_human_actions.get('hac_1').status).toBe('resolved');
+    });
+
+    it('[SCN-FWB-003] rolls back a resume comment when HumanAction resolution fails', async () => {
+        const capability = 'owner-capability-value';
+        const workflowId = workflowInstanceId(feedbackKey, 1);
+        const env = createV2Env(
+            {},
+            {
+                feedback_issues: [
+                    createD1IssueRow({
+                        status: 'needs_human',
+                        active_workflow_id: workflowId,
+                        active_human_action_id: 'hac_1',
+                        owner_capability_hash: await hashCapability(capability),
+                        owner_capability_expires_at: '2099-01-01T00:00:00.000Z',
+                    }),
+                ],
+                feedback_human_actions: [humanActionRow()],
+                feedback_workflows: [
+                    {
+                        issue_id: feedbackKey,
+                        generation: 1,
+                        instance_id: workflowId,
+                        status: 'waiting',
+                        active_run_id: null,
+                        context_version: 1,
+                        started_at: '2026-07-28T09:00:00.000Z',
+                        waiting_until: null,
+                        finished_at: null,
+                        terminal_reason: null,
+                    },
+                ],
+            }
+        );
+        const headers = {
+            Authorization: `Bearer ${capability}`,
+            'Content-Type': 'application/json',
+        };
+        const body = JSON.stringify({
+            body: '补充稳定复现步骤',
+            mode: 'resume',
+            expectedVersion: 1,
+            requestId: 'resume-action-atomicity',
+        });
+        env.FEEDBACK_DB.failHumanActionResolutionOnce = true;
+
+        const failed = await request(
+            `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/comments`,
+            { method: 'POST', headers, body },
+            env
+        );
+
+        expect(failed.status).toBeGreaterThanOrEqual(400);
+        expect(env.FEEDBACK_DB.tables.feedback_events.size).toBe(0);
+        expect(env.FEEDBACK_DB.tables.feedback_human_actions.get('hac_1').status).toBe('active');
+
+        const retried = await request(
+            `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/comments`,
+            { method: 'POST', headers, body },
+            env
+        );
+
+        expect(retried.status).toBe(201);
+        expect(env.FEEDBACK_DB.tables.feedback_human_actions.get('hac_1').status).toBe('resolved');
+        expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey)).toMatchObject({
+            status: 'queued',
+            active_human_action_id: null,
+        });
     });
 
     it('[SCN-FWB-020] only accepts a declared return state from a human action', async () => {
@@ -6206,6 +6444,13 @@ describe('feedback workbench V2 event dispatch', () => {
     it('[SCN-FWB-007] resumes the same workflowId while an instance is non-terminal', async () => {
         const { env, headers } = await createDispatchEnv();
         await postComment(env, headers, 1);
+        env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status = 'needs_human';
+        env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).active_human_action_id =
+            'hac_resume';
+        env.FEEDBACK_DB.tables.feedback_human_actions.set(
+            'hac_resume',
+            createHumanActionRow({ id: 'hac_resume' })
+        );
         env.FEEDBACK_DB.tables.feedback_workflows.set(workflowInstanceId(feedbackKey, 1), {
             issue_id: feedbackKey,
             generation: 1,
@@ -6235,6 +6480,40 @@ describe('feedback workbench V2 event dispatch', () => {
         );
     });
 
+    it('[SCN-FWB-007] records instead of resuming when the Issue is already queued', async () => {
+        const activeId = workflowInstanceId(feedbackKey, 1);
+        const { env, headers } = await createDispatchEnv({
+            issue: createD1IssueRow({
+                status: 'queued',
+                workflow_generation: 1,
+                active_workflow_id: activeId,
+            }),
+        });
+        env.FEEDBACK_DB.tables.feedback_human_actions.set(
+            'hac_queued',
+            createHumanActionRow({ id: 'hac_queued' })
+        );
+        env.FEEDBACK_DB.tables.feedback_workflows.set(activeId, {
+            issue_id: feedbackKey,
+            generation: 1,
+            instance_id: activeId,
+            status: 'waiting',
+            active_run_id: null,
+            context_version: 1,
+            started_at: '2026-08-05T08:00:00.000Z',
+            waiting_until: null,
+            finished_at: null,
+            terminal_reason: null,
+        });
+
+        const reply = await postComment(env, headers, 1, 'second reply', 'resume');
+
+        expect(reply.requestedMode).toBe('resume');
+        expect(reply.mode).toBe('record');
+        expect(reply.delivery.workflow).toBeNull();
+        expect(env.FEEDBACK_WORKFLOW.sentEvents).toHaveLength(0);
+    });
+
     it('[SCN-FWB-007] returns the same comment event for a retried request', async () => {
         const { env, headers } = await createDispatchEnv();
         const requestId = 'comment-retry-1';
@@ -6250,6 +6529,60 @@ describe('feedback workbench V2 event dispatch', () => {
                 (event) => event.type === 'comment.created'
             )
         ).toHaveLength(1);
+    });
+
+    it('[SCN-FWB-003] atomically deduplicates concurrent comment retries', async () => {
+        const { env, headers } = await createDispatchEnv();
+        const requestId = 'comment-concurrent-1';
+        let waiting = 0;
+        let releaseBatches;
+        const batchesReady = new Promise((resolve) => {
+            releaseBatches = resolve;
+        });
+        env.FEEDBACK_DB.beforeBatch = async () => {
+            waiting += 1;
+            if (waiting === 2) releaseBatches();
+            await batchesReady;
+        };
+
+        const [first, second] = await Promise.all([
+            postComment(env, headers, 1, 'same reply', 'resume', requestId),
+            postComment(env, headers, 1, 'same reply', 'resume', requestId),
+        ]);
+
+        expect(first.eventId).toBe(second.eventId);
+        expect([first.duplicate, second.duplicate].sort()).toEqual([false, true]);
+        expect(env.FEEDBACK_WORKFLOW.created).toHaveLength(1);
+        expect(
+            Array.from(env.FEEDBACK_DB.tables.feedback_events.values()).filter(
+                (event) => event.type === 'comment.created'
+            )
+        ).toHaveLength(1);
+    });
+
+    it('[SCN-FWB-003] returns the first stored routing result for a duplicate request', async () => {
+        const { env, headers } = await createDispatchEnv();
+        const requestId = 'comment-routing-result-1';
+
+        const first = await postComment(env, headers, 1, 'plain note', 'record', requestId);
+        const duplicate = await postComment(
+            env,
+            headers,
+            2,
+            '@claude-agent retry text',
+            'resume',
+            requestId
+        );
+
+        expect(first.mode).toBe('record');
+        expect(duplicate).toMatchObject({
+            duplicate: true,
+            eventId: first.eventId,
+            mode: 'record',
+            provider: '',
+            mention: '',
+            requestedMode: 'record',
+        });
     });
 
     it('[SCN-FWB-007] records a reply without a second Run while a Workflow is starting', async () => {
@@ -6742,6 +7075,20 @@ describe('feedback workbench V2 Run and Callback', () => {
             fetchSpy.mockRestore();
         }
         const run = Array.from(env.FEEDBACK_DB.tables.feedback_runs.values())[0];
+        env.FEEDBACK_DB.tables.feedback_events.set(`evt_agent_${run.id}`, {
+            id: `evt_agent_${run.id}`,
+            issue_id: feedbackKey,
+            sequence: 2,
+            type: 'agent.message',
+            actor_type: 'agent',
+            actor_id: 'codex',
+            visibility: 'public',
+            run_id: run.id,
+            occurred_at: '2026-08-05T08:05:00.000Z',
+            body_json: JSON.stringify({ text: 'Completed implementation and verification.' }),
+            metadata_json: '{}',
+            legacy_hash: null,
+        });
         return { env, run };
     }
 
@@ -7265,6 +7612,17 @@ describe('feedback workbench V2 Run and Callback', () => {
             env,
             run.id,
             {
+                eventId: 'cb_agent_evidence',
+                type: 'agent.message',
+                payload: { message: 'Implemented the fix and captured verification evidence.' },
+            },
+            token
+        );
+
+        await postCallback(
+            env,
+            run.id,
+            {
                 eventId: 'cb_artifact',
                 type: 'artifact.created',
                 payload: {
@@ -7334,6 +7692,134 @@ describe('feedback workbench V2 Run and Callback', () => {
         });
     });
 
+    it('[SCN-FWB-006] stores visual evidence in R2 and returns a signed preview URL', async () => {
+        const { env, run } = await createRunEnv();
+        env.FEEDBACK_ARTIFACTS = new MemoryR2();
+        const token = await callbackTokenFor(env, run.id);
+        const pngBase64 =
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nYQAAAAASUVORK5CYII=';
+
+        const artifactResponse = await postCallback(
+            env,
+            run.id,
+            {
+                eventId: 'cb_visual_evidence',
+                type: 'artifact.created',
+                payload: {
+                    summary: 'Fresh Playwright screenshot.',
+                    artifact: {
+                        type: 'visual-evidence',
+                        name: 'feedback-result.png',
+                        contentType: 'image/png',
+                        dataUrl: `data:image/png;base64,${pngBase64}`,
+                    },
+                },
+            },
+            token
+        );
+        const timelineResponse = await request(
+            `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/events`,
+            { headers: await adminHeaders(env) },
+            env
+        );
+        const timeline = await json(timelineResponse);
+        const visual = timeline.events.find((event) => event.artifact?.type === 'visual-evidence');
+        const previewUrl = new URL(visual.artifact.url);
+        const previewResponse = await request(
+            `${previewUrl.pathname}${previewUrl.search}`,
+            {},
+            env
+        );
+
+        expect(artifactResponse.status).toBe(201);
+        expect(env.FEEDBACK_ARTIFACTS.putCalls).toHaveLength(1);
+        expect(visual.artifact).toMatchObject({
+            name: 'feedback-result.png',
+            contentType: 'image/png',
+            previewable: true,
+        });
+        expect(previewUrl.origin).toBe('https://worker.test');
+        expect(previewUrl.pathname).toMatch(/^\/api\/feedback\/attachments\/att_/);
+        expect(previewResponse.status).toBe(200);
+        expect(previewResponse.headers.get('Content-Type')).toBe('image/png');
+        expect(previewResponse.headers.get('Cross-Origin-Resource-Policy')).toBe('cross-origin');
+        expect((await previewResponse.arrayBuffer()).byteLength).toBeGreaterThan(20);
+    });
+
+    it('[SCN-FWB-010] rejects run.completed when no Agent message was recorded', async () => {
+        const { env, run } = await createRunEnv();
+        const token = await callbackTokenFor(env, run.id);
+
+        const completed = await json(
+            await postCallback(
+                env,
+                run.id,
+                {
+                    eventId: 'cb_completed_without_message',
+                    type: 'run.completed',
+                    payload: {
+                        summary: 'Claims success without a user-facing response.',
+                        diffManifest: await attachDiffManifestHash({
+                            specVersion: '1.0',
+                            repository: 'acme/gantt-task-editor',
+                            baseRef: 'master',
+                            candidateRef: `feedback/candidate/${run.id}`,
+                            baseCommit: run.base_commit,
+                            changeCommit: 'def456',
+                            changedFiles: ['workers/share-worker.js'],
+                        }),
+                    },
+                },
+                token
+            )
+        );
+
+        expect(completed.runStatus).toBe('failed');
+        expect(completed.issueStatus).toBe('test_failed');
+        expect(env.FEEDBACK_DB.tables.feedback_runs.get(run.id).error_code).toBe(
+            'empty_agent_response'
+        );
+        expect(Array.from(env.FEEDBACK_DB.tables.feedback_events.values()).at(-1).type).toBe(
+            'run.failed'
+        );
+    });
+
+    it('[SCN-FWB-003] retries a downgraded completion with its stored callback type', async () => {
+        const { env, run } = await createRunEnv();
+        const token = await callbackTokenFor(env, run.id);
+        const workflowSignals = [];
+        let attempts = 0;
+        env.FEEDBACK_WORKFLOW = {
+            async get() {
+                return {
+                    async sendEvent(event) {
+                        attempts += 1;
+                        if (attempts === 1) throw new Error('simulated first notification failure');
+                        workflowSignals.push(event);
+                    },
+                };
+            },
+        };
+        const body = {
+            eventId: 'cb_downgraded_retry',
+            type: 'run.completed',
+            payload: { summary: 'Claims success without a user-facing Agent message.' },
+        };
+
+        const first = await json(await postCallback(env, run.id, body, token));
+        const duplicate = await json(await postCallback(env, run.id, body, token));
+
+        expect(first.runStatus).toBe('failed');
+        expect(first.workflowNotification.error).toBe('WORKFLOW_RUN_RESULT_SEND_FAILED');
+        expect(duplicate.duplicate).toBe(true);
+        expect(duplicate.workflowNotification.sent).toBe(true);
+        expect(workflowSignals).toEqual([
+            expect.objectContaining({
+                payload: expect.objectContaining({ callbackType: 'run.failed' }),
+            }),
+        ]);
+    });
+
     it('[SCN-FWB-003] returns 200 for a repeated Callback without appending twice', async () => {
         const { env, run } = await createRunEnv();
         const token = await callbackTokenFor(env, run.id);
@@ -7347,6 +7833,211 @@ describe('feedback workbench V2 Run and Callback', () => {
         expect(second.status).toBe(200);
         expect(secondBody.duplicate).toBe(true);
         expect(env.FEEDBACK_DB.tables.feedback_events.size).toBe(1);
+    });
+
+    it('[SCN-FWB-003] atomically deduplicates concurrent Callback events', async () => {
+        const { env, run } = await createRunEnv();
+        const token = await callbackTokenFor(env, run.id);
+        const body = {
+            eventId: 'cb_concurrent',
+            type: 'agent.message',
+            payload: { summary: 'One durable result.' },
+        };
+        let waiting = 0;
+        let releaseBatches;
+        const batchesReady = new Promise((resolve) => {
+            releaseBatches = resolve;
+        });
+        env.FEEDBACK_DB.beforeBatch = async () => {
+            waiting += 1;
+            if (waiting === 2) releaseBatches();
+            await batchesReady;
+        };
+
+        const [first, second] = await Promise.all([
+            postCallback(env, run.id, body, token),
+            postCallback(env, run.id, body, token),
+        ]);
+        const responses = [
+            { status: first.status, body: await json(first) },
+            { status: second.status, body: await json(second) },
+        ].sort((left, right) => left.status - right.status);
+
+        expect(responses.map((entry) => entry.status)).toEqual([200, 201]);
+        expect(responses[0].body.duplicate).toBe(true);
+        expect(
+            Array.from(env.FEEDBACK_DB.tables.feedback_events.values()).filter(
+                (event) => event.id === `evt_cb_${run.id}_cb_concurrent`
+            )
+        ).toHaveLength(1);
+    });
+
+    it('[SCN-FWB-003] commits only one of two competing terminal Callback events', async () => {
+        const { env, run } = await createRunEnv();
+        const token = await callbackTokenFor(env, run.id);
+        await postCallback(
+            env,
+            run.id,
+            {
+                eventId: 'cb_terminal_agent_message',
+                type: 'agent.message',
+                payload: { summary: 'A durable Agent result.' },
+            },
+            token
+        );
+        const completed = await completedRunBody(run.id, ['src/utils/time-formatter.js']);
+        completed.eventId = 'cb_terminal_completed';
+        const failed = {
+            eventId: 'cb_terminal_failed',
+            type: 'run.failed',
+            payload: { summary: 'A competing terminal failure.', errorCode: 'provider_failed' },
+        };
+        let waiting = 0;
+        let releaseBatches;
+        const batchesReady = new Promise((resolve) => {
+            releaseBatches = resolve;
+        });
+        env.FEEDBACK_DB.beforeBatch = async () => {
+            waiting += 1;
+            if (waiting === 2) releaseBatches();
+            await batchesReady;
+        };
+
+        const responses = await Promise.all([
+            postCallback(env, run.id, completed, token),
+            postCallback(env, run.id, failed, token),
+        ]);
+        const statuses = responses.map((response) => response.status).sort((a, b) => a - b);
+        const terminalEvents = Array.from(env.FEEDBACK_DB.tables.feedback_events.values()).filter(
+            (event) => ['run.completed', 'run.failed'].includes(event.type)
+        );
+
+        expect(statuses).toEqual([201, 409]);
+        expect(terminalEvents).toHaveLength(1);
+        expect(env.FEEDBACK_DB.tables.feedback_runs.get(run.id).status).toBe(
+            terminalEvents[0].type === 'run.completed' ? 'succeeded' : 'failed'
+        );
+    });
+
+    it('[SCN-FWB-003][SCN-FWB-020] rejects a stale waiting Callback after a terminal result commits', async () => {
+        const { env, run } = await createRunEnv({
+            business_type: 'requirement',
+            scope: 'large',
+        });
+        const token = await callbackTokenFor(env, run.id);
+        let releaseWaitingBatch;
+        let markWaitingBatchReached;
+        const waitingBatchReached = new Promise((resolve) => {
+            markWaitingBatchReached = resolve;
+        });
+        const waitingBatchRelease = new Promise((resolve) => {
+            releaseWaitingBatch = resolve;
+        });
+        env.FEEDBACK_DB.beforeBatch = async () => {
+            markWaitingBatchReached();
+            await waitingBatchRelease;
+        };
+
+        const waitingRequest = postCallback(
+            env,
+            run.id,
+            {
+                eventId: 'cb_stale_waiting',
+                type: 'agent.waiting_human',
+                payload: {
+                    actionType: 'design_decision',
+                    requestedAction: 'Review the proposed design.',
+                    design: {
+                        problem: 'The current flow is ambiguous.',
+                        proposedChange: 'Make the state transition explicit.',
+                        acceptanceCriteria: ['A terminal Run cannot return to waiting.'],
+                    },
+                },
+            },
+            token
+        );
+        await waitingBatchReached;
+
+        env.FEEDBACK_DB.beforeBatch = null;
+        const terminal = await postCallback(
+            env,
+            run.id,
+            {
+                eventId: 'cb_winning_failure',
+                type: 'run.failed',
+                payload: {
+                    errorCode: 'verification_failed',
+                    summary: 'Verification failed before the waiting request committed.',
+                },
+            },
+            token
+        );
+        releaseWaitingBatch();
+        const staleWaiting = await waitingRequest;
+        const staleWaitingBody = await json(staleWaiting.clone());
+
+        expect(terminal.status).toBe(201);
+        expect(
+            staleWaiting.status,
+            JSON.stringify({
+                body: staleWaitingBody,
+                batchError: String(env.FEEDBACK_DB.lastBatchError || ''),
+                lastQuery: env.FEEDBACK_DB.queries.at(-1),
+            })
+        ).toBe(409);
+        expect(env.FEEDBACK_DB.tables.feedback_runs.get(run.id).status).toBe('failed');
+        expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe('test_failed');
+        expect(env.FEEDBACK_DB.tables.feedback_human_actions.size).toBe(0);
+        expect(env.FEEDBACK_DB.tables.feedback_designs.size).toBe(0);
+        expect(
+            Array.from(env.FEEDBACK_DB.tables.feedback_events.values()).filter(
+                (event) => event.id === `evt_cb_${run.id}_cb_stale_waiting`
+            )
+        ).toHaveLength(0);
+    });
+
+    it('[SCN-FWB-003] recovers Candidate routing when the original completion post-processing fails', async () => {
+        const { env, run } = await createRunEnv();
+        const token = await callbackTokenFor(env, run.id);
+        await postCallback(
+            env,
+            run.id,
+            {
+                eventId: 'cb_candidate_agent_message',
+                type: 'agent.message',
+                payload: { summary: 'Implemented and verified the requested fix.' },
+            },
+            token
+        );
+        const completion = await completedRunBody(run.id, ['src/utils/time-formatter.js']);
+        completion.eventId = 'cb_candidate_recovery';
+        env.FEEDBACK_DB.failCandidateInsertOnce = true;
+
+        const first = await postCallback(env, run.id, completion, token);
+        const firstBody = await json(first.clone());
+        expect(first.status, JSON.stringify(firstBody)).toBe(500);
+        expect(env.FEEDBACK_DB.tables.feedback_runs.get(run.id).status).toBe('succeeded');
+        expect(env.FEEDBACK_DB.tables.feedback_candidates.size).toBe(0);
+
+        const retry = await postCallback(env, run.id, completion, token);
+        const recovered = await json(retry);
+        const candidate = Array.from(env.FEEDBACK_DB.tables.feedback_candidates.values())[0];
+        const action = Array.from(env.FEEDBACK_DB.tables.feedback_human_actions.values()).find(
+            (item) => item.candidate_id === candidate.id && item.status === 'active'
+        );
+
+        expect(retry.status).toBe(200);
+        expect(recovered).toEqual(
+            expect.objectContaining({ duplicate: true, candidateId: candidate.id })
+        );
+        expect(action).toBeTruthy();
+        expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey)).toEqual(
+            expect.objectContaining({
+                status: 'needs_human',
+                active_candidate_id: candidate.id,
+                active_human_action_id: action.id,
+            })
+        );
     });
 
     it('[SCN-FWB-020] agent.waiting_human creates a structured HumanAction', async () => {
@@ -7728,6 +8419,46 @@ describe('feedback workbench V2 Run and Callback', () => {
                 params: expect.objectContaining({ releaseId: release.id }),
             }),
         ]);
+    });
+
+    it('[SCN-FWB-003][SCN-FWB-022] keeps an integrated auto-delivery terminal on completion replay', async () => {
+        const { env, run } = await createAutoDeliverRunEnv();
+        const completionBody = await completedRunBody(run.id, ['src/utils/time-formatter.js']);
+        const token = await callbackTokenFor(env, run.id);
+        const fetchSpy = vi
+            .spyOn(globalThis, 'fetch')
+            .mockResolvedValue(new Response(null, { status: 204 }));
+
+        const completed = await json(await postCallback(env, run.id, completionBody, token));
+        const candidate = env.FEEDBACK_DB.tables.feedback_candidates.get(completed.candidateId);
+        const release = Array.from(env.FEEDBACK_DB.tables.feedback_releases.values())[0];
+        candidate.status = 'integrated';
+        candidate.integrated_at = '2026-08-06T09:00:00.000Z';
+        release.status = 'succeeded';
+        release.finished_at = '2026-08-06T09:00:00.000Z';
+        const issue = env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey);
+        issue.status = 'resolved';
+        issue.active_candidate_id = null;
+        issue.active_release_id = release.id;
+        issue.resolved_at = '2026-08-06T09:00:00.000Z';
+        fetchSpy.mockClear();
+
+        const replay = await postCallback(env, run.id, completionBody, token);
+
+        expect(replay.status).toBe(200);
+        expect(env.FEEDBACK_DB.tables.feedback_candidates.get(candidate.id).status).toBe(
+            'integrated'
+        );
+        expect(env.FEEDBACK_DB.tables.feedback_releases.size).toBe(1);
+        expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey)).toEqual(
+            expect.objectContaining({
+                status: 'resolved',
+                active_candidate_id: null,
+                active_release_id: release.id,
+            })
+        );
+        expect(fetchSpy).not.toHaveBeenCalled();
+        fetchSpy.mockRestore();
     });
 
     it('[SCN-FWB-013] wakes the same Release at the durable 1/5/15 minute retry points', async () => {
@@ -8415,6 +9146,26 @@ describe('feedback workbench V2 GitHub dispatch', () => {
         return `${payload}.${signature}`;
     }
 
+    async function recordAgentMessage(env, runId, eventId = 'cb_agent_message') {
+        const response = await request(
+            `/api/feedback/runs/${encodeURIComponent(runId)}/events`,
+            {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${await runToken(runId, 'callback')}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    eventId,
+                    type: 'agent.message',
+                    payload: { message: 'Completed implementation and verification.' },
+                }),
+            },
+            env
+        );
+        expect(response.status).toBe(201);
+    }
+
     it('[SCN-FWB-005] dispatches the provider workflow with a minimal payload', async () => {
         const env = createDispatchEnv();
         const calls = [];
@@ -8547,6 +9298,8 @@ describe('feedback workbench V2 GitHub dispatch', () => {
             fetchSpy.mockRestore();
         }
 
+        await recordAgentMessage(env, runId);
+
         // A Runner claiming success while having rewritten a golden answer must
         // not be believed just because it says run.completed.
         const response = await request(
@@ -8605,6 +9358,8 @@ describe('feedback workbench V2 GitHub dispatch', () => {
             fetchSpy.mockRestore();
         }
 
+        await recordAgentMessage(env, runId);
+
         const body = await json(
             await request(
                 `/api/feedback/runs/${encodeURIComponent(runId)}/events`,
@@ -8638,6 +9393,8 @@ describe('feedback workbench V2 GitHub dispatch', () => {
         } finally {
             fetchSpy.mockRestore();
         }
+
+        await recordAgentMessage(env, runId);
 
         const body = await json(
             await request(
@@ -8682,6 +9439,8 @@ describe('feedback workbench V2 GitHub dispatch', () => {
         } finally {
             fetchSpy.mockRestore();
         }
+
+        await recordAgentMessage(env, runId);
 
         const body = await json(
             await request(
@@ -8816,6 +9575,23 @@ describe('feedback workbench V2 Candidate and Release', () => {
             changeCommit: 'change222',
             changedFiles,
         });
+        const agentMessage = await request(
+            `/api/feedback/runs/${encodeURIComponent(run.id)}/events`,
+            {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${await scopedToken({ aud: 'callback', runId: run.id })}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    eventId: 'cb_agent',
+                    type: 'agent.message',
+                    payload: { message: 'Completed implementation and verification.' },
+                }),
+            },
+            env
+        );
+        expect(agentMessage.status).toBe(201);
         const completed = await json(
             await request(
                 `/api/feedback/runs/${encodeURIComponent(run.id)}/events`,
@@ -8944,6 +9720,23 @@ describe('feedback workbench V2 Candidate and Release', () => {
             id: 'run_second',
             status: 'dispatched',
         });
+        const secondMessage = await request(
+            '/api/feedback/runs/run_second/events',
+            {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${await scopedToken({ aud: 'callback', runId: 'run_second' })}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    eventId: 'cb_agent_2',
+                    type: 'agent.message',
+                    payload: { message: 'Completed follow-up implementation and verification.' },
+                }),
+            },
+            env
+        );
+        expect(secondMessage.status).toBe(201);
         const second = await json(
             await request(
                 '/api/feedback/runs/run_second/events',
@@ -9017,6 +9810,48 @@ describe('feedback workbench V2 Candidate and Release', () => {
         expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe('testing');
         expect(env.FEEDBACK_DB.tables.feedback_candidates.get(candidateId).status).toBe(
             'integrating'
+        );
+    });
+
+    it('[SCN-FWB-003][SCN-FWB-021] does not recreate Candidate review after approval replay', async () => {
+        const { env, run, manifest, candidateId, headers } = await createCandidateEnv();
+        await approveCandidate(env, headers, candidateId);
+        const actionCount = env.FEEDBACK_DB.tables.feedback_human_actions.size;
+
+        const replay = await request(
+            `/api/feedback/runs/${encodeURIComponent(run.id)}/events`,
+            {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${await scopedToken({ aud: 'callback', runId: run.id })}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    eventId: 'cb_done',
+                    type: 'run.completed',
+                    payload: {
+                        summary: 'Completion retry after Candidate approval.',
+                        verification: { targetedTests: 'passed', playwright: 'passed' },
+                        diffManifest: manifest,
+                    },
+                }),
+            },
+            env
+        );
+
+        expect(replay.status).toBe(200);
+        expect(env.FEEDBACK_DB.tables.feedback_candidates.get(candidateId).status).toBe('approved');
+        expect(env.FEEDBACK_DB.tables.feedback_human_actions.size).toBe(actionCount);
+        expect(
+            Array.from(env.FEEDBACK_DB.tables.feedback_human_actions.values()).filter(
+                (action) => action.status === 'active'
+            )
+        ).toHaveLength(0);
+        expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey)).toEqual(
+            expect.objectContaining({
+                status: 'ready_for_deploy',
+                active_candidate_id: candidateId,
+            })
         );
     });
 

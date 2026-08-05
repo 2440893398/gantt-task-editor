@@ -1532,6 +1532,45 @@ async function deleteUploadedFeedbackAttachments(env, attachments) {
     );
 }
 
+async function uploadFeedbackVisualEvidence(env, issueId, artifact, createdAt) {
+    if (artifact?.type !== 'visual-evidence' || !artifact.dataUrl) return null;
+
+    const contentType = limitText(artifact.contentType, 120).split(';')[0].toLowerCase();
+    if (!FEEDBACK_INLINE_ATTACHMENT_TYPES.has(contentType)) {
+        throw feedbackStorageError('INVALID_FEEDBACK_ATTACHMENT');
+    }
+
+    const [uploaded] = await uploadFeedbackAttachments(
+        env,
+        issueId,
+        [
+            {
+                name: limitText(artifact.name, 160) || 'visual-evidence.png',
+                type: contentType,
+                dataUrl: limitText(artifact.dataUrl, MAX_FEEDBACK_BYTES),
+            },
+        ],
+        createdAt
+    );
+    return {
+        uploaded,
+        timelineArtifact: {
+            type: 'visual-evidence',
+            name: uploaded.name,
+            attachmentId: uploaded.id,
+            contentType: uploaded.contentType,
+            size: uploaded.size,
+        },
+        storedArtifact: {
+            type: 'visual-evidence',
+            name: uploaded.name,
+            objectKey: uploaded.objectKey,
+            sha256: uploaded.sha256,
+            size: uploaded.size,
+        },
+    };
+}
+
 function getFeedbackPiiKeyVersion(env) {
     return String(env.FEEDBACK_PII_KEY_VERSION || 'v1');
 }
@@ -4545,7 +4584,9 @@ function projectRunEventToIssue({ type, policy, payload }) {
         // infrastructure failures keep the Issue where it is for a retry.
         return {
             runStatus: 'failed',
-            issueStatus: payload.errorCode === 'verification_failed' ? 'test_failed' : null,
+            issueStatus: ['verification_failed', 'empty_agent_response'].includes(payload.errorCode)
+                ? 'test_failed'
+                : null,
         };
     }
     if (type === 'run.cancelled') return { runStatus: 'cancelled', issueStatus: 'open' };
@@ -4583,6 +4624,55 @@ function normalizeCallbackEvent(body) {
     };
 }
 
+async function hasNonemptyFeedbackAgentMessage(env, issueId, runId) {
+    const row = await env.FEEDBACK_DB.prepare(
+        `SELECT body_json FROM feedback_events
+         WHERE issue_id = ? AND run_id = ? AND type = 'agent.message'
+         ORDER BY sequence DESC LIMIT 1`
+    )
+        .bind(issueId, runId)
+        .first();
+    const body = parseStoredJson(row?.body_json, {});
+    return Boolean(limitText(body.text || body.publicNote, MAX_FEEDBACK_COMMENT_LENGTH).trim());
+}
+
+async function readStoredFeedbackCallbackResult(env, run, eventId, callbackType) {
+    const existing = await env.FEEDBACK_DB.prepare(
+        'SELECT id, type, body_json FROM feedback_events WHERE id = ?'
+    )
+        .bind(eventId)
+        .first();
+    if (!existing) return null;
+
+    const storedCallbackType = String(existing.type || callbackType);
+    const storedBody = parseStoredJson(existing.body_json, {});
+
+    const completion = storedBody.completion;
+    const routing =
+        storedCallbackType === 'run.completed' && completion?.manifest
+            ? await recoverFeedbackCompletedRunPostProcessing(env, {
+                  run,
+                  manifest: completion.manifest,
+                  verification: completion.verification || {},
+              })
+            : null;
+    const candidate = routing?.candidate || null;
+    return {
+        duplicate: true,
+        eventId,
+        runStatus: run.status,
+        candidateId: candidate?.candidateId || null,
+        deliveryMode: routing?.deliveryMode || run.delivery_mode || 'candidate_review',
+        autoDelivery: routing?.autoDelivery || null,
+        humanActionId: routing?.humanActionId || null,
+        errorCode: limitText(storedBody.errorCode, 80),
+        workflowNotification: await notifyFeedbackWorkflowRunResult(env, run, {
+            eventId,
+            callbackType: storedCallbackType,
+        }),
+    };
+}
+
 /**
  * Appends one normalized Callback event. Idempotent on `runId + eventId`
  * (§15.3) so a retried Callback returns 200 without duplicating anything.
@@ -4602,34 +4692,8 @@ async function appendFeedbackCallbackEvent(env, runId, body) {
     if (!run) return null;
 
     const eventId = `evt_cb_${runId}_${callback.eventId}`;
-    const existing = await env.FEEDBACK_DB.prepare('SELECT id FROM feedback_events WHERE id = ?')
-        .bind(eventId)
-        .first();
-    if (existing) {
-        const candidate =
-            callback.type === 'run.completed' && run.delivery_mode === 'auto_deliver'
-                ? await env.FEEDBACK_DB.prepare(
-                      'SELECT * FROM feedback_candidates WHERE run_id = ?'
-                  )
-                      .bind(run.id)
-                      .first()
-                : null;
-        const autoDelivery = candidate
-            ? await resumeFeedbackAutoDeliveryCandidate(env, { run, candidate })
-            : null;
-        return {
-            duplicate: true,
-            eventId,
-            runStatus: run.status,
-            candidateId: candidate?.id || null,
-            deliveryMode: run.delivery_mode || 'candidate_review',
-            autoDelivery,
-            workflowNotification: await notifyFeedbackWorkflowRunResult(env, run, {
-                eventId,
-                callbackType: callback.type,
-            }),
-        };
-    }
+    const storedResult = await readStoredFeedbackCallbackResult(env, run, eventId, callback.type);
+    if (storedResult) return storedResult;
     if (FEEDBACK_RUN_TERMINAL_STATUSES.has(run.status)) {
         throw feedbackStorageError('FEEDBACK_RUN_ALREADY_TERMINAL');
     }
@@ -4647,6 +4711,17 @@ async function appendFeedbackCallbackEvent(env, runId, body) {
     // table the Runner used before it is allowed to project success.
     let gate = null;
     let completionManifest = {};
+    if (
+        callback.type === 'run.completed' &&
+        !(await hasNonemptyFeedbackAgentMessage(env, run.issue_id, runId))
+    ) {
+        callback.type = 'run.failed';
+        callback.payload = {
+            ...callback.payload,
+            errorCode: 'empty_agent_response',
+            summary: 'Agent did not return a user-facing result.',
+        };
+    }
     if (callback.type === 'run.completed') {
         completionManifest = callback.payload.diffManifest || callback.payload;
         gate = await verifyRunCompletionManifest({
@@ -4685,6 +4760,17 @@ async function appendFeedbackCallbackEvent(env, runId, body) {
         callback.type === 'run.failed'
             ? 'public'
             : 'internal';
+    const visualEvidence =
+        callback.type === 'artifact.created'
+            ? await uploadFeedbackVisualEvidence(
+                  env,
+                  run.issue_id,
+                  callback.payload.artifact,
+                  callback.occurredAt
+              )
+            : null;
+    const callbackArtifact = visualEvidence?.timelineArtifact || callback.payload.artifact;
+    const stateCallback = Boolean(projection.runStatus);
 
     // A waiting callback is only durable when the thing a person can answer is
     // durable too. Prepare Design/HumanAction statements up front so D1.batch
@@ -4697,6 +4783,7 @@ async function appendFeedbackCallbackEvent(env, runId, body) {
                 issueId: run.issue_id,
                 runId,
                 value: pendingDesign,
+                guardEventId: eventId,
             });
         }
         preparedAction = prepareFeedbackHumanAction(env, {
@@ -4704,6 +4791,7 @@ async function appendFeedbackCallbackEvent(env, runId, body) {
             runId,
             payload: callback.payload,
             designId: preparedDesign?.designId || null,
+            guardEventId: eventId,
         });
     }
 
@@ -4719,7 +4807,17 @@ async function appendFeedbackCallbackEvent(env, runId, body) {
                  FROM feedback_events WHERE issue_id = feedback_issues.id),
                 ?, 'agent', ?, ?, ?, ?, ?, ?, NULL
             FROM feedback_issues
-            WHERE id = ?`
+            WHERE id = ?
+              ${
+                  stateCallback
+                      ? `AND EXISTS (
+                           SELECT 1 FROM feedback_runs
+                           WHERE id = ?
+                             AND status NOT IN ('succeeded', 'failed', 'cancelled', 'timed_out')
+                       )`
+                      : ''
+              }
+            RETURNING id`
         ).bind(
             eventId,
             callback.type,
@@ -4729,7 +4827,7 @@ async function appendFeedbackCallbackEvent(env, runId, body) {
             callback.occurredAt,
             JSON.stringify({
                 text: limitText(callback.payload.summary || callback.payload.message, 12000),
-                artifact: normalizeFeedbackTimelineArtifact(callback.payload.artifact),
+                artifact: normalizeFeedbackTimelineArtifact(callbackArtifact),
                 resultEvidence: normalizeFeedbackResultEvidence(
                     callback.type,
                     completionManifest,
@@ -4737,19 +4835,51 @@ async function appendFeedbackCallbackEvent(env, runId, body) {
                 ),
                 phase: callback.payload.phase || '',
                 errorCode: limitText(callback.payload.errorCode, 80),
+                completion:
+                    callback.type === 'run.completed'
+                        ? {
+                              manifest: completionManifest,
+                              verification: callback.payload.verification || {},
+                          }
+                        : null,
             }),
             JSON.stringify({
                 callbackEventId: callback.eventId,
                 callbackSequence: callback.sequence,
                 providerRawStatus: callback.providerRawStatus,
             }),
-            run.issue_id
+            run.issue_id,
+            ...(stateCallback ? [runId] : [])
         ),
     ];
 
+    if (visualEvidence) {
+        const attachment = visualEvidence.uploaded;
+        statements.push(
+            env.FEEDBACK_DB.prepare(
+                `INSERT INTO feedback_attachments (
+                    id, issue_id, name, content_type, size, sha256, object_key,
+                    legacy_kv_key, legacy_attachment_index, scan_status, created_at, expires_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'pending', ?, ?)`
+            ).bind(
+                attachment.id,
+                run.issue_id,
+                attachment.name,
+                attachment.contentType,
+                attachment.size,
+                attachment.sha256,
+                attachment.objectKey,
+                callback.occurredAt,
+                new Date(Date.now() + FEEDBACK_TTL_SECONDS * 1000).toISOString()
+            )
+        );
+    }
+
+    let runProjectionStatementIndex = -1;
     if (projection.runStatus) {
         // §20.1 counts a succeeded write Run with no change commit as an empty
         // run, so the Run records the commits it actually produced.
+        runProjectionStatementIndex = statements.length;
         statements.push(
             env.FEEDBACK_DB.prepare(
                 `UPDATE feedback_runs
@@ -4759,7 +4889,13 @@ async function appendFeedbackCallbackEvent(env, runId, body) {
                      error_code = COALESCE(?, error_code),
                      base_commit = COALESCE(?, base_commit),
                      change_commit = COALESCE(?, change_commit)
-                 WHERE id = ?`
+                 WHERE id = ?
+                   ${
+                       stateCallback
+                           ? "AND status NOT IN ('succeeded', 'failed', 'cancelled', 'timed_out')"
+                           : ''
+                   }
+                 RETURNING id`
             ).bind(
                 projection.runStatus,
                 callback.providerSessionId || null,
@@ -4777,17 +4913,27 @@ async function appendFeedbackCallbackEvent(env, runId, body) {
             env.FEEDBACK_DB.prepare(
                 `UPDATE feedback_issues
                  SET status = ?, updated_at = ?, version = version + 1
-                 WHERE id = ?`
-            ).bind(projection.issueStatus, callback.occurredAt, run.issue_id)
+                 WHERE id = ?
+                   AND EXISTS (
+                       SELECT 1 FROM feedback_events
+                       WHERE id = ? AND issue_id = ?
+                   )`
+            ).bind(projection.issueStatus, callback.occurredAt, run.issue_id, eventId, run.issue_id)
         );
     }
 
     if (preparedDesign) statements.push(...preparedDesign.statements);
     if (preparedAction) statements.push(...preparedAction.statements);
 
+    let batchResults;
     try {
-        await env.FEEDBACK_DB.batch(statements);
+        batchResults = await env.FEEDBACK_DB.batch(statements);
     } catch (error) {
+        if (visualEvidence) {
+            await deleteUploadedFeedbackAttachments(env, [visualEvidence.uploaded]);
+        }
+        const duplicate = await readStoredFeedbackCallbackResult(env, run, eventId, callback.type);
+        if (duplicate) return duplicate;
         const message = String(error?.message || error);
         if (
             message.includes('feedback_human_actions_one_active_issue_idx') ||
@@ -4798,48 +4944,45 @@ async function appendFeedbackCallbackEvent(env, runId, body) {
         throw feedbackStorageError('FEEDBACK_CALLBACK_PERSIST_FAILED');
     }
 
+    const eventCommitted = Boolean(
+        batchResults?.[0]?.results?.some((row) => row.id === eventId) ||
+        Number(batchResults?.[0]?.meta?.changes) === 1
+    );
+    const stateClaimCommitted =
+        !stateCallback ||
+        Boolean(
+            batchResults?.[runProjectionStatementIndex]?.results?.some((row) => row.id === runId)
+        );
+    if (!eventCommitted || !stateClaimCommitted) {
+        if (visualEvidence) {
+            await deleteUploadedFeedbackAttachments(env, [visualEvidence.uploaded]);
+        }
+        const duplicate = await readStoredFeedbackCallbackResult(env, run, eventId, callback.type);
+        if (duplicate) return duplicate;
+        if (stateCallback) throw feedbackStorageError('FEEDBACK_RUN_ALREADY_TERMINAL');
+        throw feedbackStorageError('FEEDBACK_CALLBACK_PERSIST_FAILED');
+    }
+
     // §14.5: a write Run that produced a clean change set registers a
     // Candidate; without one there is nothing an approval could point at.
-    let candidate = null;
-    let deliveryMode = run.delivery_mode || 'candidate_review';
-    let autoDelivery = null;
-    let routedHumanActionId = null;
-    if (
-        callback.type === 'run.completed' &&
-        gate?.allowed &&
-        FEEDBACK_WRITE_POLICIES.has(run.policy)
-    ) {
-        candidate = await registerFeedbackCandidate(env, {
-            issueId: run.issue_id,
-            runId,
-            workflowId: null,
-            manifest: callback.payload.diffManifest || callback.payload,
-            verification: callback.payload.verification || {},
-        });
-        if (candidate && run.delivery_mode === 'auto_deliver') {
-            const routed = await routeFeedbackAutoDeliveryCandidate(env, {
-                run,
-                candidate,
-                gate,
-                verification: callback.payload.verification || {},
-            });
-            deliveryMode = routed.deliveryMode;
-            autoDelivery = routed.autoDelivery;
-            routedHumanActionId = routed.autoDelivery?.humanActionId || null;
-        } else if (candidate && run.delivery_mode === 'candidate_review') {
-            routedHumanActionId = await markFeedbackCandidateForReview(env, {
-                run,
-                candidateId: candidate.candidateId,
-                reason: 'DELIVERY_MODE_REQUIRES_REVIEW',
-                recordSuppression: false,
-            });
-        }
-    }
+    const routing =
+        callback.type === 'run.completed'
+            ? await recoverFeedbackCompletedRunPostProcessing(env, {
+                  run,
+                  manifest: completionManifest,
+                  verification: callback.payload.verification || {},
+                  gate,
+              })
+            : null;
+    const candidate = routing?.candidate || null;
+    const deliveryMode = routing?.deliveryMode || run.delivery_mode || 'candidate_review';
+    const autoDelivery = routing?.autoDelivery || null;
+    const routedHumanActionId = routing?.humanActionId || null;
     if (callback.type === 'artifact.created' && callback.payload.artifact) {
         await recordFeedbackArtifact(env, {
             issueId: run.issue_id,
             runId,
-            artifact: callback.payload.artifact,
+            artifact: visualEvidence?.storedArtifact || callback.payload.artifact,
         });
     }
 
@@ -4929,7 +5072,10 @@ function normalizeFeedbackHumanActionType(value) {
     return FEEDBACK_HUMAN_ACTION_TYPES.has(type) ? type : 'need_reproduction';
 }
 
-function prepareFeedbackHumanAction(env, { issueId, runId, payload, designId = null }) {
+function prepareFeedbackHumanAction(
+    env,
+    { issueId, runId, payload, designId = null, guardEventId = null }
+) {
     const type = normalizeFeedbackHumanActionType(payload.actionType);
     const allowed = FEEDBACK_HUMAN_ACTION_RETURN_STATES[type] || ['queued', 'closed'];
     const actionId = `hac_${crypto.randomUUID()}`;
@@ -4939,7 +5085,14 @@ function prepareFeedbackHumanAction(env, { issueId, runId, payload, designId = n
             id, issue_id, workflow_id, run_id, candidate_id, design_id, type,
             requested_action, evidence_json, allowed_return_states_json, status,
             resolution_json, created_at, resolved_at
-        ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, 'active', NULL, ?, NULL)`
+        ) ${
+            guardEventId
+                ? `SELECT ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, 'active', NULL, ?, NULL
+                   WHERE EXISTS (
+                       SELECT 1 FROM feedback_events WHERE id = ? AND issue_id = ?
+                   )`
+                : "VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, 'active', NULL, ?, NULL)"
+        }`
     ).bind(
         actionId,
         issueId,
@@ -4950,7 +5103,8 @@ function prepareFeedbackHumanAction(env, { issueId, runId, payload, designId = n
         limitText(payload.requestedAction || payload.question, 2000) || '需要你补充信息',
         JSON.stringify(Array.isArray(payload.evidence) ? payload.evidence : []),
         JSON.stringify(allowed),
-        new Date().toISOString()
+        new Date().toISOString(),
+        ...(guardEventId ? [guardEventId, issueId] : [])
     );
 
     return {
@@ -4958,10 +5112,168 @@ function prepareFeedbackHumanAction(env, { issueId, runId, payload, designId = n
         statements: [
             statement,
             env.FEEDBACK_DB.prepare(
-                'UPDATE feedback_issues SET active_human_action_id = ? WHERE id = ?'
-            ).bind(actionId, issueId),
+                `UPDATE feedback_issues SET active_human_action_id = ? WHERE id = ?
+                 ${
+                     guardEventId
+                         ? `AND EXISTS (
+                              SELECT 1 FROM feedback_events WHERE id = ? AND issue_id = ?
+                          )`
+                         : ''
+                 }`
+            ).bind(actionId, issueId, ...(guardEventId ? [guardEventId, issueId] : [])),
         ],
     };
+}
+
+async function findActiveFeedbackCandidateAction(env, issueId, candidateId) {
+    const result = await env.FEEDBACK_DB.prepare(
+        `SELECT * FROM feedback_human_actions
+         WHERE issue_id = ? AND status = 'active'
+         ORDER BY created_at DESC`
+    )
+        .bind(issueId)
+        .all();
+    return (result.results || []).find((action) => action.candidate_id === candidateId) || null;
+}
+
+async function finalizeFeedbackCompletedRun(
+    env,
+    { run, manifest, verification, gate: verifiedGate = null }
+) {
+    if (!FEEDBACK_WRITE_POLICIES.has(run.policy)) {
+        return {
+            candidate: null,
+            deliveryMode: run.delivery_mode || 'candidate_review',
+            autoDelivery: null,
+            humanActionId: null,
+        };
+    }
+    const gate =
+        verifiedGate ||
+        (await verifyRunCompletionManifest({
+            env,
+            run,
+            payload: { diffManifest: manifest, verification },
+        }));
+    if (!gate.allowed) {
+        return {
+            candidate: null,
+            deliveryMode: run.delivery_mode || 'candidate_review',
+            autoDelivery: null,
+            humanActionId: null,
+        };
+    }
+
+    const candidate = await registerFeedbackCandidate(env, {
+        issueId: run.issue_id,
+        runId: run.id,
+        workflowId: null,
+        manifest,
+        verification,
+    });
+    if (!candidate) {
+        return {
+            candidate: null,
+            deliveryMode: run.delivery_mode || 'candidate_review',
+            autoDelivery: null,
+            humanActionId: null,
+        };
+    }
+
+    const candidateRow = await env.FEEDBACK_DB.prepare(
+        'SELECT * FROM feedback_candidates WHERE id = ?'
+    )
+        .bind(candidate.candidateId)
+        .first();
+    const candidateStatus = candidateRow?.status || candidate.status;
+    if (['integrated', 'abandoned', 'failed'].includes(candidateStatus)) {
+        return {
+            candidate,
+            deliveryMode: run.delivery_mode || 'candidate_review',
+            autoDelivery:
+                run.delivery_mode === 'auto_deliver'
+                    ? {
+                          dispatched: false,
+                          alreadyCompleted: candidateStatus === 'integrated',
+                          reason: `CANDIDATE_ALREADY_${String(candidateStatus).toUpperCase()}`,
+                      }
+                    : null,
+            humanActionId: null,
+        };
+    }
+
+    if (['approved', 'integrating'].includes(candidateStatus)) {
+        return {
+            candidate,
+            deliveryMode: run.delivery_mode || 'candidate_review',
+            autoDelivery:
+                run.delivery_mode === 'auto_deliver'
+                    ? await resumeFeedbackAutoDeliveryCandidate(env, {
+                          run,
+                          candidate: candidateRow,
+                      })
+                    : null,
+            humanActionId: null,
+        };
+    }
+
+    const activeAction = await findActiveFeedbackCandidateAction(
+        env,
+        run.issue_id,
+        candidate.candidateId
+    );
+    if (activeAction) {
+        return {
+            candidate,
+            deliveryMode: 'candidate_review',
+            autoDelivery:
+                run.delivery_mode === 'auto_deliver'
+                    ? {
+                          dispatched: false,
+                          reason: 'CANDIDATE_REVIEW_ALREADY_ACTIVE',
+                          humanActionId: activeAction.id,
+                      }
+                    : null,
+            humanActionId: activeAction.id,
+        };
+    }
+
+    if (run.delivery_mode === 'auto_deliver') {
+        const routed = await routeFeedbackAutoDeliveryCandidate(env, {
+            run,
+            candidate,
+            gate,
+            verification,
+        });
+        return {
+            candidate,
+            deliveryMode: routed.deliveryMode,
+            autoDelivery: routed.autoDelivery,
+            humanActionId: routed.autoDelivery?.humanActionId || null,
+        };
+    }
+
+    const humanActionId = await markFeedbackCandidateForReview(env, {
+        run,
+        candidateId: candidate.candidateId,
+        reason: 'DELIVERY_MODE_REQUIRES_REVIEW',
+        recordSuppression: false,
+    });
+    return {
+        candidate,
+        deliveryMode: 'candidate_review',
+        autoDelivery: null,
+        humanActionId,
+    };
+}
+
+async function recoverFeedbackCompletedRunPostProcessing(env, options) {
+    try {
+        return await finalizeFeedbackCompletedRun(env, options);
+    } catch (error) {
+        if (error?.code) throw error;
+        throw feedbackStorageError('FEEDBACK_CALLBACK_POSTPROCESSING_FAILED');
+    }
 }
 
 /**
@@ -4976,6 +5288,28 @@ async function registerFeedbackCandidate(
     const repository =
         limitText(manifest.repository, 200) || String(env.FEEDBACK_GITHUB_REPOSITORY || '');
     if (!repository || !manifest.baseCommit || !manifest.changeCommit) return null;
+
+    const existing = await env.FEEDBACK_DB.prepare(
+        'SELECT * FROM feedback_candidates WHERE run_id = ?'
+    )
+        .bind(runId)
+        .first();
+    if (existing) {
+        if (!['integrated', 'abandoned', 'failed'].includes(existing.status)) {
+            await env.FEEDBACK_DB.prepare(
+                'UPDATE feedback_issues SET active_candidate_id = ? WHERE id = ?'
+            )
+                .bind(existing.id, issueId)
+                .run();
+        }
+        return {
+            candidateId: existing.id,
+            parentCandidateId: existing.parent_candidate_id || null,
+            repository: existing.repository,
+            changedFiles: parseStoredJson(existing.changed_files_json, []),
+            status: existing.status,
+        };
+    }
 
     const candidateId = `cnd_${crypto.randomUUID()}`;
     const now = new Date().toISOString();
@@ -5026,7 +5360,21 @@ async function registerFeedbackCandidate(
             now
         )
         .first();
-    if (!inserted) return null;
+    if (!inserted) {
+        const competing = await env.FEEDBACK_DB.prepare(
+            'SELECT * FROM feedback_candidates WHERE run_id = ?'
+        )
+            .bind(runId)
+            .first();
+        if (!competing) return null;
+        return {
+            candidateId: competing.id,
+            parentCandidateId: competing.parent_candidate_id || null,
+            repository: competing.repository,
+            changedFiles: parseStoredJson(competing.changed_files_json, []),
+            status: competing.status,
+        };
+    }
 
     if (parent?.id) {
         await env.FEEDBACK_DB.batch([
@@ -5049,6 +5397,7 @@ async function registerFeedbackCandidate(
         parentCandidateId: parent?.id || null,
         repository,
         changedFiles: Array.isArray(manifest.changedFiles) ? manifest.changedFiles : [],
+        status: 'verified',
     };
 }
 
@@ -6251,13 +6600,18 @@ function normalizeFeedbackTimelineArtifact(value) {
     if (!value || typeof value !== 'object') return null;
 
     const url = limitText(value.url, 1000);
+    const contentType = limitText(value.contentType, 120).split(';')[0].toLowerCase();
+    const attachmentId = limitText(value.attachmentId, 120);
     return {
         type: limitText(value.type, 60) || 'log',
         name: limitText(value.name, 200) || '验证证据',
         url,
+        attachmentId,
+        contentType,
         size: Math.max(0, Number(value.size) || 0),
         previewable:
-            /^https:\/\//i.test(url) && /\.(?:avif|gif|jpe?g|png|webp)(?:[?#]|$)/i.test(url),
+            (Boolean(attachmentId) && FEEDBACK_INLINE_ATTACHMENT_TYPES.has(contentType)) ||
+            (/^https:\/\//i.test(url) && /\.(?:avif|gif|jpe?g|png|webp)(?:[?#]|$)/i.test(url)),
     };
 }
 
@@ -6328,7 +6682,7 @@ function serializeTimelineEvent(row) {
     };
 }
 
-async function listFeedbackTimeline(env, issueId, { includeInternal }) {
+async function listFeedbackTimeline(request, env, issueId, { includeInternal }) {
     if (!env.FEEDBACK_DB) {
         throw feedbackStorageError('FEEDBACK_DB_REQUIRED');
     }
@@ -6343,7 +6697,25 @@ async function listFeedbackTimeline(env, issueId, { includeInternal }) {
           ).bind(issueId);
 
     const result = await statement.all();
-    return (result.results || []).map(serializeTimelineEvent);
+    return Promise.all(
+        (result.results || []).map(async (row) => {
+            const event = serializeTimelineEvent(row);
+            if (!event.artifact?.attachmentId) return event;
+
+            return {
+                ...event,
+                artifact: {
+                    ...event.artifact,
+                    url: await createFeedbackAttachmentAccessUrl(
+                        request,
+                        env,
+                        issueId,
+                        event.artifact.attachmentId
+                    ),
+                },
+            };
+        })
+    );
 }
 
 function serializeHumanAction(row) {
@@ -6451,7 +6823,7 @@ async function listFeedbackDesigns(env, issueId, { includeTechnical = true } = {
 }
 
 /** §16.4: prepare an immutable numbered revision tied to its Run. */
-async function prepareFeedbackDesign(env, { issueId, runId, value }) {
+async function prepareFeedbackDesign(env, { issueId, runId, value, guardEventId = null }) {
     const design = normalizeFeedbackDesignPayload(value);
     const latest = await env.FEEDBACK_DB.prepare(
         'SELECT COALESCE(MAX(revision), 0) AS revision FROM feedback_designs WHERE issue_id = ?'
@@ -6470,7 +6842,14 @@ async function prepareFeedbackDesign(env, { issueId, runId, value }) {
                 current_behavior, proposed_change, user_value, affected_areas_json,
                 acceptance_criteria_json, risks_json, implementation_outline,
                 verification_plan_json, decision, created_at, decided_at
-            ) VALUES (?, ?, ?, 'awaiting_decision', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`
+            ) ${
+                guardEventId
+                    ? `SELECT ?, ?, ?, 'awaiting_decision', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL
+                       WHERE EXISTS (
+                           SELECT 1 FROM feedback_events WHERE id = ? AND issue_id = ?
+                       )`
+                    : "VALUES (?, ?, ?, 'awaiting_decision', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)"
+            }`
         ).bind(
             designId,
             issueId,
@@ -6486,7 +6865,8 @@ async function prepareFeedbackDesign(env, { issueId, runId, value }) {
             design.implementationOutline,
             JSON.stringify(design.verificationPlan),
             design.decision,
-            occurredAt
+            occurredAt,
+            ...(guardEventId ? [guardEventId, issueId] : [])
         ),
         env.FEEDBACK_DB.prepare(
             `INSERT INTO feedback_events (
@@ -6497,7 +6877,14 @@ async function prepareFeedbackDesign(env, { issueId, runId, value }) {
                 (SELECT COALESCE(MAX(sequence), 0) + 1
                  FROM feedback_events WHERE issue_id = feedback_issues.id),
                 'design.created', 'agent', NULL, 'admin', ?, ?, ?, '{}', NULL
-            FROM feedback_issues WHERE id = ?`
+            FROM feedback_issues WHERE id = ?
+            ${
+                guardEventId
+                    ? `AND EXISTS (
+                         SELECT 1 FROM feedback_events WHERE id = ? AND issue_id = ?
+                     )`
+                    : ''
+            }`
         ).bind(
             eventId,
             runId,
@@ -6507,13 +6894,21 @@ async function prepareFeedbackDesign(env, { issueId, runId, value }) {
                 revision,
                 text: `已生成方案 v${revision}，等待确认。`,
             }),
-            issueId
+            issueId,
+            ...(guardEventId ? [guardEventId, issueId] : [])
         ),
         env.FEEDBACK_DB.prepare(
             `UPDATE feedback_issues
              SET current_design_id = ?, updated_at = ?, version = version + 1
-             WHERE id = ?`
-        ).bind(designId, occurredAt, issueId),
+             WHERE id = ?
+             ${
+                 guardEventId
+                     ? `AND EXISTS (
+                          SELECT 1 FROM feedback_events WHERE id = ? AND issue_id = ?
+                      )`
+                     : ''
+             }`
+        ).bind(designId, occurredAt, issueId, ...(guardEventId ? [guardEventId, issueId] : [])),
     ];
 
     return { designId, revision, statements };
@@ -6525,6 +6920,27 @@ function parseFeedbackMention(text) {
         if (normalized.includes(mention)) return { mention, provider };
     }
     return { mention: '', provider: '' };
+}
+
+async function readStoredFeedbackCommentResult(env, issueId, eventId) {
+    const row = await env.FEEDBACK_DB.prepare(
+        `SELECT body_json FROM feedback_events
+         WHERE id = ? AND issue_id = ? AND type = 'comment.created'`
+    )
+        .bind(eventId, issueId)
+        .first();
+    if (!row) return null;
+
+    const body = parseStoredJson(row.body_json, {});
+    const storedMode = FEEDBACK_COMMENT_MODES.has(body.mode) ? body.mode : 'record';
+    return {
+        mode: storedMode,
+        provider: storedMode === 'resume' ? limitText(body.provider, 40) : '',
+        mention: limitText(body.mention, 40),
+        requestedMode: FEEDBACK_COMMENT_MODES.has(body.requestedMode)
+            ? body.requestedMode
+            : storedMode,
+    };
 }
 
 /**
@@ -6551,19 +6967,13 @@ async function appendFeedbackComment(
     const commentEventId = normalizedRequestId
         ? `evt_comment_${(await hashFeedbackValue(`${issueId}:${normalizedRequestId}`)).slice(0, 48)}`
         : `evt_${crypto.randomUUID()}`;
-    const existing = await env.FEEDBACK_DB.prepare('SELECT id FROM feedback_events WHERE id = ?')
-        .bind(commentEventId)
-        .first();
+    const existing = await readStoredFeedbackCommentResult(env, issueId, commentEventId);
     if (existing) {
-        const { mention } = parseFeedbackMention(text);
         return {
             duplicate: true,
             issue: await readD1FeedbackIssue(env, issueId),
             eventId: commentEventId,
-            mode: FEEDBACK_COMMENT_MODES.has(mode) ? mode : 'record',
-            provider: '',
-            mention,
-            requestedMode: mode,
+            ...existing,
             workflowTermination: null,
             delivery: null,
         };
@@ -6593,19 +7003,23 @@ async function appendFeedbackComment(
               .bind(activeWorkflowId)
               .first()
         : null;
-    const workflowIsStartingOrRunning = Boolean(
+    const canResumeWaitingWorkflow = Boolean(
+        status === 'needs_human' &&
+        activeHumanAction &&
         activeWorkflowId &&
-        (!activeWorkflow || ['queued', 'running'].includes(activeWorkflow.status))
+        activeWorkflow?.status === 'waiting'
     );
+    const canStartWorkflow = Boolean(
+        actorType === 'admin' &&
+        (!activeWorkflowId || ['succeeded', 'terminated'].includes(activeWorkflow?.status)) &&
+        !FEEDBACK_TERMINAL_STATUSES.has(status)
+    );
+    const canResume = canResumeWaitingWorkflow || canStartWorkflow;
 
     // §21.3: owners can only resume the wait they were asked to answer.
-    const canResume = isOwner
-        ? status === 'needs_human' && Boolean(activeHumanAction)
-        : !FEEDBACK_TERMINAL_STATUSES.has(status);
     let effectiveMode = FEEDBACK_COMMENT_MODES.has(mode) ? mode : 'record';
     if (isOwner && effectiveMode === 'close') effectiveMode = 'record';
     if (effectiveMode === 'resume' && !canResume) effectiveMode = 'record';
-    if (effectiveMode === 'resume' && workflowIsStartingOrRunning) effectiveMode = 'record';
 
     const nextStatus =
         effectiveMode === 'close' ? 'closed' : effectiveMode === 'resume' ? 'queued' : status;
@@ -6615,7 +7029,34 @@ async function appendFeedbackComment(
     const provider = mentionProvider || runnerSettings.defaultProvider;
     const occurredAt = new Date().toISOString();
     const nextVersion = Number(expectedVersion) + 1;
-    const statements = [
+    const resumedHumanAction = effectiveMode === 'resume' ? activeHumanAction : null;
+    const humanActionResolutionJson = resumedHumanAction
+        ? JSON.stringify({ decision: 'supplied_information', via: 'comment' })
+        : '';
+    const statements = [];
+    if (resumedHumanAction) {
+        statements.push(
+            env.FEEDBACK_DB.prepare(
+                `UPDATE feedback_human_actions
+                 SET status = 'resolved', resolved_at = ?, resolution_json = ?
+                 WHERE id = ? AND status = 'active'
+                   AND EXISTS (
+                       SELECT 1 FROM feedback_issues
+                       WHERE id = ? AND version = ? AND status = 'needs_human'
+                         AND active_human_action_id = ?
+                   )
+                 RETURNING id`
+            ).bind(
+                occurredAt,
+                humanActionResolutionJson,
+                resumedHumanAction.id,
+                issueId,
+                expectedVersion,
+                resumedHumanAction.id
+            )
+        );
+    }
+    statements.push(
         env.FEEDBACK_DB.prepare(
             `INSERT INTO feedback_events (
                 id, issue_id, sequence, type, actor_type, actor_id, visibility,
@@ -6627,7 +7068,18 @@ async function appendFeedbackComment(
                  FROM feedback_events WHERE issue_id = feedback_issues.id),
                 'comment.created', ?, ?, 'public', NULL, ?, ?, ?, NULL
             FROM feedback_issues
-            WHERE id = ? AND version = ?`
+            WHERE id = ? AND version = ?
+              ${
+                  resumedHumanAction
+                      ? `AND EXISTS (
+                   SELECT 1 FROM feedback_human_actions
+                   WHERE id = ? AND issue_id = feedback_issues.id
+                     AND status = 'resolved' AND resolution_json = ?
+               )`
+                      : ''
+              }
+            ON CONFLICT(id) DO NOTHING
+            RETURNING id`
         ).bind(
             commentEventId,
             actorType,
@@ -6639,13 +7091,15 @@ async function appendFeedbackComment(
                 mention,
                 provider: effectiveMode === 'resume' ? provider : '',
                 mode: effectiveMode,
+                requestedMode: FEEDBACK_COMMENT_MODES.has(mode) ? mode : 'record',
                 requestId: normalizedRequestId,
             }),
             JSON.stringify({ expectedVersion, resultingVersion: nextVersion }),
             issueId,
-            expectedVersion
-        ),
-    ];
+            expectedVersion,
+            ...(resumedHumanAction ? [resumedHumanAction.id, humanActionResolutionJson] : [])
+        )
+    );
 
     if (nextStatus !== status) {
         statements.push(
@@ -6685,6 +7139,7 @@ async function appendFeedbackComment(
             `UPDATE feedback_issues
              SET status = ?,
                  active_workflow_id = CASE WHEN ? THEN NULL ELSE active_workflow_id END,
+                 active_human_action_id = CASE WHEN ? THEN NULL ELSE active_human_action_id END,
                  updated_at = ?, version = version + 1,
                  resolved_at = CASE WHEN ? = 'closed' THEN resolved_at ELSE resolved_at END
              WHERE id = ? AND version = ?
@@ -6696,6 +7151,7 @@ async function appendFeedbackComment(
         ).bind(
             nextStatus,
             isTerminalTransition ? 1 : 0,
+            resumedHumanAction ? 1 : 0,
             occurredAt,
             nextStatus,
             issueId,
@@ -6705,6 +7161,19 @@ async function appendFeedbackComment(
     );
 
     const results = await env.FEEDBACK_DB.batch(statements);
+    const commentInsertIndex = resumedHumanAction ? 1 : 0;
+    if (!results[commentInsertIndex]?.results?.[0]) {
+        const duplicate = await readStoredFeedbackCommentResult(env, issueId, commentEventId);
+        if (!duplicate) throw feedbackStorageError('FEEDBACK_VERSION_CONFLICT');
+        return {
+            duplicate: true,
+            issue: await readD1FeedbackIssue(env, issueId),
+            eventId: commentEventId,
+            ...duplicate,
+            workflowTermination: null,
+            delivery: null,
+        };
+    }
     if (!results[results.length - 1]?.results?.[0]) {
         throw feedbackStorageError('FEEDBACK_VERSION_CONFLICT');
     }
@@ -6712,20 +7181,6 @@ async function appendFeedbackComment(
     const workflowTermination = terminalWorkflowId
         ? await terminateFeedbackWorkflowInstance(env, terminalWorkflowId)
         : null;
-
-    if (effectiveMode === 'resume' && isOwner && activeHumanAction) {
-        await env.FEEDBACK_DB.prepare(
-            `UPDATE feedback_human_actions
-             SET status = 'resolved', resolved_at = ?, resolution_json = ?
-             WHERE id = ? AND status = 'active'`
-        )
-            .bind(
-                occurredAt,
-                JSON.stringify({ decision: 'supplied_information', via: 'comment' }),
-                activeHumanAction.id
-            )
-            .run();
-    }
 
     const delivery = await dispatchFeedbackEvent(env, {
         eventId: commentEventId,
@@ -6776,7 +7231,9 @@ async function reopenFeedbackIssue(env, issueId, { actorType, expectedVersion })
                  FROM feedback_events WHERE issue_id = feedback_issues.id),
                 'issue.reopened', ?, NULL, 'public', NULL, ?, ?, '{}', NULL
             FROM feedback_issues
-            WHERE id = ? AND version = ?`
+            WHERE id = ? AND version = ?
+            ON CONFLICT(id) DO NOTHING
+            RETURNING id`
         ).bind(
             eventId,
             actorType,
@@ -7535,6 +7992,10 @@ const FEEDBACK_ERROR_RESPONSES = {
     FEEDBACK_DESIGN_DECISION_INVALID: [400, 'Design decision is invalid'],
     FEEDBACK_HUMAN_ACTION_ALREADY_ACTIVE: [409, 'Another human action is already active'],
     FEEDBACK_CALLBACK_PERSIST_FAILED: [500, 'Callback persistence failed; retry the event'],
+    FEEDBACK_CALLBACK_POSTPROCESSING_FAILED: [
+        500,
+        'Callback post-processing failed; retry the event',
+    ],
     FEEDBACK_CALLBACK_TYPE_UNSUPPORTED: [400, 'Unsupported callback event type'],
     FEEDBACK_CALLBACK_EVENT_ID_REQUIRED: [400, 'eventId is required'],
     FEEDBACK_RUN_ALREADY_TERMINAL: [409, 'Run is already in a terminal state'],
@@ -7617,9 +8078,12 @@ function getFeedbackBoardApiBase(request, env) {
 
 function getFeedbackBoardContentSecurityPolicy(feedbackApiBase) {
     let connectSource = "'self'";
+    let imageSource = "'self' data: blob:";
     if (feedbackApiBase) {
         try {
-            connectSource += ` ${new URL(feedbackApiBase).origin}`;
+            const feedbackOrigin = new URL(feedbackApiBase).origin;
+            connectSource += ` ${feedbackOrigin}`;
+            imageSource += ` ${feedbackOrigin}`;
         } catch {
             // Invalid API configuration is surfaced by the page's request handling.
         }
@@ -7629,7 +8093,7 @@ function getFeedbackBoardContentSecurityPolicy(feedbackApiBase) {
         "default-src 'self'",
         "script-src 'self' 'unsafe-inline'",
         "style-src 'self' 'unsafe-inline'",
-        "img-src 'self' data: blob:",
+        `img-src ${imageSource}`,
         `connect-src ${connectSource}`,
         "font-src 'self'",
         "object-src 'none'",
@@ -9757,7 +10221,7 @@ export default {
                     'Content-Disposition': `${responseMetadata.disposition}; filename*=UTF-8''${encodeURIComponent(access.attachment.name)}`,
                     'Content-Security-Policy': "sandbox; default-src 'none'",
                     'Cache-Control': 'private, no-store',
-                    'Cross-Origin-Resource-Policy': 'same-origin',
+                    'Cross-Origin-Resource-Policy': 'cross-origin',
                     'X-Content-Type-Options': 'nosniff',
                 },
             });
@@ -10680,7 +11144,7 @@ export default {
 
                     return jsonResponse(
                         {
-                            events: await listFeedbackTimeline(env, key, {
+                            events: await listFeedbackTimeline(request, env, key, {
                                 includeInternal: isAdmin,
                             }),
                             version: Number(issue.version) || 1,

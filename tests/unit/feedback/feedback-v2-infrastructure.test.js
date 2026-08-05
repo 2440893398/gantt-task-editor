@@ -11,12 +11,18 @@ function readProjectFile(path) {
 }
 
 function readWorkflowJob(workflow, jobName) {
-    const jobStart = workflow.indexOf(`\n  ${jobName}:\n`);
+    const lines = workflow.split(/\r?\n/);
+    const headerPattern = new RegExp(`^(\\s*)${jobName}:\\s*$`);
+    const jobStart = lines.findIndex((line) => headerPattern.test(line));
     if (jobStart < 0) return '';
 
-    const remainder = workflow.slice(jobStart + 1);
-    const nextJob = remainder.slice(1).search(/^  [a-zA-Z0-9_-]+:\n/m);
-    return nextJob < 0 ? remainder : remainder.slice(0, nextJob + 1);
+    const indent = lines[jobStart].match(headerPattern)[1];
+    const nextJob = lines.findIndex((line, index) => {
+        if (index <= jobStart) return false;
+        const match = line.match(/^(\s*)[a-zA-Z0-9_-]+:\s*$/);
+        return match?.[1] === indent;
+    });
+    return lines.slice(jobStart, nextJob < 0 ? undefined : nextJob).join('\n');
 }
 
 describe('[SCN-FWB-018] feedback V2 Worker infrastructure', () => {
@@ -258,6 +264,42 @@ describe('[SCN-FWB-022] feedback V2 autonomous delivery infrastructure', () => {
         expect(codex).toContain('output-file: ${{ runner.temp }}/feedback-agent-final.md');
         expect(claude).toContain('id: run_claude');
         expect(claude).toContain('steps.run_claude.outputs.execution_file');
+    });
+
+    it('[SCN-FWB-006] publishes fresh screenshots and still attempts a terminal callback', () => {
+        const reporter = readProjectFile('src/features/feedback/feedback-callback-reporter.js');
+
+        expect(reporter).toContain('maxFiles: 3');
+        expect(reporter).toContain('maxFileBytes: 4 * 1024 * 1024');
+        expect(reporter).toContain('maxTotalBytes: 8 * 1024 * 1024');
+        expect(reporter).toContain('maxVisitedEntries: 200');
+        expect(reporter).toContain('maxInspectedBytes: 16 * 1024 * 1024');
+        expect(reporter).toContain('maxOutputLength: expectedLength');
+        expect(reporter).toContain('preliminaryDeadlineMs = 90_000');
+        expect(reporter).toContain("type: 'run.failed'");
+        expect(reporter).toContain("'callback_delivery_failed'");
+
+        for (const provider of ['codex', 'claude']) {
+            const workflow = readProjectFile(`.github/workflows/feedback-agent-${provider}.yml`);
+
+            expect(workflow).toContain('feedback-evidence-start');
+            expect(workflow).toContain('doc/testdoc/screenshots');
+            expect(workflow).toContain('doc/design/screenshots');
+            expect(workflow).toContain('tests/e2e/screenshots');
+            expect(workflow).toContain('type: "visual-evidence"');
+            expect(workflow).toContain('dataUrl:');
+            expect(workflow).toContain('const contentTypes = new Map([[".png", "image/png"]])');
+            expect(workflow).toContain(
+                'collect "$OUTPUT_ROOT/evidence" "$RUNNER_TEMP/feedback-evidence-start"'
+            );
+            expect(workflow).toContain('"$TRUSTED_REPORTER" deliver .');
+            expect(
+                workflow.match(
+                    /git show "\$BASE_COMMIT:src\/features\/feedback\/feedback-callback-reporter\.js"/g
+                )
+            ).toHaveLength(2);
+            expect(workflow).not.toContain('for delay in 0 5 15 45');
+        }
     });
 
     it('[SCN-FWB-010] never renders an operational event as an empty Agent result', () => {
