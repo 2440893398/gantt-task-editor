@@ -128,10 +128,14 @@ describe('[SCN-FWB-018] feedback V2 Worker infrastructure', () => {
 
     it('exports a deterministic Workflow entrypoint that persists through its D1 binding', () => {
         const workerSource = readProjectFile('workers/share-worker.js');
+        // Anchor on a closing brace at column 0, tolerating CRLF: a Windows
+        // checkout stores this file with \r\n, and an \n-only anchor silently
+        // extracts an empty string, which passes `not.toContain` for free.
         const workflowSource =
             workerSource.match(
-                /export class FeedbackWorkflow extends WorkflowEntrypoint[\s\S]*?\n}\n/
+                /export class FeedbackWorkflow extends WorkflowEntrypoint[\s\S]*?\r?\n}\r?\n/
             )?.[0] || '';
+        expect(workflowSource, 'FeedbackWorkflow class source must be extractable').not.toBe('');
 
         expect(workerSource).toContain("import { WorkflowEntrypoint } from 'cloudflare:workers';");
         expect(workflowSource).toContain(
