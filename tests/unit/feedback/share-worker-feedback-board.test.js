@@ -856,6 +856,10 @@ class MemoryD1 {
             return ok([], 1);
         }
         if (normalized.startsWith('insert into feedback_deliveries')) {
+            if (this.failDeliveryInsertOnce) {
+                this.failDeliveryInsertOnce = false;
+                throw new Error('simulated delivery insert failure');
+            }
             const [
                 id,
                 eventId,
@@ -6441,6 +6445,79 @@ describe('feedback workbench V2 event dispatch', () => {
         expect(env.FEEDBACK_WORKFLOW.created[0].params.deliveryId).toBe(first.delivery.deliveryId);
     });
 
+    it('[SCN-FWB-003] dispatches a comment whose first attempt died after the write', async () => {
+        const { env, headers } = await createDispatchEnv();
+        const body = JSON.stringify({
+            body: '触发一次投递',
+            mode: 'resume',
+            expectedVersion: 1,
+            requestId: 'comment-retry-after-lost-dispatch',
+        });
+        env.FEEDBACK_DB.failDeliveryInsertOnce = true;
+
+        const lost = await request(
+            `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/comments`,
+            { method: 'POST', headers, body },
+            env
+        );
+
+        const commentEvents = () =>
+            Array.from(env.FEEDBACK_DB.tables.feedback_events.values()).filter(
+                (row) => row.type === 'comment.created'
+            );
+
+        expect(lost.status).toBeGreaterThanOrEqual(400);
+        expect(commentEvents()).toHaveLength(1);
+        expect(env.FEEDBACK_DB.tables.feedback_deliveries.size).toBe(0);
+
+        const retried = await json(
+            await request(
+                `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/comments`,
+                { method: 'POST', headers, body },
+                env
+            )
+        );
+
+        expect(retried.duplicate).toBe(true);
+        expect(retried.mode).toBe('resume');
+        // The stored comment is not a delivered comment: the retry has to finish
+        // the dispatch the lost attempt never reached.
+        expect(commentEvents()).toHaveLength(1);
+        expect(env.FEEDBACK_DB.tables.feedback_deliveries.size).toBe(1);
+        expect(env.FEEDBACK_WORKFLOW.created).toHaveLength(1);
+        expect(retried.delivery.workflow.instanceId).toBe(workflowInstanceId(feedbackKey, 1));
+    });
+
+    it('[SCN-FWB-003] does not dispatch a second time for an already delivered comment', async () => {
+        const { env, headers } = await createDispatchEnv();
+        const body = JSON.stringify({
+            body: '触发一次投递',
+            mode: 'resume',
+            expectedVersion: 1,
+            requestId: 'comment-retry-after-delivery',
+        });
+
+        const first = await json(
+            await request(
+                `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/comments`,
+                { method: 'POST', headers, body },
+                env
+            )
+        );
+        const retried = await json(
+            await request(
+                `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/comments`,
+                { method: 'POST', headers, body },
+                env
+            )
+        );
+
+        expect(retried.duplicate).toBe(true);
+        expect(retried.delivery.deliveryId).toBe(first.delivery.deliveryId);
+        expect(env.FEEDBACK_DB.tables.feedback_deliveries.size).toBe(1);
+        expect(env.FEEDBACK_WORKFLOW.created).toHaveLength(1);
+    });
+
     it('[SCN-FWB-007] resumes the same workflowId while an instance is non-terminal', async () => {
         const { env, headers } = await createDispatchEnv();
         await postComment(env, headers, 1);
@@ -7742,8 +7819,87 @@ describe('feedback workbench V2 Run and Callback', () => {
         expect(previewUrl.pathname).toMatch(/^\/api\/feedback\/attachments\/att_/);
         expect(previewResponse.status).toBe(200);
         expect(previewResponse.headers.get('Content-Type')).toBe('image/png');
+        // The board runs on a different origin than the API, so embedding is
+        // deliberately allowed. Everything else that keeps a leaked URL from
+        // becoming a foothold stays pinned here.
         expect(previewResponse.headers.get('Cross-Origin-Resource-Policy')).toBe('cross-origin');
+        expect(previewResponse.headers.get('Content-Security-Policy')).toBe(
+            "sandbox; default-src 'none'"
+        );
+        expect(previewResponse.headers.get('X-Content-Type-Options')).toBe('nosniff');
+        expect(previewResponse.headers.get('Cache-Control')).toBe('private, no-store');
         expect((await previewResponse.arrayBuffer()).byteLength).toBeGreaterThan(20);
+
+        // A signed URL is still required: the same path without one is refused.
+        const unsigned = await request(previewUrl.pathname, {}, env);
+        expect(unsigned.status).toBeGreaterThanOrEqual(400);
+    });
+
+    it('[SCN-FWB-014] keeps the attachment row and the R2 object out when the event is not committed', async () => {
+        const { env, run } = await createRunEnv();
+        env.FEEDBACK_ARTIFACTS = new MemoryR2();
+        const token = await callbackTokenFor(env, run.id);
+        const pngBase64 =
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nYQAAAAASUVORK5CYII=';
+        // Retention dropped the Issue while the Run was still reporting: the
+        // event insert matches nothing, so nothing it owns may survive either.
+        env.FEEDBACK_DB.tables.feedback_issues.delete(feedbackKey);
+
+        const response = await postCallback(
+            env,
+            run.id,
+            {
+                eventId: 'cb_orphan_visual_evidence',
+                type: 'artifact.created',
+                payload: {
+                    summary: 'Screenshot for an Issue that no longer exists.',
+                    artifact: {
+                        type: 'visual-evidence',
+                        name: 'feedback-result.png',
+                        contentType: 'image/png',
+                        dataUrl: `data:image/png;base64,${pngBase64}`,
+                    },
+                },
+            },
+            token
+        );
+
+        expect(response.status).toBeGreaterThanOrEqual(400);
+        expect(env.FEEDBACK_DB.tables.feedback_events.size).toBe(0);
+        expect(env.FEEDBACK_DB.tables.feedback_attachments.size).toBe(0);
+        expect(env.FEEDBACK_ARTIFACTS.objects.size).toBe(0);
+    });
+
+    it('[SCN-FWB-006] rejects visual evidence past the attachment byte limit', async () => {
+        const { env, run } = await createRunEnv();
+        env.FEEDBACK_ARTIFACTS = new MemoryR2();
+        const token = await callbackTokenFor(env, run.id);
+        // Truncating to the limit would upload a corrupted image under a name
+        // and size the timeline then presents as real evidence.
+        const oversizedDataUrl = `data:image/png;base64,${'A'.repeat(19 * 1024 * 1024)}`;
+
+        const response = await postCallback(
+            env,
+            run.id,
+            {
+                eventId: 'cb_oversized_visual_evidence',
+                type: 'artifact.created',
+                payload: {
+                    artifact: {
+                        type: 'visual-evidence',
+                        name: 'huge.png',
+                        contentType: 'image/png',
+                        dataUrl: oversizedDataUrl,
+                    },
+                },
+            },
+            token
+        );
+
+        expect(response.status).toBe(400);
+        expect(env.FEEDBACK_DB.tables.feedback_attachments.size).toBe(0);
+        expect(env.FEEDBACK_ARTIFACTS.putCalls).toHaveLength(0);
+        expect(env.FEEDBACK_DB.tables.feedback_events.size).toBe(0);
     });
 
     it('[SCN-FWB-010] rejects run.completed when no Agent message was recorded', async () => {

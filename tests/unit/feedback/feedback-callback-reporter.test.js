@@ -163,6 +163,143 @@ describe('[SCN-FWB-006] trusted feedback callback reporter', () => {
         expect(result.inspectedBytes).toBeLessThanOrEqual(image.length * 4);
     });
 
+    it('keeps evidence from same-named roots apart', () => {
+        const directory = makeTemporaryDirectory();
+        const destination = join(directory, 'destination');
+        const firstRoot = join(directory, 'doc', 'testdoc', 'screenshots');
+        const secondRoot = join(directory, 'tests', 'e2e', 'screenshots');
+        mkdirSync(firstRoot, { recursive: true });
+        mkdirSync(secondRoot, { recursive: true });
+        const first = createPng(64, 64, (x, y) =>
+            (x + y) % 2 === 0 ? [0, 0, 0, 255] : [255, 255, 255, 255]
+        );
+        const second = createPng(64, 64, (x, y) =>
+            x < 32 ? [10, 20, 30, 255] : [240, 250, 255, 255]
+        );
+        writeFileSync(join(firstRoot, 'board.png'), first);
+        writeFileSync(join(secondRoot, 'board.png'), second);
+
+        const result = collectVisualEvidence({
+            destinationRoot: destination,
+            roots: [firstRoot, secondRoot],
+            newerThanMs: 0,
+        });
+
+        expect(new Set(result.accepted.map(({ name }) => name)).size).toBe(2);
+        const copied = result.accepted.map(({ name }) =>
+            readFileSync(join(destination, ...name.split('/')))
+        );
+        expect(copied[0].equals(copied[1])).toBe(false);
+    });
+
+    it('keeps a successful Run when only optional evidence delivery fails', async () => {
+        const send = vi.fn(async (callback) => callback.type !== 'artifact.created');
+        const terminal = {
+            eventId: 'terminal',
+            type: 'run.completed',
+            providerRawStatus: 'success',
+            payload: {
+                summary: 'completed',
+                verification: { visualEvidence: { required: false, present: true } },
+            },
+        };
+
+        const result = await deliverCallbacks({
+            preliminary: [
+                { eventId: 'agent', type: 'agent.message', payload: { message: '已修复' } },
+                {
+                    eventId: 'shot',
+                    type: 'artifact.created',
+                    payload: { artifact: { type: 'visual-evidence', name: 'board.png' } },
+                },
+            ],
+            terminal,
+            send,
+            now: () => 0,
+            sleep: async () => {},
+            preliminaryDelaysMs: [0],
+            terminalDelaysMs: [0],
+        });
+
+        expect(result.agentMessageFailed).toBe(false);
+        expect(result.evidenceFailed).toBe(true);
+        expect(result.terminalDelivered).toBe(true);
+        expect(result.terminal.type).toBe('run.completed');
+        // The board must not claim evidence the Worker never received.
+        expect(result.terminal.payload.verification.visualEvidence).toEqual({
+            required: false,
+            present: false,
+        });
+    });
+
+    it('fails a Run whose user-facing message never reached the Worker', async () => {
+        const send = vi.fn(async (callback) => callback.type !== 'agent.message');
+
+        const result = await deliverCallbacks({
+            preliminary: [
+                { eventId: 'agent', type: 'agent.message', payload: { message: '已修复' } },
+            ],
+            terminal: {
+                eventId: 'terminal',
+                type: 'run.completed',
+                providerRawStatus: 'success',
+                payload: { summary: 'completed', verification: {} },
+            },
+            send,
+            now: () => 0,
+            sleep: async () => {},
+            preliminaryDelaysMs: [0],
+            terminalDelaysMs: [0],
+        });
+
+        expect(result.agentMessageFailed).toBe(true);
+        expect(result.terminalDelivered).toBe(true);
+        expect(result.terminal).toEqual(
+            expect.objectContaining({
+                type: 'run.failed',
+                providerRawStatus: 'failure',
+                payload: expect.objectContaining({
+                    errorCode: 'callback_delivery_failed',
+                    callbackDeliveryFailed: true,
+                }),
+            })
+        );
+    });
+
+    it('fails a Run whose required visual evidence never reached the Worker', async () => {
+        const send = vi.fn(async (callback) => callback.type !== 'artifact.created');
+
+        const result = await deliverCallbacks({
+            preliminary: [
+                { eventId: 'agent', type: 'agent.message', payload: { message: '已修复' } },
+                {
+                    eventId: 'shot',
+                    type: 'artifact.created',
+                    payload: { artifact: { type: 'visual-evidence', name: 'board.png' } },
+                },
+            ],
+            terminal: {
+                eventId: 'terminal',
+                type: 'run.completed',
+                providerRawStatus: 'success',
+                payload: {
+                    summary: 'completed',
+                    verification: { visualEvidence: { required: true, present: true } },
+                },
+            },
+            send,
+            now: () => 0,
+            sleep: async () => {},
+            preliminaryDelaysMs: [0],
+            terminalDelaysMs: [0],
+        });
+
+        expect(result.evidenceFailed).toBe(true);
+        expect(result.terminal.type).toBe('run.failed');
+        expect(result.terminal.payload.errorCode).toBe('callback_delivery_failed');
+        expect(result.terminal.payload.verification.visualEvidence.present).toBe(false);
+    });
+
     it('reserves terminal delivery after preliminary retries exhaust their deadline', async () => {
         let clock = 0;
         const attempts = [];
@@ -173,12 +310,16 @@ describe('[SCN-FWB-006] trusted feedback callback reporter', () => {
         const preliminary = Array.from({ length: 10 }, (_, index) => ({
             eventId: `preliminary-${index}`,
             type: 'artifact.created',
+            payload: { artifact: { type: 'visual-evidence', name: `${index}.png` } },
         }));
         const terminal = {
             eventId: 'terminal',
             type: 'run.completed',
             providerRawStatus: 'success',
-            payload: { summary: 'completed' },
+            payload: {
+                summary: 'completed',
+                verification: { visualEvidence: { required: true, present: true } },
+            },
         };
 
         const result = await deliverCallbacks({

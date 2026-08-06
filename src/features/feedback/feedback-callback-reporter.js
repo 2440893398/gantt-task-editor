@@ -255,6 +255,26 @@ export function sanitizeVisualEvidence(root, options = {}) {
     return { accepted, rejected, totalBytes, visitedEntries: scanState.visitedEntries };
 }
 
+/**
+ * Names an evidence root so two roots never write to the same destination.
+ * `doc/testdoc/screenshots` and `tests/e2e/screenshots` share a basename, so a
+ * basename-only label lets the second copy silently overwrite the first.
+ */
+function evidenceRootLabel(resolvedRoot, usedLabels) {
+    const segments = resolvedRoot
+        .split(sep)
+        .filter((segment) => segment && segment !== '.' && segment !== '..');
+    const base = segments.slice(-2).join('/') || basename(resolvedRoot) || 'evidence';
+    let label = base;
+    let suffix = 2;
+    while (usedLabels.has(label)) {
+        label = `${base}-${suffix}`;
+        suffix += 1;
+    }
+    usedLabels.add(label);
+    return label;
+}
+
 export function collectVisualEvidence({ destinationRoot, roots, newerThanMs, ...options }) {
     const limits = { ...VISUAL_EVIDENCE_LIMITS, ...options };
     const accepted = [];
@@ -263,8 +283,10 @@ export function collectVisualEvidence({ destinationRoot, roots, newerThanMs, ...
     let totalBytes = 0;
     mkdirSync(destinationRoot, { recursive: true });
 
+    const rootLabels = new Set();
     outer: for (const root of roots) {
         const resolvedRoot = resolve(root);
+        const rootLabel = evidenceRootLabel(resolvedRoot, rootLabels);
         for (const file of walkFiles(resolvedRoot, scanState)) {
             if (accepted.length >= limits.maxFiles) break outer;
             if (extname(file).toLowerCase() !== '.png') continue;
@@ -283,9 +305,7 @@ export function collectVisualEvidence({ destinationRoot, roots, newerThanMs, ...
                 continue;
             }
 
-            const name = `${basename(resolvedRoot)}/${relative(resolvedRoot, file)}`
-                .split(sep)
-                .join('/');
+            const name = `${rootLabel}/${relative(resolvedRoot, file).split(sep).join('/')}`;
             const destination = join(destinationRoot, ...name.split('/'));
             mkdirSync(resolve(destination, '..'), { recursive: true });
             copyFileSync(file, destination);
@@ -314,6 +334,30 @@ async function attemptDelivery(callback, phase, delays, deadline, send, sleep, n
         }
     }
     return false;
+}
+
+function isVisualEvidenceCallback(callback) {
+    return (
+        callback?.type === 'artifact.created' &&
+        callback.payload?.artifact?.type === 'visual-evidence'
+    );
+}
+
+/** The board must never claim evidence the Worker never received. */
+function markTerminalVisualEvidenceMissing(terminal) {
+    const verification = terminal.payload?.verification;
+    if (!verification?.visualEvidence) return terminal;
+
+    return {
+        ...terminal,
+        payload: {
+            ...terminal.payload,
+            verification: {
+                ...verification,
+                visualEvidence: { ...verification.visualEvidence, present: false },
+            },
+        },
+    };
 }
 
 function downgradeTerminalCallback(terminal) {
@@ -346,10 +390,19 @@ export async function deliverCallbacks({
     terminalDelaysMs = [0, 5_000, 15_000, 45_000],
 }) {
     const preliminaryDeadline = now() + preliminaryDeadlineMs;
-    let preliminaryFailed = false;
-    for (const callback of preliminary) {
+    let agentMessageFailed = false;
+    let evidenceFailed = false;
+    let auxiliaryFailed = false;
+    const recordFailure = (callback) => {
+        if (callback?.type === 'agent.message') agentMessageFailed = true;
+        else if (isVisualEvidenceCallback(callback)) evidenceFailed = true;
+        else auxiliaryFailed = true;
+    };
+
+    let index = 0;
+    for (; index < preliminary.length; index += 1) {
         const delivered = await attemptDelivery(
-            callback,
+            preliminary[index],
             'preliminary',
             preliminaryDelaysMs,
             preliminaryDeadline,
@@ -357,14 +410,26 @@ export async function deliverCallbacks({
             sleep,
             now
         );
-        if (!delivered) preliminaryFailed = true;
+        if (!delivered) recordFailure(preliminary[index]);
         if (now() >= preliminaryDeadline) {
-            preliminaryFailed = true;
+            index += 1;
             break;
         }
     }
+    // Whatever the budget never reached is undelivered too, and is counted as
+    // the kind of callback it is rather than as a blanket failure.
+    for (; index < preliminary.length; index += 1) recordFailure(preliminary[index]);
 
-    const finalCallback = preliminaryFailed ? downgradeTerminalCallback(terminal) : terminal;
+    const preliminaryFailed = agentMessageFailed || evidenceFailed || auxiliaryFailed;
+    // §SCN-FWB-006/010: a Run is only reportable as completed when the message a
+    // person reads and the evidence the gate requires both landed. A missing
+    // optional screenshot or report is recorded, not promoted to a failed Run —
+    // that would discard an already published Candidate.
+    const evidenceRequired = terminal.payload?.verification?.visualEvidence?.required === true;
+    let finalCallback = evidenceFailed ? markTerminalVisualEvidenceMissing(terminal) : terminal;
+    if (agentMessageFailed || (evidenceFailed && evidenceRequired)) {
+        finalCallback = downgradeTerminalCallback(finalCallback);
+    }
     const terminalDelivered = await attemptDelivery(
         finalCallback,
         'terminal',
@@ -374,7 +439,14 @@ export async function deliverCallbacks({
         sleep,
         now
     );
-    return { preliminaryFailed, terminalDelivered, terminal: finalCallback };
+    return {
+        preliminaryFailed,
+        agentMessageFailed,
+        evidenceFailed,
+        auxiliaryFailed,
+        terminalDelivered,
+        terminal: finalCallback,
+    };
 }
 
 function loadCallbackFiles(directory) {

@@ -231,9 +231,16 @@ jobs:
                     const path = require("path");
                     const source = process.env.CLAUDE_EXECUTION_FILE || "";
                     let raw = "";
-                    try {
-                      raw = fs.readFileSync(source, "utf8");
-                    } catch {}
+                    let reason = "";
+                    if (!source) {
+                      reason = "missing_execution_file";
+                    } else {
+                      try {
+                        raw = fs.readFileSync(source, "utf8");
+                      } catch {
+                        reason = "unreadable_execution_file";
+                      }
+                    }
                     const extract = (value) => {
                       if (typeof value === "string") return value.trim();
                       if (Array.isArray(value)) {
@@ -261,10 +268,18 @@ jobs:
                         } catch {}
                       }
                     }
-                    fs.writeFileSync(
-                      process.env.RUNNER_TEMP + "/feedback-agent-output/agent-final.txt",
-                      finalMessage.trim().slice(0, 12000)
-                    );
+                    const message = finalMessage.trim().slice(0, 12000);
+                    if (!message && !reason) reason = "empty_agent_message";
+                    const outputRoot = process.env.RUNNER_TEMP + "/feedback-agent-output/";
+                    fs.writeFileSync(outputRoot + "agent-final.txt", message);
+                    fs.writeFileSync(outputRoot + "agent-final-reason.txt", reason);
+                    // Reading the transcript can fail on its own. Reporting that as
+                    // "the Agent said nothing" would fail every Run with no clue why.
+                    if (reason && reason !== "empty_agent_message") {
+                      process.stdout.write(
+                        `::warning title=Claude execution record::${reason} (CLAUDE_EXECUTION_FILE=${source || "unset"})\n`
+                      );
+                    }
                   '
                   /usr/bin/git add -A -- . \
                     ':!feedback-context.json' \
@@ -477,6 +492,23 @@ jobs:
                   retention-days: 7
                   if-no-files-found: ignore
 
+            - name: Resolve trusted reporter
+              id: reporter
+              if: always() && steps.payload.outcome == 'success'
+              continue-on-error: true
+              env:
+                  BASE_COMMIT: ${{ steps.base.outputs.sha }}
+                  BASH_ENV: ''
+                  ENV: ''
+                  PATH: /usr/bin:/bin
+              run: |
+                  set -euo pipefail
+                  TRUSTED_REPORTER_ROOT="$(/usr/bin/mktemp -d "$RUNNER_TEMP/feedback-callback-reporter.XXXXXX")"
+                  TRUSTED_REPORTER="$TRUSTED_REPORTER_ROOT/feedback-callback-reporter.mjs"
+                  /usr/bin/git show "$BASE_COMMIT:src/features/feedback/feedback-callback-reporter.js" \
+                    > "$TRUSTED_REPORTER"
+                  echo "path=$TRUSTED_REPORTER" >> "$GITHUB_OUTPUT"
+
             - name: Report completion
               if: always() && steps.payload.outcome == 'success'
               env:
@@ -494,6 +526,7 @@ jobs:
                   PUSH_OUTCOME: ${{ steps.push.outcome }}
                   TESTS_OUTCOME: ${{ needs.agent.outputs.targeted_tests_outcome }}
                   TRUSTED_NODE: ${{ steps.trusted_tools.outputs.node }}
+                  TRUSTED_REPORTER: ${{ steps.reporter.outputs.path }}
                   WRITE_ALLOWED: ${{ steps.payload.outputs.writeAllowed }}
                   BASH_ENV: ''
                   ENV: ''
@@ -502,25 +535,30 @@ jobs:
                   set -euo pipefail
                   FEEDBACK_CALLBACK_TOKEN="$($TRUSTED_NODE -e 'process.stdout.write(JSON.parse(process.env.PAYLOAD).callbackToken)')"
                   echo "::add-mask::$FEEDBACK_CALLBACK_TOKEN"
-                  TRUSTED_REPORTER_ROOT="$(/usr/bin/mktemp -d "$RUNNER_TEMP/feedback-callback-reporter.XXXXXX")"
-                  TRUSTED_REPORTER="$TRUSTED_REPORTER_ROOT/feedback-callback-reporter.mjs"
-                  /usr/bin/git show "$BASE_COMMIT:src/features/feedback/feedback-callback-reporter.js" \
-                    > "$TRUSTED_REPORTER"
-                  "$TRUSTED_NODE" "$TRUSTED_REPORTER" sanitize \
-                    "$RUNNER_TEMP/feedback-agent-output/evidence"
+                  if [ -n "$TRUSTED_REPORTER" ]; then
+                    "$TRUSTED_NODE" "$TRUSTED_REPORTER" sanitize \
+                      "$RUNNER_TEMP/feedback-agent-output/evidence"
+                  else
+                    echo "::warning title=Trusted reporter::unavailable; publishing the terminal callback only"
+                  fi
                   "$TRUSTED_NODE" -e '
                     const fs = require("fs");
                     const path = require("path");
-                    const agentMessage = (() => {
+                    // Evidence is only publishable once the trusted reporter has
+                    // sanitized it, so without the reporter nothing is attached.
+                    const evidencePublishable = Boolean(process.env.TRUSTED_REPORTER);
+                    const readOutput = (name) => {
                       try {
                         return fs.readFileSync(
-                          process.env.RUNNER_TEMP + "/feedback-agent-output/agent-final.txt",
+                          process.env.RUNNER_TEMP + "/feedback-agent-output/" + name,
                           "utf8"
-                        ).trim().slice(0, 12000);
+                        ).trim();
                       } catch {
                         return "";
                       }
-                    })();
+                    };
+                    const agentMessage = readOutput("agent-final.txt").slice(0, 12000);
+                    const agentMessageReason = readOutput("agent-final-reason.txt");
                     const writeAllowed = process.env.WRITE_ALLOWED === "true";
                     const playwrightRequired = process.env.POLICY === "implement_and_verify";
                     const agentPassed = process.env.AGENT_RESULT === "success";
@@ -551,7 +589,7 @@ jobs:
                         }
                       }
                     };
-                    if (fs.existsSync(evidenceRoot)) visit(evidenceRoot);
+                    if (evidencePublishable && fs.existsSync(evidenceRoot)) visit(evidenceRoot);
                     visualEvidenceFiles.sort();
                     const hasVisualEvidence = visualEvidenceFiles.length > 0;
                     const visualEvidencePassed = manifest.visualEvidenceRequired !== true || hasVisualEvidence;
@@ -576,7 +614,9 @@ jobs:
                         summary: success
                           ? `已完成处理：修改 ${manifest.changedFiles?.length || 0} 个文件，并通过所有必需验证。`
                           : emptyAgentResponse
-                            ? "Agent 未返回可显示的处理结果。"
+                            ? agentMessageReason && agentMessageReason !== "empty_agent_message"
+                              ? `无法读取 Agent 执行记录（${agentMessageReason}），本次没有可显示的处理结果。`
+                              : "Agent 未返回可显示的处理结果。"
                           : gateFailed
                             ? "The Candidate was blocked by the trusted project diff gate."
                             : "The Run did not pass isolated verification or Candidate publication.",
@@ -635,6 +675,42 @@ jobs:
                     }
                     fs.writeFileSync("callback.json", JSON.stringify(body));
                   '
+                  DELIVERED=0
+                  if [ -n "$TRUSTED_REPORTER" ]; then
+                    if CALLBACK_URL="$CALLBACK_URL" \
+                      FEEDBACK_CALLBACK_TOKEN="$FEEDBACK_CALLBACK_TOKEN" \
+                      "$TRUSTED_NODE" "$TRUSTED_REPORTER" deliver .; then
+                      DELIVERED=1
+                    fi
+                  fi
+                  if [ "$DELIVERED" -eq 1 ]; then exit 0; fi
+                  # LAST_RESORT_TERMINAL_DELIVERY: a Run with no terminal callback
+                  # hangs until the wait expires, so the terminal goes out even when
+                  # the reporter is missing or gave up. The Worker is idempotent on
+                  # eventId, so a duplicate here is answered with 200.
                   CALLBACK_URL="$CALLBACK_URL" \
                     FEEDBACK_CALLBACK_TOKEN="$FEEDBACK_CALLBACK_TOKEN" \
-                    "$TRUSTED_NODE" "$TRUSTED_REPORTER" deliver .
+                    "$TRUSTED_NODE" -e '
+                      const body = require("fs").readFileSync("callback.json", "utf8");
+                      const send = async () => {
+                        const response = await fetch(process.env.CALLBACK_URL, {
+                          method: "POST",
+                          headers: {
+                            Authorization: `Bearer ${process.env.FEEDBACK_CALLBACK_TOKEN}`,
+                            "Content-Type": "application/json",
+                          },
+                          body,
+                          signal: AbortSignal.timeout(10_000),
+                        });
+                        return response.ok;
+                      };
+                      (async () => {
+                        for (const delay of [0, 5_000, 15_000, 45_000]) {
+                          if (delay) await new Promise((resume) => setTimeout(resume, delay));
+                          try {
+                            if (await send()) return;
+                          } catch {}
+                        }
+                        process.exitCode = 1;
+                      })();
+                    '
