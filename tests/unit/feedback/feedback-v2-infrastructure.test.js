@@ -25,6 +25,19 @@ function readWorkflowJob(workflow, jobName) {
     return lines.slice(jobStart, nextJob < 0 ? undefined : nextJob).join('\n');
 }
 
+function readWorkflowStep(workflow, stepName) {
+    const lines = workflow.split(/\r?\n/);
+    const headerPattern = new RegExp(`^(\\s*)- name: ${stepName}\\s*$`);
+    const stepStart = lines.findIndex((line) => headerPattern.test(line));
+    if (stepStart < 0) return '';
+
+    const indent = lines[stepStart].match(headerPattern)[1];
+    const nextStep = lines.findIndex(
+        (line, index) => index > stepStart && line.startsWith(`${indent}- name:`)
+    );
+    return lines.slice(stepStart, nextStep < 0 ? undefined : nextStep).join('\n');
+}
+
 describe('[SCN-FWB-018] feedback V2 Worker infrastructure', () => {
     it('pins Wrangler and exposes explicit local, remote, and dry-run commands', () => {
         const packageJson = JSON.parse(readProjectFile('package.json'));
@@ -128,10 +141,14 @@ describe('[SCN-FWB-018] feedback V2 Worker infrastructure', () => {
 
     it('exports a deterministic Workflow entrypoint that persists through its D1 binding', () => {
         const workerSource = readProjectFile('workers/share-worker.js');
+        // Anchor on a closing brace at column 0, tolerating CRLF: a Windows
+        // checkout stores this file with \r\n, and an \n-only anchor silently
+        // extracts an empty string, which passes `not.toContain` for free.
         const workflowSource =
             workerSource.match(
-                /export class FeedbackWorkflow extends WorkflowEntrypoint[\s\S]*?\n}\n/
+                /export class FeedbackWorkflow extends WorkflowEntrypoint[\s\S]*?\r?\n}\r?\n/
             )?.[0] || '';
+        expect(workflowSource, 'FeedbackWorkflow class source must be extractable').not.toBe('');
 
         expect(workerSource).toContain("import { WorkflowEntrypoint } from 'cloudflare:workers';");
         expect(workflowSource).toContain(
@@ -300,6 +317,44 @@ describe('[SCN-FWB-022] feedback V2 autonomous delivery infrastructure', () => {
             ).toHaveLength(2);
             expect(workflow).not.toContain('for delay in 0 5 15 45');
         }
+    });
+
+    it('[SCN-FWB-006] delivers a terminal callback even without the trusted reporter', () => {
+        for (const provider of ['codex', 'claude']) {
+            const workflow = readProjectFile(`.github/workflows/feedback-agent-${provider}.yml`);
+            const completion = readWorkflowStep(workflow, 'Report completion');
+
+            expect(completion).not.toBe('');
+            // A Run that cannot reach a terminal callback hangs until the wait
+            // expires, so the terminal must not depend on a checkout the job may
+            // not have. Reporter extraction moves to its own tolerated step.
+            expect(completion).not.toContain('git show');
+            expect(workflow).toContain('name: Resolve trusted reporter');
+            expect(readWorkflowStep(workflow, 'Resolve trusted reporter')).toContain(
+                'continue-on-error: true'
+            );
+            expect(completion).toContain('TRUSTED_REPORTER: ${{ steps.reporter.outputs.path }}');
+            // Unsanitized evidence is never published, and the terminal still goes out.
+            expect(completion).toContain('LAST_RESORT_TERMINAL_DELIVERY');
+            expect(workflow).not.toContain('for delay in 0 5 15 45');
+        }
+    });
+
+    it('[SCN-FWB-010] separates a missing Agent execution record from an empty reply', () => {
+        const codex = readProjectFile('.github/workflows/feedback-agent-codex.yml');
+        const claude = readProjectFile('.github/workflows/feedback-agent-claude.yml');
+
+        for (const workflow of [codex, claude]) {
+            // Reading the Agent transcript can break on its own (renamed Action
+            // output, missing file). Silently reporting that as "the Agent said
+            // nothing" makes every Run fail with no way to tell why.
+            expect(workflow).toContain('agent-final-reason.txt');
+            expect(workflow).toContain('::warning');
+            // The reason has to reach the summary the user reads, not just the log.
+            expect(readWorkflowStep(workflow, 'Report completion')).toContain('agentMessageReason');
+        }
+        expect(claude).toContain('missing_execution_file');
+        expect(codex).toContain('missing_output_file');
     });
 
     it('[SCN-FWB-010] never renders an operational event as an empty Agent result', () => {

@@ -1539,6 +1539,12 @@ async function uploadFeedbackVisualEvidence(env, issueId, artifact, createdAt) {
     if (!FEEDBACK_INLINE_ATTACHMENT_TYPES.has(contentType)) {
         throw feedbackStorageError('INVALID_FEEDBACK_ATTACHMENT');
     }
+    // Truncating an oversized data URL would store a corrupted image under a
+    // name and size the timeline then presents as real evidence.
+    const dataUrl = String(artifact.dataUrl);
+    if (dataUrl.length > MAX_FEEDBACK_BYTES) {
+        throw feedbackStorageError('INVALID_FEEDBACK_ATTACHMENT');
+    }
 
     const [uploaded] = await uploadFeedbackAttachments(
         env,
@@ -1547,7 +1553,7 @@ async function uploadFeedbackVisualEvidence(env, issueId, artifact, createdAt) {
             {
                 name: limitText(artifact.name, 160) || 'visual-evidence.png',
                 type: contentType,
-                dataUrl: limitText(artifact.dataUrl, MAX_FEEDBACK_BYTES),
+                dataUrl,
             },
         ],
         createdAt
@@ -4856,11 +4862,16 @@ async function appendFeedbackCallbackEvent(env, runId, body) {
     if (visualEvidence) {
         const attachment = visualEvidence.uploaded;
         statements.push(
+            // The attachment belongs to the timeline event. If that event lost
+            // its race the object is deleted, so the row must not outlive it.
             env.FEEDBACK_DB.prepare(
                 `INSERT INTO feedback_attachments (
                     id, issue_id, name, content_type, size, sha256, object_key,
                     legacy_kv_key, legacy_attachment_index, scan_status, created_at, expires_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'pending', ?, ?)`
+                ) SELECT ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'pending', ?, ?
+                  WHERE EXISTS (
+                      SELECT 1 FROM feedback_events WHERE id = ? AND issue_id = ?
+                  )`
             ).bind(
                 attachment.id,
                 run.issue_id,
@@ -4870,7 +4881,9 @@ async function appendFeedbackCallbackEvent(env, runId, body) {
                 attachment.sha256,
                 attachment.objectKey,
                 callback.occurredAt,
-                new Date(Date.now() + FEEDBACK_TTL_SECONDS * 1000).toISOString()
+                new Date(Date.now() + FEEDBACK_TTL_SECONDS * 1000).toISOString(),
+                eventId,
+                run.issue_id
             )
         );
     }
@@ -6944,6 +6957,32 @@ async function readStoredFeedbackCommentResult(env, issueId, eventId) {
 }
 
 /**
+ * Replays the tail of an already-stored comment.
+ *
+ * A stored comment is not yet a dispatched comment: the write and the dispatch
+ * are separate steps, so an attempt that died in between leaves an event with
+ * no delivery, no Run and nothing for the reconcile sweep to find. Dispatch is
+ * idempotent on `issueId:event:eventId` (§13.1), so finishing it here is safe
+ * for a genuine duplicate and repairs the lost one.
+ */
+async function completeStoredFeedbackComment(env, issueId, eventId, stored) {
+    return {
+        duplicate: true,
+        issue: await readD1FeedbackIssue(env, issueId),
+        eventId,
+        ...stored,
+        workflowTermination: null,
+        delivery: await dispatchFeedbackEvent(env, {
+            eventId,
+            eventType: 'comment.created',
+            issueId,
+            bypassQuota: stored.mode === 'resume',
+            orchestrate: stored.mode === 'resume',
+        }),
+    };
+}
+
+/**
  * Appends a public comment event and returns the refreshed issue.
  *
  * Actor rules follow §21.3: an owner may only record; the wake path is limited
@@ -6969,14 +7008,7 @@ async function appendFeedbackComment(
         : `evt_${crypto.randomUUID()}`;
     const existing = await readStoredFeedbackCommentResult(env, issueId, commentEventId);
     if (existing) {
-        return {
-            duplicate: true,
-            issue: await readD1FeedbackIssue(env, issueId),
-            eventId: commentEventId,
-            ...existing,
-            workflowTermination: null,
-            delivery: null,
-        };
+        return completeStoredFeedbackComment(env, issueId, commentEventId, existing);
     }
 
     const issue = await readFeedbackIssue(env, issueId);
@@ -7165,14 +7197,7 @@ async function appendFeedbackComment(
     if (!results[commentInsertIndex]?.results?.[0]) {
         const duplicate = await readStoredFeedbackCommentResult(env, issueId, commentEventId);
         if (!duplicate) throw feedbackStorageError('FEEDBACK_VERSION_CONFLICT');
-        return {
-            duplicate: true,
-            issue: await readD1FeedbackIssue(env, issueId),
-            eventId: commentEventId,
-            ...duplicate,
-            workflowTermination: null,
-            delivery: null,
-        };
+        return completeStoredFeedbackComment(env, issueId, commentEventId, duplicate);
     }
     if (!results[results.length - 1]?.results?.[0]) {
         throw feedbackStorageError('FEEDBACK_VERSION_CONFLICT');
