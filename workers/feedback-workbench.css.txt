@@ -971,6 +971,45 @@ main {
     font-weight: 600;
 }
 
+.reply-attachments {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 10px;
+    flex-wrap: wrap;
+}
+
+.attachment-picker {
+    min-height: 30px;
+    padding: 5px 10px;
+    cursor: pointer;
+}
+
+.reply-attachment-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.reply-attachment-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    max-width: 100%;
+    padding: 4px 8px;
+    border: 1px solid var(--line, #d9e0e7);
+    border-radius: 6px;
+    color: var(--ink, #27313b);
+    font-size: 12px;
+}
+
+.reply-attachment-chip strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .reply-success {
     display: none;
     align-items: center;

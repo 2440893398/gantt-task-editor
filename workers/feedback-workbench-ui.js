@@ -24,6 +24,8 @@ const ICONS = {
     refresh:
         '<path d="M20 6v5h-5M4 18v-5h5"></path><path d="M18.5 9a7 7 0 0 0-12-2L4 11m16 2-2.5 4a7 7 0 0 1-12-2"></path>',
     account: '<circle cx="12" cy="8" r="4"></circle><path d="M4 21a8 8 0 0 1 16 0"></path>',
+    attachment:
+        '<path d="M21.44 11.05 12.25 20.24a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 1 1-2.82-2.83l8.49-8.48"></path>',
     search: '<circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path>',
     check: '<path d="m5 12 4 4L19 6"></path>',
     chevron: '<path d="m6 9 6 6 6-6"></path>',
@@ -252,6 +254,21 @@ function issueMain() {
                             placeholder="补充信息、确认方案，或 @ Codex Agent 继续处理…"
                         ></textarea>
                         <div class="comment-body" id="replyPreview" hidden></div>
+                        <div class="reply-attachments">
+                            <label class="button attachment-picker" for="replyAttachments">
+                                ${icon('attachment', 15)}
+                                <span>添加附件</span>
+                            </label>
+                            <input
+                                id="replyAttachments"
+                                type="file"
+                                accept="image/*,.pdf,.txt,.log,.json,.csv"
+                                multiple
+                                hidden
+                            />
+                            <span class="help" id="replyAttachmentSummary">最多 5 个，单个不超过 4 MiB</span>
+                        </div>
+                        <div class="reply-attachment-list" id="replyAttachmentList" hidden></div>
                         <div class="composer-actions">
                             <select class="reply-mode" id="replyMode" aria-label="回复后的动作"></select>
                             <div class="inline" style="gap: 9px">

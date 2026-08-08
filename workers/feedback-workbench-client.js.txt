@@ -16,7 +16,7 @@
         needs_human: '等待你的回复',
         ready_for_deploy: '待交付',
         resolved: '已解决',
-        closed: '已关闭'
+        closed: '已关闭',
     };
     var STATUS_TONES = {
         open: '',
@@ -27,14 +27,14 @@
         needs_human: 'orange',
         ready_for_deploy: 'orange',
         resolved: 'green',
-        closed: ''
+        closed: '',
     };
     var BUSINESS_TYPE_LABELS = {
         bug: 'Bug',
         improvement: '体验优化',
         requirement: '需求',
         other: '其他',
-        unclear: '待分类'
+        unclear: '待分类',
     };
     var PRIORITY_LABELS = { low: '低', medium: '中', high: '高', urgent: '紧急' };
     var SCOPE_LABELS = { small: '小', medium: '中', large: '大', unclear: '待评估' };
@@ -44,7 +44,7 @@
         'issue.created': '新反馈创建后立即分流',
         'comment.created': '用户补充或 @处理者',
         'issue.reopened': '已解决问题重新打开',
-        'status.changed': '用于外部通知和同步'
+        'status.changed': '用于外部通知和同步',
     };
     var TERMINAL_STATUSES = ['resolved', 'closed'];
     var FIELD_LABELS = {
@@ -55,13 +55,13 @@
         'ai.businessType': '类型',
         'ai.scope': '范围',
         'ai.automationDecision': '处理决策',
-        'ai.confidence': '分类置信度'
+        'ai.confidence': '分类置信度',
     };
     var EVENT_FALLBACK_TEXT = {
         'issue.updated': '更新了 Issue 信息',
         'issue.reopened': '重新打开了这条反馈',
         'classification.changed': '更新了 AI 分类',
-        'status.changed': '更新了状态'
+        'status.changed': '更新了状态',
     };
     var ICON_CHECK =
         '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m5 12 4 4L19 6"></path></svg>';
@@ -69,7 +69,7 @@
         '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v4m0 4h.01"></path></svg>';
     var PROVIDER_ICONS = {
         codex: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 5h16v14H4z"></path><path d="m8 10 2 2-2 2m4 0h4"></path></svg>',
-        claude: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M8 12h8M12 8v8"></path></svg>'
+        claude: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M8 12h8M12 8v8"></path></svg>',
     };
     var ICON_ATTACHMENT =
         '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="m7 15 3-3 3 3 2-2 3 3"></path></svg>';
@@ -97,7 +97,14 @@
         runnersDirty: false,
         health: null,
         submitting: false,
-        replyRequestId: ''
+        replyRequestId: '',
+        replyMode: '',
+        replyAttachments: [],
+        selectionGeneration: 0,
+        attachmentAccessExpiresAt: 0,
+        syncUnsupported: false,
+        pollHandle: 0,
+        pollInFlight: false,
     };
 
     /* ---------------------------------------------------------------- utils */
@@ -220,7 +227,7 @@
         return fetch(API + path, {
             method: settings.method || 'GET',
             headers: headers,
-            body: settings.body === undefined ? undefined : JSON.stringify(settings.body)
+            body: settings.body === undefined ? undefined : JSON.stringify(settings.body),
         }).then(function (response) {
             return response
                 .json()
@@ -471,12 +478,26 @@
               ? '需要你补充信息'
               : event.type === 'artifact.created'
                 ? '发布了验证证据'
-              : isAgent
-                ? '发布了处理结果'
-                : '回复了';
+                : isAgent
+                  ? '发布了处理结果'
+                  : '回复了';
+        var commentAttachmentIds = {};
+        (state.events || []).forEach(function (timelineEvent) {
+            (timelineEvent.attachments || []).forEach(function (attachment) {
+                commentAttachmentIds[attachment.id] = true;
+            });
+        });
+        var creationAttachments =
+            issue && issue.attachments
+                ? issue.attachments.filter(function (attachment) {
+                      return !commentAttachmentIds[attachment.id];
+                  })
+                : [];
         var bodyHtml = isCreation
-            ? paragraphs(issue && issue.description) + attachmentsHtml(issue)
-            : paragraphs(event.text || event.title);
+            ? paragraphs(issue && issue.description) +
+              attachmentsHtml({ attachments: creationAttachments })
+            : paragraphs(event.text || event.title) +
+              attachmentsHtml({ attachments: event.attachments });
         var evidenceHtml =
             resultEvidenceHtml(event.resultEvidence) + artifactEvidenceHtml(event.artifact);
         var visibleBodyHtml = bodyHtml || paragraphs(eventStatusText(event));
@@ -516,10 +537,10 @@
             'run.completed': '处理任务已完成，请核对下方结果与验证证据。',
             'run.failed': '处理任务未完成，请查看下方失败原因与验证结果。',
             'agent.message': '处理者未返回可显示的回复。',
-            'waiting_human': '处理暂停，需要你补充信息后才能继续。',
+            waiting_human: '处理暂停，需要你补充信息后才能继续。',
             'artifact.created': '已保存本次处理的验证证据。',
             'automation.suppressed': '本次自动处理被规则或配额阻止。',
-            'security.blocked': '本次操作被安全策略阻止。'
+            'security.blocked': '本次操作被安全策略阻止。',
         };
         return labels[event.type] || EVENT_FALLBACK_TEXT[event.type] || '该事件已记录。';
     }
@@ -557,11 +578,13 @@
         var visual = verification.visualEvidence || {};
         var hasRequiredVerification = Boolean(
             (verification.targetedTests || {}).required ||
-                (verification.build || {}).required ||
-                (verification.playwright || {}).required
+            (verification.build || {}).required ||
+            (verification.playwright || {}).required
         );
         var changeMeta = value.changeCommit
-            ? '<span>候选提交 <code>' + escapeHtml(String(value.changeCommit).slice(0, 12)) + '</code></span>'
+            ? '<span>候选提交 <code>' +
+              escapeHtml(String(value.changeCommit).slice(0, 12)) +
+              '</code></span>'
             : '';
         var fileHtml = files.length
             ? '<div class="result-files"><strong>变更文件（' +
@@ -746,37 +769,37 @@
                     statusTone(issue.status) +
                     '">' +
                     escapeHtml(statusLabel(issue.status)) +
-                    '</span>'
+                    '</span>',
             ],
             [
                 '处理者',
                 '<span class="property-value">' +
                     escapeHtml(issue.assignee || '未指派') +
-                    '</span>'
+                    '</span>',
             ],
             [
                 '优先级',
                 '<span class="property-value">' +
                     escapeHtml(PRIORITY_LABELS[issue.priority] || issue.priority || '中') +
-                    '</span>'
+                    '</span>',
             ],
             [
                 '类型',
                 '<span class="property-value badge blue">' +
                     escapeHtml(BUSINESS_TYPE_LABELS[issue.businessType] || '待分类') +
-                    '</span>'
+                    '</span>',
             ],
             [
                 '范围',
                 '<span class="property-value">' +
                     escapeHtml(SCOPE_LABELS[issue.scope] || '待评估') +
-                    '</span>'
-            ]
+                    '</span>',
+            ],
         ];
         if (issue.pagePath) {
             rows.push([
                 '页面',
-                '<span class="property-value">' + escapeHtml(issue.pagePath) + '</span>'
+                '<span class="property-value">' + escapeHtml(issue.pagePath) + '</span>',
             ]);
         }
 
@@ -909,7 +932,7 @@
             ready_for_deploy: '批准并交付',
             needs_human: '仍需补充',
             closed: '关闭 Issue',
-            open: '退回待处理'
+            open: '退回待处理',
         };
         return labels[nextState] || statusLabel(nextState);
     }
@@ -923,7 +946,7 @@
             test_failed: '验证失败，等待处理',
             ready_for_deploy: '等待交付',
             resolved: '已解决',
-            closed: '已关闭'
+            closed: '已关闭',
         };
         return headlines[status] || statusLabel(status);
     }
@@ -937,7 +960,7 @@
             test_failed: '验证未通过，失败日志保留在时间线内供排查。',
             ready_for_deploy: '候选实现已批准，等待干净集成与部署。',
             resolved: '问题已解决。若仍有问题，可重新打开。',
-            closed: '该 Issue 已关闭。若仍有问题，可重新打开。'
+            closed: '该 Issue 已关闭。若仍有问题，可重新打开。',
         };
         return details[status] || '';
     }
@@ -959,7 +982,6 @@
 
     function renderComposer() {
         var issue = state.issue;
-        state.replyRequestId = '';
         setHidden($('composer'), !issue || state.actor === 'anonymous');
         if (!issue) return;
 
@@ -971,30 +993,35 @@
         if (!isAdmin && canResume) {
             options.push({
                 value: 'resume',
-                label: '回复并交给 ' + defaultProviderLabel() + ' 继续处理'
+                label: '回复并交给 ' + defaultProviderLabel() + ' 继续处理',
             });
         }
         options.push({ value: 'record', label: '仅记录回复，暂不触发' });
         if (isAdmin && canResume) {
             options.push({
                 value: 'resume',
-                label: '回复并交给 ' + defaultProviderLabel() + ' 继续处理'
+                label: '回复并交给 ' + defaultProviderLabel() + ' 继续处理',
             });
         }
         if (isAdmin && !isTerminal) options.push({ value: 'close', label: '回复并关闭 Issue' });
 
         var select = $('replyMode');
+        var selectedMode = state.replyMode || select.value;
         select.innerHTML = options
             .map(function (option) {
                 return (
-                    '<option value="' +
-                    option.value +
-                    '">' +
-                    escapeHtml(option.label) +
-                    '</option>'
+                    '<option value="' + option.value + '">' + escapeHtml(option.label) + '</option>'
                 );
             })
             .join('');
+        if (
+            options.some(function (option) {
+                return option.value === selectedMode;
+            })
+        ) {
+            select.value = selectedMode;
+        }
+        state.replyMode = select.value;
 
         $('mentionBar').innerHTML = isAdmin
             ? '<button class="mention-button" type="button" data-mention="@codex-agent">@ Codex Agent</button>' +
@@ -1004,7 +1031,63 @@
               ? '<span class="mention-hint">回复会恢复当前等待中的处理任务</span>'
               : '<span class="mention-hint">你的回复会记录在时间线上</span>';
 
+        renderReplyAttachments();
         updateRouteHint();
+    }
+
+    function renderReplyAttachments() {
+        var list = $('replyAttachmentList');
+        var summary = $('replyAttachmentSummary');
+        if (!list || !summary) return;
+        if (!state.replyAttachments.length) {
+            list.innerHTML = '';
+            setHidden(list, true);
+            summary.textContent = '最多 5 个，单个不超过 4 MiB';
+            return;
+        }
+        setHidden(list, false);
+        list.innerHTML = state.replyAttachments
+            .map(function (attachment) {
+                return (
+                    '<span class="reply-attachment-chip"><strong>' +
+                    escapeHtml(attachment.name) +
+                    '</strong><span>' +
+                    formatBytes(attachment.size) +
+                    '</span></span>'
+                );
+            })
+            .join('');
+        if (
+            options.some(function (option) {
+                return option.value === selectedMode;
+            })
+        ) {
+            select.value = selectedMode;
+        }
+        summary.textContent = state.replyAttachments.length + ' 个附件已选';
+    }
+
+    function readReplyAttachment(file) {
+        return new Promise(function (resolve, reject) {
+            var reader = new FileReader();
+            reader.onload = function () {
+                resolve({
+                    name: file.name,
+                    type: file.type || 'application/octet-stream',
+                    size: file.size,
+                    dataUrl: reader.result,
+                });
+            };
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+        });
+    }
+
+    function estimatedReplyAttachmentBytes(files) {
+        return files.reduce(function (total, file) {
+            var dataUrlPrefix = 'data:' + (file.type || 'application/octet-stream') + ';base64,';
+            return total + new Blob([file.name, dataUrlPrefix]).size + Math.ceil(file.size / 3) * 4;
+        }, 0);
     }
 
     function defaultProviderLabel() {
@@ -1023,7 +1106,9 @@
 
         if (mode !== 'resume') {
             $('replyRouteHint').textContent =
-                mode === 'close' ? '提交后写入回复并关闭 Issue，不唤醒处理者。' : '仅写入时间线，不唤醒处理者。';
+                mode === 'close'
+                    ? '提交后写入回复并关闭 Issue，不唤醒处理者。'
+                    : '仅写入时间线，不唤醒处理者。';
             return;
         }
 
@@ -1033,49 +1118,145 @@
             '提交后将唤醒 ' + label + ' ' + source + '，策略由 Issue 分类决定，不由回复内容指定。';
     }
 
+    function applyIssueSnapshot(payload, generation) {
+        if (!payload || (generation && generation !== state.selectionGeneration)) return;
+        var issue = payload.issue || {};
+        // Admin detail nests workflow fields; flatten to one shape.
+        state.issue = issue.workflow
+            ? {
+                  key: issue.key,
+                  title: issue.title,
+                  description: issue.description,
+                  receivedAt: issue.receivedAt,
+                  version: issue.version || payload.version,
+                  attachments: issue.attachments || [],
+                  businessType: (issue.ai || {}).businessType,
+                  scope: (issue.ai || {}).scope,
+                  status: issue.workflow.status,
+                  priority: issue.workflow.priority,
+                  assignee: issue.workflow.assignee,
+                  updatedAt: issue.workflow.updatedAt,
+                  pagePath: safePagePath((issue.context || {}).url),
+              }
+            : issue;
+        if (!state.issue.version) state.issue.version = payload.version;
+        state.events = payload.events || [];
+        state.humanAction =
+            (payload.humanActions || []).filter(function (action) {
+                return action.status === 'active';
+            })[0] || null;
+        state.designs = payload.designs || [];
+        state.candidates = payload.candidates || [];
+        state.releases = payload.releases || [];
+        if (payload.attachmentAccessExpiresAt) {
+            state.attachmentAccessExpiresAt = Date.parse(payload.attachmentAccessExpiresAt) || 0;
+        }
+        renderIssueDetail();
+    }
+
     function selectIssue(key) {
+        if (key !== state.selectedKey) {
+            state.replyRequestId = '';
+            state.replyMode = '';
+            state.attachmentAccessExpiresAt = 0;
+            state.syncUnsupported = false;
+        }
         state.selectedKey = key;
+        var generation = ++state.selectionGeneration;
         renderIssueList();
-        return Promise.all([
-            request('/api/feedback/issues/' + encodeURIComponent(key)),
-            request('/api/feedback/issues/' + encodeURIComponent(key) + '/events'),
-            request('/api/feedback/issues/' + encodeURIComponent(key) + '/human-actions'),
-            request('/api/feedback/issues/' + encodeURIComponent(key) + '/designs'),
-            request('/api/feedback/issues/' + encodeURIComponent(key) + '/candidates'),
-            request('/api/feedback/issues/' + encodeURIComponent(key) + '/releases')
-        ])
-            .then(function (results) {
-                var issue = results[0].issue || {};
-                // Admin detail nests workflow fields; flatten to one shape.
-                state.issue = issue.workflow
-                    ? {
-                          key: issue.key,
-                          title: issue.title,
-                          description: issue.description,
-                          receivedAt: issue.receivedAt,
-                          version: issue.version,
-                          attachments: issue.attachments || [],
-                          businessType: (issue.ai || {}).businessType,
-                          scope: (issue.ai || {}).scope,
-                          status: issue.workflow.status,
-                          priority: issue.workflow.priority,
-                          assignee: issue.workflow.assignee,
-                          updatedAt: issue.workflow.updatedAt,
-                          pagePath: safePagePath((issue.context || {}).url)
-                      }
-                    : issue;
-                if (!state.issue.version) state.issue.version = results[1].version;
-                state.events = results[1].events || [];
-                state.humanAction =
-                    (results[2].humanActions || []).filter(function (action) {
-                        return action.status === 'active';
-                    })[0] || null;
-                state.designs = results[3].designs || [];
-                state.candidates = results[4].candidates || [];
-                state.releases = results[5].releases || [];
-                renderIssueDetail();
+        var base = '/api/feedback/issues/' + encodeURIComponent(key);
+        return request(base + '/snapshot')
+            .then(function (payload) {
+                applyIssueSnapshot(payload, generation);
+                startAutoRefresh();
+                return payload;
             })
-            .catch(handleAuthError);
+            .catch(function (error) {
+                // Older Workers can still serve the six sub-resource routes;
+                // retain a compatibility fallback while the new endpoint rolls out.
+                if (error && error.status === 404) {
+                    return Promise.all([
+                        request(base),
+                        request(base + '/events'),
+                        request(base + '/human-actions'),
+                        request(base + '/designs'),
+                        request(base + '/candidates'),
+                        request(base + '/releases'),
+                    ]).then(function (results) {
+                        applyIssueSnapshot(
+                            {
+                                issue: results[0].issue,
+                                events: results[1].events,
+                                version: results[1].version,
+                                humanActions: results[2].humanActions,
+                                designs: results[3].designs,
+                                candidates: results[4].candidates,
+                                releases: results[5].releases,
+                            },
+                            generation
+                        );
+                        startAutoRefresh();
+                        return null;
+                    });
+                }
+                handleAuthError(error);
+                return null;
+            });
+    }
+
+    function pollCurrentIssue() {
+        if (
+            state.pollInFlight ||
+            !state.issue ||
+            !state.selectedKey ||
+            state.syncUnsupported ||
+            document.hidden ||
+            !navigator.onLine ||
+            state.submitting
+        ) {
+            return Promise.resolve(null);
+        }
+        state.pollInFlight = true;
+        var generation = state.selectionGeneration;
+        var base = '/api/feedback/issues/' + encodeURIComponent(state.selectedKey);
+        var version = state.issue.version || 0;
+        var attachmentAccessExpired =
+            state.attachmentAccessExpiresAt > 0 &&
+            state.attachmentAccessExpiresAt <= Date.now() + 30 * 1000;
+        var syncPath = attachmentAccessExpired
+            ? base + '/sync'
+            : base + '/sync?version=' + encodeURIComponent(version);
+        return request(syncPath)
+            .then(function (payload) {
+                if (generation !== state.selectionGeneration) return payload;
+                if (payload && payload.changed) {
+                    applyIssueSnapshot(payload, generation);
+                    if (state.actor === 'admin') return loadIssues();
+                }
+                return payload;
+            })
+            .catch(function (error) {
+                if (error && error.status === 401) stopAutoRefresh();
+                if (error && error.status === 404) {
+                    state.syncUnsupported = true;
+                    stopAutoRefresh();
+                }
+                return null;
+            })
+            .finally(function () {
+                state.pollInFlight = false;
+            });
+    }
+
+    function stopAutoRefresh() {
+        if (state.pollHandle) window.clearInterval(state.pollHandle);
+        state.pollHandle = 0;
+    }
+
+    function startAutoRefresh() {
+        stopAutoRefresh();
+        if (state.syncUnsupported || !navigator.onLine) return;
+        state.pollHandle = window.setInterval(pollCurrentIssue, 8000);
     }
 
     function renderIssueDetail() {
@@ -1099,13 +1280,13 @@
         integrating: '集成中',
         integrated: '已集成',
         failed: '失败',
-        abandoned: '已被替代'
+        abandoned: '已被替代',
     };
     var DESIGN_STATUS_LABELS = {
         awaiting_decision: '等待确认',
         approved: '已批准',
         revision_requested: '需要修订',
-        rejected: '已拒绝'
+        rejected: '已拒绝',
     };
     var RELEASE_STATUS_LABELS = {
         created: '已创建',
@@ -1115,13 +1296,13 @@
         smoke_testing: '生产验证中',
         succeeded: '交付完成',
         failed: '交付失败',
-        cancelled: '已取消'
+        cancelled: '已取消',
     };
     var RELEASE_STAGE_LABELS = {
         'integration.merged': '合并到默认分支',
         'integration.verification_completed': '集成后验证',
         'deployment.completed': '部署完成',
-        'smoke.completed': '生产 smoke'
+        'smoke.completed': '生产 smoke',
     };
 
     /* §16.4/§19.2: Design data is rendered from the versioned resource, not
@@ -1205,7 +1386,12 @@
         $('candidateBadge').textContent =
             CANDIDATE_STATUS_LABELS[candidate.status] || candidate.status;
         $('candidateBadge').className =
-            'badge ' + (candidate.status === 'integrated' ? 'green' : candidate.status === 'failed' ? 'red' : 'blue');
+            'badge ' +
+            (candidate.status === 'integrated'
+                ? 'green'
+                : candidate.status === 'failed'
+                  ? 'red'
+                  : 'blue');
 
         var files = candidate.changedFiles || [];
         var verification = candidate.verification || {};
@@ -1225,11 +1411,17 @@
                   files
                       .slice(0, 8)
                       .map(function (file) {
-                          return '<div class="evidence-item"><strong>' + escapeHtml(file) + '</strong></div>';
+                          return (
+                              '<div class="evidence-item"><strong>' +
+                              escapeHtml(file) +
+                              '</strong></div>'
+                          );
                       })
                       .join('') +
                   (files.length > 8
-                      ? '<div class="evidence-item"><span>其余 ' + (files.length - 8) + ' 个文件</span></div>'
+                      ? '<div class="evidence-item"><span>其余 ' +
+                        (files.length - 8) +
+                        ' 个文件</span></div>'
                       : '') +
                   '</div>'
                 : '') +
@@ -1259,7 +1451,11 @@
         $('releaseBadge').textContent = RELEASE_STATUS_LABELS[release.status] || release.status;
         $('releaseBadge').className =
             'badge ' +
-            (release.status === 'succeeded' ? 'green' : release.status === 'failed' ? 'red' : 'blue');
+            (release.status === 'succeeded'
+                ? 'green'
+                : release.status === 'failed'
+                  ? 'red'
+                  : 'blue');
 
         var stages = (release.stages || [])
             .map(function (item) {
@@ -1276,7 +1472,10 @@
         $('releaseBody').innerHTML =
             stages +
             statusLine('候选实现', release.candidateId) +
-            statusLine('集成提交', release.integrationCommit ? release.integrationCommit.slice(0, 12) : '尚未合并') +
+            statusLine(
+                '集成提交',
+                release.integrationCommit ? release.integrationCommit.slice(0, 12) : '尚未合并'
+            ) +
             statusLine(
                 '部署',
                 release.deploymentRequired ? release.deploymentTarget || '待定' : '本次无需部署'
@@ -1311,7 +1510,12 @@
             '签名密钥保存在 Worker Secret 中，工作台不显示也不保存明文。轮换请执行：' +
             settings.signing.rotationHint;
 
-        $('eventChecks').innerHTML = ['issue.created', 'comment.created', 'issue.reopened', 'status.changed']
+        $('eventChecks').innerHTML = [
+            'issue.created',
+            'comment.created',
+            'issue.reopened',
+            'status.changed',
+        ]
             .map(function (type) {
                 var checked = (settings.subscribedEvents || []).indexOf(type) !== -1;
                 return (
@@ -1343,13 +1547,15 @@
         var node = $('hookTestStatus');
         if (settings.connectionState === 'connected') {
             node.className = 'connection-status success';
-            node.innerHTML = ICON_CHECK + '已验证 · ' + escapeHtml(relativeTime(settings.lastTestedAt));
+            node.innerHTML =
+                ICON_CHECK + '已验证 · ' + escapeHtml(relativeTime(settings.lastTestedAt));
             return;
         }
         if (settings.connectionState === 'failed') {
             node.className = 'connection-status error';
             node.textContent =
-                '连接失败：' + ((settings.lastTestResult && settings.lastTestResult.errorCode) || '未知错误');
+                '连接失败：' +
+                ((settings.lastTestResult && settings.lastTestResult.errorCode) || '未知错误');
             return;
         }
         node.className = 'connection-status';
@@ -1439,8 +1645,7 @@
         }
 
         if (settings) {
-            $('automationExecutorName').textContent =
-                defaultProviderLabel() + ' · GitHub-hosted';
+            $('automationExecutorName').textContent = defaultProviderLabel() + ' · GitHub-hosted';
             $('automationExecutorState').textContent = state.runners
                 ? providerStateText(state.runners.providers[state.runners.defaultProvider])
                 : '前往「AI 执行器」查看连接状态';
@@ -1481,7 +1686,7 @@
 
         return Promise.all([
             request('/api/feedback/automation/settings'),
-            request('/api/feedback/automation/health')
+            request('/api/feedback/automation/health'),
         ])
             .then(function (results) {
                 state.automation = results[0].settings;
@@ -1508,7 +1713,9 @@
         if (provider.connectionState === 'testing') {
             return '冒烟运行中 · 等待 Action 回调';
         }
-        return provider.lastTestedAt ? '待验证 · 上次测试 ' + relativeTime(provider.lastTestedAt) : '待验证';
+        return provider.lastTestedAt
+            ? '待验证 · 上次测试 ' + relativeTime(provider.lastTestedAt)
+            : '待验证';
     }
 
     function setConnectionBadge(node, connectionState, fallback) {
@@ -1828,7 +2035,7 @@
             subscribedEvents: events,
             retryEnabled: readSwitch('[data-automation-switch="retryEnabled"]'),
             deadLetterEnabled: readSwitch('[data-automation-switch="deadLetterEnabled"]'),
-            dailyReconcileEnabled: readSwitch('[data-automation-switch="dailyReconcileEnabled"]')
+            dailyReconcileEnabled: readSwitch('[data-automation-switch="dailyReconcileEnabled"]'),
         };
     }
 
@@ -1839,7 +2046,7 @@
             resumeSameWorkflow: readSwitch('[data-runner-switch="resumeSameWorkflow"]'),
             callbackUrl: $('runnerCallbackUrl').value.trim(),
             providers: {
-                codex: { responsesEndpoint: endpointInput ? endpointInput.value.trim() : '' }
+                codex: { responsesEndpoint: endpointInput ? endpointInput.value.trim() : '' },
             },
             autoDeliver: {
                 enabled: readSwitch('[data-runner-switch="autoDeliverEnabled"]'),
@@ -1848,8 +2055,8 @@
                     .map(function (item) {
                         return item.trim();
                     })
-                    .filter(Boolean)
-            }
+                    .filter(Boolean),
+            },
         };
     }
 
@@ -2001,11 +2208,14 @@
     Array.prototype.forEach.call(document.querySelectorAll('.filter-chip'), function (chip) {
         chip.addEventListener('click', function () {
             state.filter = chip.dataset.filter;
-            Array.prototype.forEach.call(document.querySelectorAll('.filter-chip'), function (item) {
-                var isActive = item === chip;
-                item.classList.toggle('active', isActive);
-                item.setAttribute('aria-pressed', String(isActive));
-            });
+            Array.prototype.forEach.call(
+                document.querySelectorAll('.filter-chip'),
+                function (item) {
+                    var isActive = item === chip;
+                    item.classList.toggle('active', isActive);
+                    item.setAttribute('aria-pressed', String(isActive));
+                }
+            );
             loadIssues();
         });
     });
@@ -2058,7 +2268,7 @@
         fetch(API + '/api/feedback/admin/session', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ password: password })
+            body: JSON.stringify({ password: password }),
         })
             .then(function (response) {
                 if (!response.ok) throw new Error('密码不正确');
@@ -2091,11 +2301,45 @@
 
     $('replyMode').addEventListener('change', function () {
         state.replyRequestId = '';
+        state.replyMode = $('replyMode').value;
         updateRouteHint();
     });
     $('replyInput').addEventListener('input', function () {
         if (!state.submitting) state.replyRequestId = '';
         updateRouteHint();
+    });
+
+    $('replyAttachments').addEventListener('change', function (event) {
+        var files = Array.prototype.slice.call(event.target.files || []);
+        if (files.length > 5) {
+            toastTimer('最多选择 5 个附件');
+            event.target.value = '';
+            return;
+        }
+        var oversized = files.find(function (file) {
+            return file.size > 4 * 1024 * 1024;
+        });
+        if (oversized) {
+            toastTimer('单个附件不能超过 4 MiB');
+            event.target.value = '';
+            return;
+        }
+        if (estimatedReplyAttachmentBytes(files) > 18 * 1024 * 1024) {
+            toastTimer('回复和附件的总请求不能超过 18 MiB');
+            event.target.value = '';
+            return;
+        }
+        Promise.all(files.map(readReplyAttachment))
+            .then(function (attachments) {
+                state.replyAttachments = attachments;
+                renderReplyAttachments();
+            })
+            .catch(function () {
+                toastTimer('附件读取失败，请重试');
+                state.replyAttachments = [];
+                event.target.value = '';
+                renderReplyAttachments();
+            });
     });
 
     Array.prototype.forEach.call(document.querySelectorAll('[data-composer-tab]'), function (tab) {
@@ -2124,7 +2368,7 @@
 
         var input = $('replyInput');
         var body = input.value.trim();
-        if (!body) {
+        if (!body && !state.replyAttachments.length) {
             input.focus();
             toastTimer('请先填写回复内容');
             return;
@@ -2132,6 +2376,17 @@
 
         var mode = $('replyMode').value;
         var requestId = state.replyRequestId || createCommentRequestId();
+        var commentPayload = {
+            body: body,
+            mode: mode,
+            expectedVersion: state.issue.version,
+            requestId: requestId,
+            attachments: state.replyAttachments,
+        };
+        if (new Blob([JSON.stringify(commentPayload)]).size > 18 * 1024 * 1024) {
+            toastTimer('回复和附件的总请求不能超过 18 MiB');
+            return;
+        }
         state.replyRequestId = requestId;
         var submit = $('replySubmit');
         state.submitting = true;
@@ -2140,16 +2395,14 @@
 
         request('/api/feedback/issues/' + encodeURIComponent(state.issue.key) + '/comments', {
             method: 'POST',
-            body: {
-                body: body,
-                mode: mode,
-                expectedVersion: state.issue.version,
-                requestId: requestId
-            }
+            body: commentPayload,
         })
             .then(function (payload) {
                 state.replyRequestId = '';
                 input.value = '';
+                state.replyAttachments = [];
+                $('replyAttachments').value = '';
+                renderReplyAttachments();
                 setHidden($('replyPreview'), true);
                 input.style.display = '';
                 var success = $('replySuccess');
@@ -2166,7 +2419,10 @@
                 } else {
                     toastTimer('回复已发布，本次未触发处理者');
                 }
-                return Promise.all([selectIssue(state.issue.key), loadIssues()]);
+                return Promise.all([
+                    selectIssue(state.issue.key),
+                    state.actor === 'admin' ? loadIssues() : Promise.resolve(),
+                ]);
             })
             .catch(function (error) {
                 if (error && error.status === 409) {
@@ -2215,10 +2471,15 @@
         }
         state.submitting = true;
         button.disabled = true;
-        request('/api/feedback/human-actions/' + encodeURIComponent(button.dataset.humanAction) + '/respond', {
-            method: 'POST',
-            body: payload
-        })
+        request(
+            '/api/feedback/human-actions/' +
+                encodeURIComponent(button.dataset.humanAction) +
+                '/respond',
+            {
+                method: 'POST',
+                body: payload,
+            }
+        )
             .then(function (result) {
                 if (result && result.resumeState === 'pending') {
                     toastTimer('方案决定已记录；Workflow 恢复待重试');
@@ -2245,7 +2506,7 @@
         button.disabled = true;
         request('/api/feedback/issues/' + encodeURIComponent(state.issue.key) + '/reopen', {
             method: 'POST',
-            body: { expectedVersion: state.issue.version }
+            body: { expectedVersion: state.issue.version },
         })
             .then(function () {
                 toastTimer('Issue 已重新打开');
@@ -2376,8 +2637,8 @@
             method: 'PATCH',
             body: {
                 expectedVersion: state.automation.version,
-                settings: collectAutomationSettings()
-            }
+                settings: collectAutomationSettings(),
+            },
         })
             .then(function (payload) {
                 state.automation = payload.settings;
@@ -2440,7 +2701,9 @@
                     state.runners = error.payload.settings;
                     renderRunners();
                 }
-                var refreshedCard = document.querySelector('[data-provider-card="' + provider + '"]');
+                var refreshedCard = document.querySelector(
+                    '[data-provider-card="' + provider + '"]'
+                );
                 var refreshedStatus = refreshedCard.querySelector('[data-connection-status]');
                 refreshedStatus.className = 'connection-status error';
                 refreshedStatus.textContent = result.message || error.message || '连接测试失败';
@@ -2483,8 +2746,8 @@
             method: 'PATCH',
             body: {
                 expectedVersion: state.runners.version,
-                settings: collectRunnerSettings()
-            }
+                settings: collectRunnerSettings(),
+            },
         })
             .then(function (payload) {
                 state.runners = payload.settings;
@@ -2507,9 +2770,28 @@
 
     /* ------------------------------------------------------------------ boot */
 
+    document.addEventListener('visibilitychange', function () {
+        if (document.hidden) {
+            stopAutoRefresh();
+            return;
+        }
+        if (state.issue) {
+            startAutoRefresh();
+            pollCurrentIssue();
+        }
+    });
+    window.addEventListener('online', function () {
+        if (state.issue && !document.hidden) {
+            startAutoRefresh();
+            pollCurrentIssue();
+        }
+    });
+    window.addEventListener('offline', stopAutoRefresh);
+    window.__feedbackWorkbenchRefreshForTest = pollCurrentIssue;
+
     function refreshAll() {
         if (state.actor === 'admin') {
-            return Promise.all([loadIssues(), loadRunners(), loadAutomation()]);
+            return loadIssues();
         }
         if (state.actor === 'owner' && state.ownerIssueId) {
             return selectIssue(state.ownerIssueId);

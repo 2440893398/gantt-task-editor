@@ -92,6 +92,24 @@ const FEEDBACK_RUN_TIMEOUT_MINUTES = Object.freeze({
 // Must match `[triggers] crons` in wrangler.toml.
 const FEEDBACK_RECONCILE_CRON = '0 3 * * *';
 const MAX_FEEDBACK_COMMENT_LENGTH = 12000;
+const MAX_FEEDBACK_COMMENT_ATTACHMENTS = 5;
+const MAX_FEEDBACK_COMMENT_ATTACHMENT_SIZE = 4 * 1024 * 1024;
+// Comments are unbounded per issue, so the per-comment cap alone cannot bound
+// an issue's R2 footprint — the cumulative quota does.
+const MAX_FEEDBACK_ISSUE_ATTACHMENTS = 40;
+// Downloads already force attachment disposition for anything non-image, but
+// the workbench only promises images/PDF/plain-text supplements; declared or
+// data-URL types outside this list are rejected instead of stored. Files the
+// browser cannot classify arrive as application/octet-stream and are served
+// download-only.
+const FEEDBACK_COMMENT_ATTACHMENT_TYPES = new Set([
+    'application/json',
+    'application/octet-stream',
+    'application/pdf',
+    'text/csv',
+    'text/markdown',
+    'text/plain',
+]);
 const FEEDBACK_EVENT_SPEC_VERSION = '1.0';
 // §17.2: at most 4 attempts (1 initial + 3 retries at 1/5/15 minutes).
 const FEEDBACK_DELIVERY_MAX_ATTEMPTS = 4;
@@ -1446,7 +1464,7 @@ async function hydrateFeedbackContext(env, contextJson) {
     }
 }
 
-function decodeFeedbackAttachment(attachment) {
+function decodeFeedbackAttachment(attachment, maxBytes = MAX_FEEDBACK_BYTES) {
     const dataUrl = String(attachment.dataUrl || '');
     const commaIndex = dataUrl.indexOf(',');
     if (!dataUrl.startsWith('data:') || commaIndex < 0) {
@@ -1474,7 +1492,7 @@ function decodeFeedbackAttachment(attachment) {
         throw feedbackStorageError('INVALID_FEEDBACK_ATTACHMENT');
     }
 
-    if (bytes.byteLength > MAX_FEEDBACK_BYTES) {
+    if (bytes.byteLength > maxBytes) {
         throw feedbackStorageError('FEEDBACK_ATTACHMENT_TOO_LARGE');
     }
 
@@ -1482,6 +1500,42 @@ function decodeFeedbackAttachment(attachment) {
         bytes,
         contentType: dataUrlContentType || declaredContentType || 'application/octet-stream',
     };
+}
+
+function normalizeFeedbackCommentAttachments(rawAttachments = []) {
+    if (!Array.isArray(rawAttachments)) return [];
+    if (rawAttachments.length > MAX_FEEDBACK_COMMENT_ATTACHMENTS) {
+        throw feedbackStorageError('FEEDBACK_ATTACHMENTS_TOO_MANY');
+    }
+
+    return rawAttachments.map((item) => {
+        const attachment = item && typeof item === 'object' ? item : {};
+        const dataUrl = String(attachment.dataUrl || '');
+        if (!dataUrl || dataUrl.length > MAX_FEEDBACK_COMMENT_ATTACHMENT_SIZE * 2) {
+            throw feedbackStorageError('INVALID_FEEDBACK_ATTACHMENT');
+        }
+        const normalized = {
+            name: limitText(attachment.name, 160) || '附件',
+            type: limitText(attachment.type, 120) || 'application/octet-stream',
+            size: Number(attachment.size) || 0,
+            dataUrl,
+        };
+        const decoded = decodeFeedbackAttachment(normalized, MAX_FEEDBACK_COMMENT_ATTACHMENT_SIZE);
+        if (normalized.size && normalized.size !== decoded.bytes.byteLength) {
+            throw feedbackStorageError('INVALID_FEEDBACK_ATTACHMENT');
+        }
+        const contentType = String(decoded.contentType || '')
+            .split(';')[0]
+            .trim()
+            .toLowerCase();
+        if (
+            !contentType.startsWith('image/') &&
+            !FEEDBACK_COMMENT_ATTACHMENT_TYPES.has(contentType)
+        ) {
+            throw feedbackStorageError('FEEDBACK_ATTACHMENT_TYPE_NOT_ALLOWED');
+        }
+        return { ...normalized, size: decoded.bytes.byteLength };
+    });
 }
 
 async function uploadFeedbackAttachments(env, issueId, attachments, createdAt) {
@@ -2160,6 +2214,10 @@ async function readD1FeedbackIssue(env, key) {
             type: attachment.content_type,
             size: Number(attachment.size) || 0,
             objectKey: attachment.object_key || '',
+            eventId: attachment.event_id || '',
+            ordinal: Number.isInteger(attachment.attachment_ordinal)
+                ? attachment.attachment_ordinal
+                : null,
         };
     });
 
@@ -2235,6 +2293,7 @@ function serializePublicIssue(issue, detail = false) {
     const replayEventCount = Number(issue.context?.replay?.eventCount) || 0;
     const base = {
         key: issue.key,
+        version: Number(issue.version) || 1,
         type: issue.type || 'manual',
         sourceType: issue.sourceType,
         submittedType: issue.submittedType,
@@ -6687,6 +6746,14 @@ function serializeTimelineEvent(row) {
         mention: limitText(body.mention, 40),
         provider: limitText(body.provider, 40),
         artifact: normalizeFeedbackTimelineArtifact(body.artifact),
+        attachments: Array.isArray(body.attachments)
+            ? body.attachments.slice(0, MAX_FEEDBACK_COMMENT_ATTACHMENTS).map((attachment) => ({
+                  id: limitText(attachment.id, 120),
+                  name: limitText(attachment.name, 160) || '附件',
+                  type: limitText(attachment.type, 120) || 'application/octet-stream',
+                  size: Number(attachment.size) || 0,
+              }))
+            : [],
         resultEvidence:
             body.resultEvidence && typeof body.resultEvidence === 'object'
                 ? body.resultEvidence
@@ -6713,19 +6780,31 @@ async function listFeedbackTimeline(request, env, issueId, { includeInternal }) 
     return Promise.all(
         (result.results || []).map(async (row) => {
             const event = serializeTimelineEvent(row);
-            if (!event.artifact?.attachmentId) return event;
-
+            const [artifact, attachments] = await Promise.all([
+                event.artifact?.attachmentId
+                    ? createFeedbackAttachmentAccessUrl(
+                          request,
+                          env,
+                          issueId,
+                          event.artifact.attachmentId
+                      )
+                    : '',
+                Promise.all(
+                    event.attachments.map(async (attachment) => ({
+                        ...attachment,
+                        url: await createFeedbackAttachmentAccessUrl(
+                            request,
+                            env,
+                            issueId,
+                            attachment.id
+                        ),
+                    }))
+                ),
+            ]);
             return {
                 ...event,
-                artifact: {
-                    ...event.artifact,
-                    url: await createFeedbackAttachmentAccessUrl(
-                        request,
-                        env,
-                        issueId,
-                        event.artifact.attachmentId
-                    ),
-                },
+                artifact: artifact ? { ...event.artifact, url: artifact } : event.artifact,
+                attachments,
             };
         })
     );
@@ -6833,6 +6912,56 @@ async function listFeedbackDesigns(env, issueId, { includeTechnical = true } = {
         .bind(issueId)
         .all();
     return (result.results || []).map((row) => serializeFeedbackDesign(row, { includeTechnical }));
+}
+
+async function readFeedbackWorkbenchSnapshot(request, env, key, { isAdmin, sinceVersion } = {}) {
+    const versionRow = await env.FEEDBACK_DB.prepare(
+        'SELECT version, status, updated_at FROM feedback_issues WHERE id = ?'
+    )
+        .bind(key)
+        .first();
+    if (!versionRow) return null;
+
+    const version = Number(versionRow.version) || 1;
+    if (Number.isFinite(sinceVersion) && sinceVersion === version) {
+        return { changed: false, version };
+    }
+
+    const issue = await readFeedbackIssue(env, key);
+    if (!issue) return null;
+    const issueWithAttachmentAccess = await addFeedbackAttachmentAccessUrls(request, env, issue);
+    const [events, humanActions, designs, candidatesResult, releasesResult] = await Promise.all([
+        listFeedbackTimeline(request, env, key, { includeInternal: isAdmin }),
+        listHumanActions(env, key),
+        listFeedbackDesigns(env, key, { includeTechnical: isAdmin }),
+        env.FEEDBACK_DB.prepare(
+            'SELECT * FROM feedback_candidates WHERE issue_id = ? ORDER BY created_at DESC'
+        )
+            .bind(key)
+            .all(),
+        env.FEEDBACK_DB.prepare(
+            'SELECT * FROM feedback_releases WHERE issue_id = ? ORDER BY started_at DESC'
+        )
+            .bind(key)
+            .all(),
+    ]);
+    return {
+        changed: true,
+        version,
+        attachmentAccessExpiresAt: new Date(
+            Date.now() + FEEDBACK_ATTACHMENT_ACCESS_TTL_SECONDS * 1000
+        ).toISOString(),
+        issue: isAdmin
+            ? serializeAdminIssue(issueWithAttachmentAccess)
+            : serializePublicIssue(issueWithAttachmentAccess, true),
+        events,
+        humanActions,
+        designs,
+        candidates: (candidatesResult.results || []).map((row) =>
+            serializeFeedbackCandidate(row, { includeTechnical: isAdmin })
+        ),
+        releases: (releasesResult.results || []).map(serializeFeedbackRelease),
+    };
 }
 
 /** §16.4: prepare an immutable numbered revision tied to its Run. */
@@ -6950,6 +7079,7 @@ async function readStoredFeedbackCommentResult(env, issueId, eventId) {
         mode: storedMode,
         provider: storedMode === 'resume' ? limitText(body.provider, 40) : '',
         mention: limitText(body.mention, 40),
+        requestFingerprint: limitText(body.requestFingerprint, 80),
         requestedMode: FEEDBACK_COMMENT_MODES.has(body.requestedMode)
             ? body.requestedMode
             : storedMode,
@@ -6993,21 +7123,32 @@ async function completeStoredFeedbackComment(env, issueId, eventId, stored) {
 async function appendFeedbackComment(
     env,
     issueId,
-    { actorType, body, mode, expectedVersion, requestId }
+    { actorType, body, mode, expectedVersion, requestId, attachments }
 ) {
     if (!env.FEEDBACK_DB) {
         throw feedbackStorageError('FEEDBACK_DB_REQUIRED');
     }
 
     const text = limitText(body, MAX_FEEDBACK_COMMENT_LENGTH).trim();
-    if (!text) throw feedbackStorageError('FEEDBACK_COMMENT_EMPTY');
+    const normalizedAttachments = normalizeFeedbackCommentAttachments(attachments);
+    if (!text && normalizedAttachments.length === 0) {
+        throw feedbackStorageError('FEEDBACK_COMMENT_EMPTY');
+    }
 
     const normalizedRequestId = limitText(requestId, 160).trim();
+    // Keep request-id retries compatible with the existing routing contract;
+    // attachment bytes are the non-replayable part that must not be replaced.
+    const requestFingerprint = await hashFeedbackValue(
+        JSON.stringify({ attachments: normalizedAttachments })
+    );
     const commentEventId = normalizedRequestId
         ? `evt_comment_${(await hashFeedbackValue(`${issueId}:${normalizedRequestId}`)).slice(0, 48)}`
         : `evt_${crypto.randomUUID()}`;
     const existing = await readStoredFeedbackCommentResult(env, issueId, commentEventId);
     if (existing) {
+        if (existing.requestFingerprint && existing.requestFingerprint !== requestFingerprint) {
+            throw feedbackStorageError('FEEDBACK_COMMENT_REQUEST_CONFLICT');
+        }
         return completeStoredFeedbackComment(env, issueId, commentEventId, existing);
     }
 
@@ -7015,6 +7156,13 @@ async function appendFeedbackComment(
     if (!issue) return null;
     if (Number(issue.version) !== Number(expectedVersion)) {
         throw feedbackStorageError('FEEDBACK_VERSION_CONFLICT');
+    }
+    if (
+        normalizedAttachments.length > 0 &&
+        (issue.attachments || []).length + normalizedAttachments.length >
+            MAX_FEEDBACK_ISSUE_ATTACHMENTS
+    ) {
+        throw feedbackStorageError('FEEDBACK_ISSUE_ATTACHMENT_QUOTA');
     }
 
     const status = issue.workflow.status;
@@ -7061,6 +7209,21 @@ async function appendFeedbackComment(
     const provider = mentionProvider || runnerSettings.defaultProvider;
     const occurredAt = new Date().toISOString();
     const nextVersion = Number(expectedVersion) + 1;
+    const attachmentExpiresAt = new Date(
+        Date.parse(occurredAt) + FEEDBACK_TTL_SECONDS * 1000
+    ).toISOString();
+    const uploadedAttachments = await uploadFeedbackAttachments(
+        env,
+        issueId,
+        normalizedAttachments,
+        occurredAt
+    );
+    const publicAttachments = uploadedAttachments.map((attachment) => ({
+        id: attachment.id,
+        name: attachment.name,
+        type: attachment.contentType,
+        size: attachment.size,
+    }));
     const resumedHumanAction = effectiveMode === 'resume' ? activeHumanAction : null;
     const humanActionResolutionJson = resumedHumanAction
         ? JSON.stringify({ decision: 'supplied_information', via: 'comment' })
@@ -7088,6 +7251,18 @@ async function appendFeedbackComment(
             )
         );
     }
+    const commentBodyJson = JSON.stringify({
+        text,
+        publicNote: text,
+        mention,
+        provider: effectiveMode === 'resume' ? provider : '',
+        mode: effectiveMode,
+        requestedMode: FEEDBACK_COMMENT_MODES.has(mode) ? mode : 'record',
+        requestId: normalizedRequestId,
+        requestFingerprint,
+        attachmentIds: publicAttachments.map((attachment) => attachment.id),
+        attachments: publicAttachments,
+    });
     statements.push(
         env.FEEDBACK_DB.prepare(
             `INSERT INTO feedback_events (
@@ -7117,21 +7292,44 @@ async function appendFeedbackComment(
             actorType,
             null,
             occurredAt,
-            JSON.stringify({
-                text,
-                publicNote: text,
-                mention,
-                provider: effectiveMode === 'resume' ? provider : '',
-                mode: effectiveMode,
-                requestedMode: FEEDBACK_COMMENT_MODES.has(mode) ? mode : 'record',
-                requestId: normalizedRequestId,
-            }),
+            commentBodyJson,
             JSON.stringify({ expectedVersion, resultingVersion: nextVersion }),
             issueId,
             expectedVersion,
             ...(resumedHumanAction ? [resumedHumanAction.id, humanActionResolutionJson] : [])
         )
     );
+
+    uploadedAttachments.forEach((attachment, ordinal) => {
+        statements.push(
+            env.FEEDBACK_DB.prepare(
+                `INSERT INTO feedback_attachments (
+                    id, issue_id, event_id, attachment_ordinal, name, content_type,
+                    size, sha256, object_key, legacy_kv_key, legacy_attachment_index,
+                    scan_status, created_at, expires_at
+                ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'pending', ?, ?
+                  WHERE EXISTS (
+                      SELECT 1 FROM feedback_events
+                      WHERE id = ? AND issue_id = ? AND body_json = ?
+                  )`
+            ).bind(
+                attachment.id,
+                issueId,
+                commentEventId,
+                ordinal,
+                attachment.name,
+                attachment.contentType,
+                attachment.size,
+                attachment.sha256,
+                attachment.objectKey,
+                occurredAt,
+                attachmentExpiresAt,
+                commentEventId,
+                issueId,
+                commentBodyJson
+            )
+        );
+    });
 
     if (nextStatus !== status) {
         statements.push(
@@ -7170,6 +7368,7 @@ async function appendFeedbackComment(
         env.FEEDBACK_DB.prepare(
             `UPDATE feedback_issues
              SET status = ?,
+                 attachment_count = ?,
                  active_workflow_id = CASE WHEN ? THEN NULL ELSE active_workflow_id END,
                  active_human_action_id = CASE WHEN ? THEN NULL ELSE active_human_action_id END,
                  updated_at = ?, version = version + 1,
@@ -7182,6 +7381,7 @@ async function appendFeedbackComment(
              RETURNING id`
         ).bind(
             nextStatus,
+            (issue.attachments || []).length + uploadedAttachments.length,
             isTerminalTransition ? 1 : 0,
             resumedHumanAction ? 1 : 0,
             occurredAt,
@@ -7192,14 +7392,28 @@ async function appendFeedbackComment(
         )
     );
 
-    const results = await env.FEEDBACK_DB.batch(statements);
+    let results;
+    try {
+        results = await env.FEEDBACK_DB.batch(statements);
+    } catch (error) {
+        await deleteUploadedFeedbackAttachments(env, uploadedAttachments);
+        throw error;
+    }
     const commentInsertIndex = resumedHumanAction ? 1 : 0;
     if (!results[commentInsertIndex]?.results?.[0]) {
+        await deleteUploadedFeedbackAttachments(env, uploadedAttachments);
         const duplicate = await readStoredFeedbackCommentResult(env, issueId, commentEventId);
         if (!duplicate) throw feedbackStorageError('FEEDBACK_VERSION_CONFLICT');
+        if (duplicate.requestFingerprint && duplicate.requestFingerprint !== requestFingerprint) {
+            throw feedbackStorageError('FEEDBACK_COMMENT_REQUEST_CONFLICT');
+        }
         return completeStoredFeedbackComment(env, issueId, commentEventId, duplicate);
     }
+    // Defensive only: both the event insert and this final update guard on the
+    // same `version = expectedVersion` snapshot inside one D1 transaction, so
+    // the event landing while the update misses should be unreachable.
     if (!results[results.length - 1]?.results?.[0]) {
+        await deleteUploadedFeedbackAttachments(env, uploadedAttachments);
         throw feedbackStorageError('FEEDBACK_VERSION_CONFLICT');
     }
 
@@ -7976,6 +8190,8 @@ function matchesFeedbackQueueFilter(issue, filter) {
 }
 
 const FEEDBACK_ISSUE_SUB_ROUTES = new Set([
+    'snapshot',
+    'sync',
     'events',
     'comments',
     'reopen',
@@ -8006,6 +8222,15 @@ const FEEDBACK_ERROR_RESPONSES = {
     FEEDBACK_DB_REQUIRED: [503, 'Feedback storage is unavailable'],
     FEEDBACK_VERSION_CONFLICT: [409, 'Version conflict'],
     FEEDBACK_COMMENT_EMPTY: [400, 'Comment body is required'],
+    FEEDBACK_COMMENT_TOO_LARGE: [413, 'Comment payload is too large'],
+    FEEDBACK_ATTACHMENTS_TOO_MANY: [400, 'A comment can include at most 5 attachments'],
+    FEEDBACK_COMMENT_REQUEST_CONFLICT: [409, 'Request id was already used with different content'],
+    INVALID_FEEDBACK_ATTACHMENT: [400, 'Invalid feedback attachment'],
+    FEEDBACK_ATTACHMENT_TOO_LARGE: [413, 'Feedback attachment is too large'],
+    FEEDBACK_ATTACHMENT_TYPE_NOT_ALLOWED: [400, 'Attachment type is not allowed'],
+    FEEDBACK_ATTACHMENTS_REQUIRE_R2: [503, 'Feedback attachment storage is unavailable'],
+    FEEDBACK_ATTACHMENT_UPLOAD_FAILED: [503, 'Feedback attachment upload failed'],
+    FEEDBACK_ISSUE_ATTACHMENT_QUOTA: [400, 'Issue attachment limit reached'],
     FEEDBACK_ISSUE_NOT_TERMINAL: [409, 'Issue is not closed'],
     FEEDBACK_HUMAN_ACTION_RESOLVED: [409, 'Human action is already resolved'],
     FEEDBACK_HUMAN_ACTION_STATE_NOT_ALLOWED: [400, 'Return state is not allowed'],
@@ -11163,6 +11388,19 @@ export default {
             }
 
             try {
+                // `snapshot` is the first-open read, `sync` the recurring probe;
+                // both share one contract so they must never drift apart.
+                if (request.method === 'GET' && (segment === 'snapshot' || segment === 'sync')) {
+                    const rawVersion = url.searchParams.get('version');
+                    const sinceVersion = rawVersion === null ? NaN : Number(rawVersion);
+                    const snapshot = await readFeedbackWorkbenchSnapshot(request, env, key, {
+                        isAdmin,
+                        sinceVersion,
+                    });
+                    if (!snapshot) return errorResponse('Not found', 404, headers);
+                    return jsonResponse(snapshot, { headers });
+                }
+
                 if (request.method === 'GET' && segment === 'events') {
                     const issue = await readFeedbackIssue(env, key);
                     if (!issue) return errorResponse('Not found', 404, headers);
@@ -11227,15 +11465,25 @@ export default {
                 }
 
                 if (request.method === 'POST' && segment === 'comments') {
-                    const body = await request.json();
+                    const rawBody = await request.text();
+                    if (new TextEncoder().encode(rawBody).length > MAX_FEEDBACK_BYTES) {
+                        throw feedbackStorageError('FEEDBACK_COMMENT_TOO_LARGE');
+                    }
+                    const body = JSON.parse(rawBody);
                     const result = await appendFeedbackComment(env, key, {
                         actorType: isAdmin ? 'admin' : 'user',
                         body: body.body,
                         mode: body.mode,
                         expectedVersion: Number(body.expectedVersion),
                         requestId: body.requestId,
+                        attachments: body.attachments,
                     });
                     if (!result) return errorResponse('Not found', 404, headers);
+                    const issueForResponse = await addFeedbackAttachmentAccessUrls(
+                        request,
+                        env,
+                        result.issue
+                    );
 
                     return jsonResponse(
                         {
@@ -11248,8 +11496,8 @@ export default {
                             delivery: result.delivery,
                             workflowTermination: result.workflowTermination,
                             issue: isAdmin
-                                ? serializeAdminIssue(result.issue)
-                                : serializePublicIssue(result.issue, true),
+                                ? serializeAdminIssue(issueForResponse)
+                                : serializePublicIssue(issueForResponse, true),
                         },
                         { status: result.duplicate ? 200 : 201, headers }
                     );

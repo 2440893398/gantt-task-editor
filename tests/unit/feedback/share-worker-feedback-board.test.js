@@ -266,6 +266,16 @@ class MemoryD1 {
             return { success: true, results: rows.map((row) => ({ ...row })) };
         }
 
+        if (
+            normalized.startsWith('select') &&
+            normalized.includes('from feedback_releases where issue_id = ?')
+        ) {
+            const rows = Array.from(this.tables.feedback_releases.values())
+                .filter((row) => row.issue_id === values[0])
+                .sort((a, b) => String(b.started_at).localeCompare(String(a.started_at)));
+            return { success: true, results: rows.map((row) => ({ ...row })) };
+        }
+
         if (normalized.startsWith('update feedback_issues set')) {
             const [
                 title,
@@ -388,17 +398,25 @@ class MemoryD1 {
             /^insert into ([a-z_]+)\s*\(([^)]+)\)\s*values\s*\((.+?)\)/
         );
         const guardedSelectInsert = normalized.match(
-            /^insert into ([a-z_]+)\s*\(([^)]+)\)\s*select\s+(.+?)\s+where exists\s*\(\s*select 1 from feedback_events where id = \? and issue_id = \?\s*\)$/
+            /^insert into ([a-z_]+)\s*\(([^)]+)\)\s*select\s+(.+?)\s+where exists\s*\(\s*select 1 from feedback_events where id = \? and issue_id = \?(?: and body_json = \?)?\s*\)$/
         );
         const insert = valuesInsert || guardedSelectInsert;
         if (insert) {
             const [, tableName, rawColumns, rawValues] = insert;
             const columns = rawColumns.split(',').map((column) => column.trim());
             const guarded = Boolean(guardedSelectInsert);
-            const rowValues = guarded ? values.slice(0, -2) : values;
+            const hasBodyGuard = guarded && normalized.includes('body_json = ?');
+            const rowValues = guarded ? values.slice(0, hasBodyGuard ? -3 : -2) : values;
             if (guarded) {
-                const guardEvent = this.tables.feedback_events.get(values.at(-2));
-                if (!guardEvent || guardEvent.issue_id !== values.at(-1)) {
+                const guardEventId = hasBodyGuard ? values.at(-3) : values.at(-2);
+                const guardIssueId = hasBodyGuard ? values.at(-2) : values.at(-1);
+                const guardBody = hasBodyGuard ? values.at(-1) : null;
+                const guardEvent = this.tables.feedback_events.get(guardEventId);
+                if (
+                    !guardEvent ||
+                    guardEvent.issue_id !== guardIssueId ||
+                    (hasBodyGuard && guardEvent.body_json !== guardBody)
+                ) {
                     return { success: true, results: [], meta: { changes: 0 } };
                 }
             }
@@ -1640,11 +1658,11 @@ function replayDataUrl(events = [{ type: 4, data: { width: 1280, height: 720 } }
     return `data:application/json;base64,${Buffer.from(payload, 'utf8').toString('base64')}`;
 }
 
-async function waitFor(assertion) {
+async function waitFor(assertion, timeoutMs = 1000) {
     const startedAt = Date.now();
     let lastError;
 
-    while (Date.now() - startedAt < 1000) {
+    while (Date.now() - startedAt < timeoutMs) {
         try {
             assertion();
             return;
@@ -1661,7 +1679,10 @@ async function waitFor(assertion) {
  * Boots the V2 workbench page (`/feedback`) in JSDOM with a stubbed API so the
  * rendered UI — not a string snapshot — is what the assertions inspect.
  */
-async function openWorkbench(env, { url = 'https://worker.test/feedback', routes = {} } = {}) {
+async function openWorkbench(
+    env,
+    { url = 'https://worker.test/feedback', routes = {}, setupWindow = () => {} } = {}
+) {
     const pageResponse = await request('/feedback', {}, env);
     const html = await pageResponse.text();
     const requests = [];
@@ -1672,6 +1693,7 @@ async function openWorkbench(env, { url = 'https://worker.test/feedback', routes
         beforeParse(window) {
             window.alert = () => {};
             window.scrollTo = () => {};
+            setupWindow(window);
             window.fetch = async (path, options = {}) => {
                 requests.push({ path, options });
                 const route = routes[path];
@@ -1687,37 +1709,48 @@ async function openWorkbench(env, { url = 'https://worker.test/feedback', routes
 
 function ownerWorkbenchRoutes({ status = 'open', events, humanActions = [], designs = [] } = {}) {
     const detailPath = `/api/feedback/issues/${encodeURIComponent(feedbackKey)}`;
+    const issue = {
+        key: feedbackKey,
+        title: 'Owner issue detail',
+        description: 'Visible only with the matching capability.',
+        receivedAt: '2026-07-28T08:00:00.000Z',
+        updatedAt: '2026-07-28T08:00:00.000Z',
+        version: 1,
+        status,
+        priority: 'medium',
+        businessType: 'bug',
+        scope: 'small',
+        attachments: [],
+        attachmentCount: 0,
+    };
+    const timelineEvents = events || [
+        {
+            id: 'evt_1',
+            sequence: 1,
+            type: 'issue.created',
+            actorType: 'user',
+            visibility: 'public',
+            occurredAt: '2026-07-28T08:00:00.000Z',
+            text: '',
+            changes: {},
+        },
+    ];
 
     return {
-        [detailPath]: {
-            issue: {
-                key: feedbackKey,
-                title: 'Owner issue detail',
-                description: 'Visible only with the matching capability.',
-                receivedAt: '2026-07-28T08:00:00.000Z',
-                updatedAt: '2026-07-28T08:00:00.000Z',
-                status,
-                priority: 'medium',
-                businessType: 'bug',
-                scope: 'small',
-                attachments: [],
-                attachmentCount: 0,
-            },
+        [`${detailPath}/snapshot`]: {
+            changed: true,
+            version: 1,
+            issue,
+            events: timelineEvents,
+            humanActions,
+            designs,
+            candidates: [],
+            releases: [],
         },
+        [detailPath]: { issue },
         [`${detailPath}/events`]: {
             version: 1,
-            events: events || [
-                {
-                    id: 'evt_1',
-                    sequence: 1,
-                    type: 'issue.created',
-                    actorType: 'user',
-                    visibility: 'public',
-                    occurredAt: '2026-07-28T08:00:00.000Z',
-                    text: '',
-                    changes: {},
-                },
-            ],
+            events: timelineEvents,
         },
         [`${detailPath}/human-actions`]: { humanActions },
         [`${detailPath}/designs`]: { designs },
@@ -1859,13 +1892,7 @@ describe('feedback issue board Worker routes', () => {
         });
 
         const paths = dom.requests.map((entry) => entry.path);
-        expect(paths).toEqual(
-            expect.arrayContaining([
-                `/api/feedback/issues/${encodeURIComponent(feedbackKey)}`,
-                `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/events`,
-                `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/human-actions`,
-            ])
-        );
+        expect(paths).toEqual([`/api/feedback/issues/${encodeURIComponent(feedbackKey)}/snapshot`]);
         // Owner capability never enumerates the queue or reaches admin settings.
         expect(paths).not.toContain('/api/feedback/issues');
         expect(paths.some((path) => path.startsWith('/api/feedback/automation'))).toBe(false);
@@ -1874,6 +1901,404 @@ describe('feedback issue board Worker routes', () => {
                 (entry) => entry.options.headers.Authorization === 'Bearer owner-token'
             )
         ).toBe(true);
+    });
+
+    it('[SCN-FWB-025] keeps the reply draft while an automatic snapshot refresh runs', async () => {
+        const routes = ownerWorkbenchRoutes();
+        const snapshotPath = `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/snapshot`;
+        let snapshotCalls = 0;
+        const snapshotResponse = () => {
+            snapshotCalls += 1;
+            const version = snapshotCalls > 1 ? 2 : 1;
+            const snapshot = ownerWorkbenchRoutes({
+                status: snapshotCalls > 1 ? 'queued' : 'open',
+            })[snapshotPath];
+            return Response.json({
+                ...snapshot,
+                version,
+                issue: { ...snapshot.issue, version },
+            });
+        };
+        routes[snapshotPath] = snapshotResponse;
+        routes[`/api/feedback/issues/${encodeURIComponent(feedbackKey)}/sync?version=1`] =
+            snapshotResponse;
+        const dom = await openWorkbench(env, {
+            url: `https://worker.test/feedback#issue=${encodeURIComponent(
+                feedbackKey
+            )}&capability=owner-token`,
+            routes,
+        });
+
+        await waitFor(() => expect(snapshotCalls).toBe(1));
+        await waitFor(() =>
+            expect(dom.window.document.getElementById('issueTitle').textContent).toContain(
+                'Owner issue detail'
+            )
+        );
+        dom.window.document.getElementById('replyInput').value = '尚未提交的补充说明';
+        dom.window.document.dispatchEvent(new dom.window.Event('visibilitychange'));
+        dom.window.__feedbackWorkbenchRefreshForTest();
+        await waitFor(() => expect(snapshotCalls).toBe(2));
+        await waitFor(() =>
+            expect(dom.window.document.getElementById('issueHeadingMeta').textContent).toContain(
+                '已排队'
+            )
+        );
+        expect(dom.window.document.getElementById('replyInput').value).toBe('尚未提交的补充说明');
+        expect(dom.window.document.getElementById('issueHeadingMeta').textContent).toContain(
+            '已排队'
+        );
+    });
+
+    it('[SCN-FWB-025] ignores a stale sync response after selecting another issue', async () => {
+        const issueA = feedbackKey;
+        const issueB = 'feedback:issue-b';
+        const listIssue = (key, title) => ({
+            key,
+            title,
+            descriptionPreview: title,
+            receivedAt: '2026-08-07T08:00:00.000Z',
+            updatedAt: '2026-08-07T08:00:00.000Z',
+            version: 1,
+            status: 'open',
+            priority: 'medium',
+            businessType: 'bug',
+        });
+        const snapshot = (key, title, version = 1) => ({
+            changed: true,
+            version,
+            issue: {
+                ...listIssue(key, title),
+                description: title,
+                attachments: [],
+            },
+            events: [],
+            humanActions: [],
+            designs: [],
+            candidates: [],
+            releases: [],
+        });
+        let resolveStaleSync;
+        const staleSync = new Promise((resolve) => {
+            resolveStaleSync = resolve;
+        });
+        const routes = {
+            '/api/feedback/issues?filter=attention': {
+                issues: [listIssue(issueA, 'Issue A'), listIssue(issueB, 'Issue B')],
+                attentionCount: 0,
+            },
+            [`/api/feedback/issues/${encodeURIComponent(issueA)}/snapshot`]: snapshot(
+                issueA,
+                'Issue A'
+            ),
+            [`/api/feedback/issues/${encodeURIComponent(issueA)}/sync?version=1`]: () => staleSync,
+            [`/api/feedback/issues/${encodeURIComponent(issueB)}/snapshot`]: snapshot(
+                issueB,
+                'Issue B'
+            ),
+        };
+        const dom = await openWorkbench(env, {
+            routes,
+            setupWindow(window) {
+                window.sessionStorage.setItem('feedback.workbench.adminToken', 'admin-token');
+            },
+        });
+
+        await waitFor(() =>
+            expect(dom.window.document.getElementById('issueTitle').textContent).toContain(
+                'Issue A'
+            )
+        );
+        const syncRequest = dom.window.__feedbackWorkbenchRefreshForTest();
+        Array.from(dom.window.document.querySelectorAll('[data-issue]'))
+            .find((button) => button.dataset.issue === issueB)
+            .click();
+        await waitFor(() =>
+            expect(dom.window.document.getElementById('issueTitle').textContent).toContain(
+                'Issue B'
+            )
+        );
+
+        resolveStaleSync(Response.json(snapshot(issueA, 'Stale Issue A', 2)));
+        await syncRequest;
+
+        expect(dom.window.document.getElementById('issueTitle').textContent).toContain('Issue B');
+        expect(dom.window.document.getElementById('issueTitle').textContent).not.toContain(
+            'Stale Issue A'
+        );
+    });
+
+    it('[SCN-FWB-025] keeps the selected reply mode after an automatic refresh', async () => {
+        const routes = ownerWorkbenchRoutes();
+        const snapshotPath = `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/snapshot`;
+        const issue = routes[snapshotPath].issue;
+        routes['/api/feedback/issues?filter=attention'] = {
+            issues: [{ ...issue, descriptionPreview: issue.description }],
+            attentionCount: 0,
+        };
+        routes[`/api/feedback/issues/${encodeURIComponent(feedbackKey)}/sync?version=1`] = {
+            ...routes[snapshotPath],
+            version: 2,
+            issue: { ...issue, version: 2 },
+        };
+        const dom = await openWorkbench(env, {
+            routes,
+            setupWindow(window) {
+                window.sessionStorage.setItem('feedback.workbench.adminToken', 'admin-token');
+            },
+        });
+
+        await waitFor(() =>
+            expect(dom.window.document.getElementById('replyMode').value).toBe('record')
+        );
+        const replyMode = dom.window.document.getElementById('replyMode');
+        replyMode.value = 'close';
+        replyMode.dispatchEvent(new dom.window.Event('change'));
+        await dom.window.__feedbackWorkbenchRefreshForTest();
+
+        expect(dom.window.document.getElementById('replyMode').value).toBe('close');
+    });
+
+    it('[SCN-FWB-025] reuses the comment request id after a failed submit and refresh', async () => {
+        const routes = ownerWorkbenchRoutes();
+        const commentPath = `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/comments`;
+        const snapshotPath = `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/snapshot`;
+        const submitted = [];
+        routes[commentPath] = (options) => {
+            submitted.push(JSON.parse(options.body));
+            return Response.json({ error: 'temporary failure' }, { status: 503 });
+        };
+        routes[`/api/feedback/issues/${encodeURIComponent(feedbackKey)}/sync?version=1`] = {
+            ...routes[snapshotPath],
+            version: 2,
+            issue: { ...routes[snapshotPath].issue, version: 2 },
+        };
+        const dom = await openWorkbench(env, {
+            url: `https://worker.test/feedback#issue=${encodeURIComponent(
+                feedbackKey
+            )}&capability=owner-token`,
+            routes,
+        });
+
+        await waitFor(() =>
+            expect(dom.window.document.getElementById('issueTitle').textContent).toContain(
+                'Owner issue detail'
+            )
+        );
+        const input = dom.window.document.getElementById('replyInput');
+        input.value = 'Retry the same comment';
+        input.dispatchEvent(new dom.window.Event('input'));
+        dom.window.document
+            .getElementById('replyForm')
+            .dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+        await waitFor(() => expect(submitted).toHaveLength(1));
+        await waitFor(() =>
+            expect(dom.window.document.getElementById('replySubmit').disabled).toBe(false)
+        );
+
+        await dom.window.__feedbackWorkbenchRefreshForTest();
+        dom.window.document
+            .getElementById('replyForm')
+            .dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+        await waitFor(() => expect(submitted).toHaveLength(2));
+
+        expect(submitted[1].requestId).toBe(submitted[0].requestId);
+    });
+
+    it('[SCN-FWB-025] does not send sync probes while the browser is offline', async () => {
+        const routes = ownerWorkbenchRoutes();
+        const syncPath = `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/sync?version=1`;
+        let syncCalls = 0;
+        routes[syncPath] = () => {
+            syncCalls += 1;
+            return Response.json({ changed: false, version: 1 });
+        };
+        const dom = await openWorkbench(env, {
+            url: `https://worker.test/feedback#issue=${encodeURIComponent(
+                feedbackKey
+            )}&capability=owner-token`,
+            routes,
+            setupWindow(window) {
+                Object.defineProperty(window.navigator, 'onLine', {
+                    configurable: true,
+                    value: false,
+                });
+            },
+        });
+
+        await waitFor(() =>
+            expect(dom.window.document.getElementById('issueTitle').textContent).toContain(
+                'Owner issue detail'
+            )
+        );
+        await dom.window.__feedbackWorkbenchRefreshForTest();
+
+        expect(syncCalls).toBe(0);
+    });
+
+    it('[SCN-FWB-025] stops probing after an older Worker returns 404 for sync', async () => {
+        const routes = ownerWorkbenchRoutes();
+        const syncPath = `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/sync?version=1`;
+        let syncCalls = 0;
+        routes[syncPath] = () => {
+            syncCalls += 1;
+            return Response.json({ error: 'not found' }, { status: 404 });
+        };
+        const dom = await openWorkbench(env, {
+            url: `https://worker.test/feedback#issue=${encodeURIComponent(
+                feedbackKey
+            )}&capability=owner-token`,
+            routes,
+        });
+
+        await waitFor(() =>
+            expect(dom.window.document.getElementById('issueTitle').textContent).toContain(
+                'Owner issue detail'
+            )
+        );
+        await dom.window.__feedbackWorkbenchRefreshForTest();
+        await dom.window.__feedbackWorkbenchRefreshForTest();
+
+        expect(syncCalls).toBe(1);
+    });
+
+    it('[SCN-FWB-026] refreshes expired attachment access without an issue version change', async () => {
+        const routes = ownerWorkbenchRoutes();
+        const snapshotPath = `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/snapshot`;
+        routes[snapshotPath] = {
+            ...routes[snapshotPath],
+            attachmentAccessExpiresAt: new Date(Date.now() + 10 * 1000).toISOString(),
+            events: [
+                {
+                    id: 'evt_attachment',
+                    sequence: 1,
+                    type: 'comment.created',
+                    actorType: 'user',
+                    visibility: 'public',
+                    occurredAt: '2026-08-07T08:00:00.000Z',
+                    text: 'Attachment',
+                    changes: {},
+                    attachments: [
+                        {
+                            id: 'att_refresh',
+                            name: 'refresh.png',
+                            type: 'image/png',
+                            size: 4,
+                            url: 'https://worker.test/old-token',
+                        },
+                    ],
+                },
+            ],
+        };
+        routes[`/api/feedback/issues/${encodeURIComponent(feedbackKey)}/sync`] = {
+            ...routes[snapshotPath],
+            attachmentAccessExpiresAt: '2099-01-01T00:00:00.000Z',
+            events: [
+                {
+                    ...routes[snapshotPath].events[0],
+                    attachments: [
+                        {
+                            ...routes[snapshotPath].events[0].attachments[0],
+                            url: 'https://worker.test/new-token',
+                        },
+                    ],
+                },
+            ],
+        };
+        const dom = await openWorkbench(env, {
+            url: `https://worker.test/feedback#issue=${encodeURIComponent(
+                feedbackKey
+            )}&capability=owner-token`,
+            routes,
+        });
+
+        await waitFor(() =>
+            expect(
+                Array.from(dom.window.document.querySelectorAll('a')).find(
+                    (link) => link.href === 'https://worker.test/old-token'
+                )
+            ).toBeTruthy()
+        );
+        await dom.window.__feedbackWorkbenchRefreshForTest();
+
+        expect(dom.requests.map((entry) => entry.path)).toContain(
+            `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/sync`
+        );
+        expect(
+            Array.from(dom.window.document.querySelectorAll('a')).find(
+                (link) => link.href === 'https://worker.test/new-token'
+            )
+        ).toBeTruthy();
+    });
+
+    it('[SCN-FWB-026] rejects a comment request above 18 MiB before fetch', async () => {
+        const routes = ownerWorkbenchRoutes();
+        const commentPath = `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/comments`;
+        let commentCalls = 0;
+        routes[commentPath] = () => {
+            commentCalls += 1;
+            return Response.json({ error: 'must not upload' }, { status: 500 });
+        };
+        const dom = await openWorkbench(env, {
+            url: `https://worker.test/feedback#issue=${encodeURIComponent(
+                feedbackKey
+            )}&capability=owner-token`,
+            routes,
+            setupWindow(window) {
+                const largeDataUrl = `data:image/png;base64,${'A'.repeat(4 * 1024 * 1024)}`;
+                window.FileReader.prototype.readAsDataURL = function () {
+                    Object.defineProperty(this, 'result', {
+                        configurable: true,
+                        value: largeDataUrl,
+                    });
+                    window.setTimeout(() => this.onload(), 0);
+                };
+            },
+        });
+
+        await waitFor(() =>
+            expect(dom.window.document.getElementById('issueTitle').textContent).toContain(
+                'Owner issue detail'
+            )
+        );
+        const files = Array.from(
+            { length: 5 },
+            (_, index) =>
+                new dom.window.File([new Uint8Array(3 * 1024 * 1024)], `large-${index}.png`, {
+                    type: 'image/png',
+                })
+        );
+        const attachmentsInput = dom.window.document.getElementById('replyAttachments');
+        Object.defineProperty(attachmentsInput, 'files', {
+            configurable: true,
+            value: files,
+        });
+        attachmentsInput.dispatchEvent(new dom.window.Event('change'));
+        await waitFor(() =>
+            expect(dom.window.document.getElementById('toastText').textContent).toContain('18 MiB')
+        );
+
+        expect(commentCalls).toBe(0);
+        expect(dom.window.document.getElementById('toastText').textContent).toContain('18 MiB');
+    }, 20000);
+
+    it('[SCN-FWB-026] exposes an attachment picker with a stable selection summary', async () => {
+        const dom = await openWorkbench(env, {
+            url: `https://worker.test/feedback#issue=${encodeURIComponent(
+                feedbackKey
+            )}&capability=owner-token`,
+            routes: ownerWorkbenchRoutes(),
+        });
+
+        await waitFor(() =>
+            expect(dom.window.document.getElementById('replyAttachments')).toBeTruthy()
+        );
+        const input = dom.window.document.getElementById('replyAttachments');
+        expect(input.accept).toContain('image/*');
+        expect(input.multiple).toBe(true);
+        expect(dom.window.document.getElementById('replyAttachmentSummary').textContent).toContain(
+            '最多 5 个'
+        );
     });
 
     it('[SCN-FWB-006] renders changes, independent verification results, and visual evidence', async () => {
@@ -4505,6 +4930,348 @@ describe('feedback workbench V2 routes', () => {
         expect(payload.settings.signing.configured).toBe(true);
         expect(payload.settings.signing.secretRef).toBe('FEEDBACK_WEBHOOK_SECRET');
         expect(JSON.stringify(payload)).not.toContain('super-secret-signing-key');
+    });
+
+    it('[SCN-FWB-025] returns the complete Issue snapshot in one authorized request', async () => {
+        const env = createV2Env(
+            {},
+            {
+                feedback_issues: [createD1IssueRow()],
+                feedback_events: [
+                    {
+                        id: 'evt_snapshot',
+                        issue_id: feedbackKey,
+                        sequence: 1,
+                        type: 'issue.created',
+                        actor_type: 'user',
+                        actor_id: null,
+                        visibility: 'public',
+                        run_id: null,
+                        occurred_at: '2026-07-28T08:00:00.000Z',
+                        body_json: '{}',
+                        metadata_json: '{}',
+                        legacy_hash: null,
+                    },
+                ],
+            }
+        );
+        const headers = await adminHeaders(env);
+
+        const response = await request(
+            `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/snapshot`,
+            { headers },
+            env
+        );
+        const payload = await json(response);
+        expect(response.status, JSON.stringify(payload)).toBe(200);
+        expect(payload).toMatchObject({
+            changed: true,
+            version: 1,
+            issue: { key: feedbackKey },
+            events: [{ id: 'evt_snapshot' }],
+            humanActions: [],
+            designs: [],
+            candidates: [],
+            releases: [],
+        });
+        expect(Date.parse(payload.attachmentAccessExpiresAt)).toBeGreaterThan(Date.now());
+    });
+
+    it('[SCN-FWB-025] answers an unchanged snapshot probe without reading sub-resources', async () => {
+        const env = createV2Env({}, { feedback_issues: [createD1IssueRow({ version: 4 })] });
+        const headers = await adminHeaders(env);
+
+        const response = await request(
+            `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/snapshot?version=4`,
+            { headers },
+            env
+        );
+        const payload = await json(response);
+
+        expect(payload).toEqual({ changed: false, version: 4 });
+        expect(
+            env.FEEDBACK_DB.queries.some(({ query }) =>
+                query.includes('from feedback_events where issue_id = ?')
+            )
+        ).toBe(false);
+    });
+
+    it('[SCN-FWB-026] stores comment attachments and exposes them on the timeline event', async () => {
+        const ownerCapability = 'owner-comment-attachment';
+        const env = createV2Env(
+            {},
+            {
+                feedback_issues: [
+                    createD1IssueRow({
+                        owner_capability_hash: await hashCapability(ownerCapability),
+                        owner_capability_expires_at: '2099-01-01T00:00:00.000Z',
+                    }),
+                ],
+            }
+        );
+        env.FEEDBACK_ARTIFACTS = new MemoryR2();
+        const attachmentBytes = Buffer.from('comment image');
+        const headers = {
+            Authorization: `Bearer ${ownerCapability}`,
+            'Content-Type': 'application/json',
+        };
+
+        const response = await request(
+            `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/comments`,
+            {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({
+                    body: '',
+                    mode: 'record',
+                    expectedVersion: 1,
+                    requestId: 'comment-with-attachment',
+                    attachments: [
+                        {
+                            name: 'details.png',
+                            type: 'image/png',
+                            size: attachmentBytes.length,
+                            dataUrl: `data:image/png;base64,${attachmentBytes.toString('base64')}`,
+                        },
+                    ],
+                }),
+            },
+            env
+        );
+        const payload = await json(response);
+
+        expect(response.status).toBe(201);
+        expect(payload.issue.version).toBe(2);
+        expect(payload.issue.attachments).toEqual([
+            expect.objectContaining({
+                name: 'details.png',
+                type: 'image/png',
+                url: expect.any(String),
+            }),
+        ]);
+        const event = env.FEEDBACK_DB.tables.feedback_events.get(payload.eventId);
+        expect(JSON.parse(event.body_json).attachmentIds).toEqual([
+            payload.issue.attachments[0].id,
+        ]);
+        expect(env.FEEDBACK_ARTIFACTS.putCalls).toHaveLength(1);
+    });
+
+    async function ownerCommentEnv(overrides = {}, seed = {}) {
+        const ownerCapability = 'owner-comment-attachment';
+        const env = createV2Env(
+            {},
+            {
+                feedback_issues: [
+                    createD1IssueRow({
+                        owner_capability_hash: await hashCapability(ownerCapability),
+                        owner_capability_expires_at: '2099-01-01T00:00:00.000Z',
+                        ...overrides,
+                    }),
+                ],
+                ...seed,
+            }
+        );
+        env.FEEDBACK_ARTIFACTS = new MemoryR2();
+        const headers = {
+            Authorization: `Bearer ${ownerCapability}`,
+            'Content-Type': 'application/json',
+        };
+        const postComment = (body) =>
+            request(
+                `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/comments`,
+                { method: 'POST', headers, body: JSON.stringify(body) },
+                env
+            );
+        return { env, postComment };
+    }
+
+    function commentAttachment(content, overrides = {}) {
+        const bytes = Buffer.from(content);
+        return {
+            name: 'supplement.png',
+            type: 'image/png',
+            size: bytes.length,
+            dataUrl: `data:image/png;base64,${bytes.toString('base64')}`,
+            ...overrides,
+        };
+    }
+
+    it('[SCN-FWB-026] rejects a request-id retry that carries a different attachment payload', async () => {
+        const { env, postComment } = await ownerCommentEnv();
+
+        const first = await postComment({
+            body: '补充截图',
+            mode: 'record',
+            expectedVersion: 1,
+            requestId: 'retry-fingerprint',
+            attachments: [commentAttachment('original bytes')],
+        });
+        expect(first.status).toBe(201);
+        expect(env.FEEDBACK_ARTIFACTS.putCalls).toHaveLength(1);
+
+        const conflicting = await postComment({
+            body: '补充截图',
+            mode: 'record',
+            expectedVersion: 1,
+            requestId: 'retry-fingerprint',
+            attachments: [commentAttachment('replaced bytes')],
+        });
+        expect(conflicting.status).toBe(409);
+        expect((await json(conflicting)).error).toContain('Request id');
+        // The conflicting retry must neither upload nor replace the original object.
+        expect(env.FEEDBACK_ARTIFACTS.putCalls).toHaveLength(1);
+        expect(env.FEEDBACK_DB.tables.feedback_attachments.size).toBe(1);
+
+        const replay = await postComment({
+            body: '补充截图',
+            mode: 'record',
+            expectedVersion: 1,
+            requestId: 'retry-fingerprint',
+            attachments: [commentAttachment('original bytes')],
+        });
+        expect(replay.status).toBe(200);
+        expect((await json(replay)).duplicate).toBe(true);
+        expect(env.FEEDBACK_ARTIFACTS.putCalls).toHaveLength(1);
+    });
+
+    it('[SCN-FWB-026] cleans uploaded R2 objects when the comment D1 batch throws', async () => {
+        const { env, postComment } = await ownerCommentEnv();
+        env.FEEDBACK_DB.beforeBatch = () => {
+            throw new Error('D1 batch unavailable');
+        };
+
+        const response = await postComment({
+            body: '',
+            mode: 'record',
+            expectedVersion: 1,
+            requestId: 'batch-throws',
+            attachments: [commentAttachment('doomed bytes')],
+        });
+
+        expect(response.status).toBeGreaterThanOrEqual(400);
+        expect(env.FEEDBACK_ARTIFACTS.putCalls).toHaveLength(1);
+        expect(env.FEEDBACK_ARTIFACTS.deleteCalls).toHaveLength(1);
+        expect(env.FEEDBACK_ARTIFACTS.objects.size).toBe(0);
+        expect(env.FEEDBACK_DB.tables.feedback_events.size).toBe(0);
+        expect(env.FEEDBACK_DB.tables.feedback_attachments.size).toBe(0);
+    });
+
+    it('[SCN-FWB-026] cleans uploaded R2 objects when a concurrent update wins the version race', async () => {
+        const { env, postComment } = await ownerCommentEnv();
+        // A concurrent writer bumps the issue version between the read and the batch.
+        env.FEEDBACK_DB.beforeBatch = () => {
+            const row = env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey);
+            env.FEEDBACK_DB.tables.feedback_issues.set(feedbackKey, {
+                ...row,
+                version: row.version + 1,
+            });
+        };
+
+        const response = await postComment({
+            body: '',
+            mode: 'record',
+            expectedVersion: 1,
+            requestId: 'version-race',
+            attachments: [commentAttachment('raced bytes')],
+        });
+
+        expect(response.status).toBe(409);
+        expect(env.FEEDBACK_ARTIFACTS.deleteCalls).toHaveLength(1);
+        expect(env.FEEDBACK_ARTIFACTS.objects.size).toBe(0);
+        expect(env.FEEDBACK_DB.tables.feedback_attachments.size).toBe(0);
+    });
+
+    it('[SCN-FWB-026] rejects a comment with more than 5 attachments before uploading', async () => {
+        const { env, postComment } = await ownerCommentEnv();
+
+        const response = await postComment({
+            body: '',
+            mode: 'record',
+            expectedVersion: 1,
+            requestId: 'too-many',
+            attachments: Array.from({ length: 6 }, (_, index) =>
+                commentAttachment(`file-${index}`)
+            ),
+        });
+
+        expect(response.status).toBe(400);
+        expect((await json(response)).error).toContain('at most 5');
+        expect(env.FEEDBACK_ARTIFACTS.putCalls).toHaveLength(0);
+    });
+
+    it('[SCN-FWB-026] rejects an attachment whose declared size disagrees with its bytes', async () => {
+        const { env, postComment } = await ownerCommentEnv();
+
+        const response = await postComment({
+            body: '',
+            mode: 'record',
+            expectedVersion: 1,
+            requestId: 'size-mismatch',
+            attachments: [commentAttachment('actual bytes', { size: 999 })],
+        });
+
+        expect(response.status).toBe(400);
+        expect((await json(response)).error).toContain('Invalid feedback attachment');
+        expect(env.FEEDBACK_ARTIFACTS.putCalls).toHaveLength(0);
+    });
+
+    it('[SCN-FWB-026] rejects attachment types outside the server allowlist', async () => {
+        const { env, postComment } = await ownerCommentEnv();
+        const html = Buffer.from('<script>alert(1)</script>');
+
+        const response = await postComment({
+            body: '',
+            mode: 'record',
+            expectedVersion: 1,
+            requestId: 'type-not-allowed',
+            attachments: [
+                {
+                    name: 'payload.html',
+                    type: 'text/html',
+                    size: html.length,
+                    dataUrl: `data:text/html;base64,${html.toString('base64')}`,
+                },
+            ],
+        });
+
+        expect(response.status).toBe(400);
+        expect((await json(response)).error).toContain('type is not allowed');
+        expect(env.FEEDBACK_ARTIFACTS.putCalls).toHaveLength(0);
+    });
+
+    it('[SCN-FWB-026] rejects new comment attachments once the issue quota is reached', async () => {
+        const seededAttachments = Array.from({ length: 40 }, (_, index) => ({
+            id: `att_seed_${index}`,
+            issue_id: feedbackKey,
+            event_id: null,
+            attachment_ordinal: null,
+            name: `seed-${index}.png`,
+            content_type: 'image/png',
+            size: 10,
+            sha256: `hash-${index}`,
+            object_key: `feedback-attachments/2026-07-28/${feedbackKey}/att_seed_${index}`,
+            legacy_kv_key: null,
+            legacy_attachment_index: null,
+            scan_status: 'pending',
+            created_at: '2026-07-28T08:00:00.000Z',
+            expires_at: '2099-01-01T00:00:00.000Z',
+        }));
+        const { env, postComment } = await ownerCommentEnv(
+            { attachment_count: 40 },
+            { feedback_attachments: seededAttachments }
+        );
+
+        const response = await postComment({
+            body: '',
+            mode: 'record',
+            expectedVersion: 1,
+            requestId: 'quota-reached',
+            attachments: [commentAttachment('one too many')],
+        });
+
+        expect(response.status).toBe(400);
+        expect((await json(response)).error).toContain('attachment limit');
+        expect(env.FEEDBACK_ARTIFACTS.putCalls).toHaveLength(0);
     });
 
     it('[SCN-FWB-015] saving a new hook URL resets the verified state', async () => {
