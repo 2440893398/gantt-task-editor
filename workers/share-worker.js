@@ -5278,6 +5278,69 @@ async function findActiveFeedbackCandidateAction(env, issueId, candidateId) {
     return (result.results || []).find((action) => action.candidate_id === candidateId) || null;
 }
 
+/**
+ * §7.2 decides what a finished read-only Run leaves behind. The Agent answered
+ * the question, but the Issue still needs a person, so say what that person is
+ * being asked for.
+ */
+function describeFeedbackAnalysisHandoff(issue) {
+    const businessType = String(issue?.business_type || 'unclear');
+    const scope = String(issue?.scope || 'unclear');
+
+    if (businessType === 'unclear' || businessType === 'other' || scope === 'unclear') {
+        return {
+            actionType: 'need_reproduction',
+            requestedAction:
+                '分析已完成，结论见上一条处理结果。这条反馈还不足以判断要改什么：请补充复现步骤、期望结果或截图，回复后会带着新信息重新分析。',
+        };
+    }
+
+    return {
+        actionType: 'confirm_policy',
+        requestedAction:
+            '分析已完成，结论见上一条处理结果。请确认下一步：回复补充你的决定会重新处理；' +
+            '如果要进入代码实现，需求与中大型改动须先形成并批准设计方案，其余请由管理员在 Issue 分类中确认范围。',
+    };
+}
+
+/**
+ * SCN-FWB-020 requires every `needs_human` Issue to carry an active HumanAction
+ * saying what is being waited on. A write Run gets one from the Candidate review
+ * path; a read-only Run produced no Candidate, so it used to leave the Issue
+ * parked on "waiting for your reply" with nothing to reply to — and, because the
+ * Workflow had already finished, nothing an owner reply could wake up.
+ *
+ * Runs through the same callback path on replay, so it must be idempotent.
+ */
+async function ensureFeedbackAnalysisHandoff(env, { run }) {
+    const existing = await env.FEEDBACK_DB.prepare(
+        `SELECT id FROM feedback_human_actions
+         WHERE issue_id = ? AND status = 'active'
+         ORDER BY created_at DESC LIMIT 1`
+    )
+        .bind(run.issue_id)
+        .first();
+    if (existing) return existing.id;
+
+    const issue = await env.FEEDBACK_DB.prepare(
+        'SELECT business_type, scope FROM feedback_issues WHERE id = ?'
+    )
+        .bind(run.issue_id)
+        .first();
+    const { actionType, requestedAction } = describeFeedbackAnalysisHandoff(issue);
+    const prepared = prepareFeedbackHumanAction(env, {
+        issueId: run.issue_id,
+        runId: run.id,
+        payload: {
+            actionType,
+            requestedAction,
+            evidence: [{ policy: run.policy, runId: run.id }],
+        },
+    });
+    await env.FEEDBACK_DB.batch(prepared.statements);
+    return prepared.actionId;
+}
+
 async function finalizeFeedbackCompletedRun(
     env,
     { run, manifest, verification, gate: verifiedGate = null }
@@ -5287,7 +5350,7 @@ async function finalizeFeedbackCompletedRun(
             candidate: null,
             deliveryMode: run.delivery_mode || 'candidate_review',
             autoDelivery: null,
-            humanActionId: null,
+            humanActionId: await ensureFeedbackAnalysisHandoff(env, { run }),
         };
     }
     const gate =
@@ -7259,8 +7322,17 @@ async function appendFeedbackComment(
         activeWorkflowId &&
         activeWorkflow?.status === 'waiting'
     );
+    // §17.3/SCN-FWB-007: once an instance has finished, the next round is a new
+    // generation. A read-only Run finishes its Workflow before the person is
+    // asked anything, so requiring a `waiting` instance would leave the owner
+    // staring at a HumanAction they are not allowed to answer.
+    const canAnswerFinishedWait = Boolean(
+        status === 'needs_human' &&
+        activeHumanAction &&
+        (!activeWorkflowId || ['succeeded', 'terminated'].includes(activeWorkflow?.status))
+    );
     const canStartWorkflow = Boolean(
-        actorType === 'admin' &&
+        (actorType === 'admin' || canAnswerFinishedWait) &&
         (!activeWorkflowId || ['succeeded', 'terminated'].includes(activeWorkflow?.status)) &&
         !FEEDBACK_TERMINAL_STATUSES.has(status)
     );

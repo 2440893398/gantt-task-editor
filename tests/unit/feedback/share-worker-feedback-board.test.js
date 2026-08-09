@@ -7281,6 +7281,131 @@ describe('feedback workbench V2 event dispatch', () => {
         );
     }
 
+    it('[SCN-FWB-020] lets the owner answer a wait whose Workflow already finished', async () => {
+        // A read-only Run finishes its Workflow before anyone is asked
+        // anything, so the owner's reply has to start generation 2 rather than
+        // resume a `waiting` instance that no longer exists.
+        const ownerCapability = 'owner-answers-finished-wait';
+        const digest = await crypto.subtle.digest(
+            'SHA-256',
+            new TextEncoder().encode(ownerCapability)
+        );
+        const env = createV2Env(
+            {},
+            {
+                feedback_issues: [
+                    createD1IssueRow({
+                        status: 'needs_human',
+                        workflow_generation: 1,
+                        active_workflow_id: workflowInstanceId(feedbackKey, 1),
+                        active_human_action_id: 'hac_analysis',
+                        owner_capability_hash: Array.from(new Uint8Array(digest), (byte) =>
+                            byte.toString(16).padStart(2, '0')
+                        ).join(''),
+                        owner_capability_expires_at: '2099-01-01T00:00:00.000Z',
+                    }),
+                ],
+                feedback_human_actions: [
+                    {
+                        id: 'hac_analysis',
+                        issue_id: feedbackKey,
+                        workflow_id: null,
+                        run_id: 'run_analysis',
+                        candidate_id: null,
+                        design_id: null,
+                        type: 'need_reproduction',
+                        requested_action: '请补充复现步骤',
+                        evidence_json: '[]',
+                        allowed_return_states_json: JSON.stringify(['queued', 'closed']),
+                        status: 'active',
+                        resolution_json: null,
+                        created_at: '2026-08-09T09:00:00.000Z',
+                        resolved_at: null,
+                    },
+                ],
+                feedback_workflows: [
+                    {
+                        instance_id: workflowInstanceId(feedbackKey, 1),
+                        issue_id: feedbackKey,
+                        generation: 1,
+                        status: 'succeeded',
+                        started_at: '2026-08-09T08:00:00.000Z',
+                    },
+                ],
+            }
+        );
+        env.FEEDBACK_WORKFLOW = createWorkflowStub();
+
+        const payload = await json(
+            await request(
+                `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/comments`,
+                {
+                    method: 'POST',
+                    headers: {
+                        Authorization: `Bearer ${ownerCapability}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        body: '复现步骤：打开甘特图，点击今天的日期。',
+                        mode: 'resume',
+                        expectedVersion: 1,
+                    }),
+                },
+                env
+            )
+        );
+
+        expect(payload.mode).toBe('resume');
+        // Owners get the public serialization, where status is flat.
+        expect(payload.issue.status).toBe('queued');
+        expect(env.FEEDBACK_WORKFLOW.created).toHaveLength(1);
+        expect(env.FEEDBACK_WORKFLOW.created[0].params.generation).toBe(2);
+        expect(env.FEEDBACK_DB.tables.feedback_human_actions.get('hac_analysis').status).toBe(
+            'resolved'
+        );
+    });
+
+    it('[SCN-FWB-012] still refuses an owner reply when nothing is waiting on them', async () => {
+        const ownerCapability = 'owner-with-no-open-wait';
+        const digest = await crypto.subtle.digest(
+            'SHA-256',
+            new TextEncoder().encode(ownerCapability)
+        );
+        const env = createV2Env(
+            {},
+            {
+                feedback_issues: [
+                    createD1IssueRow({
+                        status: 'open',
+                        owner_capability_hash: Array.from(new Uint8Array(digest), (byte) =>
+                            byte.toString(16).padStart(2, '0')
+                        ).join(''),
+                        owner_capability_expires_at: '2099-01-01T00:00:00.000Z',
+                    }),
+                ],
+            }
+        );
+        env.FEEDBACK_WORKFLOW = createWorkflowStub();
+
+        const payload = await json(
+            await request(
+                `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/comments`,
+                {
+                    method: 'POST',
+                    headers: {
+                        Authorization: `Bearer ${ownerCapability}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ body: '再顶一下', mode: 'resume', expectedVersion: 1 }),
+                },
+                env
+            )
+        );
+
+        expect(payload.mode).toBe('record');
+        expect(env.FEEDBACK_WORKFLOW.created).toHaveLength(0);
+    });
+
     it('[SCN-FWB-002] creates exactly one issueId:generation Workflow per event', async () => {
         const { env, headers } = await createDispatchEnv();
 
@@ -8097,6 +8222,119 @@ describe('feedback workbench V2 Run and Callback', () => {
             env
         );
     }
+
+    it('[SCN-FWB-020] leaves a read-only Run with a HumanAction the owner can actually answer', async () => {
+        // bug + unclear scope routes to `analyze`, so this Run produces no
+        // Candidate — the case that used to park the Issue on "waiting for your
+        // reply" with nothing to reply to.
+        const { env, run } = await createRunEnv({ business_type: 'bug', scope: 'unclear' });
+        expect(run.policy).toBe('analyze');
+
+        const token = await callbackTokenFor(env, run.id);
+        await postCallback(
+            env,
+            run.id,
+            {
+                eventId: 'cb_agent_message',
+                type: 'agent.message',
+                payload: { message: '根因在 workers/share-worker.js:11379。' },
+            },
+            token
+        );
+        const completed = await postCallback(
+            env,
+            run.id,
+            {
+                eventId: 'cb_completed_analyze',
+                type: 'run.completed',
+                payload: { summary: '已完成只读分析：本次不修改仓库文件。' },
+            },
+            token
+        );
+
+        expect(completed.status).toBe(201);
+
+        const issue = env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey);
+        const actions = [...env.FEEDBACK_DB.tables.feedback_human_actions.values()].filter(
+            (action) => action.status === 'active'
+        );
+
+        expect(issue.status).toBe('needs_human');
+        expect(actions).toHaveLength(1);
+        expect(actions[0]).toMatchObject({ run_id: run.id, type: 'need_reproduction' });
+        expect(actions[0].requested_action).toContain('请补充复现步骤');
+        expect(issue.active_human_action_id).toBe(actions[0].id);
+        expect(JSON.parse(actions[0].allowed_return_states_json)).toEqual(['queued', 'closed']);
+    });
+
+    it('[SCN-FWB-020] asks a classified Issue to confirm the next step instead of for repro', async () => {
+        const { env, run } = await createRunEnv({
+            business_type: 'requirement',
+            scope: 'medium',
+            automation_decision: 'design_required',
+        });
+        expect(run.policy).toBe('analyze');
+
+        const token = await callbackTokenFor(env, run.id);
+        await postCallback(
+            env,
+            run.id,
+            {
+                eventId: 'cb_agent_message',
+                type: 'agent.message',
+                payload: { message: '这是需求类改动，建议先形成设计方案。' },
+            },
+            token
+        );
+        await postCallback(
+            env,
+            run.id,
+            {
+                eventId: 'cb_completed',
+                type: 'run.completed',
+                payload: { summary: '已完成分析。' },
+            },
+            token
+        );
+
+        const action = [...env.FEEDBACK_DB.tables.feedback_human_actions.values()].find(
+            (row) => row.status === 'active'
+        );
+
+        expect(action.type).toBe('confirm_policy');
+        expect(action.requested_action).toContain('请确认下一步');
+    });
+
+    it('[SCN-FWB-020] does not stack a second HumanAction when the callback is replayed', async () => {
+        const { env, run } = await createRunEnv({ business_type: 'bug', scope: 'unclear' });
+        const token = await callbackTokenFor(env, run.id);
+        await postCallback(
+            env,
+            run.id,
+            {
+                eventId: 'cb_agent_message',
+                type: 'agent.message',
+                payload: { message: '分析结论。' },
+            },
+            token
+        );
+        const body = {
+            eventId: 'cb_completed_replay',
+            type: 'run.completed',
+            payload: { summary: '已完成只读分析。' },
+        };
+
+        const first = await postCallback(env, run.id, body, token);
+        const second = await postCallback(env, run.id, body, token);
+
+        expect(first.status).toBe(201);
+        expect(second.status).toBe(200);
+        expect(
+            [...env.FEEDBACK_DB.tables.feedback_human_actions.values()].filter(
+                (action) => action.status === 'active'
+            )
+        ).toHaveLength(1);
+    });
 
     it('[SCN-FWB-027] carries intake classification into a write-capable Run without an admin step', async () => {
         const env = createV2Env(

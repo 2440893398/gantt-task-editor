@@ -1,5 +1,8 @@
-#!/usr/bin/env node
 // 存量 Issue 分类回填（SCN-FWB-027）。
+//
+// 不要加 `#!/usr/bin/env node`：本文件的纯函数被单元测试 import，而 Vite 的 SSR
+// 转换不会剥掉 shebang，加上它整个测试文件会以 "Invalid or unexpected token" 收集
+// 失败。脚本一律以 `node scripts/...` 调用，shebang 本来也没用。
 //
 // SCN-FWB-027 只在 `issue.created` 时分类，所以在它上线之前创建的 Issue 仍是
 // `unclear`，§7.2 会一直把它们路由到只读 `analyze`。本脚本用同一份规则表把这些
