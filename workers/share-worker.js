@@ -6868,6 +6868,10 @@ function serializeTimelineEvent(row) {
         ),
         mention: limitText(body.mention, 40),
         provider: limitText(body.provider, 40),
+        // SCN-FWB-030: `run.phase_changed` stores which step started; without
+        // surfacing it the timeline can only say "next phase", which is the
+        // same as saying nothing.
+        phase: limitText(body.phase, 40),
         artifact: normalizeFeedbackTimelineArtifact(body.artifact),
         attachments: Array.isArray(body.attachments)
             ? body.attachments.slice(0, MAX_FEEDBACK_COMMENT_ATTACHMENTS).map((attachment) => ({

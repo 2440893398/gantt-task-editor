@@ -530,10 +530,25 @@
         );
     }
 
+    // SCN-FWB-030: a phase event whose text is "进入下一阶段" answers nothing —
+    // the point of reporting progress is saying which step is running, because
+    // browser verification alone can take 20 minutes.
+    var RUN_PHASE_TEXT = {
+        analyzing: '正在阅读代码并分析问题。',
+        implementing: '正在修改代码。',
+        testing: '正在运行单元测试与构建。',
+        browser_verification: '正在运行浏览器回归验证，这一步通常最久。',
+    };
+
+    function runPhaseText(event) {
+        var phase = (event && event.phase) || '';
+        return RUN_PHASE_TEXT[phase] || '处理任务已进入下一阶段。';
+    }
+
     function eventStatusText(event) {
+        if (event.type === 'run.phase_changed') return runPhaseText(event);
         var labels = {
             'run.started': '处理任务已启动，正在读取上下文并执行。',
-            'run.phase_changed': '处理任务已进入下一阶段。',
             'run.completed': '处理任务已完成，请核对下方结果与验证证据。',
             'run.failed': '处理任务未完成，请查看下方失败原因与验证结果。',
             'agent.message': '处理者未返回可显示的回复。',
