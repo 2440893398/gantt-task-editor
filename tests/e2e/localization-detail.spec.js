@@ -12,6 +12,14 @@
 
 import { test, expect } from '@playwright/test';
 
+import { gotoApp } from './helpers/app-ready.js';
+
+// 本地化测试必须钉死浏览器语言。不钉死时，在中文系统上 `detectBrowserLanguage()`
+// 本来就返回 zh-CN，beforeEach 里那次「显式切到 zh-CN」等于没做，测试永远绿；
+// 只有在 en-US 的 runner（CI）上才会暴露初始化覆写问题。选 en-US 是因为它才是
+// 被验证的那一侧：显式切换必须压过自动探测。
+test.use({ locale: 'en-US' });
+
 // 本地化期望值映射表
 const LOCALIZATION_MAP = {
     'zh-CN': {
@@ -207,11 +215,15 @@ async function expandShortcutsPanel(page) {
 
 test.describe('Localization Detail Tests - 本地化细节测试', () => {
     test.beforeEach(async ({ page }) => {
-        await page.goto('/');
+        // 必须等启动完成再切语言。main.js 的 DOMContentLoaded 回调里
+        // `await checkStorageAvailability()` 之后才 `await i18n.init()`，而
+        // `init()` 会 `setLanguage(detectBrowserLanguage())`。在慢 runner 上这条链
+        // 会晚于 `page.goto` 返回，于是测试先切到 zh-CN、init 再把它覆写回 en-US，
+        // 标题变成 "Shortcuts & Legend"（CI 上 3 次重试全红）。
+        await gotoApp(page);
         // 强制设置为中文，因为Playwright默认是英文环境，而测试用例期望中文初始状态
         await page.evaluate(() => window.i18n.setLanguage('zh-CN'));
-        await expect(page.locator('#gantt_here')).toBeVisible();
-        await page.waitForTimeout(1000); // 等待页面完全加载
+        await expect.poll(() => page.evaluate(() => window.i18n.getLanguage())).toBe('zh-CN');
     });
 
     // ============================================

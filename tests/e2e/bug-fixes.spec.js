@@ -1,5 +1,7 @@
 import { test, expect } from '@playwright/test';
 
+import { gotoApp } from './helpers/app-ready.js';
+
 test.use({ locale: 'zh-CN' });
 
 async function getTaskSchedule(page, taskId) {
@@ -79,8 +81,7 @@ async function dragTaskProgress(page, taskId, deltaX) {
 
 test.describe('Bug Fixes Verification', () => {
     test.beforeEach(async ({ page }) => {
-        await page.goto('/');
-        await expect(page.locator('#gantt_here')).toBeVisible();
+        await gotoApp(page);
     });
 
     /**
@@ -110,7 +111,10 @@ test.describe('Bug Fixes Verification', () => {
 
         const toast = page.locator('.gantt-toast');
         await expect(toast).toContainText('Test Auto Hide');
-        await expect(toast).toBeHidden({ timeout: 1000 });
+        // 100ms 自动关闭 + 300ms 淡出后才 remove()，1000ms 的观察窗只剩 600ms 余量，
+        // 在忙碌 runner 上定时器晚一点就误报。放宽窗口不削弱断言：不自动关闭时的兜底
+        // 是 10s（toast.js 的 `duration > 0 ? duration : 10000`），仍然会红。
+        await expect(toast).toBeHidden({ timeout: 5000 });
     });
 
     test('TC-BUG-003: 未修改直接保存应显示本地化提示', async ({ page }) => {
