@@ -60,6 +60,11 @@ const workerModuleFiles = [
         outputName: 'feedback-issue-classifier.js',
     },
     {
+        sourcePath: 'src/features/feedback/analysis-handoff.js',
+        sourceImport: '../src/features/feedback/analysis-handoff.js',
+        outputName: 'feedback-analysis-handoff.js',
+    },
+    {
         sourcePath: 'src/features/feedback/vendor/rrweb-replay-2.0.0-alpha.20.umd.min.txt',
         sourceImport: '../src/features/feedback/vendor/rrweb-replay-2.0.0-alpha.20.umd.min.txt',
         outputName: 'feedback-rrweb-replay-2.0.0-alpha.20.umd.min.txt',
