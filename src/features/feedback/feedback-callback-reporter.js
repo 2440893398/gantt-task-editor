@@ -192,28 +192,69 @@ export function inspectPng(buffer, options = {}) {
     return { width, height, nonblank, ...statistics };
 }
 
+/**
+ * Streams one directory's entries, stopping at the remaining scan budget.
+ *
+ * Injectable so a test can hand back a different enumeration order: the whole
+ * point of the sort below is that the caller's order must not matter, and a
+ * developer machine cannot demonstrate that (NTFS always answers sorted).
+ */
+export function readDirectoryEntries(directory, remaining) {
+    const handle = opendirSync(directory);
+    const entries = [];
+    try {
+        let entry;
+        while (entries.length < remaining && (entry = handle.readSync())) {
+            entries.push({
+                name: entry.name,
+                directory: entry.isDirectory(),
+                file: entry.isFile(),
+            });
+        }
+    } finally {
+        try {
+            handle.closeSync();
+        } catch {
+            // Reading to the end closes the directory automatically.
+        }
+    }
+    return entries;
+}
+
+/**
+ * Walks `root` in a stable, name-sorted order.
+ *
+ * Yield order decides which screenshots survive `maxFiles`/`maxTotalBytes`, so
+ * raw enumeration order made the surviving evidence depend on the filesystem:
+ * NTFS hands back names alphabetically, ext4 hands them back in hash order. The
+ * same repository therefore kept `a.png, b.png` locally and `d.png, c.png` on a
+ * GitHub runner — and, because `npm test` is a hard gate, that mismatch failed
+ * every write-capable feedback Run on CI.
+ *
+ * Entries are still read through a bounded window: at most the remaining
+ * `maxVisitedEntries` are buffered per directory, so a runaway directory cannot
+ * be materialised in full (§SCN-FWB-006's bounded-scan contract).
+ */
 function* walkFiles(root, state) {
     if (!existsSync(root)) return;
+    const readEntries = state.readDirectoryEntries || readDirectoryEntries;
     const directories = [root];
     while (directories.length > 0 && state.visitedEntries < state.maxVisitedEntries) {
-        const directory = directories.pop();
-        const handle = opendirSync(directory);
-        try {
-            let entry;
-            while ((entry = handle.readSync())) {
-                if (state.visitedEntries >= state.maxVisitedEntries) return;
-                state.visitedEntries += 1;
-                const child = join(directory, entry.name);
-                if (entry.isDirectory()) directories.push(child);
-                else if (entry.isFile()) yield child;
-            }
-        } finally {
-            try {
-                handle.closeSync();
-            } catch {
-                // Reading to the end closes the directory automatically.
-            }
-        }
+        const directory = directories.shift();
+        const entries = readEntries(directory, state.maxVisitedEntries - state.visitedEntries);
+        state.visitedEntries += entries.length;
+
+        const files = entries
+            .filter((entry) => entry.file)
+            .map((entry) => join(directory, entry.name))
+            .sort();
+        const children = entries
+            .filter((entry) => entry.directory)
+            .map((entry) => join(directory, entry.name))
+            .sort();
+
+        for (const file of files) yield file;
+        directories.push(...children);
     }
 }
 
@@ -226,6 +267,7 @@ export function sanitizeVisualEvidence(root, options = {}) {
     const scanState = {
         visitedEntries: 0,
         maxVisitedEntries: limits.maxVisitedEntries,
+        readDirectoryEntries: limits.readDirectoryEntries,
     };
     for (const file of walkFiles(root, scanState)) {
         const name = relative(root, file).split(sep).join('/');
@@ -278,7 +320,11 @@ function evidenceRootLabel(resolvedRoot, usedLabels) {
 export function collectVisualEvidence({ destinationRoot, roots, newerThanMs, ...options }) {
     const limits = { ...VISUAL_EVIDENCE_LIMITS, ...options };
     const accepted = [];
-    const scanState = { visitedEntries: 0, maxVisitedEntries: limits.maxVisitedEntries };
+    const scanState = {
+        visitedEntries: 0,
+        maxVisitedEntries: limits.maxVisitedEntries,
+        readDirectoryEntries: limits.readDirectoryEntries,
+    };
     let inspectedBytes = 0;
     let totalBytes = 0;
     mkdirSync(destinationRoot, { recursive: true });
