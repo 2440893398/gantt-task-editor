@@ -144,7 +144,7 @@ function main() {
             'wrangler.toml',
             '--json',
             '--command',
-            `SELECT i.id, i.version, i.status, i.business_type, i.scope,
+            `SELECT i.id, i.version, i.status, i.business_type, i.scope, i.automation_decision,
                     i.active_human_action_id, i.updated_at,
                     (SELECT COUNT(*) FROM feedback_human_actions h
                      WHERE h.issue_id = i.id AND h.status = 'active') AS active_actions

@@ -10,7 +10,10 @@ import rrwebReplayBrowserStyles from '../src/features/feedback/vendor/rrweb-repl
 import { renderFeedbackWorkbenchPage } from './feedback-workbench-ui.js';
 import { evaluateDiffGate } from '../src/features/feedback/diff-gate.js';
 import { classifyFeedbackSubmission } from '../src/features/feedback/issue-classifier.js';
-import { describeFeedbackAnalysisHandoff } from '../src/features/feedback/analysis-handoff.js';
+import {
+    describeFeedbackAnalysisHandoff,
+    requiresFeedbackDesign,
+} from '../src/features/feedback/analysis-handoff.js';
 
 const TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
 const FEEDBACK_TTL_SECONDS = 180 * 24 * 60 * 60; // 180 days
@@ -3938,15 +3941,9 @@ function resolveFeedbackPolicy({ businessType, scope, automationDecision, approv
     const policy = (() => {
         if (automationDecision === 'review_required') return 'review';
         if (automationDecision === 'need_reproduction') return 'analyze';
-        // §16.4: an explicit gate, a requirement, a large scope, or a
-        // non-small improvement cannot become write-capable until the exact
-        // current Design revision is approved.
-        const requiresDesign =
-            automationDecision === 'design_required' ||
-            businessType === 'requirement' ||
-            scope === 'large' ||
-            (businessType === 'improvement' && scope !== 'small');
-        if (requiresDesign) return approvedDesign ? 'implement_and_verify' : 'analyze';
+        if (requiresFeedbackDesign({ businessType, scope, automationDecision })) {
+            return approvedDesign ? 'implement_and_verify' : 'analyze';
+        }
         if (businessType === 'bug') {
             return scope === 'unclear' ? 'analyze' : 'implement_and_verify';
         }
@@ -4204,6 +4201,15 @@ async function createFeedbackRun(env, { issueId, workflowId, provider, triggerEv
             policy,
             deliveryMode,
             provider: resolvedProvider,
+            // §16.4/SCN-FWB-020: the Report job runs after the Agent job and has
+            // no access to the fetched context, so the one fact it needs to
+            // choose `agent.waiting_human` over `run.completed` travels with the
+            // dispatch. Routing stays server-owned (§7.3).
+            requiresDesign: requiresFeedbackDesign({
+                businessType: issue.business_type,
+                scope: issue.scope,
+                automationDecision: issue.automation_decision,
+            }),
             permissionProfile: FEEDBACK_PERMISSION_PROFILES[policy] || 'feedback-readonly',
             responsesEndpoint:
                 resolvedProvider === 'codex'
@@ -4552,7 +4558,7 @@ async function readFeedbackRunContext(env, runId) {
     const row = await env.FEEDBACK_DB.prepare(
         `SELECT r.id AS run_id, r.policy, r.provider, r.runner_type, r.status AS run_status,
                 r.base_commit, r.design_id, i.id AS issue_id, i.version, i.title, i.description,
-                i.business_type, i.scope, i.status AS issue_status
+                i.business_type, i.scope, i.automation_decision, i.status AS issue_status
          FROM feedback_runs r
          JOIN feedback_issues i ON i.id = r.issue_id
          WHERE r.id = ?`
@@ -4581,6 +4587,14 @@ async function readFeedbackRunContext(env, runId) {
         runStatus: row.run_status,
         baseCommit: row.base_commit || null,
         design: design ? serializeFeedbackDesign(design) : null,
+        // §16.4/SCN-FWB-020: tells a read-only Run that its deliverable is a
+        // Design, not just an explanation. Without it the Runner cannot know
+        // that finishing with `run.completed` would strand the Issue.
+        requiresDesign: requiresFeedbackDesign({
+            businessType: row.business_type,
+            scope: row.scope,
+            automationDecision: row.automation_decision,
+        }),
         issue: {
             id: row.issue_id,
             version: Number(row.version) || 1,
@@ -5299,7 +5313,7 @@ async function ensureFeedbackAnalysisHandoff(env, { run }) {
     if (existing) return existing.id;
 
     const issue = await env.FEEDBACK_DB.prepare(
-        'SELECT business_type, scope FROM feedback_issues WHERE id = ?'
+        'SELECT business_type, scope, automation_decision FROM feedback_issues WHERE id = ?'
     )
         .bind(run.issue_id)
         .first();
