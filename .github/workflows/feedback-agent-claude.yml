@@ -144,6 +144,30 @@ jobs:
             - name: Mark evidence collection start
               run: /usr/bin/touch "$RUNNER_TEMP/feedback-evidence-start"
 
+            # SCN-FWB-030: a Run can spend 20+ minutes inside one step, and the
+            # workbench used to show nothing between `run.started` and the
+            # terminal — a person could not tell "still working" from "hung".
+            # The token is re-extracted per step on purpose: putting it in
+            # GITHUB_ENV would hand it to the untrusted Agent step as well.
+            - name: Report phase (analysing)
+              env:
+                  CALLBACK_URL: ${{ steps.payload.outputs.callbackUrl }}
+                  PAYLOAD: ${{ inputs.payload }}
+                  TRUSTED_NODE: ${{ steps.trusted_tools.outputs.node }}
+                  WRITE_ALLOWED: ${{ steps.payload.outputs.writeAllowed }}
+              run: |
+                  set -euo pipefail
+                  FEEDBACK_CALLBACK_TOKEN="$($TRUSTED_NODE -e 'process.stdout.write(JSON.parse(process.env.PAYLOAD).callbackToken)')"
+                  echo "::add-mask::$FEEDBACK_CALLBACK_TOKEN"
+                  if [ "$WRITE_ALLOWED" = "true" ]; then PHASE=implementing; else PHASE=analyzing; fi
+                  # Progress is never worth failing a Run over.
+                  /usr/bin/curl --silent --show-error --max-time 10 \
+                    -X POST "$CALLBACK_URL" \
+                    -H "Authorization: Bearer $FEEDBACK_CALLBACK_TOKEN" \
+                    -H 'Content-Type: application/json' \
+                    -d "{\"eventId\":\"cb-phase-$PHASE-${{ github.run_id }}-${{ github.run_attempt }}\",\"type\":\"run.phase_changed\",\"provider\":\"claude\",\"payload\":{\"phase\":\"$PHASE\"}}" \
+                    > /dev/null || true
+
             - name: Run Claude Code
               id: run_claude
               uses: anthropics/claude-code-action@be7b93b1907a4abad570368f3c74b6fe3807510b
@@ -156,6 +180,26 @@ jobs:
                       --allowedTools
                       ${{ steps.payload.outputs.writeAllowed == 'true' && 'Read,Grep,Glob,Edit,Write,Bash' || 'Read,Grep,Glob' }}
 
+            # `phase: testing` is the one phase the reporter also sees: it moves
+            # the Issue to `testing` (「验证中」), which is public, while the
+            # phase events themselves stay internal per §10.2.
+            - name: Report phase (testing)
+              if: steps.payload.outputs.writeAllowed == 'true'
+              env:
+                  CALLBACK_URL: ${{ steps.payload.outputs.callbackUrl }}
+                  PAYLOAD: ${{ inputs.payload }}
+                  TRUSTED_NODE: ${{ steps.trusted_tools.outputs.node }}
+              run: |
+                  set -euo pipefail
+                  FEEDBACK_CALLBACK_TOKEN="$($TRUSTED_NODE -e 'process.stdout.write(JSON.parse(process.env.PAYLOAD).callbackToken)')"
+                  echo "::add-mask::$FEEDBACK_CALLBACK_TOKEN"
+                  /usr/bin/curl --silent --show-error --max-time 10 \
+                    -X POST "$CALLBACK_URL" \
+                    -H "Authorization: Bearer $FEEDBACK_CALLBACK_TOKEN" \
+                    -H 'Content-Type: application/json' \
+                    -d "{\"eventId\":\"cb-phase-testing-${{ github.run_id }}-${{ github.run_attempt }}\",\"type\":\"run.phase_changed\",\"provider\":\"claude\",\"payload\":{\"phase\":\"testing\"}}" \
+                    > /dev/null || true
+
             - name: Targeted tests
               id: tests
               if: steps.payload.outputs.writeAllowed == 'true'
@@ -165,6 +209,24 @@ jobs:
               id: build
               if: steps.payload.outputs.writeAllowed == 'true'
               run: npm run build
+
+            # The long pole: the E2E suite ran 21 minutes on run 31308373864.
+            - name: Report phase (browser verification)
+              if: steps.payload.outputs.policy == 'implement_and_verify'
+              env:
+                  CALLBACK_URL: ${{ steps.payload.outputs.callbackUrl }}
+                  PAYLOAD: ${{ inputs.payload }}
+                  TRUSTED_NODE: ${{ steps.trusted_tools.outputs.node }}
+              run: |
+                  set -euo pipefail
+                  FEEDBACK_CALLBACK_TOKEN="$($TRUSTED_NODE -e 'process.stdout.write(JSON.parse(process.env.PAYLOAD).callbackToken)')"
+                  echo "::add-mask::$FEEDBACK_CALLBACK_TOKEN"
+                  /usr/bin/curl --silent --show-error --max-time 10 \
+                    -X POST "$CALLBACK_URL" \
+                    -H "Authorization: Bearer $FEEDBACK_CALLBACK_TOKEN" \
+                    -H 'Content-Type: application/json' \
+                    -d "{\"eventId\":\"cb-phase-e2e-${{ github.run_id }}-${{ github.run_attempt }}\",\"type\":\"run.phase_changed\",\"provider\":\"claude\",\"payload\":{\"phase\":\"browser_verification\"}}" \
+                    > /dev/null || true
 
             - name: Playwright verification
               id: playwright
