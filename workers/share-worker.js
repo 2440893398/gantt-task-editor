@@ -10,6 +10,7 @@ import rrwebReplayBrowserStyles from '../src/features/feedback/vendor/rrweb-repl
 import { renderFeedbackWorkbenchPage } from './feedback-workbench-ui.js';
 import { evaluateDiffGate } from '../src/features/feedback/diff-gate.js';
 import { classifyFeedbackSubmission } from '../src/features/feedback/issue-classifier.js';
+import { describeFeedbackAnalysisHandoff } from '../src/features/feedback/analysis-handoff.js';
 
 const TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
 const FEEDBACK_TTL_SECONDS = 180 * 24 * 60 * 60; // 180 days
@@ -5276,31 +5277,6 @@ async function findActiveFeedbackCandidateAction(env, issueId, candidateId) {
         .bind(issueId)
         .all();
     return (result.results || []).find((action) => action.candidate_id === candidateId) || null;
-}
-
-/**
- * §7.2 decides what a finished read-only Run leaves behind. The Agent answered
- * the question, but the Issue still needs a person, so say what that person is
- * being asked for.
- */
-function describeFeedbackAnalysisHandoff(issue) {
-    const businessType = String(issue?.business_type || 'unclear');
-    const scope = String(issue?.scope || 'unclear');
-
-    if (businessType === 'unclear' || businessType === 'other' || scope === 'unclear') {
-        return {
-            actionType: 'need_reproduction',
-            requestedAction:
-                '分析已完成，结论见上一条处理结果。这条反馈还不足以判断要改什么：请补充复现步骤、期望结果或截图，回复后会带着新信息重新分析。',
-        };
-    }
-
-    return {
-        actionType: 'confirm_policy',
-        requestedAction:
-            '分析已完成，结论见上一条处理结果。请确认下一步：回复补充你的决定会重新处理；' +
-            '如果要进入代码实现，需求与中大型改动须先形成并批准设计方案，其余请由管理员在 Issue 分类中确认范围。',
-    };
 }
 
 /**
