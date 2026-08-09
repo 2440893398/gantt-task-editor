@@ -1,9 +1,10 @@
 import { test, expect } from '@playwright/test';
 
+import { gotoApp } from './helpers/app-ready.js';
+
 test.describe('Regression: today marker and new task entry', () => {
     test.beforeEach(async ({ page }) => {
-        await page.goto('/');
-        await expect(page.locator('#gantt_here')).toBeVisible();
+        await gotoApp(page);
     });
 
     test('clicking Today keeps a visible today marker line', async ({ page }) => {

@@ -6,6 +6,8 @@
 
 import { test, expect } from '@playwright/test';
 
+import { gotoApp, waitForAppReady } from './helpers/app-ready.js';
+
 // 默认使用中文环境
 test.use({ locale: 'zh-CN' });
 
@@ -14,9 +16,11 @@ test.describe('用户反馈优化测试套件', () => {
         // 增加单个测试超时时间
         test.setTimeout(60000);
 
-        await page.goto('http://localhost:5273/');
-        // 等待甘特图核心元素加载完成
-        await expect(page.locator('#gantt_here')).toBeVisible({ timeout: 30000 });
+        // 等到 loading 遮罩消失、且初始化后那次强制 gantt.render() 已经落地。
+        // 只等 `#gantt_here` 可见不够：该元素在 opacity:0 的 #app-container 里就已存在，
+        // 而 init 末尾 1000ms + 500ms 后的那次重绘会把刚打开的内联编辑器整个换掉
+        // （CI 上 TC-002-03 三次重试都拿不到 duration 编辑器）。
+        await gotoApp(page, 'http://localhost:5273/');
         // 等待工具栏初始化完成
         await expect(page.locator('#scroll-to-today-btn')).toBeVisible({ timeout: 15000 });
         // 等待至少一行真实任务渲染；不要把异步渲染瞬间的 0/1 行数冻结为期望总数。
@@ -196,9 +200,8 @@ test.describe('用户反馈优化测试套件', () => {
             // 刷新页面
             await page.reload();
             // 等待甘特图和工具栏加载
-            await expect(page.locator('#gantt_here')).toBeVisible({ timeout: 30000 });
+            await waitForAppReady(page);
             await expect(page.locator('#scroll-to-today-btn')).toBeVisible({ timeout: 10000 });
-            await page.waitForTimeout(2000);
 
             // 验证语言设置保留 - 检查Today按钮文本 (使用 toContainText 自动重试)
             await expect(page.locator('#scroll-to-today-btn')).toContainText('Today');

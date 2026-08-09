@@ -1,7 +1,9 @@
 import { test, expect } from '@playwright/test';
 
+import { waitForAppReady } from './helpers/app-ready.js';
+
 async function waitForGanttData(page) {
-    await expect(page.locator('#gantt_here')).toBeVisible();
+    await waitForAppReady(page);
     await expect
         .poll(async () => {
             return page.evaluate(() => gantt?.serialize?.()?.data?.length ?? 0);
