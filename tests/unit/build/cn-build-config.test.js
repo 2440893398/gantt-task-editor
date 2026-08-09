@@ -128,6 +128,7 @@ describe('CN build configuration', () => {
         expect(fs.existsSync(path.join(outputDir, 'feedback-workbench.css.txt'))).toBe(true);
         expect(fs.existsSync(path.join(outputDir, 'feedback-workbench-client.js.txt'))).toBe(true);
         expect(fs.existsSync(path.join(outputDir, 'feedback-diff-gate.js'))).toBe(true);
+        expect(fs.existsSync(path.join(outputDir, 'feedback-issue-classifier.js'))).toBe(true);
         expect(
             fs.existsSync(path.join(outputDir, 'feedback-rrweb-replay-2.0.0-alpha.20.umd.min.txt'))
         ).toBe(true);

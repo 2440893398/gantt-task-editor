@@ -2,27 +2,8 @@
 
 Vanilla JS Gantt chart SPA. Vite 5, Tailwind 4 + DaisyUI 5, DHTMLX Gantt (CDN), Dexie.js, Vercel AI SDK.
 
-## Build & Run
-
-```bash
-npm run dev      # http://localhost:5273
-npm run build    # dist/
-npm run build:cn # dist-cn/ (Cloudflare)
-npm run check    # lint + format:check + test
-```
-
-## Testing
-
-```bash
-npm test             # Vitest (unit tests)
-npm run test:ui      # vitest --ui
-npm run test:coverage # v8 coverage → doc/testdoc/
-npm run test:e2e     # Playwright E2E (Chromium)
-```
-
-Single test: `npx vitest run tests/unit/xxx.test.js`
-
-Vitest: jsdom, `pool: 'forks'`. Playwright: Chromium only.
+Commands live in `package.json` scripts (`dev` serves on port 5273). Vitest runs on jsdom with
+`pool: 'forks'`; Playwright is Chromium-only.
 
 ## Business Testing Loop (mandatory)
 
@@ -51,26 +32,6 @@ Use the minimum sufficient tier: Tier 0 for trivial/no-runtime changes, Tier 1 f
 local fixes, Tier 2 for user-visible interactions, and Tier 3 for core flows such as
 drag/drop, hierarchy, links, persistence, calendar cache/worktime, batch operations, or
 undo/redo. Keep verification targeted, but include fresh evidence in the final response.
-
-## Project Structure
-
-```
-src/
-├── main.js              # Entry point
-├── config/constants.js  # Colors, field config
-├── core/                # storage.js (Dexie), store.js (state)
-├── data/                # fields.js, tasks.js
-├── features/
-│   ├── agent-cli/       # AI agent command layer: commands/, runtime/ (dispatch, manifest, guards), discovery/, adapters/
-│   ├── ai/              # agent, api, components, prompts, renderers, services, skills/**, tools, utils
-│   ├── calendar/        # holidayFetcher, mini-calendar, panel, tab1-3, locale-country
-│   ├── config/configIO.js, customFields/, gantt/ (~18 modules)
-│   ├── lightbox/, projects/, selection/, share/, task-details/
-├── locales/             # zh-CN, en-US, ja-JP, ko-KR
-├── styles/, utils/      # i18n, toast, time-formatter, dom, analytics
-workers/share-worker.js   # Cloudflare Worker
-tests/setup.js, unit/** (~100), e2e/** (~27)
-```
 
 ## Code Style
 
@@ -111,9 +72,32 @@ tests/setup.js, unit/** (~100), e2e/** (~27)
   (registry → manifest/discovery → dispatch → guards). It mirrors feature behavior, so it
   goes stale silently when features change.
 
+## Deployment (two copies, one codebase)
+
+`npm run build:cn` copies `workers/share-worker.js` verbatim into the Pages artifact as
+`_worker.js`, so **the Pages site and the `gantt-share` Worker run the same code in two
+deployments**. They differ only in bindings: the Pages project has KV + Durable Object,
+while D1, R2 and Workflows exist only on the Worker — which is why the feedback write path
+lives there and the app's `VITE_FEEDBACK_API_URL` points at `*.workers.dev`. Pages still
+needs its `_worker.js` because `/feedback` is rendered, not a static file.
+
+- **Changing `workers/share-worker.js` means deploying both sides.** Deploying only one
+  leaves the page UI and the API on different versions — that drift is what users perceive
+  as "the styling is wrong". Worker: `npx wrangler deploy --config wrangler.toml`.
+  Pages: `npm run deploy:cn`.
+- **Pages is the only entry a person should see** (SCN-FWB-028). User-facing links use
+  `FEEDBACK_PRODUCTION_ORIGIN`, and `/feedback` on `*.workers.dev` 302s back to Pages.
+  Attachment signed URLs stay on the Worker — they need R2 and the signing secret.
+- **New modules imported by the Worker must be registered** in `workerModuleFiles`
+  (`scripts/prepare-cloudflare-pages.js`), or the CN build validation fails.
+- **`.github/workflows/` changes do not take effect via deploy.** The Worker dispatches
+  workflows from `master` (`FEEDBACK_GITHUB_REF`), so they must be merged first.
+- Pre-flight checks that need no credentials: `npm run feedback:worker:dry-run` and
+  `npm run build:cn`.
+
 ## Boundaries
 
-- ✅ **Always do:** Run `npm test` before committing. Include `.js` in import paths. Use `i18n.t()` in JS and `data-i18n` in HTML. When changing or adding any feature, check the impact on the agent CLI command layer (`src/features/agent-cli/`) — adapt its commands/manifest/guards to match and update `tests/unit/agent-cli/` (plus `tests/e2e/agent-cli.spec.js` for user-visible flows).
+- ✅ **Always do:** Run `npm test` before committing. Include `.js` in import paths. Use `i18n.t()` in JS and `data-i18n` in HTML. When changing or adding any feature, check the impact on the agent CLI command layer (`src/features/agent-cli/`) — adapt its commands/manifest/guards to match and update `tests/unit/agent-cli/` (plus `tests/e2e/agent-cli.spec.js` for user-visible flows). After changing `workers/share-worker.js`, deploy both the Worker and Pages — see [Deployment](#deployment-two-copies-one-codebase).
 - ⚠️ **Ask first:** Adding new DHTMLX Gantt event listeners. Modifying `core/store.js` or `core/storage.js`. Changing `features/` module boundaries.
 - 🚫 **Never do:** Call Dexie directly — use `src/core/storage.js`. Import `window.gantt` as a module. Use `var`. Create files outside `src/` or `tests/`.
 

@@ -207,7 +207,7 @@ graph LR
 
 | 来源 | 细粒度上限 | 项目级上限 / 24h | 超额行为 |
 | ---- | ---------- | ---------------- | -------- |
-| 未认证 `issue.created → analyze` | 同一来源 2 次 | 10 Runs | Issue 仍可记录；自动化被抑制 |
+| 未认证 `issue.created`（按 §7.2 矩阵路由） | 同一来源 2 次 | 10 Runs | Issue 仍可记录；自动化被抑制 |
 | Owner 回答 `needs_human` | 每 Issue 3 次 | 20 Runs | 评论记录；不恢复 Workflow |
 | 允许名单自动触发 | 每 Issue 5 次 | 50 Runs | 429；管理员可查看抑制原因 |
 | 管理员手动 Run | 每 Issue 10 次 | 100 Runs | 必须等待下一窗口，不提供无限绕过 |
@@ -262,6 +262,18 @@ V2 继续把分类与生命周期分开保存，避免旧流程曾出现的类�
 
 读取旧 `type=manual/auto_error` 时只映射 `sourceType`，不得覆盖 `submittedType/businessType`。
 每个选中 Issue 必须先保存分类，再创建写入型 Run。
+
+分类在 `issue.created` 入库前由 `src/features/feedback/issue-classifier.js` 的确定性规则表
+产出（SCN-FWB-027），不调用模型：同一输入永远得到同一 `businessType/scope/automationDecision/
+confidence`，因此路由仍完全可预测、可单测、可回放。规则以提交者在弹窗选定的类型为准，只有
+选“不确定”时才由标题/正文信号推断；识别不出业务意图一律落回 `unclear`，由 §7.2 保持只读，
+绝不猜成写入型。分类依据（命中的信号）写入 `visibility=internal` 的 `classification.changed`
+事件，`actor_id` 记为分类来源（当前为 `intake_rules`），公开时间线与 Agent 最小上下文都看不到它。
+显式传入的 `ai.*` 字段（管理员或内部调用）优先于自动分类；分类只在创建时发生一次并落库，
+读取路径不得改写既有分类。
+
+自动分类只提供事实，不改变授权：匿名提交即使被路由到写入型 policy，仍不是 §7.4 的 trusted
+actor，`deliveryMode` 恒为 `candidate_review`，必须经人工批准才能交付。
 
 ## 8. Provider 与 Runner 路由
 

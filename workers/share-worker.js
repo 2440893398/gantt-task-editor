@@ -9,6 +9,7 @@ import rrwebReplayBrowserScript from '../src/features/feedback/vendor/rrweb-repl
 import rrwebReplayBrowserStyles from '../src/features/feedback/vendor/rrweb-replay-2.0.0-alpha.20.style.min.txt';
 import { renderFeedbackWorkbenchPage } from './feedback-workbench-ui.js';
 import { evaluateDiffGate } from '../src/features/feedback/diff-gate.js';
+import { classifyFeedbackSubmission } from '../src/features/feedback/issue-classifier.js';
 
 const TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
 const FEEDBACK_TTL_SECONDS = 180 * 24 * 60 * 60; // 180 days
@@ -1021,6 +1022,38 @@ function normalizeAiClassification(feedback = {}) {
     };
 }
 
+/**
+ * §7.5 / SCN-FWB-027: classification happens once, at intake, so §7.2 has real
+ * facts to route on. Explicitly supplied `ai.*` fields (admin or internal
+ * callers) always win — the rule table only fills what the caller left out, and
+ * anything it cannot recognise stays `unclear`, which §7.2 keeps read-only.
+ */
+function classifyNewFeedbackIssue(body, submission) {
+    const supplied = body?.ai && typeof body.ai === 'object' ? body.ai : {};
+    const normalized = normalizeAiClassification(body);
+    const hasSuppliedType = FEEDBACK_BUSINESS_TYPES.has(supplied.businessType);
+    const hasSuppliedScope = FEEDBACK_SCOPES.has(supplied.scope);
+    const hasSuppliedDecision = FEEDBACK_AUTOMATION_DECISIONS.has(supplied.automationDecision);
+    if (hasSuppliedType && hasSuppliedScope && hasSuppliedDecision) return normalized;
+
+    const auto = classifyFeedbackSubmission(submission);
+    return {
+        ...normalized,
+        businessType: hasSuppliedType ? normalized.businessType : auto.businessType,
+        scope: hasSuppliedScope ? normalized.scope : auto.scope,
+        automationDecision: hasSuppliedDecision
+            ? normalized.automationDecision
+            : auto.automationDecision,
+        confidence: normalizeEnumValue(
+            supplied.confidence,
+            FEEDBACK_AI_CONFIDENCE,
+            auto.confidence
+        ),
+        classifiedAt: limitText(supplied.classifiedAt, 80) || new Date().toISOString(),
+        signals: auto.signals,
+    };
+}
+
 function escapeHtml(value) {
     return String(value || '')
         .replace(/&/g, '&amp;')
@@ -1135,6 +1168,8 @@ function normalizeFeedbackPayload(body, request) {
         body.submittedType || body.businessType || legacySubmittedType,
         'unclear'
     );
+    const title = limitText(body.title, 240);
+    const description = limitText(body.description, 12000);
 
     return {
         schemaVersion: 1,
@@ -1142,9 +1177,15 @@ function normalizeFeedbackPayload(body, request) {
         type: sourceType,
         sourceType,
         submittedType,
-        ai: normalizeAiClassification(body),
-        title: limitText(body.title, 240),
-        description: limitText(body.description, 12000),
+        ai: classifyNewFeedbackIssue(body, {
+            submittedType,
+            title,
+            description,
+            context: body.context,
+            attachmentCount: attachments.length,
+        }),
+        title,
+        description,
         contact: limitText(body.contact, 240),
         attachments,
         context: body.context || {},
@@ -1975,6 +2016,7 @@ async function createD1FeedbackIssue(env, feedback) {
         Date.parse(createdAt) + FEEDBACK_TTL_SECONDS * 1000
     ).toISOString();
     const eventId = `evt_${crypto.randomUUID()}`;
+    const classificationEventId = `evt_${crypto.randomUUID()}`;
     const eventBody = {
         title: feedback.title,
         sourceType: feedback.sourceType,
@@ -2050,6 +2092,34 @@ async function createD1FeedbackIssue(env, feedback) {
             null,
             createdAt,
             JSON.stringify(eventBody),
+            JSON.stringify({ schemaVersion: 2 }),
+            null
+        ),
+        // SCN-FWB-027: the routing facts are only auditable if the reason they
+        // were chosen is recorded. Internal visibility keeps the rule trace out
+        // of the owner's timeline.
+        env.FEEDBACK_DB.prepare(
+            `INSERT INTO feedback_events (
+                id, issue_id, sequence, type, actor_type, actor_id, visibility,
+                run_id, occurred_at, body_json, metadata_json, legacy_hash
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(
+            classificationEventId,
+            issueId,
+            2,
+            'classification.changed',
+            'system',
+            'intake_rules',
+            'internal',
+            null,
+            createdAt,
+            JSON.stringify({
+                businessType: feedback.ai.businessType,
+                scope: feedback.ai.scope,
+                automationDecision: feedback.ai.automationDecision,
+                confidence: feedback.ai.confidence,
+                signals: Array.isArray(feedback.ai.signals) ? feedback.ai.signals : [],
+            }),
             JSON.stringify({ schemaVersion: 2 }),
             null
         ),
@@ -8326,6 +8396,30 @@ function getFeedbackBoardApiBase(request, env) {
     return '';
 }
 
+/**
+ * §19: the Pages site is the only entry a person should ever see. The Worker
+ * carries the D1/R2/Workflows bindings, so the app calls it for the API — which
+ * used to make every owner link point at `*.workers.dev`, a second copy of the
+ * same workbench that is only as fresh as the last Worker deploy.
+ *
+ * Rewriting is limited to the `workers.dev` backend: a custom domain or a local
+ * `wrangler dev` must keep working same-origin, and a misconfigured value that
+ * points back at this very origin must not build a redirect loop.
+ */
+function getFeedbackPublicOrigin(request, env) {
+    const url = new URL(request.url);
+    const configured = String(env.FEEDBACK_PRODUCTION_ORIGIN || '').replace(/\/+$/, '');
+    if (!configured || !url.hostname.endsWith('.workers.dev')) return url.origin;
+
+    try {
+        const parsed = new URL(configured);
+        if (parsed.origin === url.origin) return url.origin;
+        return parsed.origin;
+    } catch {
+        return url.origin;
+    }
+}
+
 function getFeedbackBoardContentSecurityPolicy(feedbackApiBase) {
     let connectSource = "'self'";
     let imageSource = "'self' data: blob:";
@@ -10421,6 +10515,24 @@ export default {
             request.method === 'GET' &&
             (url.pathname === '/feedback' || url.pathname === '/feedback/legacy')
         ) {
+            // §19: one workbench for people to look at. On the API backend the
+            // page is a duplicate that drifts with its own deploy cadence, so
+            // send visitors to the Pages entry instead. The capability lives in
+            // the fragment, which the browser re-attaches without ever putting
+            // it on the wire.
+            const publicOrigin = getFeedbackPublicOrigin(request, env);
+            if (publicOrigin !== url.origin) {
+                return new Response(null, {
+                    status: 302,
+                    headers: {
+                        ...headers,
+                        Location: `${publicOrigin}${url.pathname}${url.search}`,
+                        'Cache-Control': 'no-store',
+                        'Referrer-Policy': 'no-referrer',
+                    },
+                });
+            }
+
             const feedbackApiBase = getFeedbackBoardApiBase(request, env);
             const page =
                 url.pathname === '/feedback/legacy'
@@ -11624,7 +11736,8 @@ export default {
                         issueId: created.issueId,
                         ownerCapability: created.ownerCapability,
                         ownerCapabilityExpiresAt: created.ownerCapabilityExpiresAt,
-                        ownerUrl: `${url.origin}/feedback#issue=${encodeURIComponent(
+                        // §19: hand back the Pages entry, not the API origin.
+                        ownerUrl: `${getFeedbackPublicOrigin(request, env)}/feedback#issue=${encodeURIComponent(
                             created.issueId
                         )}&capability=${encodeURIComponent(created.ownerCapability)}`,
                         stored: true,

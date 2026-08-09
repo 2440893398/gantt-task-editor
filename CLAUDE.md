@@ -1,6 +1,6 @@
 # CLAUDE.md — gantt-task-editor
 
-通用项目规范见 [AGENTS.md](./AGENTS.md)，两份文件对所有 AI 协作者同等生效。
+通用项目规范见 @AGENTS.md，两份文件对所有 AI 协作者同等生效。
 
 ## 业务测试闭环（必须遵守）
 
