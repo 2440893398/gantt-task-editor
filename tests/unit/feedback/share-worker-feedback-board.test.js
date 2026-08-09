@@ -1784,6 +1784,80 @@ describe('feedback issue board Worker routes', () => {
         expect(html).not.toContain('rrweb-player@latest');
     });
 
+    it('[SCN-FWB-028] sends workers.dev visitors to the Pages workbench instead of the API copy', async () => {
+        const workerEnv = createV2Env();
+        workerEnv.FEEDBACK_PRODUCTION_ORIGIN = 'https://gantt-task-editor.pages.dev';
+
+        const response = await worker.fetch(
+            new Request('https://gantt-share.ch451314.workers.dev/feedback?tab=runs'),
+            workerEnv
+        );
+
+        expect(response.status).toBe(302);
+        expect(response.headers.get('Location')).toBe(
+            'https://gantt-task-editor.pages.dev/feedback?tab=runs'
+        );
+        expect(response.headers.get('Cache-Control')).toBe('no-store');
+        expect(response.headers.get('Referrer-Policy')).toBe('no-referrer');
+    });
+
+    it('[SCN-FWB-028] returns an owner link on the Pages site even though the API runs on the Worker', async () => {
+        const workerEnv = createV2Env();
+        workerEnv.FEEDBACK_PRODUCTION_ORIGIN = 'https://gantt-task-editor.pages.dev/';
+
+        const response = await worker.fetch(
+            new Request('https://gantt-share.ch451314.workers.dev/api/feedback', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    submittedType: 'bug',
+                    title: '点击保存后日期不对',
+                    description: '点击保存按钮后，任务列表里的日期不对。',
+                }),
+            }),
+            workerEnv
+        );
+        const body = await json(response);
+
+        expect(response.status).toBe(201);
+        expect(
+            body.ownerUrl.startsWith('https://gantt-task-editor.pages.dev/feedback#issue=')
+        ).toBe(true);
+        expect(body.ownerUrl).toContain(`capability=${encodeURIComponent(body.ownerCapability)}`);
+    });
+
+    it('[SCN-FWB-028] keeps local and custom-domain deployments same-origin', async () => {
+        const localEnv = createV2Env();
+        localEnv.FEEDBACK_PRODUCTION_ORIGIN = 'https://gantt-task-editor.pages.dev';
+
+        const page = await worker.fetch(new Request('http://127.0.0.1:8788/feedback'), localEnv);
+        const created = await json(
+            await worker.fetch(
+                new Request('http://127.0.0.1:8788/api/feedback', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ title: '本地反馈', description: '点击保存没有反应。' }),
+                }),
+                localEnv
+            )
+        );
+
+        expect(page.status).toBe(200);
+        expect(created.ownerUrl.startsWith('http://127.0.0.1:8788/feedback#issue=')).toBe(true);
+    });
+
+    it('[SCN-FWB-028] never redirects to itself when the public origin is misconfigured', async () => {
+        const workerEnv = createV2Env();
+        workerEnv.FEEDBACK_PRODUCTION_ORIGIN = 'https://gantt-share.ch451314.workers.dev';
+
+        const response = await worker.fetch(
+            new Request('https://gantt-share.ch451314.workers.dev/feedback'),
+            workerEnv
+        );
+
+        expect(response.status).toBe(200);
+    });
+
     it('[SCN-FWB-014] allows the configured feedback origin to render signed evidence images', async () => {
         env.FEEDBACK_API_URL = 'https://feedback-api.example.test';
 
@@ -3895,9 +3969,11 @@ describe('feedback issue board Worker routes', () => {
         expect(response.status).toBe(201);
         expect(stored.source_type).toBe('manual');
         expect(stored.submitted_type).toBe('requirement');
-        expect(stored.business_type).toBe('unclear');
-        expect(stored.scope).toBe('unclear');
-        expect(stored.automation_decision).toBe('');
+        // SCN-FWB-027: intake now classifies instead of storing `unclear` and
+        // waiting for an admin who has no UI to do it.
+        expect(stored.business_type).toBe('requirement');
+        expect(stored.scope).toBe('medium');
+        expect(stored.automation_decision).toBe('design_required');
         expect(submitEnv.FEEDBACK_KV.putCalls).toEqual([]);
     });
 
@@ -3980,7 +4056,14 @@ describe('feedback issue board Worker routes', () => {
         });
         expect(storedIssue.owner_capability_hash).toBeTruthy();
         expect(storedIssue.owner_capability_hash).not.toContain(body.ownerCapability);
-        expect(d1Env.FEEDBACK_DB.tables.feedback_events.size).toBe(1);
+        // SCN-FWB-027 adds the internal classification trace alongside
+        // `issue.created`; both still live only in D1.
+        const storedEvents = [...d1Env.FEEDBACK_DB.tables.feedback_events.values()];
+        expect(storedEvents).toHaveLength(2);
+        expect(storedEvents.map((event) => event.type)).toEqual([
+            'issue.created',
+            'classification.changed',
+        ]);
         expect(d1Env.FEEDBACK_KV.putCalls).toEqual([]);
     });
 
@@ -8014,6 +8097,93 @@ describe('feedback workbench V2 Run and Callback', () => {
             env
         );
     }
+
+    it('[SCN-FWB-027] carries intake classification into a write-capable Run without an admin step', async () => {
+        const env = createV2Env(
+            {},
+            {
+                feedback_settings: [
+                    {
+                        name: 'runners',
+                        value_json: JSON.stringify({
+                            defaultProvider: 'codex',
+                            providers: {
+                                codex: {
+                                    connectionState: 'connected',
+                                    lastTestResult: { ok: true },
+                                },
+                            },
+                        }),
+                        version: 1,
+                        updated_at: '2026-08-09T08:00:00.000Z',
+                        updated_by: 'admin',
+                    },
+                ],
+            }
+        );
+        Object.assign(env, {
+            FEEDBACK_CALLBACK_ORIGIN: 'https://worker.test',
+            FEEDBACK_GITHUB_REPOSITORY: 'acme/gantt-task-editor',
+            FEEDBACK_GITHUB_TOKEN: 'ghp_test',
+            FEEDBACK_RELEASE_TOKEN_SECRET: 'unit-test-secret',
+        });
+
+        const submitSpy = mockSuccessfulGitHubRunDispatch();
+        let created;
+        try {
+            created = await json(
+                await request(
+                    '/api/feedback',
+                    {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            sourceType: 'manual',
+                            submittedType: 'unclear',
+                            title: '查看进度的地址不对',
+                            description:
+                                '问题反馈后给用户提供的查看处理进度的地址，访问的不是 pages 页面，且点击进去后样式不对。',
+                        }),
+                    },
+                    env
+                )
+            );
+        } finally {
+            submitSpy.mockRestore();
+        }
+
+        const issue = env.FEEDBACK_DB.tables.feedback_issues.get(created.issueId);
+        expect(issue.business_type).toBe('bug');
+        expect(issue.scope).toBe('small');
+        expect(issue.automation_decision).toBe('auto_fix');
+        expect(issue.ai_classified_at).toBeTruthy();
+
+        const classificationEvent = [...env.FEEDBACK_DB.tables.feedback_events.values()].find(
+            (event) => event.type === 'classification.changed'
+        );
+        expect(classificationEvent.visibility).toBe('internal');
+        expect(JSON.parse(classificationEvent.body_json).signals).toContain('text:bug');
+
+        const createdEvent = [...env.FEEDBACK_DB.tables.feedback_events.values()].find(
+            (event) => event.type === 'issue.created'
+        );
+        const runSpy = mockSuccessfulGitHubRunDispatch();
+        try {
+            await runWorkflow(env, {
+                issueId: created.issueId,
+                eventId: createdEvent.id,
+                eventType: 'issue.created',
+            });
+        } finally {
+            runSpy.mockRestore();
+        }
+
+        const run = Array.from(env.FEEDBACK_DB.tables.feedback_runs.values()).at(-1);
+        expect(run.policy).toBe('implement_and_verify');
+        // An anonymous submitter is never a trusted actor, so the Candidate
+        // still stops for human approval (§7.4).
+        expect(run.delivery_mode).toBe('candidate_review');
+    });
 
     it('[SCN-FWB-008] routes policy deterministically from classification, not model output', async () => {
         const cases = [

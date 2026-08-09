@@ -55,6 +55,11 @@ const workerModuleFiles = [
         outputName: 'feedback-diff-gate.js',
     },
     {
+        sourcePath: 'src/features/feedback/issue-classifier.js',
+        sourceImport: '../src/features/feedback/issue-classifier.js',
+        outputName: 'feedback-issue-classifier.js',
+    },
+    {
         sourcePath: 'src/features/feedback/vendor/rrweb-replay-2.0.0-alpha.20.umd.min.txt',
         sourceImport: '../src/features/feedback/vendor/rrweb-replay-2.0.0-alpha.20.umd.min.txt',
         outputName: 'feedback-rrweb-replay-2.0.0-alpha.20.umd.min.txt',

@@ -269,8 +269,14 @@ describe('[SCN-FWB-022] feedback V2 autonomous delivery infrastructure', () => {
         const codex = readProjectFile('.github/workflows/feedback-agent-codex.yml');
         const claude = readProjectFile('.github/workflows/feedback-agent-claude.yml');
 
+        // SCN-FWB-029 moved prompt construction into one shared builder, so the
+        // timeline contract is asserted there rather than in each workflow.
+        expect(readProjectFile('src/features/feedback/feedback-prompt.js')).toContain(
+            'context.timeline'
+        );
+
         for (const workflow of [codex, claude]) {
-            expect(workflow).toContain('context.timeline');
+            expect(workflow).toContain('scripts/feedback-build-prompt.mjs');
             expect(workflow).toContain('agent-final.txt');
             expect(workflow).toContain('type: "agent.message"');
             expect(workflow).toContain('empty_agent_response');
