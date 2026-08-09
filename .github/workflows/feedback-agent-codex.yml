@@ -304,6 +304,9 @@ jobs:
                       baseRef: process.env.GITHUB_REF_NAME || "master",
                       candidateRef: `feedback/candidate/${payload.runId}`,
                       writeAllowed,
+                      // SCN-FWB-020: server-owned; the Runner never re-derives
+                      // the §7.2 matrix for itself.
+                      requiresDesign: payload.requiresDesign === true,
                     };
                     const fs = require("fs");
                     for (const [key, value] of Object.entries(out)) {
@@ -452,7 +455,13 @@ jobs:
                   TRUSTED_REPORTER="$TRUSTED_REPORTER_ROOT/feedback-callback-reporter.mjs"
                   /usr/bin/git show "$BASE_COMMIT:src/features/feedback/feedback-callback-reporter.js" \
                     > "$TRUSTED_REPORTER"
+                  # SCN-FWB-020: the design extractor reads the Agent's own words,
+                  # so it comes from the trusted base commit like the reporter.
+                  TRUSTED_DESIGN="$TRUSTED_REPORTER_ROOT/feedback-extract-design.mjs"
+                  /usr/bin/git show "$BASE_COMMIT:scripts/feedback-extract-design.mjs" \
+                    > "$TRUSTED_DESIGN"
                   echo "path=$TRUSTED_REPORTER" >> "$GITHUB_OUTPUT"
+                  echo "design=$TRUSTED_DESIGN" >> "$GITHUB_OUTPUT"
 
             - name: Report completion
               if: always() && steps.payload.outcome == 'success'
@@ -469,7 +478,9 @@ jobs:
                   POLICY: ${{ steps.payload.outputs.policy }}
                   PLAYWRIGHT_OUTCOME: ${{ needs.agent.outputs.playwright_outcome }}
                   PUSH_OUTCOME: ${{ steps.push.outcome }}
+                  REQUIRES_DESIGN: ${{ steps.payload.outputs.requiresDesign }}
                   TESTS_OUTCOME: ${{ needs.agent.outputs.targeted_tests_outcome }}
+                  TRUSTED_DESIGN: ${{ steps.reporter.outputs.design }}
                   TRUSTED_NODE: ${{ steps.trusted_tools.outputs.node }}
                   TRUSTED_REPORTER: ${{ steps.reporter.outputs.path }}
                   WRITE_ALLOWED: ${{ steps.payload.outputs.writeAllowed }}
@@ -485,6 +496,16 @@ jobs:
                       "$RUNNER_TEMP/feedback-agent-output/evidence"
                   else
                     echo "::warning title=Trusted reporter::unavailable; publishing the terminal callback only"
+                  fi
+                  # SCN-FWB-020: on an Issue that needs an approved design, the
+                  # read-only deliverable IS the design. Extract it before the
+                  # terminal is built so the Run can wait for a decision instead
+                  # of completing into a dead end.
+                  if [ "$REQUIRES_DESIGN" = "true" ] && [ "$WRITE_ALLOWED" != "true" ] \
+                     && [ -n "$TRUSTED_DESIGN" ]; then
+                    "$TRUSTED_NODE" "$TRUSTED_DESIGN" \
+                      --message "$RUNNER_TEMP/feedback-agent-output/agent-final.txt" \
+                      --out "$RUNNER_TEMP/feedback-design.json" || true
                   fi
                   "$TRUSTED_NODE" -e '
                     const fs = require("fs");
@@ -550,7 +571,34 @@ jobs:
                         present: hasVisualEvidence,
                       },
                     };
-                    const body = {
+                    // SCN-FWB-020: a design proposal is a wait, not a completion.
+                    // Only a successful read-only Run may switch the terminal, and
+                    // only when the extractor validated the design the Worker will
+                    // accept — a rejected design would lose the whole terminal.
+                    let pendingDesign = null;
+                    if (success && !writeAllowed && process.env.REQUIRES_DESIGN === "true") {
+                      try {
+                        const extracted = JSON.parse(
+                          fs.readFileSync(process.env.RUNNER_TEMP + "/feedback-design.json", "utf8")
+                        );
+                        if (extracted.found && extracted.design) pendingDesign = extracted.design;
+                        else console.log(`::warning title=Feedback design::${extracted.reason || "not produced"}`);
+                      } catch {
+                        console.log("::warning title=Feedback design::extractor produced no result");
+                      }
+                    }
+                    const body = pendingDesign ? {
+                      eventId: `cb-final-${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}`,
+                      type: "agent.waiting_human",
+                      provider: "codex",
+                      providerRawStatus: "success",
+                      payload: {
+                        actionType: "design_decision",
+                        requestedAction: "已产出方案，请管理员确认：批准后才会进入代码实现，也可以要求修订或拒绝。",
+                        summary: "已完成只读分析并产出方案，等待确认。",
+                        design: pendingDesign,
+                      },
+                    } : {
                       eventId: `cb-final-${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}`,
                       type: success ? "run.completed" : "run.failed",
                       provider: "codex",

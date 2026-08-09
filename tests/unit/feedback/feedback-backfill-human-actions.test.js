@@ -53,9 +53,8 @@ describe('[SCN-FWB-020] stranded needs_human backfill', () => {
         // drift here is exactly what would make the script and production
         // disagree about what a person is being asked for.
         const worker = fs.readFileSync(path.resolve('workers/share-worker.js'), 'utf8');
-        expect(worker).toContain(
-            "import { describeFeedbackAnalysisHandoff } from '../src/features/feedback/analysis-handoff.js';"
-        );
+        expect(worker).toContain("from '../src/features/feedback/analysis-handoff.js';");
+        expect(worker).toContain('describeFeedbackAnalysisHandoff,');
         expect(worker).not.toContain('function describeFeedbackAnalysisHandoff');
     });
 

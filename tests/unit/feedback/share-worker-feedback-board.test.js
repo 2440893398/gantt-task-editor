@@ -8302,7 +8302,12 @@ describe('feedback workbench V2 Run and Callback', () => {
         );
 
         expect(action.type).toBe('confirm_policy');
-        expect(action.requested_action).toContain('请确认下一步');
+        // Reaching `run.completed` on an Issue that needs a design means the Run
+        // produced no approvable design (one would have arrived as
+        // `agent.waiting_human`). Saying "confirm the next step" here would be a
+        // lie — there is nothing to approve, so ask for acceptance criteria.
+        expect(action.requested_action).toContain('验收标准');
+        expect(action.requested_action).toContain('由管理员批准后才会开始实现');
     });
 
     it('[SCN-FWB-020] does not stack a second HumanAction when the callback is replayed', async () => {
@@ -10362,6 +10367,9 @@ describe('feedback workbench V2 Run and Callback', () => {
         expect(raw).not.toContain('内部排查记录');
         // §18.2: reporter text is labelled as untrusted so prompts can separate it.
         expect(body.context.issue.description).toHaveProperty('untrustedUserContent');
+        // §16.4/SCN-FWB-020: the prompt builder reads this to decide whether the
+        // read-only deliverable is a Design. A small bug needs no Design.
+        expect(body.context.requiresDesign).toBe(false);
         expect(contextToken).toBeTruthy();
     });
 
@@ -10572,6 +10580,51 @@ describe('feedback workbench V2 GitHub dispatch', () => {
         } finally {
             fetchSpy.mockRestore();
         }
+    });
+
+    it('[SCN-FWB-020] tells the Runner when its read-only deliverable is a Design', async () => {
+        // §16.4: without this flag the Runner finishes with `run.completed`, the
+        // Issue lands in `needs_human` with no Design, and §7.2 routes the next
+        // Run straight back to `analyze` — the Issue can never reach implement.
+        async function dispatchPayloadFor(overrides) {
+            const env = createDispatchEnv();
+            Object.assign(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey), overrides);
+            const calls = [];
+            const fetchSpy = vi
+                .spyOn(globalThis, 'fetch')
+                .mockImplementation(async (url, options) => {
+                    calls.push({ url, options });
+                    if (url.endsWith('/commits/master')) {
+                        return Response.json({ sha: 'c'.repeat(40) });
+                    }
+                    return new Response(null, { status: 204 });
+                });
+            try {
+                await runWorkflow(env, { issueId: feedbackKey });
+                return JSON.parse(JSON.parse(calls[1].options.body).inputs.payload);
+            } finally {
+                fetchSpy.mockRestore();
+            }
+        }
+
+        const requirement = await dispatchPayloadFor({
+            business_type: 'requirement',
+            scope: 'medium',
+        });
+        expect(requirement.policy).toBe('analyze');
+        expect(requirement.requiresDesign).toBe(true);
+
+        const broadImprovement = await dispatchPayloadFor({
+            business_type: 'improvement',
+            scope: 'medium',
+        });
+        expect(broadImprovement.requiresDesign).toBe(true);
+
+        // A small bug goes straight to implementation; asking for a Design there
+        // would add an approval nobody needs.
+        const smallBug = await dispatchPayloadFor({ business_type: 'bug', scope: 'small' });
+        expect(smallBug.policy).toBe('implement_and_verify');
+        expect(smallBug.requiresDesign).toBe(false);
     });
 
     it('[SCN-FWB-009] leaves the Run visibly un-started when dispatch is unconfigured', async () => {
