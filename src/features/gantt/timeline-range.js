@@ -17,8 +17,17 @@
  * dhtmlxGantt 自己定范围的时机一致。
  */
 
-/** 范围两端各留出的缓冲天数，避免任务条或今日线正好贴在边缘上被裁掉。 */
-const RANGE_PADDING_DAYS = 7;
+/** 起点缓冲，避免第一根任务条贴在边缘上被裁掉。 */
+const PAST_PADDING_DAYS = 7;
+
+/**
+ * 终点缓冲。不对称是有原因的：「今天居左」要求今天右边还有内容可滚，否则滚动会在
+ * 时间轴末端被截断，今天反而被顶到视口右侧。生产实测（视口 1992px、内容 22891px、
+ * 今天在 22400px）只剩 491px 可滚，今天停在 75.3% 处——正好是这个需求要避免的位置。
+ * 90 天在日刻度下约 6000px，比任何合理视口都宽，因此左对齐在各种窗口尺寸下都成立；
+ * 顺带也给「往后排期」留了可拖拽的空白。
+ */
+const FUTURE_PADDING_DAYS = 90;
 
 function startOfToday() {
     const today = new Date();
@@ -78,8 +87,8 @@ function applyTimelineRange() {
     if (!gantt?.config) return;
     const bounds = typeof gantt.getSubtaskDates === 'function' ? gantt.getSubtaskDates() : null;
     const { start, end } = resolveTimelineRange(bounds);
-    const nextStart = shiftDays(start, -RANGE_PADDING_DAYS);
-    const nextEnd = shiftDays(end, RANGE_PADDING_DAYS);
+    const nextStart = shiftDays(start, -PAST_PADDING_DAYS);
+    const nextEnd = shiftDays(end, FUTURE_PADDING_DAYS);
 
     // 只在范围真的变化时写回。`onBeforeGanttRender` 每次都赋值会让 dhtmlx 认为刻度
     // 失效、重算并重排任务条，于是每次渲染都把任务条挪一遍——Playwright 在
