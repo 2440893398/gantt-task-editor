@@ -12,7 +12,7 @@
 | SCN-GUI-008 | P1 | 内联编辑日期遵守任务排期模式 | `start_end` 模式编辑开始日期时截止日期保持不变并重算 duration；`start_duration` 模式编辑截止日期时保持 duration 并反推 start | active |
 | SCN-GUI-009 | P1 | Excel 导出里程碑日期不提前 | 零工期/里程碑任务导出的“计划截止”与开始日期相同；普通任务仍把 exclusive end 转为含端点日期 | active |
 | SCN-GUI-010 | P0 | 桌面端通过任务条两端拖展调整 `start_end` 排期 | 桌面视口中 `gantt.config.drag_resize === true`；`start_end` 任务显示两端手柄，左端中线拖动后结束日期不变、开始日期移动且 `duration` 改变，右端拖动后开始日期不变、结束日期移动且 `duration` 改变；日期调整使用任务条上方命中区，0% 进度手柄保留下方独立命中区并仍可拖动；`start_duration` 任务不显示缩放手柄且拒绝缩放；移动端仍保持禁用缩放，拖动主体仍只平移排期并保持工期 | active |
-| SCN-GUI-011 | P1 | 今日标记落在真实的今天，点「今天」把今天停在任务区左侧 | 时间轴范围始终包含今天（任务全在过去或全在未来也一样），`gantt.getState().min_date <= 今天 <= max_date`，且今天之后至少保留 90 天可滚内容——否则滚动会在末端被截断，今天反而被顶到视口右侧（生产 1992px 视口实测停在 75.3%）；`posFromDate(今天)` 不得等于 `posFromDate(max_date)`——相等说明日期被钳到端点，标记是在冒充今天；今日标记（`.gantt_marker` 或 `#custom-today-line`，取决于 CDN 构建是否带 marker 扩展，断言不得绑定其中一种）的 `left` 与 `posFromDate(今天)` 一致；点击「今天」后今天距视口左边缘为视口宽 × 0.1（±8px），且该偏移不随窗口尺寸或一天中的时刻变化——滚动与标记都以当天零点为基准，用 `new Date()` 会按已过去的时长把今天推左近一整列 | active |
+| SCN-GUI-011 | P1 | 今日标记落在真实的今天，点「今天」把今天停在任务区左侧 | 时间轴范围始终包含今天（任务全在过去或全在未来也一样），`gantt.getState().min_date <= 今天 <= max_date`，且今天之后至少保留 90 天可滚内容——否则滚动会在末端被截断，今天反而被顶到视口右侧（生产 1992px 视口实测停在 75.3%）；`posFromDate(今天)` 不得等于 `posFromDate(max_date)`——相等说明日期被钳到端点，标记是在冒充今天；今日标记（`.gantt_marker` 或 `#custom-today-line`，取决于 CDN 构建是否带 marker 扩展，断言不得绑定其中一种）的 `left` 与 `posFromDate(今天)` 一致，且必须在数据装载引发的重绘之后仍然在 DOM 里——`initMarkers()` 跑在 `gantt.parse()` 之前，只加一次会被随后的重建冲掉（生产实测连续 15 秒 `.gantt_marker` 为 0）；点击「今天」后今天距视口左边缘为视口宽 × 0.1（±8px），且该偏移不随窗口尺寸或一天中的时刻变化——滚动与标记都以当天零点为基准，用 `new Date()` 会按已过去的时长把今天推左近一整列 | active |
 
 ## 变更日志
 
