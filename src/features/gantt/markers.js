@@ -4,6 +4,8 @@
  * 添加今日竖线标记和其他时间标记
  */
 
+import { isTodayWithinTimeline } from './timeline-range.js';
+
 let todayMarkerId = null;
 
 function rerenderMarkerLayer() {
@@ -100,6 +102,14 @@ function addTodayLineElement() {
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
+
+    // 越界兜底：`posFromDate` 把范围外的日期钳到 [0, 内容宽度]，所以 2026-08-10 和
+    // 时间轴末端会算出同一个 x。只判 `pos <= 0` 挡得住早于范围的日期，挡不住晚于
+    // 范围的——那种情况下这条线会画在末端冒充今天，比不画更糟。范围本身由
+    // timeline-range.js 负责始终包含今天，这里只是最后一道防线。
+    if (!isTodayWithinTimeline()) {
+        return;
+    }
 
     // 计算今日位置
     const pos = gantt.posFromDate(today);

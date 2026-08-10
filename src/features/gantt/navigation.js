@@ -183,8 +183,30 @@ function setupManualDrag() {
 }
 
 /**
+ * 今天停在任务区左侧时留出的呼吸位，按可视宽度取比例。
+ *
+ * 用户要的是「当天日期居左」：右侧留给接下来要做的事。完全贴边会让今天那一列被
+ * 边框压住、也看不到任何刚过去的上下文，所以留一成宽度。
+ */
+const TODAY_LEFT_MARGIN_RATIO = 0.1;
+
+/**
+ * 取时间轴可视区宽度。
+ *
+ * 不能用 `.gantt_task_data`：那是可滚动的内容容器，宽度是整条时间轴（实测 1401px
+ * 对 712px 的可视区）。也不能用 `getScrollState().inner_width`，本项目的布局下它
+ * 实测返回 15。`.gantt_task` 这个布局单元格才是真正的视口。
+ */
+function getTimelineViewportWidth() {
+    const taskArea = document.querySelector('.gantt_task');
+    return taskArea?.clientWidth || 0;
+}
+
+/**
  * 滚动到今天
- * 将视图滚动到当前日期居中位置
+ *
+ * 把今天这一列停在任务区左侧。`gantt.showDate` 只保证今天进入视口，落点由内部
+ * 决定，所以定位之后要自己再摆一次。
  */
 export function scrollToToday() {
     const today = new Date();
@@ -194,14 +216,33 @@ export function scrollToToday() {
     // 使用 gantt.showDate 滚动到今天
     if (typeof gantt.showDate === 'function') {
         gantt.showDate(today);
-    } else {
-        // 备用方案：使用 scrollTo
-        const pos = gantt.posFromDate ? gantt.posFromDate(today) : 0;
-        const scrollContainer = document.querySelector('.gantt_hor_scroll');
-        if (scrollContainer && pos > 0) {
-            scrollContainer.scrollLeft = pos - scrollContainer.offsetWidth / 2;
-        }
     }
+
+    if (alignTodayToLeft(today)) return;
+
+    // 备用方案：Gantt 滚动 API 不可用时直接操作滚动容器
+    const pos = gantt.posFromDate ? gantt.posFromDate(today) : 0;
+    const scrollContainer = document.querySelector('.gantt_hor_scroll');
+    if (scrollContainer && pos > 0) {
+        scrollContainer.scrollLeft = pos - scrollContainer.offsetWidth * TODAY_LEFT_MARGIN_RATIO;
+    }
+}
+
+function alignTodayToLeft(today) {
+    if (typeof gantt.posFromDate !== 'function' || typeof gantt.scrollTo !== 'function') {
+        return false;
+    }
+
+    const position = gantt.posFromDate(today);
+    const viewportWidth = getTimelineViewportWidth();
+    if (!Number.isFinite(position) || viewportWidth <= 0) return false;
+
+    // `posFromDate` 与 `scrollTo` 用的是同一套时间轴内容坐标系，直接相减即可。
+    // 再减一次 `getScrollState().x` 会把 `showDate` 刚滚过去的距离重复扣掉——那正是
+    // 上一版「居中」实现在浏览器里偏 356px 的原因，而它的单测把 `getScrollState`
+    // mock 成 `{ x: 0 }`，恰好是这个 bug 唯一不显形的取值。
+    gantt.scrollTo(Math.max(0, position - viewportWidth * TODAY_LEFT_MARGIN_RATIO), null);
+    return true;
 }
 
 /**

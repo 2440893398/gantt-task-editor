@@ -15,6 +15,7 @@ import {
 import { updateSelectedTasksUI } from '../selection/selectionManager.js';
 import { initNavigation, refreshUndoRedoButtons } from './navigation.js';
 import { initMarkers } from './markers.js';
+import { initTimelineRange } from './timeline-range.js';
 import { initZoom } from './zoom.js';
 import { initScheduler, recalculateDurationsFromDates } from './scheduler.js';
 import { initResponsive } from './responsive.js';
@@ -858,6 +859,9 @@ export function initGantt() {
 
     // 新建任务/链接使用顺序短 ID（替代 DHTMLX 默认的时间戳大数字）
     installSequentialIdGenerator(gantt);
+
+    // 必须在 init 之前：范围决定首帧的时间刻度，事后再改要多一次整图重绘
+    initTimelineRange();
 
     // 初始化甘特图
     gantt.init('gantt_here');
