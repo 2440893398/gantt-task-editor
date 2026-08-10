@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
+    FEEDBACK_EVIDENCE_DIR,
     buildFeedbackPrompt,
     isWriteCapablePolicy,
 } from '../../../src/features/feedback/feedback-prompt.js';
@@ -51,6 +52,29 @@ describe('[SCN-FWB-029] runner prompt construction', () => {
             expect(prompt).toContain('Run targeted tests, then npm test before completion.');
             expect(prompt).not.toContain('This Run is read-only by design');
         }
+    });
+
+    it('[SCN-FWB-029] asks the browser-verified policy for evidence of its own fix', () => {
+        const prompt = buildFeedbackPrompt(createContext('implement_and_verify'));
+
+        expect(prompt).toContain('## Browser verification');
+        // The collector only publishes what lands here, and nothing else in the
+        // repository writes to it — so without this instruction an Issue gets no
+        // evidence at all, and with the old roots it got someone else's.
+        expect(prompt).toContain(`${FEEDBACK_EVIDENCE_DIR}/<descriptive-name>.png`);
+        expect(prompt).toContain('Confirm it fails before the fix.');
+        // The defect this exists for: a centering fix that missed by 356px in
+        // the browser went green as a unit test with `getScrollState` mocked.
+        expect(prompt).toContain('jsdom unit test with mocked geometry');
+
+        // The other write policy runs no browser, so demanding a Playwright
+        // test there would be an instruction it cannot follow.
+        expect(buildFeedbackPrompt(createContext('implement'))).not.toContain(
+            '## Browser verification'
+        );
+        expect(buildFeedbackPrompt(createContext('analyze'))).not.toContain(
+            '## Browser verification'
+        );
     });
 
     it('[SCN-FWB-029] tells a read-only Run that the analysis is the deliverable', () => {

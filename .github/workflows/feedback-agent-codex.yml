@@ -86,6 +86,10 @@ jobs:
                       baseRef: process.env.GITHUB_REF_NAME || "master",
                       candidateRef: `feedback/candidate/${payload.runId}`,
                       writeAllowed,
+                      // §14.4 rule 4: server-owned authorization to record a
+                      // scenario in `tests/scenarios/**`. The Runner never
+                      // decides this for itself.
+                      contractRun: payload.contractRun === true,
                       permissionProfile: writeAllowed ? "feedback-workspace" : ":read-only",
                       responsesEndpoint,
                     };
@@ -207,11 +211,58 @@ jobs:
                   permission-profile: ${{ steps.payload.outputs.permissionProfile }}
                   safety-strategy: drop-sudo
 
+            # The same rule table `publish_candidate` uses, run *before* the
+            # 26-minute verification sequence instead of after it. Run
+            # 31322835665 spent its whole budget going green and was then thrown
+            # away over one path; a change set that cannot ship should not buy
+            # CI time first. This is a pre-flight only: it never grants
+            # anything, and the authoritative gate still re-runs on the applied
+            # patch in a job the Agent cannot reach. `continue-on-error` is
+            # deliberate — failing the job here would strand the terminal
+            # callback on "did not pass isolated verification" and hide which
+            # path was rejected.
+            - name: Pre-flight project diff gate
+              id: preflight_gate
+              continue-on-error: true
+              env:
+                  BASE_COMMIT: ${{ steps.base.outputs.sha }}
+                  CONTRACT_RUN: ${{ steps.payload.outputs.contractRun }}
+                  WRITE_ALLOWED: ${{ steps.payload.outputs.writeAllowed }}
+                  TRUSTED_NODE: ${{ steps.trusted_tools.outputs.node }}
+                  BASH_ENV: ''
+                  ENV: ''
+                  PATH: /usr/bin:/bin
+              run: |
+                  set -euo pipefail
+                  export GIT_NO_REPLACE_OBJECTS=1
+                  TRUSTED_GATE_ROOT="$(/usr/bin/mktemp -d "$RUNNER_TEMP/feedback-preflight-gate.XXXXXX")"
+                  trap '/bin/rm -rf "$TRUSTED_GATE_ROOT"' EXIT
+                  /bin/mkdir -p "$TRUSTED_GATE_ROOT/scripts" "$TRUSTED_GATE_ROOT/src/features/feedback"
+                  /usr/bin/git show "$BASE_COMMIT:scripts/feedback-diff-gate.mjs" \
+                    > "$TRUSTED_GATE_ROOT/scripts/feedback-diff-gate.mjs"
+                  /usr/bin/git show "$BASE_COMMIT:src/features/feedback/diff-gate.js" \
+                    > "$TRUSTED_GATE_ROOT/src/features/feedback/diff-gate.js"
+                  /usr/bin/printf '{"type":"module"}\n' > "$TRUSTED_GATE_ROOT/package.json"
+                  # Nothing is committed yet, so the change set has to be staged
+                  # before the gate can see newly created files at all.
+                  /usr/bin/git add -A -- . \
+                    ':!doc/design/screenshots' \
+                    ':!feedback-context.json' \
+                    ':!feedback-diff-manifest.json' \
+                    ':!callback.json'
+                  "$TRUSTED_NODE" "$TRUSTED_GATE_ROOT/scripts/feedback-diff-gate.mjs" \
+                    --base "$BASE_COMMIT" \
+                    --staged \
+                    --contract-run "$CONTRACT_RUN" \
+                    --write-allowed "$WRITE_ALLOWED"
+
             # `phase: testing` is the one phase the reporter also sees: it moves
             # the Issue to `testing` (「验证中」), which is public, while the
             # phase events themselves stay internal per §10.2.
             - name: Report phase (testing)
-              if: steps.payload.outputs.writeAllowed == 'true'
+              if: >-
+                  steps.payload.outputs.writeAllowed == 'true' &&
+                  steps.preflight_gate.outcome == 'success'
               env:
                   CALLBACK_URL: ${{ steps.payload.outputs.callbackUrl }}
                   PAYLOAD: ${{ inputs.payload }}
@@ -229,17 +280,23 @@ jobs:
 
             - name: Targeted tests
               id: tests
-              if: steps.payload.outputs.writeAllowed == 'true'
+              if: >-
+                  steps.payload.outputs.writeAllowed == 'true' &&
+                  steps.preflight_gate.outcome == 'success'
               run: npm test
 
             - name: Build verification
               id: build
-              if: steps.payload.outputs.writeAllowed == 'true'
+              if: >-
+                  steps.payload.outputs.writeAllowed == 'true' &&
+                  steps.preflight_gate.outcome == 'success'
               run: npm run build
 
             # The long pole: the E2E suite ran 21 minutes on run 31308373864.
             - name: Report phase (browser verification)
-              if: steps.payload.outputs.policy == 'implement_and_verify'
+              if: >-
+                  steps.payload.outputs.policy == 'implement_and_verify' &&
+                  steps.preflight_gate.outcome == 'success'
               env:
                   CALLBACK_URL: ${{ steps.payload.outputs.callbackUrl }}
                   PAYLOAD: ${{ inputs.payload }}
@@ -257,7 +314,9 @@ jobs:
 
             - name: Playwright verification
               id: playwright
-              if: steps.payload.outputs.policy == 'implement_and_verify'
+              if: >-
+                  steps.payload.outputs.policy == 'implement_and_verify' &&
+                  steps.preflight_gate.outcome == 'success'
               run: npm run test:e2e
 
             - name: Package untrusted Agent output
@@ -288,7 +347,13 @@ jobs:
                     echo "::warning title=Codex output record::missing_output_file ($RUNNER_TEMP/feedback-agent-final.md)"
                   fi
                   /bin/echo -n "$AGENT_MESSAGE_REASON" > "$OUTPUT_ROOT/agent-final-reason.txt"
+                  # `doc/design/screenshots` holds tracked documentation assets
+                  # that `tests/e2e/ui_capture.spec.js` rewrites on every
+                  # `npm run test:e2e`. Without this exclusion every
+                  # implement_and_verify Candidate carried three unrelated PNGs
+                  # — 581KB of the 582KB patch on run 31322835665.
                   /usr/bin/git add -A -- . \
+                    ':!doc/design/screenshots' \
                     ':!feedback-context.json' \
                     ':!feedback-diff-manifest.json' \
                     ':!callback.json'
@@ -297,9 +362,19 @@ jobs:
                   TRUSTED_REPORTER_ROOT="$(/usr/bin/mktemp -d "$RUNNER_TEMP/feedback-callback-reporter.XXXXXX")"
                   /usr/bin/git show "$BASE_COMMIT:src/features/feedback/feedback-callback-reporter.js" \
                     > "$TRUSTED_REPORTER_ROOT/feedback-callback-reporter.mjs"
+                  # Evidence is "PNGs written during this Run", so a root that
+                  # some unrelated spec rewrites every time is not evidence.
+                  # `doc/testdoc/screenshots`, `doc/design/screenshots` and
+                  # `tests/e2e/screenshots` are all rewritten wholesale by
+                  # ui_capture / ux-improvements / gantt-ui-excel on every
+                  # `npm run test:e2e`, which is why run 31322835665 published a
+                  # settings modal and two full-page captures for an Issue about
+                  # the today marker. `tests/e2e/evidence` is written by nothing
+                  # else, so whatever lands there was taken on purpose;
+                  # `test-results` carries Playwright's own failure artifacts.
                   "$TRUSTED_NODE" "$TRUSTED_REPORTER_ROOT/feedback-callback-reporter.mjs" \
                     collect "$OUTPUT_ROOT/evidence" "$RUNNER_TEMP/feedback-evidence-start" \
-                    doc/testdoc/screenshots doc/design/screenshots tests/e2e/screenshots test-results
+                    tests/e2e/evidence test-results
 
             - name: Upload untrusted Agent output
               if: always() && steps.package.outcome == 'success'
@@ -366,6 +441,7 @@ jobs:
                       baseRef: process.env.GITHUB_REF_NAME || "master",
                       candidateRef: `feedback/candidate/${payload.runId}`,
                       writeAllowed,
+                      contractRun: payload.contractRun === true,
                       // SCN-FWB-020: server-owned; the Runner never re-derives
                       // the §7.2 matrix for itself.
                       requiresDesign: payload.requiresDesign === true,
@@ -443,6 +519,7 @@ jobs:
                   BASE_COMMIT: ${{ steps.base.outputs.sha }}
                   BASE_REF: ${{ steps.payload.outputs.baseRef }}
                   CANDIDATE_REF: ${{ steps.payload.outputs.candidateRef }}
+                  CONTRACT_RUN: ${{ steps.payload.outputs.contractRun }}
                   WRITE_ALLOWED: ${{ steps.payload.outputs.writeAllowed }}
                   TRUSTED_NODE: ${{ steps.trusted_tools.outputs.node }}
                   BASH_ENV: ''
@@ -461,6 +538,7 @@ jobs:
                   /usr/bin/printf '{"type":"module"}\n' > "$TRUSTED_GATE_ROOT/package.json"
                   "$TRUSTED_NODE" "$TRUSTED_GATE_ROOT/scripts/feedback-diff-gate.mjs" \
                     --base "$BASE_COMMIT" \
+                    --contract-run "$CONTRACT_RUN" \
                     --write-allowed "$WRITE_ALLOWED" \
                     --repository "$GITHUB_REPOSITORY" \
                     --base-ref "$BASE_REF" \
@@ -687,6 +765,12 @@ jobs:
                             : gateFailed
                               ? "security_policy_violation"
                               : "verification_failed",
+                        // §15.3: the workbench re-runs the same rule table on
+                        // this payload. Without carrying the authorization the
+                        // Runner's gate used, its re-check defaults both back to
+                        // empty and rejects a Candidate the Runner just allowed.
+                        contractRunApproved: manifest.contractRunApproved === true,
+                        scnId: manifest.scnId || "",
                         diffManifest: manifest,
                         verification: verificationReport,
                       },

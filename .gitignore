@@ -52,6 +52,9 @@ docs/.doc-automation
 coverage/
 tests/e2e/downloads/
 tests/e2e/screenshots/
+# Verification screenshots a feedback Run publishes to its Issue. Untracked on
+# purpose: they are evidence for one Run, not a repository asset.
+tests/e2e/evidence/
 
 # Output files
 output*.txt

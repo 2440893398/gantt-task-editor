@@ -4210,6 +4210,18 @@ async function createFeedbackRun(env, { issueId, workflowId, provider, triggerEv
                 scope: issue.scope,
                 automationDecision: issue.automation_decision,
             }),
+            // §14.4 rule 4: the project contract says a requirement change
+            // updates `tests/scenarios/**` first, and the diff gate treats those
+            // files as contract-aware — allowed only for an authorized Run. With
+            // nothing granting that authorization, every Run that followed the
+            // rule was rejected with CONTRACT_CHANGE_NOT_AUTHORIZED after all its
+            // tests had already run. A write-capable Run is exactly the Run that
+            // may need to record a scenario, so the grant is server-owned like
+            // `requiresDesign`. It never weakens the outcome: contract files stay
+            // in `requiresCandidateReview`, so the Candidate still needs a human
+            // and can never leave through `auto_deliver`, and `expected/*.json`
+            // stays hard-denied.
+            contractRun: FEEDBACK_WRITE_POLICIES.has(policy),
             permissionProfile: FEEDBACK_PERMISSION_PROFILES[policy] || 'feedback-readonly',
             responsesEndpoint:
                 resolvedProvider === 'codex'
@@ -4890,6 +4902,22 @@ async function appendFeedbackCallbackEvent(env, runId, body) {
         }
     }
 
+    // Display-only view of the manifest. The Runner sends it on a failed
+    // terminal too, and that is exactly when a person needs to see which files
+    // were touched and which rule rejected them. Reading it for `run.completed`
+    // alone rendered a gate-blocked Run as 「没有记录任何变更文件」 next to three
+    // green checks — a contradiction that says nothing about the cause. It
+    // stays out of `completionManifest` on purpose: a blocked Candidate is
+    // never pushed, so its commit must not be recorded as this Run's
+    // `change_commit`, and the authorization re-check above is unaffected.
+    const resultManifest =
+        callback.type === 'run.failed'
+            ? callback.payload.diffManifest || completionManifest
+            : completionManifest;
+    const resultViolations = Array.isArray(callback.payload.violations)
+        ? callback.payload.violations
+        : resultManifest.violations;
+
     const projection = projectRunEventToIssue({
         type: callback.type,
         policy: run.policy,
@@ -4980,8 +5008,9 @@ async function appendFeedbackCallbackEvent(env, runId, body) {
                 artifact: normalizeFeedbackTimelineArtifact(callbackArtifact),
                 resultEvidence: normalizeFeedbackResultEvidence(
                     callback.type,
-                    completionManifest,
-                    callback.payload.verification
+                    resultManifest,
+                    callback.payload.verification,
+                    resultViolations
                 ),
                 phase: callback.payload.phase || '',
                 errorCode: limitText(callback.payload.errorCode, 80),
@@ -6819,7 +6848,7 @@ function normalizeFeedbackVerificationStep(value, command) {
     };
 }
 
-function normalizeFeedbackResultEvidence(type, manifest, verification) {
+function normalizeFeedbackResultEvidence(type, manifest, verification, violations) {
     if (!['run.completed', 'run.failed'].includes(type)) return null;
 
     const safeManifest = manifest && typeof manifest === 'object' ? manifest : {};
@@ -6827,6 +6856,15 @@ function normalizeFeedbackResultEvidence(type, manifest, verification) {
     return {
         changedFiles: Array.isArray(safeManifest.changedFiles)
             ? safeManifest.changedFiles.slice(0, 100).map((path) => limitText(path, 300))
+            : [],
+        // §14.4: a gate rejection is only actionable if it names the rule and
+        // the path it fired on.
+        violations: Array.isArray(violations)
+            ? violations.slice(0, 20).map((violation) => ({
+                  code: limitText(violation?.code, 60),
+                  file: limitText(violation?.file, 300),
+                  detail: limitText(violation?.detail, 60),
+              }))
             : [],
         changeCommit: limitText(safeManifest.changeCommit, 80),
         candidateRef: limitText(safeManifest.candidateRef, 300),
