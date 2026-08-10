@@ -34,6 +34,19 @@ export function initMarkers() {
         addTodayMarker();
     }
 
+    // 数据装载之后补一次。`initMarkers()` 跑在 `gantt.parse()` 之前，而 parse 会重建
+    // 时间轴（timeline-range.js 就在 onParse 时改范围），初始化时注册的 marker 之后
+    // 常常就不在 DOM 里了——生产实测连续 15 秒 `.gantt_marker` 数量为 0，而手动补一次
+    // 就稳定停在今天那一列。
+    //
+    // 本机看不到这个：这台机器上 `gantt.addMarker` 是 undefined，走的是
+    // `#custom-today-line` 兜底，而兜底挂在 `onGanttRender` 上、每次重绘都会自己重画，
+    // 等于天然自愈。两条路径的差异只在真实浏览器 + 带 marker 扩展的构建里才显形。
+    gantt.attachEvent('onParse', () => {
+        // 延后一拍，让 parse 触发的那次重绘先落地，否则补上的标记又被它冲掉。
+        setTimeout(refreshTodayMarker, 0);
+    });
+
     // 每天凌晨更新标记
     scheduleDailyUpdate();
 
