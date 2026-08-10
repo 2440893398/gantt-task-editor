@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 import {
     classifyFeedbackQualityTier,
     classifyDiffPath,
@@ -7,6 +9,12 @@ import {
     requiresFeedbackVisualEvidence,
     normalizeDiffPath,
 } from '../../../src/features/feedback/diff-gate.js';
+
+// `scripts/feedback-diff-gate.mjs` starts with a shebang, so importing it makes
+// Vitest fail to parse the whole file. The plumbing is pinned as text instead.
+function readProjectFile(relativePath) {
+    return fs.readFileSync(path.resolve(process.cwd(), relativePath), 'utf8');
+}
 
 /**
  * The project rules in CLAUDE.md and tests/scenarios/README.md only hold if
@@ -273,6 +281,54 @@ describe('[SCN-FWB-012] feedback diff gate', () => {
             expect(result.allowed).toBe(true);
             expect(result.qualityTier).toBe(3);
             expect(result.autoDeliverAllowed).toBe(false);
+        });
+    });
+
+    /**
+     * The rule table above was always right; nothing ever supplied its inputs.
+     * `contractRunApproved` had no source in the whole pipeline, so every Run
+     * that followed CLAUDE.md's "update the scenario inventory first" was
+     * rejected with CONTRACT_CHANGE_NOT_AUTHORIZED — after paying for the full
+     * verification sequence (run 31322835665).
+     */
+    describe('[SCN-FWB-012] contract-run authorization reaches the gate', () => {
+        const gate = readProjectFile('scripts/feedback-diff-gate.mjs');
+
+        it('[SCN-FWB-012] grants the authorization server-side, never in the Runner', () => {
+            expect(readProjectFile('workers/share-worker.js')).toContain(
+                'contractRun: FEEDBACK_WRITE_POLICIES.has(policy)'
+            );
+            for (const provider of ['codex', 'claude']) {
+                const workflow = readProjectFile(
+                    `.github/workflows/feedback-agent-${provider}.yml`
+                );
+                // Read off the dispatch, not decided locally: `=== true` means a
+                // missing field can only ever mean "not authorized".
+                expect(workflow).toContain('contractRun: payload.contractRun === true');
+                expect(workflow).toContain('--contract-run "$CONTRACT_RUN"');
+            }
+        });
+
+        it('[SCN-FWB-012] reads the SCN-ID off the change instead of trusting a declaration', () => {
+            // A declared `--scn` is a string the caller picked; it can name a
+            // scenario the diff never touches. The added lines cannot lie.
+            expect(gate).toContain('function scnIdFromDiff');
+            expect(gate).toContain('scnIdFromDiff(diffText)');
+            expect(gate).toContain('CONTRACT_AWARE_PATTERNS.some');
+            expect(gate).toMatch(/SCN-\[A-Z\]\+-\\d\{3\}/);
+        });
+
+        it('[SCN-FWB-012] hands the same authorization to the workbench re-check', () => {
+            // §15.3's second enforcement point re-runs this table on the
+            // callback payload. Without these two fields it defaults both to
+            // empty and rejects what the Runner just allowed.
+            expect(gate).toContain('contractRunApproved,');
+            expect(gate).toContain('scnId,');
+            for (const provider of ['codex', 'claude']) {
+                expect(
+                    readProjectFile(`.github/workflows/feedback-agent-${provider}.yml`)
+                ).toContain('scnId: manifest.scnId || ""');
+            }
         });
     });
 });

@@ -731,6 +731,10 @@ main {
     color: var(--danger);
 }
 
+.result-violations > strong {
+    color: var(--danger);
+}
+
 .result-check.skipped > span:last-child {
     color: var(--muted);
 }

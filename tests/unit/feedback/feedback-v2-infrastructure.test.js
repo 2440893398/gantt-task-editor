@@ -306,15 +306,30 @@ describe('[SCN-FWB-022] feedback V2 autonomous delivery infrastructure', () => {
             const workflow = readProjectFile(`.github/workflows/feedback-agent-${provider}.yml`);
 
             expect(workflow).toContain('feedback-evidence-start');
-            expect(workflow).toContain('doc/testdoc/screenshots');
-            expect(workflow).toContain('doc/design/screenshots');
-            expect(workflow).toContain('tests/e2e/screenshots');
             expect(workflow).toContain('type: "visual-evidence"');
             expect(workflow).toContain('dataUrl:');
             expect(workflow).toContain('const contentTypes = new Map([[".png", "image/png"]])');
-            expect(workflow).toContain(
-                'collect "$OUTPUT_ROOT/evidence" "$RUNNER_TEMP/feedback-evidence-start"'
+            // The roots are asserted on the invocation line, not with a
+            // whole-file `toContain`: `doc/design/screenshots` still appears in
+            // the comment that explains why it was removed, so a substring
+            // search over the file cannot tell a root from prose about a root.
+            const lines = workflow.split('\n');
+            const collectIndex = lines.findIndex((line) =>
+                line.includes(
+                    'collect "$OUTPUT_ROOT/evidence" "$RUNNER_TEMP/feedback-evidence-start"'
+                )
             );
+            expect(collectIndex).toBeGreaterThan(-1);
+            const collectArguments = lines[collectIndex + 1];
+            // Evidence must come from a directory only this Run's verification
+            // writes to. Every rejected root here is rewritten wholesale by an
+            // unrelated spec on each `npm run test:e2e`, which is how an Issue
+            // about the today marker was answered with a settings modal.
+            expect(collectArguments).toContain('tests/e2e/evidence');
+            expect(collectArguments).toContain('test-results');
+            expect(collectArguments).not.toContain('doc/testdoc/screenshots');
+            expect(collectArguments).not.toContain('doc/design/screenshots');
+            expect(collectArguments).not.toContain('tests/e2e/screenshots');
             expect(workflow).toContain('"$TRUSTED_REPORTER" deliver .');
             expect(
                 workflow.match(
@@ -379,11 +394,18 @@ describe('[SCN-FWB-022] feedback V2 autonomous delivery infrastructure', () => {
             expect(workflow).toContain('invalid runId');
             expect(workflow).not.toContain('name: Prepare trusted diff gate');
             expect(workflow).not.toContain('TRUSTED_DIFF_GATE');
-            expect(
+            // Two invocations by design (SCN-FWB-031): the pre-flight in the
+            // Agent job and the authoritative one in `publish_candidate`. The
+            // property this pins is that *every* one of them reads the gate out
+            // of the base commit, never out of the Agent's working tree.
+            const basePinnedGateReads =
                 workflow.match(
                     /\/usr\/bin\/git show "\$BASE_COMMIT:scripts\/feedback-diff-gate\.mjs"/g
-                )
-            ).toHaveLength(1);
+                ) || [];
+            const allGateReads =
+                workflow.match(/git show "[^"]*:scripts\/feedback-diff-gate\.mjs"/g) || [];
+            expect(basePinnedGateReads).toHaveLength(2);
+            expect(allGateReads).toHaveLength(basePinnedGateReads.length);
             expect(workflow).toContain(
                 'TRUSTED_GATE_ROOT="$(/usr/bin/mktemp -d "$RUNNER_TEMP/feedback-diff-gate.XXXXXX")"'
             );
@@ -429,6 +451,79 @@ describe('[SCN-FWB-022] feedback V2 autonomous delivery infrastructure', () => {
             expect(publishJob).not.toContain('run: npm test');
             expect(publishJob).not.toContain('run: npm run build');
         }
+    });
+
+    it('[SCN-FWB-031] rejects a doomed change set before it buys the verification budget', () => {
+        for (const provider of ['codex', 'claude']) {
+            const workflow = readProjectFile(`.github/workflows/feedback-agent-${provider}.yml`);
+            const agentJob = readWorkflowJob(workflow, 'agent');
+            const publishJob = readWorkflowJob(workflow, 'publish_candidate');
+
+            // The pre-flight lives in the untrusted job, so it may only ever
+            // reject. The authoritative gate still re-runs on the applied patch
+            // in a job the Agent cannot reach.
+            expect(agentJob).toContain('name: Pre-flight project diff gate');
+            expect(publishJob).toContain('name: Project diff gate');
+            expect(publishJob).not.toContain('name: Pre-flight project diff gate');
+
+            const preflight = readWorkflowStep(workflow, 'Pre-flight project diff gate');
+            // Nothing is committed at this point: without staging, a file the
+            // Agent just created is absent from `git diff` and would sail
+            // through the pre-flight untouched.
+            expect(preflight).toContain('/usr/bin/git add -A');
+            expect(preflight).toContain('--staged');
+            // Failing the job here would collapse the terminal summary to "did
+            // not pass isolated verification" and throw away the rule name,
+            // which is the one thing the reporter needs.
+            expect(preflight).toContain('continue-on-error: true');
+            // Only the authoritative run writes a manifest; a second one could
+            // be mistaken for the published result.
+            expect(preflight).not.toContain('--out');
+
+            for (const step of [
+                'Targeted tests',
+                'Build verification',
+                'Playwright verification',
+            ]) {
+                expect(readWorkflowStep(workflow, step)).toContain(
+                    "steps.preflight_gate.outcome == 'success'"
+                );
+            }
+
+            // `doc/design/screenshots` is tracked and rewritten by
+            // `ui_capture.spec.js` on every browser run, so `git add -A` swept
+            // three unrelated PNGs into every implement_and_verify Candidate.
+            expect(readWorkflowStep(workflow, 'Package untrusted Agent output')).toContain(
+                "':!doc/design/screenshots'"
+            );
+        }
+    });
+
+    it('[SCN-FWB-031] carries the rejected paths and rules into the failed terminal', () => {
+        const gate = readProjectFile('scripts/feedback-diff-gate.mjs');
+        const worker = readProjectFile('workers/share-worker.js');
+        const client = readProjectFile('workers/feedback-workbench-client.js.txt');
+
+        // Printing violations to stderr only told the Actions log; the Issue
+        // showed "blocked by the trusted project diff gate" and nothing else.
+        expect(gate).toContain('violations: result.violations');
+        for (const provider of ['codex', 'claude']) {
+            const workflow = readProjectFile(`.github/workflows/feedback-agent-${provider}.yml`);
+            expect(readWorkflowStep(workflow, 'Report completion')).toContain(
+                'contractRunApproved: manifest.contractRunApproved === true'
+            );
+        }
+
+        // The Runner sends `diffManifest` on a failed terminal too. Reading it
+        // only for `run.completed` is what produced "被门禁阻断 + 没有记录任何
+        // 变更文件 + 三项验证全绿" on run 31322835665.
+        expect(worker).toContain("callback.type === 'run.failed'");
+        expect(worker).toContain('resultManifest');
+        expect(worker).toContain('resultViolations');
+        // Display only: a blocked Candidate is never pushed, so its commit must
+        // not become the Run's change_commit.
+        expect(worker).toContain('limitText(completionManifest.changeCommit, 80)');
+        expect(client).toContain('被质量门禁拒绝');
     });
 
     it('defines an exact-Candidate Release job with integration, deployment, smoke and failure callbacks', () => {

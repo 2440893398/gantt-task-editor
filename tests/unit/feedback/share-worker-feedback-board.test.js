@@ -8934,6 +8934,9 @@ describe('feedback workbench V2 Run and Callback', () => {
         });
         expect(completed.resultEvidence).toEqual({
             changedFiles: ['workers/share-worker.js'],
+            // SCN-FWB-031: present on every result card, empty when nothing was
+            // rejected — a successful Run has no violations to explain.
+            violations: [],
             changeCommit: 'def456',
             candidateRef: `feedback/candidate/${run.id}`,
             verification: {

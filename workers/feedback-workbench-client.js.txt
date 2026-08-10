@@ -615,11 +615,38 @@
               ? '<p class="result-warning">没有记录任何变更文件，不能据此判断问题已处理。</p>'
               : '<p class="help">本次为只读分析，没有修改仓库文件。</p>';
 
+        // A gate rejection is only actionable when it names the rule and the
+        // path it fired on. Without this the Issue showed "被质量门禁阻断" and
+        // nothing else, so the same Run could only fail the same way again.
+        var violations = Array.isArray(value.violations) ? value.violations : [];
+        var violationHtml = violations.length
+            ? '<div class="result-files result-violations"><strong>被质量门禁拒绝（' +
+              violations.length +
+              '）</strong><ul>' +
+              violations
+                  .map(function (violation) {
+                      return (
+                          '<li>' +
+                          escapeHtml(String(violation.code || 'UNKNOWN_RULE')) +
+                          (violation.file
+                              ? ' <code>' + escapeHtml(String(violation.file)) + '</code>'
+                              : '') +
+                          (violation.detail
+                              ? '（' + escapeHtml(String(violation.detail)) + '）'
+                              : '') +
+                          '</li>'
+                      );
+                  })
+                  .join('') +
+              '</ul></div>'
+            : '';
+
         return (
             '<section class="result-evidence" data-result-evidence><div class="result-title"><strong>处理结果</strong>' +
             changeMeta +
             '</div>' +
             fileHtml +
+            violationHtml +
             '<div class="result-checks">' +
             verificationRowHtml('目标测试', verification.targetedTests) +
             verificationRowHtml('构建', verification.build) +

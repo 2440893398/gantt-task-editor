@@ -15,7 +15,7 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
-import { evaluateDiffGate } from '../src/features/feedback/diff-gate.js';
+import { CONTRACT_AWARE_PATTERNS, evaluateDiffGate } from '../src/features/feedback/diff-gate.js';
 
 function parseArgs(argv) {
     const args = {};
@@ -45,6 +45,30 @@ function splitList(value) {
         .filter(Boolean);
 }
 
+/**
+ * Reads the SCN-ID backing a contract change off the diff itself.
+ *
+ * A pre-declared `--scn` is just a string the caller picked; nothing ties it to
+ * what the change actually did. Taking it from the added lines of the contract
+ * file means the traceability rule (tests/scenarios/README.md §3.5) is cleared
+ * only when the edit really carries an ID.
+ */
+function scnIdFromDiff(diff) {
+    let currentFile = '';
+    for (const line of String(diff || '').split(/\r?\n/)) {
+        const header = line.match(/^\+\+\+ b\/(.+)$/);
+        if (header) {
+            currentFile = header[1].replace(/\\/g, '/');
+            continue;
+        }
+        if (line.startsWith('+++') || !line.startsWith('+')) continue;
+        if (!CONTRACT_AWARE_PATTERNS.some((pattern) => pattern.test(currentFile))) continue;
+        const match = line.match(/SCN-[A-Z]+-\d{3}/);
+        if (match) return match[0];
+    }
+    return '';
+}
+
 const args = parseArgs(process.argv.slice(2));
 const base = args.base || process.env.FEEDBACK_BASE_COMMIT || '';
 if (!base) {
@@ -55,20 +79,27 @@ if (!base) {
 let changedFiles;
 let diffText;
 try {
-    changedFiles = splitList(git('diff', '--name-only', base));
-    diffText = git('diff', '--unified=0', base);
+    // The pre-flight run inside the Agent job fires before anything is
+    // committed, so it stages the change set and reads the index. The
+    // publish-side run has a real Candidate commit and reads the working tree.
+    const scope = args.staged === 'true' ? ['diff', '--cached'] : ['diff'];
+    changedFiles = splitList(git(...scope, '--name-only', base));
+    diffText = git(...scope, '--unified=0', base);
 } catch (error) {
     console.error('feedback-diff-gate: could not read the diff:', error.message);
     process.exit(2);
 }
 
+const contractRunApproved =
+    (args['contract-run'] || process.env.FEEDBACK_CONTRACT_RUN || '') === 'true';
+const scnId = args.scn || process.env.FEEDBACK_SCN_ID || scnIdFromDiff(diffText);
+
 const result = evaluateDiffGate({
     changedFiles,
     diffText,
     approvedPaths: splitList(args['approved-paths'] || process.env.FEEDBACK_APPROVED_PATHS),
-    contractRunApproved:
-        (args['contract-run'] || process.env.FEEDBACK_CONTRACT_RUN || '') === 'true',
-    scnId: args.scn || process.env.FEEDBACK_SCN_ID || '',
+    contractRunApproved,
+    scnId,
     writeAllowed:
         (args['write-allowed'] || process.env.FEEDBACK_WRITE_ALLOWED || 'true') !== 'false',
 });
@@ -91,6 +122,14 @@ const manifest = {
     baseCommit: base,
     changeCommit,
     changedFiles,
+    // Carried so the workbench's second enforcement point re-checks the same
+    // authorization this run used, instead of defaulting it back to `false`.
+    contractRunApproved,
+    scnId,
+    // Carried so a blocked Run can tell the reporter *which* rule rejected it.
+    // Printing them to stderr only meant the workbench showed "blocked by the
+    // trusted project diff gate" with no way to find out what to change.
+    violations: result.violations,
     requiresCandidateReview: result.requiresCandidateReview,
     qualityTier: result.qualityTier,
     visualEvidenceRequired: result.visualEvidenceRequired,
