@@ -209,7 +209,11 @@ function getTimelineViewportWidth() {
  * 决定，所以定位之后要自己再摆一次。
  */
 export function scrollToToday() {
+    // 归到零点。`posFromDate(new Date())` 给的是「今天 + 已过去的那部分」，在日刻度下
+    // 就是今天这一列内部的偏移：晚上 22:47 实测比零点多 66px，接近一整列。今日标记画在
+    // 零点（markers.js 同样归零），基准不一致会让「今天居左」随一天中的时刻漂移。
     const today = new Date();
+    today.setHours(0, 0, 0, 0);
 
     console.log('📅 滚动到今天:', today.toLocaleDateString('zh-CN'));
 

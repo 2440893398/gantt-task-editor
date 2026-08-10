@@ -20,7 +20,13 @@ async function readTimelineGeometry(page) {
         today.setHours(0, 0, 0, 0);
         const state = gantt.getState();
         const scroll = gantt.getScrollState();
-        const line = document.getElementById('custom-today-line');
+        // Two implementations of the same marker: `gantt.addMarker` when the
+        // dhtmlxGantt marker extension is present, `#custom-today-line` when it
+        // is not. Which one loads depends on the CDN build — production has
+        // `addMarker`, this machine reports it undefined — so the assertions
+        // below take whichever exists rather than pinning one.
+        const marker =
+            document.getElementById('custom-today-line') || document.querySelector('.gantt_marker');
         return {
             today: today.getTime(),
             minDate: new Date(state.min_date).getTime(),
@@ -30,7 +36,7 @@ async function readTimelineGeometry(page) {
             scrollX: scroll.x,
             contentWidth: scroll.width,
             viewportWidth: document.querySelector('.gantt_task')?.clientWidth || 0,
-            todayLineLeft: line ? Number.parseFloat(line.style.left) : null,
+            markerLeft: marker ? Number.parseFloat(marker.style.left) : null,
         };
     });
 }
@@ -64,8 +70,8 @@ test.describe('Regression: today marker and new task entry', () => {
         // these two ever match again, the marker is back to lying about which
         // day it points at.
         expect(before.positionOfToday).not.toBe(before.positionOfMaxDate);
-        expect(before.todayLineLeft).not.toBeNull();
-        expect(Math.abs(before.todayLineLeft - before.positionOfToday)).toBeLessThanOrEqual(1);
+        expect(before.markerLeft).not.toBeNull();
+        expect(Math.abs(before.markerLeft - before.positionOfToday)).toBeLessThanOrEqual(1);
 
         await page.locator('#scroll-to-today-btn').click();
         await expect
@@ -73,21 +79,18 @@ test.describe('Regression: today marker and new task entry', () => {
             .toBeGreaterThan(0);
         const after = await readTimelineGeometry(page);
 
-        // Left-aligned as requested, capped by how much timeline actually
-        // exists to the right of today — asking to scroll past the end simply
-        // stops at the end.
-        const maxScroll = Math.max(0, after.contentWidth - after.viewportWidth);
-        const wanted = Math.max(
-            0,
-            after.positionOfToday - after.viewportWidth * TODAY_LEFT_MARGIN_RATIO
-        );
-        expect(Math.abs(after.scrollX - Math.min(wanted, maxScroll))).toBeLessThanOrEqual(4);
-
-        // The user-visible property behind that arithmetic: today is on screen,
-        // and in the left half — never centred and never off the right edge.
+        // The timeline always keeps 90 days beyond today, which is wider than
+        // any viewport, so the requested scroll is never clipped by the end of
+        // the content and today lands where it was asked to land. Asserting a
+        // ratio rather than "somewhere in the left half" keeps this independent
+        // of window size: at 1992px wide, production put today at 75% of the
+        // viewport while a 712px window put it at 40%, and a half-viewport
+        // bound would have called one of those correct.
         const offsetInViewport = after.positionOfToday - after.scrollX;
-        expect(offsetInViewport).toBeGreaterThanOrEqual(0);
-        expect(offsetInViewport).toBeLessThanOrEqual(after.viewportWidth * 0.5);
+        expect(
+            Math.abs(offsetInViewport - after.viewportWidth * TODAY_LEFT_MARGIN_RATIO)
+        ).toBeLessThanOrEqual(8);
+        expect(after.scrollX).toBeLessThanOrEqual(after.contentWidth - after.viewportWidth);
 
         await page.screenshot({ path: 'tests/e2e/evidence/today-marker-left-aligned.png' });
     });
