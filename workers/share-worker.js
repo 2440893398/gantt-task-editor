@@ -558,9 +558,8 @@ export class CloudDocDurableObject {
 }
 
 function isFeedbackWorkflowTimeout(error) {
-    return String(error?.message || error)
-        .toLowerCase()
-        .includes('timeout');
+    const message = String(error?.message || error).toLowerCase();
+    return message.includes('timeout') || message.includes('timed out');
 }
 
 export class FeedbackWorkflow extends WorkflowEntrypoint {

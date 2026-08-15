@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { Script } from 'node:vm';
 import { describe, expect, it } from 'vitest';
 
 const projectRoot = resolve(import.meta.dirname, '../../..');
@@ -358,6 +359,39 @@ describe('[SCN-FWB-022] feedback V2 autonomous delivery infrastructure', () => {
             // Unsanitized evidence is never published, and the terminal still goes out.
             expect(completion).toContain('LAST_RESORT_TERMINAL_DELIVERY');
             expect(workflow).not.toContain('for delay in 0 5 15 45');
+        }
+    });
+
+    it('[SCN-FWB-006] uses a quoted heredoc for multiline workflow JavaScript', () => {
+        for (const provider of ['codex', 'claude']) {
+            const workflow = readProjectFile(`.github/workflows/feedback-agent-${provider}.yml`);
+            const completion = readWorkflowStep(workflow, 'Report completion');
+
+            expect(completion).toContain("<<'NODE'");
+            expect(workflow).not.toMatch(/(?:^|\n)\s*(?:node|"\$TRUSTED_NODE") -e '\s*$/m);
+
+            const starts = workflow.match(/<<'NODE'/g) || [];
+            const programs = Array.from(workflow.matchAll(/<<'NODE'\r?\n([\s\S]*?)^\s+NODE\s*$/gm));
+            expect(programs, `${provider} must close every Node heredoc`).toHaveLength(
+                starts.length
+            );
+            for (const [index, program] of programs.entries()) {
+                expect(
+                    () => new Script(program[1]),
+                    `${provider} heredoc ${index + 1} must contain valid JavaScript`
+                ).not.toThrow();
+            }
+        }
+    });
+
+    it('[SCN-FWB-017] keeps scoped dispatch tokens out of logged step environments', () => {
+        for (const provider of ['codex', 'claude']) {
+            const workflow = readProjectFile(`.github/workflows/feedback-agent-${provider}.yml`);
+
+            expect(workflow).not.toContain('PAYLOAD: ${{ inputs.payload }}');
+            expect(workflow).not.toContain('process.env.PAYLOAD');
+            expect(workflow).toContain('process.env.GITHUB_EVENT_PATH');
+            expect(workflow).toContain('::add-mask::');
         }
     });
 

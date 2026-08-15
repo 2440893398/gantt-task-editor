@@ -10218,7 +10218,7 @@ describe('feedback workbench V2 Run and Callback', () => {
                     type: 'feedback-run-result',
                     timeout: '60 minutes',
                 });
-                throw new Error('workflow wait timeout');
+                throw new Error('Execution timed out after 1800000ms');
             },
         };
 

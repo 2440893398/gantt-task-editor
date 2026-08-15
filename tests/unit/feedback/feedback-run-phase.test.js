@@ -73,8 +73,9 @@ describe('[SCN-FWB-030] run progress is reported while a Run is still working', 
             expect(source).not.toMatch(/FEEDBACK_CALLBACK_TOKEN[^\n]*GITHUB_ENV/);
             for (const step of phaseSteps(provider)) {
                 expect(step.run).toContain('::add-mask::$FEEDBACK_CALLBACK_TOKEN');
-                // Extracted in-step from the dispatch payload, like run.started.
-                expect(step.run).toContain('JSON.parse(process.env.PAYLOAD).callbackToken');
+                // Extracted in-step from the protected event file, like run.started.
+                expect(step.run).toContain('process.env.GITHUB_EVENT_PATH');
+                expect(step.run).not.toContain('process.env.PAYLOAD');
             }
         }
     });

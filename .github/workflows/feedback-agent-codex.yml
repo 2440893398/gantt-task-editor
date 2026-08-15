@@ -31,12 +31,13 @@ jobs:
             - name: Validate dispatch payload
               id: payload
               env:
-                  PAYLOAD: ${{ inputs.payload }}
                   FEEDBACK_CALLBACK_ORIGIN: ${{ vars.FEEDBACK_CALLBACK_ORIGIN }}
               run: |
                   set -euo pipefail
-                  node -e '
-                    const payload = JSON.parse(process.env.PAYLOAD);
+                  node - <<'NODE'
+                    const fs = require("fs");
+                    const event = JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, "utf8"));
+                    const payload = JSON.parse(event.inputs?.payload || "");
                     const required = ["issueId", "runId", "policy", "provider", "contextToken", "callbackToken"];
                     for (const key of required) {
                       if (!payload[key]) throw new Error(`missing ${key}`);
@@ -49,6 +50,8 @@ jobs:
                     if (!tokenPattern.test(payload.contextToken) || !tokenPattern.test(payload.callbackToken)) {
                       throw new Error("invalid scoped token");
                     }
+                    console.log(`::add-mask::${payload.contextToken}`);
+                    console.log(`::add-mask::${payload.callbackToken}`);
                     const allowed = ["analyze", "implement", "implement_and_verify", "review"];
                     if (!allowed.includes(payload.policy)) throw new Error(`unroutable policy ${payload.policy}`);
                     const deliveryMode = payload.deliveryMode || "candidate_review";
@@ -93,13 +96,10 @@ jobs:
                       permissionProfile: writeAllowed ? "feedback-workspace" : ":read-only",
                       responsesEndpoint,
                     };
-                    const fs = require("fs");
                     for (const [key, value] of Object.entries(out)) {
                       fs.appendFileSync(process.env.GITHUB_OUTPUT, `${key}=${value}\n`);
                     }
-                  '
-                  echo "::add-mask::$(node -e 'console.log(JSON.parse(process.env.PAYLOAD).contextToken || "")')"
-                  echo "::add-mask::$(node -e 'console.log(JSON.parse(process.env.PAYLOAD).callbackToken || "")')"
+                  NODE
 
             - name: Checkout the pinned base commit
               uses: actions/checkout@v4
@@ -120,11 +120,10 @@ jobs:
             - name: Report run.started
               env:
                   CALLBACK_URL: ${{ steps.payload.outputs.callbackUrl }}
-                  PAYLOAD: ${{ inputs.payload }}
                   TRUSTED_NODE: ${{ steps.trusted_tools.outputs.node }}
               run: |
                   set -euo pipefail
-                  FEEDBACK_CALLBACK_TOKEN="$($TRUSTED_NODE -e 'process.stdout.write(JSON.parse(process.env.PAYLOAD).callbackToken)')"
+                  FEEDBACK_CALLBACK_TOKEN="$("$TRUSTED_NODE" -e 'const event = JSON.parse(require("fs").readFileSync(process.env.GITHUB_EVENT_PATH, "utf8")); process.stdout.write(JSON.parse(event.inputs.payload).callbackToken);')"
                   echo "::add-mask::$FEEDBACK_CALLBACK_TOKEN"
                   /usr/bin/curl --fail-with-body --silent --show-error --max-time 20 \
                     -X POST "$CALLBACK_URL" \
@@ -135,12 +134,11 @@ jobs:
             - name: Fetch the Issue context
               env:
                   CONTEXT_URL: ${{ steps.payload.outputs.contextUrl }}
-                  PAYLOAD: ${{ inputs.payload }}
                   PROMPT_PATH: ${{ runner.temp }}/feedback-prompt.md
                   TRUSTED_NODE: ${{ steps.trusted_tools.outputs.node }}
               run: |
                   set -euo pipefail
-                  FEEDBACK_CONTEXT_TOKEN="$($TRUSTED_NODE -e 'process.stdout.write(JSON.parse(process.env.PAYLOAD).contextToken)')"
+                  FEEDBACK_CONTEXT_TOKEN="$("$TRUSTED_NODE" -e 'const event = JSON.parse(require("fs").readFileSync(process.env.GITHUB_EVENT_PATH, "utf8")); process.stdout.write(JSON.parse(event.inputs.payload).contextToken);')"
                   echo "::add-mask::$FEEDBACK_CONTEXT_TOKEN"
                   /usr/bin/curl --fail-with-body --silent --show-error --max-time 20 \
                     "$CONTEXT_URL" -H "Authorization: Bearer $FEEDBACK_CONTEXT_TOKEN" \
@@ -182,12 +180,11 @@ jobs:
             - name: Report phase (analysing)
               env:
                   CALLBACK_URL: ${{ steps.payload.outputs.callbackUrl }}
-                  PAYLOAD: ${{ inputs.payload }}
                   TRUSTED_NODE: ${{ steps.trusted_tools.outputs.node }}
                   WRITE_ALLOWED: ${{ steps.payload.outputs.writeAllowed }}
               run: |
                   set -euo pipefail
-                  FEEDBACK_CALLBACK_TOKEN="$($TRUSTED_NODE -e 'process.stdout.write(JSON.parse(process.env.PAYLOAD).callbackToken)')"
+                  FEEDBACK_CALLBACK_TOKEN="$("$TRUSTED_NODE" -e 'const event = JSON.parse(require("fs").readFileSync(process.env.GITHUB_EVENT_PATH, "utf8")); process.stdout.write(JSON.parse(event.inputs.payload).callbackToken);')"
                   echo "::add-mask::$FEEDBACK_CALLBACK_TOKEN"
                   if [ "$WRITE_ALLOWED" = "true" ]; then PHASE=implementing; else PHASE=analyzing; fi
                   # Progress is never worth failing a Run over.
@@ -265,11 +262,10 @@ jobs:
                   steps.preflight_gate.outcome == 'success'
               env:
                   CALLBACK_URL: ${{ steps.payload.outputs.callbackUrl }}
-                  PAYLOAD: ${{ inputs.payload }}
                   TRUSTED_NODE: ${{ steps.trusted_tools.outputs.node }}
               run: |
                   set -euo pipefail
-                  FEEDBACK_CALLBACK_TOKEN="$($TRUSTED_NODE -e 'process.stdout.write(JSON.parse(process.env.PAYLOAD).callbackToken)')"
+                  FEEDBACK_CALLBACK_TOKEN="$("$TRUSTED_NODE" -e 'const event = JSON.parse(require("fs").readFileSync(process.env.GITHUB_EVENT_PATH, "utf8")); process.stdout.write(JSON.parse(event.inputs.payload).callbackToken);')"
                   echo "::add-mask::$FEEDBACK_CALLBACK_TOKEN"
                   /usr/bin/curl --silent --show-error --max-time 10 \
                     -X POST "$CALLBACK_URL" \
@@ -299,11 +295,10 @@ jobs:
                   steps.preflight_gate.outcome == 'success'
               env:
                   CALLBACK_URL: ${{ steps.payload.outputs.callbackUrl }}
-                  PAYLOAD: ${{ inputs.payload }}
                   TRUSTED_NODE: ${{ steps.trusted_tools.outputs.node }}
               run: |
                   set -euo pipefail
-                  FEEDBACK_CALLBACK_TOKEN="$($TRUSTED_NODE -e 'process.stdout.write(JSON.parse(process.env.PAYLOAD).callbackToken)')"
+                  FEEDBACK_CALLBACK_TOKEN="$("$TRUSTED_NODE" -e 'const event = JSON.parse(require("fs").readFileSync(process.env.GITHUB_EVENT_PATH, "utf8")); process.stdout.write(JSON.parse(event.inputs.payload).callbackToken);')"
                   echo "::add-mask::$FEEDBACK_CALLBACK_TOKEN"
                   /usr/bin/curl --silent --show-error --max-time 10 \
                     -X POST "$CALLBACK_URL" \
@@ -398,13 +393,14 @@ jobs:
             - name: Validate dispatch payload
               id: payload
               env:
-                  PAYLOAD: ${{ inputs.payload }}
                   FEEDBACK_CALLBACK_ORIGIN: ${{ vars.FEEDBACK_CALLBACK_ORIGIN }}
                   TRUSTED_NODE: ${{ steps.trusted_tools.outputs.node }}
               run: |
                   set -euo pipefail
-                  "$TRUSTED_NODE" -e '
-                    const payload = JSON.parse(process.env.PAYLOAD);
+                  "$TRUSTED_NODE" - <<'NODE'
+                    const fs = require("fs");
+                    const event = JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, "utf8"));
+                    const payload = JSON.parse(event.inputs?.payload || "");
                     const required = ["issueId", "runId", "policy", "provider", "contextToken", "callbackToken"];
                     for (const key of required) {
                       if (!payload[key]) throw new Error(`missing ${key}`);
@@ -417,6 +413,8 @@ jobs:
                     if (!tokenPattern.test(payload.contextToken) || !tokenPattern.test(payload.callbackToken)) {
                       throw new Error("invalid scoped token");
                     }
+                    console.log(`::add-mask::${payload.contextToken}`);
+                    console.log(`::add-mask::${payload.callbackToken}`);
                     const allowed = ["analyze", "implement", "implement_and_verify", "review"];
                     if (!allowed.includes(payload.policy)) throw new Error(`unroutable policy ${payload.policy}`);
                     const deliveryMode = payload.deliveryMode || "candidate_review";
@@ -446,12 +444,10 @@ jobs:
                       // the §7.2 matrix for itself.
                       requiresDesign: payload.requiresDesign === true,
                     };
-                    const fs = require("fs");
                     for (const [key, value] of Object.entries(out)) {
                       fs.appendFileSync(process.env.GITHUB_OUTPUT, `${key}=${value}\n`);
                     }
-                  '
-                  echo "::add-mask::$($TRUSTED_NODE -e 'console.log(JSON.parse(process.env.PAYLOAD).callbackToken || "")')"
+                  NODE
 
             - name: Checkout the pinned base commit
               uses: actions/checkout@v4
@@ -614,7 +610,6 @@ jobs:
                   CALLBACK_URL: ${{ steps.payload.outputs.callbackUrl }}
                   EVIDENCE_URL: ${{ steps.evidence.outputs.artifact-url }}
                   GATE_OUTCOME: ${{ steps.gate.outcome }}
-                  PAYLOAD: ${{ inputs.payload }}
                   POLICY: ${{ steps.payload.outputs.policy }}
                   PLAYWRIGHT_OUTCOME: ${{ needs.agent.outputs.playwright_outcome }}
                   PUSH_OUTCOME: ${{ steps.push.outcome }}
@@ -629,7 +624,7 @@ jobs:
                   PATH: /usr/bin:/bin
               run: |
                   set -euo pipefail
-                  FEEDBACK_CALLBACK_TOKEN="$($TRUSTED_NODE -e 'process.stdout.write(JSON.parse(process.env.PAYLOAD).callbackToken)')"
+                  FEEDBACK_CALLBACK_TOKEN="$("$TRUSTED_NODE" -e 'const event = JSON.parse(require("fs").readFileSync(process.env.GITHUB_EVENT_PATH, "utf8")); process.stdout.write(JSON.parse(event.inputs.payload).callbackToken);')"
                   echo "::add-mask::$FEEDBACK_CALLBACK_TOKEN"
                   if [ -n "$TRUSTED_REPORTER" ]; then
                     "$TRUSTED_NODE" "$TRUSTED_REPORTER" sanitize \
@@ -647,7 +642,7 @@ jobs:
                       --message "$RUNNER_TEMP/feedback-agent-output/agent-final.txt" \
                       --out "$RUNNER_TEMP/feedback-design.json" || true
                   fi
-                  "$TRUSTED_NODE" -e '
+                  "$TRUSTED_NODE" - <<'NODE'
                     const fs = require("fs");
                     const path = require("path");
                     // Evidence is only publishable once the trusted reporter has
@@ -818,7 +813,7 @@ jobs:
                       }));
                     }
                     fs.writeFileSync("callback.json", JSON.stringify(body));
-                  '
+                  NODE
                   DELIVERED=0
                   if [ -n "$TRUSTED_REPORTER" ]; then
                     if CALLBACK_URL="$CALLBACK_URL" \
@@ -834,7 +829,7 @@ jobs:
                   # eventId, so a duplicate here is answered with 200.
                   CALLBACK_URL="$CALLBACK_URL" \
                     FEEDBACK_CALLBACK_TOKEN="$FEEDBACK_CALLBACK_TOKEN" \
-                    "$TRUSTED_NODE" -e '
+                    "$TRUSTED_NODE" - <<'NODE'
                       const body = require("fs").readFileSync("callback.json", "utf8");
                       const send = async () => {
                         const response = await fetch(process.env.CALLBACK_URL, {
@@ -857,4 +852,4 @@ jobs:
                         }
                         process.exitCode = 1;
                       })();
-                    '
+                    NODE

@@ -123,6 +123,33 @@ describe('[SCN-FWB-012] feedback diff gate', () => {
             );
         });
 
+        it('[SCN-FWB-012] allows an assertion to be replaced inside the same diff hunk', () => {
+            const diff = [
+                '--- a/tests/unit/example.test.js',
+                '+++ b/tests/unit/example.test.js',
+                '@@ -10,1 +10,1 @@',
+                "-    expect(window.location.hash).toBe('');",
+                '+    expect(window.location.hash).toBe(`#issue=${issueId}`);',
+            ].join('\n');
+
+            expect(findVerificationWeakening(diff)).toEqual([]);
+        });
+
+        it('[SCN-FWB-012] does not let another hunk hide a removed assertion', () => {
+            const diff = [
+                '--- a/tests/unit/example.test.js',
+                '+++ b/tests/unit/example.test.js',
+                '@@ -10,1 +10,0 @@',
+                '-    expect(result.saved).toBe(true);',
+                '@@ -30,0 +30,1 @@',
+                '+    expect(result.visible).toBe(true);',
+            ].join('\n');
+
+            expect(findVerificationWeakening(diff)).toContainEqual(
+                expect.objectContaining({ code: 'ASSERTION_REMOVED' })
+            );
+        });
+
         it('does not flag context lines that merely mention the pattern', () => {
             const diff = [
                 '--- a/docs/testing.md',
