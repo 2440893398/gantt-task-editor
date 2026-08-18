@@ -65,6 +65,13 @@ const workerModuleFiles = [
         outputName: 'feedback-analysis-handoff.js',
     },
     {
+        // Executor Protocol v0：Worker 与 Adapter 共用的唯一事件定义（SCN-FWB-032）。
+        // Pages 与 Worker 跑同一份 share-worker.js，所以它的模块图也必须平铺进 CN 产物。
+        sourcePath: 'packages/feedback-platform/protocol/v0.js',
+        sourceImport: '../packages/feedback-platform/protocol/v0.js',
+        outputName: 'feedback-protocol-v0.js',
+    },
+    {
         sourcePath: 'src/features/feedback/vendor/rrweb-replay-2.0.0-alpha.20.umd.min.txt',
         sourceImport: '../src/features/feedback/vendor/rrweb-replay-2.0.0-alpha.20.umd.min.txt',
         outputName: 'feedback-rrweb-replay-2.0.0-alpha.20.umd.min.txt',

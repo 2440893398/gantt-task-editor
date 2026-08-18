@@ -38,6 +38,13 @@ export const ADMIN_APPROVAL_PATTERNS = [
     /^CLAUDE\.md$/,
     /^\.agents\//,
     /^\.codex\//,
+    // 反馈编排平台自身：执行器协议定义与 Adapter 符合性测试（SCN-FWB-032）。
+    // 它和 `.github/workflows/`、`scripts/` 同类——都是「决定流水线怎么裁决」的代码，
+    // 不是被裁决的业务代码。在 M1 把平台落成代码之前这个目录不存在，之前的三类模式
+    // 因此一条都不匹配它：一个 Run 本可以顺手把 C1～C5 改成恒真再交付。
+    // 走 admin scope 而不是 hard deny，是因为平台代码本身仍需要能被正常修改，
+    // 只是必须显式授权、强制 Candidate 复核、且永远不得走 auto_deliver。
+    /^packages\/feedback-platform\//,
 ];
 
 /**
@@ -84,6 +91,34 @@ function matchesAny(patterns, filePath) {
 }
 
 /** Normalizes a path so `./x`, `a\b` and `a//b` cannot dodge a pattern. */
+/**
+ * Reads the SCN-ID backing a contract change off the diff itself.
+ *
+ * A pre-declared `--scn` is just a string the caller picked; nothing ties it to
+ * what the change actually did. Taking it from the added lines of the contract
+ * file means the traceability rule (tests/scenarios/README.md §3.5) is cleared
+ * only when the edit really carries an ID.
+ *
+ * Lives here rather than in `scripts/feedback-diff-gate.mjs` so the gate CLI and
+ * any Adapter conformance check (C5 / SCN-FWB-032) share one implementation —
+ * the script carries a shebang and cannot be imported by tests at all.
+ */
+export function scnIdFromDiff(diff) {
+    let currentFile = '';
+    for (const line of String(diff || '').split(/\r?\n/)) {
+        const header = line.match(/^\+\+\+ b\/(.+)$/);
+        if (header) {
+            currentFile = header[1].replace(/\\/g, '/');
+            continue;
+        }
+        if (line.startsWith('+++') || !line.startsWith('+')) continue;
+        if (!CONTRACT_AWARE_PATTERNS.some((pattern) => pattern.test(currentFile))) continue;
+        const match = line.match(/SCN-[A-Z]+-\d{3}/);
+        if (match) return match[0];
+    }
+    return '';
+}
+
 export function normalizeDiffPath(filePath) {
     return String(filePath || '')
         .replace(/\\/g, '/')

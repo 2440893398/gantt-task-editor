@@ -9,7 +9,15 @@ const root = process.env.SCENARIO_COVERAGE_ROOT
     ? path.resolve(process.env.SCENARIO_COVERAGE_ROOT)
     : path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const scenariosDir = path.join(root, 'tests', 'scenarios');
-const testsDir = path.join(root, 'tests');
+// 扫描根：`tests/` 之外还要看 `packages/*/tests/`。
+//
+// 平台包的符合性测试同样是业务测试（它们带 [SCN-FWB-032] 标题），不扫就等于那条场景
+// 永远没有覆盖、只能停在 todo，追溯链是断的。
+//
+// 这不违反 §1.2 的自举约束：那条约束防的是「平台的测试挂掉 → 所有反馈处理瘫痪」，
+// 指的是把平台测试并进**运行型**硬门禁（根 npm test）。本脚本只做静态引用扫描，
+// 不执行任何平台测试，平台测试跑不跑得过与对账结果无关。
+const testRoots = [path.join(root, 'tests'), path.join(root, 'packages')];
 
 const SCN_ID = /SCN-[A-Z]+-\d{3}/g;
 const AUTOMATED_STATUSES = new Set(['active']);
@@ -147,7 +155,10 @@ for (const file of fs.readdirSync(scenariosDir)) {
     }
 }
 
-const refs = collectTestRefs(testsDir);
+const refs = new Map();
+for (const dir of testRoots) {
+    if (fs.existsSync(dir)) collectTestRefs(dir, refs);
+}
 
 for (const [id, meta] of inventory) {
     if (AUTOMATED_STATUSES.has(meta.status) && !refs.has(id)) {

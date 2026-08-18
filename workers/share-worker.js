@@ -14,6 +14,9 @@ import {
     describeFeedbackAnalysisHandoff,
     requiresFeedbackDesign,
 } from '../src/features/feedback/analysis-handoff.js';
+// Executor Protocol v0：事件类型的唯一来源（SCN-FWB-032）。Worker 与所有 Adapter
+// 共用同一份，播报与校验不得再分家。
+import { ALL_EVENT_TYPES } from '../packages/feedback-platform/protocol/v0.js';
 
 const TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
 const FEEDBACK_TTL_SECONDS = 180 * 24 * 60 * 60; // 180 days
@@ -48,13 +51,13 @@ const FEEDBACK_AUTOMATION_EVENT_TYPES = [
     'issue.reopened',
     'status.changed',
 ];
-const FEEDBACK_CALLBACK_EVENTS = [
-    'run.started',
-    'agent.message',
-    'waiting_human',
-    'artifact.created',
-    'run.completed',
-];
+// 对外播报给 Runner 配置方的事件契约。
+//
+// 这里原本是一份手写的 5 条数组，且把 `agent.waiting_human` 写成了 `waiting_human`
+// ——校验器（下面的 FEEDBACK_CALLBACK_EVENT_TYPES）从不接受这个名字，还多认 3 种事件。
+// 也就是说：照着管理端播报的契约实现的 Adapter，会被自己的服务端拒收。
+// 改为从 Executor Protocol v0 派生（SCN-FWB-032：Worker 与 Adapter 不得各持一份）。
+const FEEDBACK_CALLBACK_EVENTS = ALL_EVENT_TYPES;
 const FEEDBACK_PROVIDERS = new Set(['codex', 'claude']);
 const FEEDBACK_PROVIDER_ACTIONS = {
     codex: 'openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56',
@@ -153,21 +156,28 @@ const FEEDBACK_RUN_STATUSES = new Set([
     'failed',
     'cancelled',
     'timed_out',
+    'executor_lost',
 ]);
-const FEEDBACK_RUN_TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'cancelled', 'timed_out']);
+const FEEDBACK_RUN_TERMINAL_STATUSES = new Set([
+    'succeeded',
+    'failed',
+    'cancelled',
+    'timed_out',
+    'executor_lost',
+]);
 // §15.2 normalized Callback contract. Provider-specific shapes are mapped onto
-// these before anything reaches storage or the UI.
-const FEEDBACK_CALLBACK_EVENT_TYPES = new Set([
-    'run.started',
-    'agent.message',
-    'agent.waiting_human',
-    'run.phase_changed',
-    'artifact.created',
-    'run.completed',
-    'run.failed',
-    'run.cancelled',
-]);
+// these before anything reaches storage or the UI. 与上面的对外播报同源，
+// 保证「说的」和「认的」永远是同一份（SCN-FWB-032）。
+const FEEDBACK_CALLBACK_EVENT_TYPES = new Set(ALL_EVENT_TYPES);
 const FEEDBACK_RUN_TOKEN_TTL_SECONDS = 4 * 60 * 60;
+const FEEDBACK_EXECUTOR_DEFAULT_LEASE_SECONDS = 60;
+const FEEDBACK_EXECUTOR_MIN_LEASE_SECONDS = 15;
+const FEEDBACK_EXECUTOR_MAX_LEASE_SECONDS = 5 * 60;
+const FEEDBACK_EXECUTOR_APPROVAL_KINDS = new Set([
+    'file_change',
+    'command_execution',
+    'permissions',
+]);
 // §13.3/§14.4 step 2: read-only policies get a profile without workspace write.
 const FEEDBACK_PERMISSION_PROFILES = {
     analyze: 'feedback-readonly',
@@ -232,6 +242,8 @@ const FEEDBACK_HUMAN_ACTION_TYPES = new Set([
     'review_candidate',
     'blocked_external',
     'confirm_policy',
+    'runtime_approval',
+    'executor_lost',
 ]);
 const FEEDBACK_HUMAN_ACTION_RETURN_STATES = Object.freeze({
     need_reproduction: ['queued', 'closed'],
@@ -240,6 +252,10 @@ const FEEDBACK_HUMAN_ACTION_RETURN_STATES = Object.freeze({
     developer_fix_required: ['queued', 'closed'],
     blocked_external: ['queued', 'closed'],
     confirm_policy: ['queued', 'closed'],
+    // M4 will add a resolver that sends the decision down the active lease.
+    // Until then an approval is intentionally fail-closed.
+    runtime_approval: [],
+    executor_lost: ['queued', 'closed'],
 });
 const FEEDBACK_DESIGN_DECISIONS = new Set(['approve', 'revise', 'reject']);
 const FEEDBACK_SOURCE_TYPES = new Set(['manual', 'auto_error', 'admin']);
@@ -2048,9 +2064,10 @@ async function createD1FeedbackIssue(env, feedback) {
                 owner_capability_expires_at, attachment_count, context_json,
                 business_type, scope, automation_decision, ai_confidence,
                 ai_classified_at, status, priority, assignee, legacy_public_note,
-                legacy_internal_note, legacy_kv_key, created_at, updated_at, resolved_at
+                legacy_internal_note, legacy_kv_key, created_at, updated_at, resolved_at,
+                project_id
             ) VALUES (
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
             )`
         ).bind(
             issueId,
@@ -2078,7 +2095,10 @@ async function createD1FeedbackIssue(env, feedback) {
             null,
             createdAt,
             createdAt,
-            null
+            null,
+            // §M2-T3：新 Issue 归属到当前启用的项目。迁移 0006 未 apply 时解析器回落到
+            // 环境变量并给出空 id，此时列留空，与迁移前的行为一致。
+            (await resolveFeedbackProject(env)).id || null
         ),
         env.FEEDBACK_DB.prepare(
             `INSERT INTO feedback_events (
@@ -3318,8 +3338,10 @@ function normalizeFeedbackAutoDeliverSettings(raw) {
  * production smoke prerequisites to be present. These are existence checks on
  * server-held configuration — deliberately not a claim that a deploy succeeded.
  */
-function evaluateFeedbackAutoDeliverPreflight(env) {
+async function evaluateFeedbackAutoDeliverPreflight(env) {
     const has = (name) => Boolean(String(env[name] || '').trim());
+    // §M2：目标仓库来自 `feedback_projects`，不再是环境变量。
+    const project = await resolveFeedbackProject(env);
 
     // Provider health is deliberately absent here: §7.4 re-checks it per Run for
     // the provider that Run actually uses, which is stricter than a snapshot.
@@ -3327,8 +3349,8 @@ function evaluateFeedbackAutoDeliverPreflight(env) {
         {
             id: 'github_dispatch',
             label: 'GitHub 派发凭据',
-            ok: has('FEEDBACK_GITHUB_REPOSITORY') && has('FEEDBACK_GITHUB_TOKEN'),
-            reason: '缺少 FEEDBACK_GITHUB_REPOSITORY 或 FEEDBACK_GITHUB_TOKEN',
+            ok: Boolean(project.repo) && has('FEEDBACK_GITHUB_TOKEN'),
+            reason: 'feedback_projects 无启用项目，或缺少 FEEDBACK_GITHUB_TOKEN',
         },
         {
             id: 'callback_origin',
@@ -3995,7 +4017,7 @@ async function resolveFeedbackDeliveryMode(
         : null;
     const providerHealth = runnerSettings.providers[provider];
     const credentialsReady = Boolean(
-        env.FEEDBACK_GITHUB_REPOSITORY &&
+        (await resolveFeedbackProject(env)).repo &&
         env.FEEDBACK_GITHUB_TOKEN &&
         env.FEEDBACK_CALLBACK_ORIGIN &&
         env.FEEDBACK_RELEASE_TOKEN_SECRET
@@ -4082,6 +4104,47 @@ async function verifyFeedbackRunToken(request, env, { runId, audience }) {
  * and creates the Run plus its short-lived, run-scoped tokens. §7.3 allows at
  * most one write-capable Run per Issue, enforced by compare-and-set.
  */
+/**
+ * §M2：目标项目是一行数据，不再是 wrangler.toml 里的环境变量。
+ *
+ * 回落到环境变量是有意保留的：迁移 `0006` 尚未 apply 的库（本地 `wrangler dev`、
+ * 生产的回滚窗口）必须仍能派发。**部署顺序因此是有约束的**——先把 0006 apply 到
+ * 生产 D1，再部署删掉了这些变量的 Worker；反过来会让派发在两者之间的窗口里失配。
+ */
+async function resolveFeedbackProject(env) {
+    let row = null;
+    try {
+        row = await env.FEEDBACK_DB?.prepare(
+            `SELECT id, repo, default_branch, commands_json, deploy_config_json, is_self
+             FROM feedback_projects WHERE enabled = 1 ORDER BY id LIMIT 1`
+        ).first();
+    } catch {
+        row = null;
+    }
+
+    if (row) {
+        return {
+            id: String(row.id || ''),
+            repo: String(row.repo || ''),
+            defaultBranch: String(row.default_branch || 'master'),
+            commands: parseStoredJson(row.commands_json, {}),
+            deployConfig: parseStoredJson(row.deploy_config_json, {}),
+            isSelf: Number(row.is_self) === 1,
+            source: 'table',
+        };
+    }
+
+    return {
+        id: '',
+        repo: String(env.FEEDBACK_GITHUB_REPOSITORY || ''),
+        defaultBranch: String(env.FEEDBACK_GITHUB_REF || 'master'),
+        commands: {},
+        deployConfig: {},
+        isSelf: false,
+        source: 'env',
+    };
+}
+
 async function createFeedbackRun(env, { issueId, workflowId, provider, triggerEventId = '' }) {
     if (!env.FEEDBACK_DB) {
         throw feedbackStorageError('FEEDBACK_DB_REQUIRED');
@@ -4125,6 +4188,14 @@ async function createFeedbackRun(env, { issueId, workflowId, provider, triggerEv
     });
 
     if (FEEDBACK_WRITE_POLICIES.has(policy)) {
+        // §1.2 自举约束的机械实现：平台自身的项目不得产生写入型 Run。
+        // 2026-08-09 平台的测试挂掉一次就让所有反馈处理瘫痪；让平台去改自己的代码，
+        // 等于把那次事故变成可自我触发的。判定在数据层，不靠 prompt 也不靠人记得。
+        const project = await resolveFeedbackProject(env);
+        if (project.isSelf) {
+            throw feedbackStorageError('FEEDBACK_SELF_TARGET_WRITE_FORBIDDEN');
+        }
+
         const conflicting = await env.FEEDBACK_DB.prepare(
             `SELECT id FROM feedback_runs
              WHERE issue_id = ? AND status NOT IN
@@ -4288,7 +4359,8 @@ async function recordFeedbackDispatchResult(env, runId, dispatch) {
  * through a smoke-scoped callback. Until it does, the provider is `testing`.
  */
 async function dispatchFeedbackRunnerSmoke(env, { provider, smokeId, settings }) {
-    const repository = String(env.FEEDBACK_GITHUB_REPOSITORY || '');
+    const project = await resolveFeedbackProject(env);
+    const repository = project.repo;
     const githubToken = String(env.FEEDBACK_GITHUB_TOKEN || '');
     const callbackOrigin = String(env.FEEDBACK_CALLBACK_ORIGIN || '');
     if (!repository || !githubToken || !callbackOrigin) {
@@ -4311,7 +4383,7 @@ async function dispatchFeedbackRunnerSmoke(env, { provider, smokeId, settings })
         callbackToken: token,
     };
 
-    const ref = String(env.FEEDBACK_GITHUB_REF || 'master');
+    const ref = project.defaultBranch;
     const url = `https://api.github.com/repos/${repository}/actions/workflows/${FEEDBACK_SMOKE_WORKFLOW_FILE}/dispatches`;
     try {
         const response = await fetch(url, {
@@ -4393,14 +4465,15 @@ async function verifyFeedbackSmokeToken(request, env, { smokeId }) {
  * un-started rather than silently assumed to be running.
  */
 async function dispatchFeedbackRunToGitHub(env, { payload, provider }) {
-    const repository = String(env.FEEDBACK_GITHUB_REPOSITORY || '');
+    const project = await resolveFeedbackProject(env);
+    const repository = project.repo;
     const token = String(env.FEEDBACK_GITHUB_TOKEN || '');
     const workflowFile = FEEDBACK_PROVIDER_WORKFLOW_FILES[provider];
     if (!repository || !token || !workflowFile) {
         return { dispatched: false, errorCode: 'GITHUB_DISPATCH_NOT_CONFIGURED' };
     }
 
-    const ref = String(env.FEEDBACK_GITHUB_REF || 'master');
+    const ref = project.defaultBranch;
     let dispatchPayload = payload;
     if (!/^[0-9a-f]{40,64}$/i.test(String(dispatchPayload.baseCommit || ''))) {
         const commitUrl = `https://api.github.com/repos/${repository}/commits/${encodeURIComponent(ref)}`;
@@ -4495,8 +4568,9 @@ async function verifyRunCompletionManifest({ env, run, payload }) {
             };
         }
 
-        const expectedRepository = String(env.FEEDBACK_GITHUB_REPOSITORY || '').trim();
-        const expectedBaseRef = String(env.FEEDBACK_GITHUB_REF || 'master');
+        const expectedProject = await resolveFeedbackProject(env);
+        const expectedRepository = expectedProject.repo.trim();
+        const expectedBaseRef = expectedProject.defaultBranch;
         const expectedCandidateRef = `feedback/candidate/${String(run.id).replace(
             /[^a-zA-Z0-9_-]/g,
             '-'
@@ -5510,7 +5584,7 @@ async function registerFeedbackCandidate(
     { issueId, runId, workflowId, manifest, verification }
 ) {
     const repository =
-        limitText(manifest.repository, 200) || String(env.FEEDBACK_GITHUB_REPOSITORY || '');
+        limitText(manifest.repository, 200) || (await resolveFeedbackProject(env)).repo;
     if (!repository || !manifest.baseCommit || !manifest.changeCommit) return null;
 
     const existing = await env.FEEDBACK_DB.prepare(
@@ -5707,14 +5781,15 @@ async function markFeedbackCandidateForReview(
 }
 
 async function dispatchFeedbackReleaseToGitHub(env, { release, candidate }) {
-    const repository = String(candidate.repository || env.FEEDBACK_GITHUB_REPOSITORY || '');
+    const project = await resolveFeedbackProject(env);
+    const repository = String(candidate.repository || project.repo || '');
     const token = String(env.FEEDBACK_GITHUB_TOKEN || '');
     const callbackOrigin = String(env.FEEDBACK_CALLBACK_ORIGIN || '').replace(/\/$/, '');
     if (!repository || !token || !callbackOrigin) {
         return { dispatched: false, errorCode: 'GITHUB_RELEASE_DISPATCH_NOT_CONFIGURED' };
     }
 
-    const ref = String(env.FEEDBACK_GITHUB_REF || 'master');
+    const ref = project.defaultBranch;
     const url = `https://api.github.com/repos/${repository}/actions/workflows/${FEEDBACK_RELEASE_WORKFLOW_FILE}/dispatches`;
     const payload = {
         releaseId: release.releaseId,
@@ -6258,7 +6333,7 @@ async function deliverFeedbackCandidate(env, candidateId, { actorType }) {
         throw feedbackStorageError('FEEDBACK_ISSUE_NOT_READY_FOR_DEPLOY');
     }
 
-    const remoteDefaultBranch = String(env.FEEDBACK_GITHUB_REF || 'master');
+    const remoteDefaultBranch = (await resolveFeedbackProject(env)).defaultBranch;
     const active = await env.FEEDBACK_DB.prepare(
         `SELECT id FROM feedback_releases
          WHERE repository = ? AND remote_default_branch = ?
@@ -8480,6 +8555,556 @@ function logFeedback(level, message, context = {}) {
     sink(`[Feedback] ${message}`, entry);
 }
 
+// ========== Feedback Executor Control Plane ==========
+
+function feedbackExecutorError(code) {
+    const error = new Error(code);
+    error.code = code;
+    return error;
+}
+
+function feedbackExecutorErrorResponse(error, headers) {
+    const statuses = {
+        FEEDBACK_DB_REQUIRED: 503,
+        FEEDBACK_EXECUTOR_ID_REQUIRED: 400,
+        FEEDBACK_EXECUTOR_CAPABILITIES_INVALID: 400,
+        FEEDBACK_EXECUTOR_LEASE_STALE: 409,
+        FEEDBACK_EXECUTOR_EVENT_REQUIRED: 400,
+        FEEDBACK_EXECUTOR_APPROVAL_INVALID: 400,
+        FEEDBACK_HUMAN_ACTION_ALREADY_ACTIVE: 409,
+    };
+    const status = statuses[error?.code];
+    if (status) return errorResponse(error.code, status, headers);
+    return feedbackErrorResponse(error, headers);
+}
+
+function isValidFeedbackExecutorToken(request, env) {
+    const expected = String(env.FEEDBACK_EXECUTOR_TOKEN || '');
+    return Boolean(expected && feedbackHashesMatch(getBearerToken(request), expected));
+}
+
+function normalizeFeedbackExecutorId(value) {
+    const executorId = limitText(value, 120).trim();
+    return /^[a-zA-Z0-9._:-]+$/.test(executorId) ? executorId : '';
+}
+
+function normalizeFeedbackExecutorLeaseSeconds(value) {
+    const seconds = Number(value) || FEEDBACK_EXECUTOR_DEFAULT_LEASE_SECONDS;
+    return Math.min(
+        FEEDBACK_EXECUTOR_MAX_LEASE_SECONDS,
+        Math.max(FEEDBACK_EXECUTOR_MIN_LEASE_SECONDS, Math.floor(seconds))
+    );
+}
+
+function parseFeedbackExecutorCapabilities(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        throw feedbackExecutorError('FEEDBACK_EXECUTOR_CAPABILITIES_INVALID');
+    }
+    const serialized = JSON.stringify(value);
+    if (serialized.length > 16000) {
+        throw feedbackExecutorError('FEEDBACK_EXECUTOR_CAPABILITIES_INVALID');
+    }
+    return serialized;
+}
+
+async function readFeedbackExecutorContext(env, runId) {
+    const row = await env.FEEDBACK_DB.prepare(
+        `SELECT
+            r.id AS run_id, r.issue_id, r.workflow_id, r.policy, r.provider,
+            r.delivery_mode, r.status AS run_status,
+            i.project_id, i.title, i.description, i.context_json,
+            p.repo, p.default_branch, p.commands_json, p.deploy_config_json
+         FROM feedback_runs r
+         JOIN feedback_issues i ON i.id = r.issue_id
+         LEFT JOIN feedback_projects p ON p.id = i.project_id
+         WHERE r.id = ?`
+    )
+        .bind(runId)
+        .first();
+    if (!row) return null;
+
+    const timelineResult = await env.FEEDBACK_DB.prepare(
+        `SELECT type, actor_type, actor_id, occurred_at, body_json
+         FROM feedback_events
+         WHERE issue_id = ? AND visibility = 'public'
+         ORDER BY sequence`
+    )
+        .bind(row.issue_id)
+        .all();
+
+    return {
+        runId: row.run_id,
+        issueId: row.issue_id,
+        workflowId: row.workflow_id,
+        projectId: row.project_id || '',
+        provider: row.provider,
+        policy: row.policy,
+        deliveryMode: row.delivery_mode,
+        repository: row.repo || '',
+        defaultBranch: row.default_branch || 'master',
+        commands: parseStoredJson(row.commands_json, {}),
+        deployConfig: parseStoredJson(row.deploy_config_json, {}),
+        issue: {
+            title: row.title,
+            description: row.description,
+            context: parseStoredJson(row.context_json, {}),
+        },
+        timeline: (timelineResult.results || []).map((event) => ({
+            type: event.type,
+            actorType: event.actor_type,
+            actorId: event.actor_id || '',
+            occurredAt: event.occurred_at,
+            body: parseStoredJson(event.body_json, {}),
+        })),
+    };
+}
+
+async function expireFeedbackExecutorLeases(env, now = new Date()) {
+    const nowIso = now.toISOString();
+    const result = await env.FEEDBACK_DB.prepare(
+        `SELECT l.id, l.run_id, l.executor_id, l.epoch, r.issue_id, r.workflow_id
+         FROM feedback_executor_leases l
+         JOIN feedback_runs r ON r.id = l.run_id
+         WHERE l.status = 'active' AND l.expires_at <= ?
+         ORDER BY l.expires_at, l.id`
+    )
+        .bind(nowIso)
+        .all();
+
+    for (const lease of result.results || []) {
+        const currentAction = await env.FEEDBACK_DB.prepare(
+            `SELECT id FROM feedback_human_actions
+             WHERE issue_id = ? AND status = 'active'`
+        )
+            .bind(lease.issue_id)
+            .first();
+        const actionId = currentAction?.id || `ha_executor_lost_${lease.run_id}_${lease.epoch}`;
+        const statements = [];
+        if (!currentAction) {
+            statements.push(
+                env.FEEDBACK_DB.prepare(
+                    `INSERT OR IGNORE INTO feedback_human_actions (
+                        id, issue_id, workflow_id, run_id, type, requested_action,
+                        evidence_json, allowed_return_states_json, status, created_at
+                     ) VALUES (?, ?, ?, ?, 'executor_lost', ?, ?, ?, 'active', ?)`
+                ).bind(
+                    actionId,
+                    lease.issue_id,
+                    lease.workflow_id,
+                    lease.run_id,
+                    '执行器租约已过期。请检查工作区副作用后决定是否重新开始。',
+                    JSON.stringify([{ executorId: lease.executor_id, epoch: lease.epoch }]),
+                    JSON.stringify(['queued', 'closed']),
+                    nowIso
+                )
+            );
+        }
+        statements.push(
+            env.FEEDBACK_DB.prepare(
+                `UPDATE feedback_executor_leases
+                 SET status = 'expired', released_at = ?
+                 WHERE id = ? AND status = 'active'`
+            ).bind(nowIso, lease.id),
+            env.FEEDBACK_DB.prepare(
+                `UPDATE feedback_runs
+                 SET status = 'executor_lost', error_code = 'executor_lost', finished_at = ?
+                 WHERE id = ? AND status NOT IN
+                    ('succeeded', 'failed', 'cancelled', 'timed_out', 'executor_lost')`
+            ).bind(nowIso, lease.run_id),
+            env.FEEDBACK_DB.prepare(
+                `UPDATE feedback_issues
+                 SET status = 'needs_human', active_human_action_id = ?, updated_at = ?
+                 WHERE id = ?`
+            ).bind(actionId, nowIso, lease.issue_id),
+            env.FEEDBACK_DB.prepare(
+                `UPDATE feedback_workflows
+                 SET status = 'waiting', waiting_until = NULL
+                 WHERE instance_id = ?`
+            ).bind(lease.workflow_id),
+            env.FEEDBACK_DB.prepare(
+                `UPDATE feedback_executors
+                 SET status = 'offline', updated_at = ?
+                 WHERE id = ?
+                   AND NOT EXISTS (
+                       SELECT 1 FROM feedback_executor_leases
+                       WHERE executor_id = ? AND status = 'active' AND id <> ?
+                   )`
+            ).bind(nowIso, lease.executor_id, lease.executor_id, lease.id)
+        );
+        await env.FEEDBACK_DB.batch(statements);
+    }
+
+    return (result.results || []).length;
+}
+
+async function upsertFeedbackExecutor(env, executorId, capabilitiesJson, nowIso) {
+    await env.FEEDBACK_DB.prepare(
+        `INSERT INTO feedback_executors (
+            id, capabilities_json, status, last_heartbeat_at, created_at, updated_at
+         ) VALUES (?, ?, 'online', ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+            capabilities_json = excluded.capabilities_json,
+            status = 'online',
+            last_heartbeat_at = excluded.last_heartbeat_at,
+            updated_at = excluded.updated_at`
+    )
+        .bind(executorId, capabilitiesJson, nowIso, nowIso, nowIso)
+        .run();
+}
+
+async function createFeedbackExecutorSessionStatements(
+    env,
+    { run, executorId, leaseId, epoch, context, nowIso }
+) {
+    const existing = await env.FEEDBACK_DB.prepare(
+        `SELECT id FROM feedback_agent_sessions
+         WHERE issue_id = ? AND provider = ? AND status = 'active'
+         ORDER BY updated_at DESC LIMIT 1`
+    )
+        .bind(run.issue_id, run.provider)
+        .first();
+    const sessionId = existing?.id || `session_${crypto.randomUUID()}`;
+    const sequenceRow = await env.FEEDBACK_DB.prepare(
+        'SELECT COALESCE(MAX(sequence), 0) AS sequence FROM feedback_turns WHERE session_id = ?'
+    )
+        .bind(sessionId)
+        .first();
+    const turnId = `turn_${crypto.randomUUID()}`;
+    const contextJson = JSON.stringify(context);
+    const sessionStatement = existing
+        ? env.FEEDBACK_DB.prepare(
+              `UPDATE feedback_agent_sessions
+               SET current_run_id = ?, executor_id = ?, lease_epoch = ?,
+                   context_snapshot_json = ?, updated_at = ?
+               WHERE id = ?
+                 AND EXISTS (SELECT 1 FROM feedback_executor_leases WHERE id = ?)`
+          ).bind(run.id, executorId, epoch, contextJson, nowIso, sessionId, leaseId)
+        : env.FEEDBACK_DB.prepare(
+              `INSERT INTO feedback_agent_sessions (
+                  id, issue_id, current_run_id, provider, provider_thread_id,
+                  executor_id, lease_epoch, context_snapshot_json, status,
+                  created_at, updated_at
+               )
+               SELECT ?, ?, ?, ?, NULL, ?, ?, ?, 'active', ?, ?
+               WHERE EXISTS (SELECT 1 FROM feedback_executor_leases WHERE id = ?)`
+          ).bind(
+              sessionId,
+              run.issue_id,
+              run.id,
+              run.provider,
+              executorId,
+              epoch,
+              contextJson,
+              nowIso,
+              nowIso,
+              leaseId
+          );
+    const turnStatement = env.FEEDBACK_DB.prepare(
+        `INSERT INTO feedback_turns (
+            id, session_id, run_id, sequence, status, input_json,
+            output_json, created_at
+         )
+         SELECT ?, ?, ?, ?, 'queued', ?, '{}', ?
+         WHERE EXISTS (SELECT 1 FROM feedback_executor_leases WHERE id = ?)
+         ON CONFLICT(run_id) DO NOTHING`
+    ).bind(
+        turnId,
+        sessionId,
+        run.id,
+        Number(sequenceRow?.sequence || 0) + 1,
+        contextJson,
+        nowIso,
+        leaseId
+    );
+
+    return { sessionId, statements: [sessionStatement, turnStatement] };
+}
+
+async function claimFeedbackExecutorLease(env, body) {
+    if (!env.FEEDBACK_DB) throw feedbackExecutorError('FEEDBACK_DB_REQUIRED');
+    const executorId = normalizeFeedbackExecutorId(body?.executorId);
+    if (!executorId) throw feedbackExecutorError('FEEDBACK_EXECUTOR_ID_REQUIRED');
+    const capabilitiesJson = parseFeedbackExecutorCapabilities(body.capabilities);
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const expiresAt = new Date(
+        now.getTime() + normalizeFeedbackExecutorLeaseSeconds(body.leaseSeconds) * 1000
+    ).toISOString();
+
+    await expireFeedbackExecutorLeases(env, now);
+    await upsertFeedbackExecutor(env, executorId, capabilitiesJson, nowIso);
+
+    const existing = await env.FEEDBACK_DB.prepare(
+        `SELECT l.id, l.run_id, l.epoch, l.expires_at
+         FROM feedback_executor_leases l
+         WHERE l.executor_id = ? AND l.status = 'active' AND l.expires_at > ?`
+    )
+        .bind(executorId, nowIso)
+        .first();
+    if (existing) {
+        return {
+            leaseId: existing.id,
+            runId: existing.run_id,
+            executorId,
+            epoch: existing.epoch,
+            expiresAt: existing.expires_at,
+            context: await readFeedbackExecutorContext(env, existing.run_id),
+            reused: true,
+        };
+    }
+
+    const run = await env.FEEDBACK_DB.prepare(
+        `SELECT r.id, r.issue_id, r.workflow_id, r.provider
+         FROM feedback_runs r
+         WHERE r.runner_type = 'executor' AND r.status = 'created'
+           AND NOT EXISTS (
+               SELECT 1 FROM feedback_executor_leases l
+               WHERE l.run_id = r.id AND l.status = 'active'
+           )
+         ORDER BY r.started_at, r.id
+         LIMIT 1`
+    ).first();
+    if (!run) return null;
+
+    const context = await readFeedbackExecutorContext(env, run.id);
+    const leaseId = `lease_${crypto.randomUUID()}`;
+    const epochRow = await env.FEEDBACK_DB.prepare(
+        'SELECT COALESCE(MAX(epoch), 0) + 1 AS epoch FROM feedback_executor_leases WHERE run_id = ?'
+    )
+        .bind(run.id)
+        .first();
+    const epoch = Number(epochRow?.epoch || 1);
+    const session = await createFeedbackExecutorSessionStatements(env, {
+        run,
+        executorId,
+        leaseId,
+        epoch,
+        context,
+        nowIso,
+    });
+    const results = await env.FEEDBACK_DB.batch([
+        env.FEEDBACK_DB.prepare(
+            `INSERT INTO feedback_executor_leases (
+                id, run_id, executor_id, epoch, status, acquired_at,
+                heartbeat_at, expires_at
+             )
+             SELECT ?, id, ?, ?, 'active', ?, ?, ?
+             FROM feedback_runs
+             WHERE id = ? AND runner_type = 'executor' AND status = 'created'
+               AND NOT EXISTS (
+                   SELECT 1 FROM feedback_executor_leases
+                   WHERE run_id = ? AND status = 'active'
+               )
+             RETURNING id, run_id, epoch, expires_at`
+        ).bind(leaseId, executorId, epoch, nowIso, nowIso, expiresAt, run.id, run.id),
+        env.FEEDBACK_DB.prepare(
+            `UPDATE feedback_runs
+             SET status = 'running', runner_label = ?
+             WHERE id = ?
+               AND EXISTS (SELECT 1 FROM feedback_executor_leases WHERE id = ?)`
+        ).bind(executorId, run.id, leaseId),
+        ...session.statements,
+    ]);
+    const claimed = results[0]?.results?.[0];
+    if (!claimed) return null;
+
+    return {
+        leaseId: claimed.id,
+        runId: claimed.run_id,
+        executorId,
+        epoch: claimed.epoch,
+        expiresAt: claimed.expires_at,
+        context,
+        sessionId: session.sessionId,
+        reused: false,
+    };
+}
+
+async function verifyFeedbackExecutorLease(env, body, runId = body?.runId) {
+    if (!env.FEEDBACK_DB) throw feedbackExecutorError('FEEDBACK_DB_REQUIRED');
+    const executorId = normalizeFeedbackExecutorId(body?.executorId);
+    const leaseId = limitText(body?.leaseId, 160).trim();
+    const epoch = Number(body?.epoch);
+    if (!executorId || !leaseId || !Number.isInteger(epoch) || epoch < 1 || !runId) {
+        throw feedbackExecutorError('FEEDBACK_EXECUTOR_LEASE_STALE');
+    }
+    const lease = await env.FEEDBACK_DB.prepare(
+        `SELECT id, run_id, executor_id, epoch, expires_at
+         FROM feedback_executor_leases
+         WHERE id = ? AND run_id = ? AND executor_id = ? AND epoch = ?
+           AND status = 'active' AND expires_at > ?`
+    )
+        .bind(leaseId, runId, executorId, epoch, new Date().toISOString())
+        .first();
+    if (!lease) throw feedbackExecutorError('FEEDBACK_EXECUTOR_LEASE_STALE');
+    return lease;
+}
+
+async function heartbeatFeedbackExecutor(env, body) {
+    const lease = await verifyFeedbackExecutorLease(env, body);
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const expiresAt = new Date(
+        now.getTime() + normalizeFeedbackExecutorLeaseSeconds(body.leaseSeconds) * 1000
+    ).toISOString();
+    const result = await env.FEEDBACK_DB.prepare(
+        `UPDATE feedback_executor_leases
+         SET heartbeat_at = ?, expires_at = ?
+         WHERE id = ? AND run_id = ? AND executor_id = ? AND epoch = ?
+           AND status = 'active' AND expires_at > ?
+         RETURNING id`
+    )
+        .bind(nowIso, expiresAt, lease.id, lease.run_id, lease.executor_id, lease.epoch, nowIso)
+        .run();
+    if (!result.results?.length) {
+        throw feedbackExecutorError('FEEDBACK_EXECUTOR_LEASE_STALE');
+    }
+    await env.FEEDBACK_DB.prepare(
+        `UPDATE feedback_executors
+         SET status = 'online', last_heartbeat_at = ?, updated_at = ?
+         WHERE id = ?`
+    )
+        .bind(nowIso, nowIso, lease.executor_id)
+        .run();
+    return { leaseId: lease.id, runId: lease.run_id, epoch: lease.epoch, expiresAt, commands: [] };
+}
+
+async function recordFeedbackExecutorEventState(env, runId, event) {
+    const nowIso = limitText(event?.occurredAt, 40) || new Date().toISOString();
+    const providerThreadId = limitText(event?.providerSessionId, 200);
+    if (providerThreadId) {
+        await env.FEEDBACK_DB.prepare(
+            `UPDATE feedback_agent_sessions
+             SET provider_thread_id = ?, updated_at = ?
+             WHERE current_run_id = ? AND status = 'active'`
+        )
+            .bind(providerThreadId, nowIso, runId)
+            .run();
+    }
+
+    const terminalStatuses = {
+        'run.completed': 'completed',
+        'run.failed': 'failed',
+        'run.cancelled': 'cancelled',
+    };
+    if (event?.type === 'run.started') {
+        await env.FEEDBACK_DB.prepare(
+            `UPDATE feedback_turns
+             SET status = 'running', started_at = COALESCE(started_at, ?)
+             WHERE run_id = ?`
+        )
+            .bind(nowIso, runId)
+            .run();
+    } else if (terminalStatuses[event?.type]) {
+        await env.FEEDBACK_DB.prepare(
+            `UPDATE feedback_turns
+             SET status = ?, output_json = ?, finished_at = ?
+             WHERE run_id = ?`
+        )
+            .bind(terminalStatuses[event.type], JSON.stringify(event.payload || {}), nowIso, runId)
+            .run();
+    } else if (event?.type === 'agent.message') {
+        await env.FEEDBACK_DB.prepare('UPDATE feedback_turns SET output_json = ? WHERE run_id = ?')
+            .bind(JSON.stringify(event.payload || {}), runId)
+            .run();
+    }
+}
+
+async function appendFeedbackExecutorEvent(env, runId, body) {
+    await verifyFeedbackExecutorLease(env, body, runId);
+    if (!body?.event || typeof body.event !== 'object') {
+        throw feedbackExecutorError('FEEDBACK_EXECUTOR_EVENT_REQUIRED');
+    }
+    const result = await appendFeedbackCallbackEvent(env, runId, body.event);
+    if (result) await recordFeedbackExecutorEventState(env, runId, body.event);
+    return result;
+}
+
+async function createFeedbackExecutorApproval(env, body) {
+    const runId = limitText(body?.runId, 160).trim();
+    await verifyFeedbackExecutorLease(env, body, runId);
+    const requestId = limitText(body?.requestId, 160).trim();
+    const kind = limitText(body?.kind, 80).trim();
+    const summary = limitText(body?.summary, 2000).trim();
+    if (!requestId || !summary || !FEEDBACK_EXECUTOR_APPROVAL_KINDS.has(kind)) {
+        throw feedbackExecutorError('FEEDBACK_EXECUTOR_APPROVAL_INVALID');
+    }
+    const run = await env.FEEDBACK_DB.prepare(
+        'SELECT issue_id, workflow_id FROM feedback_runs WHERE id = ?'
+    )
+        .bind(runId)
+        .first();
+    if (!run) return null;
+
+    const actionId = `ha_runtime_${(await hashFeedbackValue(`${runId}:${requestId}`)).slice(0, 32)}`;
+    const existing = await env.FEEDBACK_DB.prepare(
+        'SELECT id FROM feedback_human_actions WHERE id = ?'
+    )
+        .bind(actionId)
+        .first();
+    if (existing) return { actionId, duplicate: true };
+    const active = await env.FEEDBACK_DB.prepare(
+        `SELECT id FROM feedback_human_actions
+         WHERE issue_id = ? AND status = 'active'`
+    )
+        .bind(run.issue_id)
+        .first();
+    if (active) throw feedbackExecutorError('FEEDBACK_HUMAN_ACTION_ALREADY_ACTIVE');
+
+    const details = body.details && typeof body.details === 'object' ? body.details : {};
+    const nowIso = new Date().toISOString();
+    const results = await env.FEEDBACK_DB.batch([
+        env.FEEDBACK_DB.prepare(
+            `INSERT INTO feedback_human_actions (
+                id, issue_id, workflow_id, run_id, type, requested_action,
+                evidence_json, allowed_return_states_json, status, created_at
+             ) VALUES (?, ?, ?, ?, 'runtime_approval', ?, ?, ?, 'active', ?)
+             ON CONFLICT DO NOTHING
+             RETURNING id`
+        ).bind(
+            actionId,
+            run.issue_id,
+            run.workflow_id,
+            runId,
+            summary,
+            JSON.stringify([{ kind, ...details }]),
+            JSON.stringify([]),
+            nowIso
+        ),
+        env.FEEDBACK_DB.prepare(
+            `UPDATE feedback_runs
+             SET status = 'waiting_human'
+             WHERE id = ? AND EXISTS (
+                 SELECT 1 FROM feedback_human_actions WHERE id = ?
+             )`
+        ).bind(runId, actionId),
+        env.FEEDBACK_DB.prepare(
+            `UPDATE feedback_issues
+             SET status = 'needs_human', active_human_action_id = ?, updated_at = ?
+             WHERE id = ? AND EXISTS (
+                 SELECT 1 FROM feedback_human_actions WHERE id = ?
+             )`
+        ).bind(actionId, nowIso, run.issue_id, actionId),
+        env.FEEDBACK_DB.prepare(
+            `UPDATE feedback_workflows
+             SET status = 'waiting', waiting_until = NULL
+             WHERE instance_id = ? AND EXISTS (
+                 SELECT 1 FROM feedback_human_actions WHERE id = ?
+             )`
+        ).bind(run.workflow_id, actionId),
+    ]);
+    if (!results[0]?.results?.length) {
+        const duplicate = await env.FEEDBACK_DB.prepare(
+            'SELECT id FROM feedback_human_actions WHERE id = ?'
+        )
+            .bind(actionId)
+            .first();
+        if (!duplicate) throw feedbackExecutorError('FEEDBACK_HUMAN_ACTION_ALREADY_ACTIVE');
+        return { actionId, duplicate: true };
+    }
+    return { actionId, duplicate: false };
+}
+
 function feedbackErrorResponse(error, headers) {
     const mapped = FEEDBACK_ERROR_RESPONSES[error?.code];
     if (mapped) return errorResponse(mapped[1], mapped[0], headers);
@@ -10612,6 +11237,53 @@ export default {
             });
         }
 
+        // M3 control plane. Executors always initiate outbound requests; this
+        // Worker never reaches into a workstation or exposes app-server.
+        if (url.pathname.startsWith('/api/executor/')) {
+            if (request.method !== 'POST') {
+                return errorResponse('Method Not Allowed', 405, headers);
+            }
+            if (!isValidFeedbackExecutorToken(request, env)) {
+                return errorResponse('Unauthorized', 401, headers);
+            }
+
+            try {
+                const body = await request.json();
+                if (url.pathname === '/api/executor/lease') {
+                    const lease = await claimFeedbackExecutorLease(env, body);
+                    return lease
+                        ? jsonResponse(lease, { status: lease.reused ? 200 : 201, headers })
+                        : new Response(null, { status: 204, headers });
+                }
+                if (url.pathname === '/api/executor/heartbeat') {
+                    return jsonResponse(await heartbeatFeedbackExecutor(env, body), { headers });
+                }
+                if (url.pathname === '/api/executor/approvals') {
+                    const approval = await createFeedbackExecutorApproval(env, body);
+                    if (!approval) return errorResponse('Not found', 404, headers);
+                    return jsonResponse(approval, {
+                        status: approval.duplicate ? 200 : 201,
+                        headers,
+                    });
+                }
+
+                const eventRoute = url.pathname.match(/^\/api\/executor\/runs\/([^/]+)\/events$/);
+                if (eventRoute) {
+                    const runId = decodeURIComponent(eventRoute[1]);
+                    const result = await appendFeedbackExecutorEvent(env, runId, body);
+                    if (!result) return errorResponse('Not found', 404, headers);
+                    return jsonResponse(result, {
+                        status: result.duplicate ? 200 : 201,
+                        headers,
+                    });
+                }
+            } catch (error) {
+                return feedbackExecutorErrorResponse(error, headers);
+            }
+
+            return errorResponse('Not Found', 404, headers);
+        }
+
         // §19: the V2 workbench is the production UI; the V1 board stays
         // reachable at /feedback/legacy until its replay/classification tools
         // are ported into the workbench.
@@ -11097,7 +11769,7 @@ export default {
 
             try {
                 const current = await readFeedbackSettings(env, 'runners');
-                const preflight = evaluateFeedbackAutoDeliverPreflight(env);
+                const preflight = await evaluateFeedbackAutoDeliverPreflight(env);
                 const saved = await writeFeedbackSettings(
                     env,
                     'runners',
@@ -11188,7 +11860,7 @@ export default {
                         errorCode: dispatch.errorCode,
                         message:
                             dispatch.errorCode === 'ACTION_SMOKE_NOT_CONFIGURED'
-                                ? '端点格式校验通过；真实 Action 冒烟需要配置 FEEDBACK_GITHUB_REPOSITORY、FEEDBACK_GITHUB_TOKEN 和 FEEDBACK_CALLBACK_ORIGIN 后才能运行'
+                                ? '端点格式校验通过；真实 Action 冒烟需要 feedback_projects 有启用项目，并配置 FEEDBACK_GITHUB_TOKEN 和 FEEDBACK_CALLBACK_ORIGIN 后才能运行'
                                 : '真实 Action 冒烟派发失败，连接状态保持未验证',
                     };
                     const saved = await writeFeedbackSettings(

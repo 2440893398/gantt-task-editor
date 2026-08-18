@@ -6,12 +6,25 @@ compatibility_flags = ["nodejs_compat"]
 [observability]
 enabled = true
 
+# §M2：目标项目（仓库 / 默认分支 / 命令 / 交付配置）已搬进 D1 的 `feedback_projects`
+# 单行数据，见 migrations/0006。改目标不再需要改配置并重新部署。
+#
+# 已删除：
+#   FEEDBACK_GITHUB_REPOSITORY / FEEDBACK_GITHUB_REF —— 迁进 feedback_projects
+#   FEEDBACK_GITHUB_WORKFLOW   —— 死配置。代码里一次都没读过；派发用的是
+#                                 FEEDBACK_PROVIDER_WORKFLOW_FILES 那张 provider→文件映射。
+#
+# 刻意保留在这里的：
+#   FEEDBACK_PRODUCTION_ORIGIN —— 被同步的 getFeedbackPublicOrigin(request, env) 在请求
+#   路径上读取，而 Pages 与 Worker 跑同一份 share-worker.js、Pages 侧没有 D1 绑定。
+#   把它挪进表会让同一份代码在两种部署下行为分叉，且要把一个同步函数改成 async。
+#   配置归属按「谁需要读它」划分：派发路径进表，同源渲染判定留 vars。
+#
+# ⚠️ 部署顺序：先把 0006 apply 到生产 D1，再部署本文件。反过来会在两者之间的窗口里
+#    让派发拿不到仓库名（解析器会回落到已被删除的环境变量）。
 [vars]
 FEEDBACK_CALLBACK_ORIGIN = "https://gantt-share.ch451314.workers.dev"
 FEEDBACK_GITHUB_API_VERSION = "2026-03-10"
-FEEDBACK_GITHUB_REF = "master"
-FEEDBACK_GITHUB_REPOSITORY = "2440893398/gantt-task-editor"
-FEEDBACK_GITHUB_WORKFLOW = "feedback-agent-codex.yml"
 FEEDBACK_PRODUCTION_API_URL = "https://gantt-share.ch451314.workers.dev"
 FEEDBACK_PRODUCTION_ORIGIN = "https://gantt-task-editor.pages.dev"
 

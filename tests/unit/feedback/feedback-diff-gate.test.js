@@ -312,10 +312,30 @@ describe('[SCN-FWB-012] feedback diff gate', () => {
         it('[SCN-FWB-012] reads the SCN-ID off the change instead of trusting a declaration', () => {
             // A declared `--scn` is a string the caller picked; it can name a
             // scenario the diff never touches. The added lines cannot lie.
-            expect(gate).toContain('function scnIdFromDiff');
-            expect(gate).toContain('scnIdFromDiff(diffText)');
-            expect(gate).toContain('CONTRACT_AWARE_PATTERNS.some');
-            expect(gate).toMatch(/SCN-\[A-Z\]\+-\\d\{3\}/);
+            //
+            // The extractor now lives in the shared module so the gate CLI and the
+            // Adapter conformance suite (C5 / SCN-FWB-032) run one implementation —
+            // the CLI carries a shebang and cannot be imported by a test at all.
+            const shared = readProjectFile('src/features/feedback/diff-gate.js');
+            expect(shared).toContain('export function scnIdFromDiff');
+            expect(shared).toContain('CONTRACT_AWARE_PATTERNS.some');
+            expect(shared).toMatch(/SCN-\[A-Z\]\+-\\d\{3\}/);
+
+            // The assignment must have no caller-supplied alternative. The previous
+            // assertion only required the substring `scnIdFromDiff(diffText)`, which
+            // `args.scn || process.env.FEEDBACK_SCN_ID || scnIdFromDiff(diffText)`
+            // also satisfies — so it stayed green for as long as that precedence
+            // existed. Pin the whole statement instead.
+            expect(gate).toContain('const scnId = scnIdFromDiff(diffText);');
+            // Only executable lines count — the comment above that statement names
+            // the removed precedence on purpose, so a whole-file substring check
+            // would flag its own explanation.
+            const executable = gate
+                .split(/\r?\n/)
+                .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+                .join('\n');
+            expect(executable).not.toMatch(/scnId\s*=\s*args\.scn/);
+            expect(executable).not.toContain('FEEDBACK_SCN_ID');
         });
 
         it('[SCN-FWB-012] hands the same authorization to the workbench re-check', () => {

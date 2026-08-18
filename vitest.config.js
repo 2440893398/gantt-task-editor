@@ -37,7 +37,17 @@ export default defineConfig({
         singleFork: true,
         setupFiles: ['./tests/setup.js'],
         include: ['tests/**/*.{test,spec}.{js,jsx,ts,tsx}'],
-        exclude: ['node_modules', 'dist', 'tests/e2e/**', '.worktrees/**', '**/.worktrees/**'],
+        exclude: [
+            'node_modules',
+            'dist',
+            'tests/e2e/**',
+            '.worktrees/**',
+            '**/.worktrees/**',
+            // 平台包有独立测试入口，故意不进目标项目的硬门禁：2026-08-09 平台自身的
+            // 测试挂掉曾让所有反馈处理瘫痪。上面的 include 只吃 `tests/**` 已经排除了
+            // 它，这一条是防止哪天放宽 include 就把自举风险重新接上（实施计划 §1.2）。
+            'packages/**',
+        ],
         // 测试报告输出配置
         reporters: ['default', 'html', 'json'],
         outputFile: {

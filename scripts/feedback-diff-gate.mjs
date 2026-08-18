@@ -15,7 +15,7 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
-import { CONTRACT_AWARE_PATTERNS, evaluateDiffGate } from '../src/features/feedback/diff-gate.js';
+import { evaluateDiffGate, scnIdFromDiff } from '../src/features/feedback/diff-gate.js';
 
 function parseArgs(argv) {
     const args = {};
@@ -45,30 +45,6 @@ function splitList(value) {
         .filter(Boolean);
 }
 
-/**
- * Reads the SCN-ID backing a contract change off the diff itself.
- *
- * A pre-declared `--scn` is just a string the caller picked; nothing ties it to
- * what the change actually did. Taking it from the added lines of the contract
- * file means the traceability rule (tests/scenarios/README.md §3.5) is cleared
- * only when the edit really carries an ID.
- */
-function scnIdFromDiff(diff) {
-    let currentFile = '';
-    for (const line of String(diff || '').split(/\r?\n/)) {
-        const header = line.match(/^\+\+\+ b\/(.+)$/);
-        if (header) {
-            currentFile = header[1].replace(/\\/g, '/');
-            continue;
-        }
-        if (line.startsWith('+++') || !line.startsWith('+')) continue;
-        if (!CONTRACT_AWARE_PATTERNS.some((pattern) => pattern.test(currentFile))) continue;
-        const match = line.match(/SCN-[A-Z]+-\d{3}/);
-        if (match) return match[0];
-    }
-    return '';
-}
-
 const args = parseArgs(process.argv.slice(2));
 const base = args.base || process.env.FEEDBACK_BASE_COMMIT || '';
 if (!base) {
@@ -92,7 +68,15 @@ try {
 
 const contractRunApproved =
     (args['contract-run'] || process.env.FEEDBACK_CONTRACT_RUN || '') === 'true';
-const scnId = args.scn || process.env.FEEDBACK_SCN_ID || scnIdFromDiff(diffText);
+// SCN-ID 只从 diff 读出，没有调用方声明的旁路。
+//
+// 这里原本是 `args.scn || process.env.FEEDBACK_SCN_ID || scnIdFromDiff(diffText)`，
+// 与上面 scnIdFromDiff 自己的注释（「预先声明的 --scn 只是调用方挑的一个字符串」）
+// 正好相反。生产路径从未传过这两者，所以删除它对行为零影响；但门禁脚本虽然是从 base
+// commit 提取到受信目录再跑的、Agent 改不到脚本本身，进程环境变量却仍会被读到——
+// 本仓已经把 GITHUB_ENV 污染当作真实威胁模型处理过（见 SCN-FWB-030 变更日志）。
+// C5（SCN-FWB-032）要求 SCN-ID 从 diff 读出而非调用方声明。
+const scnId = scnIdFromDiff(diffText);
 
 const result = evaluateDiffGate({
     changedFiles,
