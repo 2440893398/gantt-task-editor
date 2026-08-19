@@ -2,10 +2,9 @@
  * 智能调度引擎模块
  *
  * 实现 PRD-竞品改进-v1.0 中的智能调度功能：
- * - 级联更新 (Cascade Update)
+ * - 级联更新 (Cascade Update) — 简化实现，仅处理 FS（完成-开始）依赖
  * - 工作日历 (Work Calendar) — 异步四层优先级判断
  * - 父任务自动聚合 (WBS Calculation)
- * - SS 依赖支持
  * - 循环检测 (Cycle Detection)
  * - Buffer/Lag 支持（手动异步调度实现）
  *
@@ -25,6 +24,10 @@ import { rollupStatus, rollupAssignee, sumNumberField, rollupProgress } from './
 import undoManager from './history/undoManager.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+// 工作日扫描上限（约 10 年）。日历配置异常（如工作日全被关闭）时，
+// 逐日扫描会变成死循环；到达上限即放弃并按日历天推进。
+const MAX_WORKDAY_SCAN = 3660;
 
 const dragSnapshotTaskIds = new Set();
 const dragDurationSnapshots = new Map();
@@ -212,7 +215,12 @@ export async function isWorkDay(date, assignee = null) {
 export async function getNextWorkDay(date, assignee = null) {
     const result = new Date(date);
     result.setDate(result.getDate() + 1);
+    let scanned = 0;
     while (!(await isWorkDay(result, assignee))) {
+        if (++scanned > MAX_WORKDAY_SCAN) {
+            console.warn('[Scheduler] No workday found within scan limit, using calendar day');
+            break;
+        }
         result.setDate(result.getDate() + 1);
     }
     return result;
@@ -228,7 +236,13 @@ export async function getNextWorkDay(date, assignee = null) {
 export async function addWorkDays(date, days, assignee = null) {
     const result = new Date(date);
     let added = 0;
+    let scanned = 0;
     while (added < days) {
+        if (++scanned > MAX_WORKDAY_SCAN) {
+            console.warn('[Scheduler] Workday scan limit hit, falling back to calendar days');
+            result.setDate(result.getDate() + (days - added));
+            break;
+        }
         result.setDate(result.getDate() + 1);
         if (await isWorkDay(result, assignee)) {
             added++;
@@ -570,10 +584,7 @@ function bindLinkEvents() {
         }
         if (hasHierarchyDependencyConflict(gantt, link.source, link.target)) {
             if (window.showToast) {
-                window.showToast(
-                    '无法创建依赖：父任务与其子孙任务之间不能建立依赖',
-                    'error'
-                );
+                window.showToast('无法创建依赖：父任务与其子孙任务之间不能建立依赖', 'error');
             } else {
                 alert('无法创建依赖：父任务与其子孙任务之间不能建立依赖');
             }
@@ -651,8 +662,15 @@ export async function recalculateProjectSchedule(taskId = null) {
 /**
  * 异步重新调度：遍历以 taskId 为前置的所有后继任务，更新开始日期
  * 注意：这是简化版实现，仅处理直接后继（FS 依赖）
+ *
+ * visited 防护：建线时 onBeforeLinkAdd 会拦环，但导入的备份/云文档/批量写入
+ * 可能带环，菱形依赖也会导致同一节点被重复级联——不带 visited 就是无限递归。
  */
-async function scheduleAsyncReschedule(taskId) {
+async function scheduleAsyncReschedule(taskId, visited = new Set()) {
+    const taskKey = String(taskId);
+    if (visited.has(taskKey)) return;
+    visited.add(taskKey);
+
     try {
         const task = gantt.getTask(taskId);
         const links = gantt.getLinks().filter((l) => l.source == taskId && l.type === '0'); // FS
@@ -666,8 +684,13 @@ async function scheduleAsyncReschedule(taskId) {
             if (link.lag && link.lag > 0) {
                 newStart = await addWorkDays(newStart, link.lag, successor.assignee);
             }
-            // 确保是工作日
+            // 确保是工作日（带扫描上限，防日历配置异常导致死循环）
+            let scanned = 0;
             while (!(await isWorkDay(newStart, successor.assignee))) {
+                if (++scanned > MAX_WORKDAY_SCAN) {
+                    console.warn('[Scheduler] No workday found within scan limit');
+                    break;
+                }
                 newStart.setDate(newStart.getDate() + 1);
             }
 
@@ -693,8 +716,8 @@ async function scheduleAsyncReschedule(taskId) {
                 suppressTaskUpdateReschedule = previousSuppressState;
             }
 
-            // 递归处理下游
-            await scheduleAsyncReschedule(link.target);
+            // 递归处理下游（共享 visited，环/菱形只处理一次）
+            await scheduleAsyncReschedule(link.target, visited);
         }
     } catch (e) {
         console.warn('[Scheduler] async reschedule error:', e);

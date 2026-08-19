@@ -66,7 +66,9 @@ undo/redo. Keep verification targeted, but include fresh evidence in the final r
 
 - **DHTMLX Gantt**: CDN global `window.gantt` — never import as module
 - **Vite chunks**: `vendor` (dexie, exceljs...) + `ai` (@ai-sdk/openai, ai)
-- **Project scoping**: all Dexie uses `projectScope(projectId)`
+- **Project scoping**: all Dexie uses `projectScope(projectId)` — EXCEPT the work
+  calendar (settings, company special days, person leaves, holiday cache), which is
+  deliberately global across projects (EXC-GUI-01, decided 2026-08-19)
 - **Undo/redo**: `undoManager` singleton tracks AI mutations
 - **Agent CLI layer**: `src/features/agent-cli/` exposes app features as agent commands
   (registry → manifest/discovery → dispatch → guards). It mirrors feature behavior, so it

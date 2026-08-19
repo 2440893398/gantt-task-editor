@@ -17,7 +17,6 @@ import {
     addCustomField as _addCustomField,
     removeCustomField as _removeCustomField,
     getCustomFieldByName as _getCustomFieldByName,
-    reorderFields,
 } from '../../src/core/store.js';
 
 // Mock showConfirmDialog to capture calls
@@ -265,31 +264,8 @@ describe('Field delete', () => {
     });
 });
 
-describe('Field reorder', () => {
-    beforeEach(() => {
-        state.customFields = [
-            { name: 'field1', label: 'Field 1' },
-            { name: 'field2', label: 'Field 2' },
-            { name: 'field3', label: 'Field 3' },
-        ];
-    });
-
-    it('reorders fields correctly', () => {
-        reorderFields(0, 2);
-
-        expect(state.customFields[0].name).toBe('field2');
-        expect(state.customFields[1].name).toBe('field3');
-        expect(state.customFields[2].name).toBe('field1');
-    });
-
-    it('updates field order list', () => {
-        reorderFields(0, 2);
-
-        expect(state.fieldOrder).toContain('field1');
-        expect(state.fieldOrder).toContain('field2');
-        expect(state.fieldOrder).toContain('field3');
-    });
-});
+// 「Field reorder」用例组已随死代码 reorderFields 一并删除：
+// 生产路径的列序调整由 column-reorder-sync.js 承载，另有专属测试。
 
 describe('Field type selector updates', () => {
     beforeEach(() => {

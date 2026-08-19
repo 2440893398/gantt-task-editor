@@ -17,7 +17,6 @@ import 'fake-indexeddb/auto';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { db } from '../../src/core/storage.js';
 import {
-    DEFAULT_PROJECT_ID,
     getCustomDay,
     saveCustomDay,
     deleteCustomDay,
@@ -379,33 +378,15 @@ describe('calendar_meta: getCalendarMeta / saveCalendarMeta', () => {
         expect(meta.fetchedAt).toBe(2000);
     });
 
-    it('saveCalendarMeta 会自动补齐默认 project_id', async () => {
+    // EXC-GUI-01 拍板（2026-08-19）：日历是全局资源，meta 主键为 year、全局一份，
+    // 不存在按项目区分的记录。
+    it('meta 按 year 主键存取，全局一份（EXC-GUI-01）', async () => {
         await saveCalendarMeta({ year: 2026, countryCode: 'CN', fetchedAt: 1000 });
 
-        const raw = await db.calendar_meta.get([2026, DEFAULT_PROJECT_ID]);
+        const raw = await db.calendar_meta.get(2026);
         expect(raw).toBeDefined();
-        expect(raw.project_id).toBe(DEFAULT_PROJECT_ID);
-    });
-
-    it('getCalendarMeta 支持按 project_id 读取复合主键记录', async () => {
-        await saveCalendarMeta({
-            year: 2026,
-            project_id: 'prj_alpha',
-            countryCode: 'CN',
-            fetchedAt: 1000,
-        });
-        await saveCalendarMeta({
-            year: 2026,
-            project_id: 'prj_beta',
-            countryCode: 'JP',
-            fetchedAt: 2000,
-        });
-
-        const alpha = await getCalendarMeta(2026, 'prj_alpha');
-        const beta = await getCalendarMeta(2026, 'prj_beta');
-
-        expect(alpha.countryCode).toBe('CN');
-        expect(beta.countryCode).toBe('JP');
+        expect(raw.countryCode).toBe('CN');
+        expect(await db.calendar_meta.count()).toBe(1);
     });
 });
 

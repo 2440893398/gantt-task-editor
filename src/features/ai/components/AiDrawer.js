@@ -6,6 +6,7 @@
 
 import { marked } from 'marked';
 import { i18n } from '../../../utils/i18n.js';
+import { sanitizeRichTextHtml } from '../../../utils/dom.js';
 import { showToast } from '../../../utils/toast.js';
 import { getAgentName } from '../prompts/agentRegistry.js';
 import { openAiConfigModal } from './AiConfigModal.js';
@@ -1581,8 +1582,9 @@ function renderMarkdown(text) {
     const normalizedText = normalizeAiMarkdown(text);
 
     try {
-        // marked.parse 返回 HTML 字符串
-        return marked.parse(normalizedText);
+        // marked 不做消毒，模型输出可被任务数据/附件内容注入（prompt injection），
+        // 必须过一遍 sanitizer 再进 innerHTML
+        return sanitizeRichTextHtml(marked.parse(normalizedText));
     } catch (e) {
         console.warn('[AiDrawer] Markdown parse error:', e);
         return escapeHtml(normalizedText).replace(/\n/g, '<br>');

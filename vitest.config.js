@@ -34,7 +34,19 @@ export default defineConfig({
         environment: 'jsdom',
         globals: true,
         pool: 'forks',
-        singleFork: true,
+        // 注意：singleFork 只在 poolOptions.forks 下生效，之前放在 test 顶层被静默忽略，
+        // 实际按 CPU 核数全并发——普通开发机上 jsdom 环境互相挤压，曾把 5s/15s 超时
+        // 的用例挤成随机假红（2026-08-19 评审实测：两轮全量失败集合不重合、单跑全绿）。
+        // 用 maxForks 限并发以兼顾速度与稳定。
+        poolOptions: {
+            forks: {
+                minForks: 1,
+                maxForks: 4,
+            },
+        },
+        // 默认 5s 在 4 fork 并发的 jsdom 环境下仍会被挤爆（单跑 <1s 的用例全量下
+        // 偶发 5s+）；放宽到 15s——真正的挂死仍会失败，只是报告得慢一点。
+        testTimeout: 15000,
         setupFiles: ['./tests/setup.js'],
         include: ['tests/**/*.{test,spec}.{js,jsx,ts,tsx}'],
         exclude: [

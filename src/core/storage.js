@@ -89,6 +89,21 @@ db.version(5).stores({
     calendar_meta: '[year+project_id]',
 });
 
+// v6/v7: EXC-GUI-01 拍板（2026-08-19）——工作日历是全局资源，不按项目隔离。
+// 移除 v4 预留但从未启用的 project_id 索引；calendar_meta 主键从
+// [year+project_id] 还原为 year（主键无法在线变更，沿用 v4/v5 的先删后建；
+// 该表是节假日拉取缓存的元数据，清空后自动重新拉取）。
+db.version(6).stores({
+    calendar_settings: '++id',
+    calendar_custom: 'id, date',
+    person_leaves: 'id, assignee, startDate, endDate',
+    calendar_meta: null,
+});
+
+db.version(7).stores({
+    calendar_meta: 'year',
+});
+
 // ========================================
 // 常量导出
 // ========================================
@@ -508,14 +523,22 @@ function withProjectId(record, projectId) {
     };
 }
 
+function toLocalDateString(date) {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+}
+
 function serializeTaskDates(task) {
     const taskCopy = { ...task };
-    // 将 Date 对象转换为字符串
+    // 将 Date 对象转换为字符串。必须按本地时区取日期：
+    // toISOString 会把东八区的本地零点序列化成前一天（UTC 视角）。
     if (taskCopy.start_date instanceof Date) {
-        taskCopy.start_date = taskCopy.start_date.toISOString().split('T')[0];
+        taskCopy.start_date = toLocalDateString(taskCopy.start_date);
     }
     if (taskCopy.end_date instanceof Date) {
-        taskCopy.end_date = taskCopy.end_date.toISOString().split('T')[0];
+        taskCopy.end_date = toLocalDateString(taskCopy.end_date);
     }
     return taskCopy;
 }
@@ -947,7 +970,8 @@ export async function checkStorageAvailability() {
  * @param {Object} config - { apiKey, baseUrl, model }
  */
 export function saveAiConfig(config) {
-    // 安全处理：不明文存储完整 Key，仅存储必要信息
+    // 注意：apiKey 以明文存入 localStorage（BYOK 场景下浏览器端无密钥可用于加密，
+    // 加密只是混淆）。防线是页面无 XSS——任何注入都能读走此 Key。
     const safeConfig = {
         apiKey: config.apiKey || '',
         baseUrl: config.baseUrl || 'https://api.openai.com/v1',
@@ -989,12 +1013,20 @@ export { db };
 
 // ========================================
 // 工作日历 CRUD (IndexedDB)
+//
+// EXC-GUI-01 拍板（2026-08-19）：工作日历（设置/公司特殊日/人员请假/节假日缓存）
+// 是全局资源，跨项目共享，刻意不走 projectScope。
 // ========================================
 
 /** 获取/保存全局日历设置 */
 export async function getCalendarSettings() {
     const row = await db.calendar_settings.toCollection().first();
     return row ?? { countryCode: 'CN', workdaysOfWeek: [1, 2, 3, 4, 5], hoursPerDay: 8 };
+}
+
+/** 获取原始存储行（无默认值回退；未保存过时返回 undefined，供"是否已初始化"判断） */
+export async function getStoredCalendarSettings() {
+    return db.calendar_settings.toCollection().first();
 }
 
 export async function saveCalendarSettings(settings) {
@@ -1024,6 +1056,15 @@ export async function getAllHolidays() {
     return db.calendar_holidays.orderBy('date').toArray();
 }
 
+/** 按年份集合 + 国家码查询节假日（供高亮缓存等只读消费方使用，避免直接摸 db） */
+export async function getHolidaysByYears(years, countryCode) {
+    return db.calendar_holidays
+        .where('year')
+        .anyOf(years)
+        .filter((holiday) => holiday.countryCode === countryCode)
+        .toArray();
+}
+
 export async function clearHolidaysByYear(year, countryCode) {
     if (countryCode) {
         await db.calendar_holidays
@@ -1037,15 +1078,18 @@ export async function clearHolidaysByYear(year, countryCode) {
     await db.calendar_holidays.where('year').equals(year).delete();
 }
 
-/** 缓存元数据 */
-export async function getCalendarMeta(year, projectId = DEFAULT_PROJECT_ID) {
-    return db.calendar_meta.get([year, projectId]);
+/** 缓存元数据（主键 year，全局一份） */
+export async function getCalendarMeta(year) {
+    return db.calendar_meta.get(year);
 }
 
 export async function saveCalendarMeta(meta) {
-    // meta must contain { year, project_id }; project_id defaults to DEFAULT_PROJECT_ID
-    const record = { project_id: DEFAULT_PROJECT_ID, ...meta };
-    await db.calendar_meta.put(record);
+    // meta must contain { year }
+    await db.calendar_meta.put(meta);
+}
+
+export async function deleteCalendarMeta(year) {
+    await db.calendar_meta.delete(year);
 }
 
 /** 自定义特殊日 */

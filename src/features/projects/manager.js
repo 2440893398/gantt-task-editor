@@ -95,15 +95,9 @@ export async function updateProject(id, updates) {
  * @param {string} id
  */
 export async function deleteProject(id) {
-    const tables = [
-        'tasks',
-        'links',
-        'baselines',
-        'calendar_settings',
-        'calendar_custom',
-        'person_leaves',
-        'history',
-    ];
+    // 日历表（settings/custom/leaves）不在级联范围：EXC-GUI-01 拍板（2026-08-19）
+    // 日历是跨项目共享的全局资源，删项目不得清掉别的项目还在用的日历数据。
+    const tables = ['tasks', 'links', 'baselines', 'history'];
     await db.transaction('rw', [db.projects, ...tables.map((t) => db[t])], async () => {
         for (const t of tables) {
             await db[t].where('project_id').equals(id).delete();

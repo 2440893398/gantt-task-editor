@@ -50,30 +50,16 @@
     <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700&display=swap"
         rel="stylesheet">
 
-    <!-- DHTMLX Gantt -->
-    <link href="https://cdn.dhtmlx.com/gantt/edge/dhtmlxgantt.css" rel="stylesheet">
-    <script src="https://cdn.dhtmlx.com/gantt/edge/dhtmlxgantt.js"></script>
-    <script>
-        // Shim for potential capitalization issues or missing reference in locale files
-        window.Gantt = window.Gantt || window.gantt || {};
-        if (!window.Gantt.plugin) {
-            window.Gantt.plugin = function (callback) {
-                // locale_cn.js uses Gantt.plugin(function(gantt){...}) to set locales
-                // We pass the global gantt instance to it
-                if (window.gantt) {
-                    callback(window.gantt);
-                } else {
-                    // If gantt not ready yet, queue it? Or just wait.
-                    // Usually dhtmlxgantt.js is loaded before this script.
-                    console.warn('Gantt instance not found during plugin initialization');
-                }
-            };
-        }
-    </script>
-    <script src="https://docs.dhtmlx.com/gantt/codebase/locale/locale_cn.js"></script>
+    <!-- DHTMLX Gantt：锁定 10.0（勿用 edge——滚动版会跨大版本漂移，本地与生产
+         可能拿到不同构建）。中文由主包内置 i18n 提供（init.js setLocale('cn')），
+         不再外挂旧版 locale 文件。 -->
+    <link href="https://cdn.dhtmlx.com/gantt/10.0/dhtmlxgantt.css" rel="stylesheet">
+    <script src="https://cdn.dhtmlx.com/gantt/10.0/dhtmlxgantt.js"></script>
 
     <!-- SortableJS -->
-    <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"
+        integrity="sha384-eeLEhtwdMwD3X9y+8P3Cn7Idl/M+w8H4uZqkgD/2eJVkWIN1yKzEj6XegJ9dL3q0"
+        crossorigin="anonymous"></script>
 </head>
 
 <body>

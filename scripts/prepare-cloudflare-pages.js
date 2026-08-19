@@ -17,13 +17,16 @@ const textExtensions = new Set([
     '.xml',
 ]);
 
-const requiredCnHtmlIncludes = ['/lib/dhtmlxgantt.css', '/lib/dhtmlxgantt.js', '/lib/locale_cn.js'];
+const requiredCnHtmlIncludes = ['/lib/dhtmlxgantt.css', '/lib/dhtmlxgantt.js'];
 
 const forbiddenArtifactStrings = [
     'gantt-share.your-worker.workers.dev',
     'index.cn.html',
+    // CN 产物只允许 /lib/ 本地资源，任何 DHTMLX CDN 引用（含历史 edge 版）都算漏网
     'https://cdn.dhtmlx.com/gantt/edge/dhtmlxgantt.css',
     'https://cdn.dhtmlx.com/gantt/edge/dhtmlxgantt.js',
+    'https://cdn.dhtmlx.com/gantt/10.0/dhtmlxgantt.css',
+    'https://cdn.dhtmlx.com/gantt/10.0/dhtmlxgantt.js',
     'https://docs.dhtmlx.com/gantt/codebase/locale/locale_cn.js',
 ];
 

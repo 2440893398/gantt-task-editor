@@ -27,8 +27,12 @@
 | 2026-07-22 | 细化 `SCN-GUI-010` | 合并后复现左侧日期手柄与 0% 进度手柄在任务条中线争抢指针；明确日期调整与进度调整使用互不重叠的上下命中区，中线归日期调整且下方进度拖动保持可用 |
 | 2026-07-27 | 细化 `SCN-GUI-006` | 反馈 `feedback:1785117686309:p9blj8iayf` 的截图显示单个跨周任务因日历日工期除以工作日数而被误算为 10.8 小时/日；明确单任务不得因非工作日分摊产生资源冲突，保留多任务合计超载提示 |
 | 2026-08-10 | 新增 `SCN-GUI-011` | 反馈 `feedback:1786019619402:i6qavy1ot6` 要求「在当天日期处画一条标记识别线」并把当天「居左」。浏览器实测发现根因不在滚动数学上：dhtmlxGantt 把时间轴收敛到任务外接区间（演示数据 2025-10-01～10-21），今天（2026-08-10）整个在范围之外，而 `posFromDate` 对越界日期钳在 `[0, 内容宽度]`——`posFromDate(今天)` 与 `posFromDate(max_date)` 都返回 1400。`gantt.addMarker` 在当前 CDN 构建里是 `undefined`，走的是 `#custom-today-line` 兜底，于是这条线被画在时间轴末端（2025-10-21）冒充今天；点「今天」滚到最右正好停在那条假线上，画面自洽所以一直没暴露。旧回归用例只断言「有一条今日线」，因此在假线上照样绿。改为在数据装载（`onParse`）时把范围扩到「任务区间 ∪ 今天」（前后各留 7 天），越界时宁可不画线。挂 `onParse` 而不是 `onBeforeGanttRender` 是踩过的坑：按渲染算等于范围随任务日期实时变化，拖动任务条时整条时间轴在光标底下平移、被拖的 bar 自己也在动，`[SCN-GUI-010]` 因此连续 3 次 30 秒超时报 `element is not stable`；dhtmlxGantt 自己也只在 parse 时定范围。滚动改为把今天停在视口左侧一成处——`posFromDate` 与 `scrollTo` 同坐标系，不得再减一次 `getScrollState().x`（上一版「居中」实现正是多减了它，浏览器实测偏 356px，而它的单测把 `getScrollState` mock 成 `{ x: 0 }`，恰好是该 bug 唯一不显形的取值，见 README §3.7）。居左而非居中依用户原文。首次部署后在生产上复验又抓到三处只在真实环境暴露的问题：结尾只留 7 天缓冲时今天右侧无内容可滚，1992px 视口下今天被顶到 75.3%（本地 712px 视口恰好落在左半区，所以没抓到）——改为结尾留 90 天；生产的 `gantt.addMarker` 是函数、走的是 `.gantt_marker` 真标记，本机是 `undefined`、走 `#custom-today-line` 兜底，断言不能绑定其中一种；`scrollToToday` 用 `new Date()` 而非当天零点，22:47 实测比零点多 66px（近一整列），会让同一个断言早上绿、晚上红。 |
+| 2026-08-19 | `EXC-GUI-01` 用户拍板选②：日历为全局资源。落地 Dexie v6/v7（去 project_id 索引、meta 主键还原 year）、AGENTS.md 例外说明、日历模块不再直连 db；`deleteProject` 级联同步移除三张日历表——删项目不得清掉共享日历（该级联此前依赖 v4 预留索引，且只会误删被 v4 迁移标记为默认项目的存量行） | 用户 2026-08-19 拍板答复 |
+| 2026-08-19 | 新增例外队列 `EXC-GUI-01`（日历是否按项目隔离）；同日代码评审落地若干不改变业务语义的加固：tooltip 任务字段转义、AI 回复消毒、调度级联加环防护与工作日扫描上限（异常数据下不再死循环，正常路径行为不变）、DHTMLX CDN 从 edge 锁定到 10.0 并移除 v6.3.7 Professional 旧版 locale 外挂（中文由 v10 主包内置 i18n 提供） | 评审报告 `doc/root/CODE_REVIEW-全项目代码评审-2026-08-19.md` |
 | 2026-08-09 | 验证点未变，修复 `SCN-GUI-001/003/010` 的执行前置条件 | Codex Run 的 Playwright 门禁在 CI 上连红：这些用例只等 `#gantt_here` 可见就动手，而该元素在 opacity:0 的 `#app-container` 里早已存在。慢 runner 上 `i18n.init()` 会把测试显式切换的语言覆写回浏览器语言（CPU 节流 8× 可本地复现：切换后 `zh-CN`、init 落地后变 `en-US`），`#app-loading` 遮罩会吞掉悬停，init 末尾 1000+500ms 的强制 `gantt.render()` 会把刚打开的内联编辑器换掉。统一改用 `tests/e2e/helpers/app-ready.js` 等待启动完成 |
 
 ## 例外队列
 
-暂无。
+| ID | 问题 | 背景 | 状态 |
+|---|---|---|---|
+| EXC-GUI-01 | 工作日历数据（日历设置/公司特殊日/人员请假）是否按项目隔离？ | 2026-08-19 代码评审发现：Dexie v4 迁移已给日历各表加 `project_id` 列，但全部日历读写均不按项目过滤，与 AGENTS.md "all Dexie uses projectScope" 相悖 | **已拍板（2026-08-19，选②）：日历是全局资源，跨项目共享。** 已落地：AGENTS.md 写明例外；Dexie v6/v7 移除未启用的 `project_id` 索引、`calendar_meta` 主键还原为 `year`；`getCalendarMeta`/`saveCalendarMeta` 去掉项目参数 |

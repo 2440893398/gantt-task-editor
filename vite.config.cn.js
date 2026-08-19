@@ -15,16 +15,12 @@ export function transformCnIndexHtml(html) {
             ].join('\n')
         )
         .replace(
-            '<link href="https://cdn.dhtmlx.com/gantt/edge/dhtmlxgantt.css" rel="stylesheet">',
+            '<link href="https://cdn.dhtmlx.com/gantt/10.0/dhtmlxgantt.css" rel="stylesheet">',
             '<link href="/lib/dhtmlxgantt.css" rel="stylesheet">'
         )
         .replace(
-            '<script src="https://cdn.dhtmlx.com/gantt/edge/dhtmlxgantt.js"></script>',
+            '<script src="https://cdn.dhtmlx.com/gantt/10.0/dhtmlxgantt.js"></script>',
             '<script src="/lib/dhtmlxgantt.js"></script>'
-        )
-        .replace(
-            '<script src="https://docs.dhtmlx.com/gantt/codebase/locale/locale_cn.js"></script>',
-            '<script src="/lib/locale_cn.js"></script>'
         );
 }
 

@@ -7,11 +7,11 @@
  */
 
 import {
-    DEFAULT_PROJECT_ID,
     getCalendarSettings,
+    getStoredCalendarSettings,
     saveCalendarSettings,
     getCalendarMeta,
-    db,
+    deleteCalendarMeta,
 } from '../../core/storage.js';
 import { ensureHolidaysCached } from './holidayFetcher.js';
 import { refreshHolidayHighlightCache } from '../gantt/init.js';
@@ -52,7 +52,7 @@ function formatConfiguredCount(source, dateStr) {
 
 export async function renderTab1(container) {
     const settings = await getCalendarSettings();
-    const storedSettings = await db.calendar_settings.toCollection().first();
+    const storedSettings = await getStoredCalendarSettings();
     const currentLocale = i18n.getLanguage?.() || 'zh-CN';
     const resolvedCountry = resolveCountryByLocale(storedSettings, currentLocale);
     const currentCountryCode = resolvedCountry.countryCode;
@@ -175,10 +175,9 @@ export async function renderTab1(container) {
             countryAuto: false,
         });
         // 强制清除 meta 触发重新拉取
-        const { db } = await import('../../core/storage.js');
         const thisYear = new Date().getFullYear();
-        await db.calendar_meta.delete([thisYear, DEFAULT_PROJECT_ID]);
-        await db.calendar_meta.delete([thisYear + 1, DEFAULT_PROJECT_ID]);
+        await deleteCalendarMeta(thisYear);
+        await deleteCalendarMeta(thisYear + 1);
         await ensureHolidaysCached(thisYear);
         await ensureHolidaysCached(thisYear + 1);
         await refreshHolidayHighlightCache();

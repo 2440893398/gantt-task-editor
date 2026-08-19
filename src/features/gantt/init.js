@@ -41,7 +41,7 @@ import { initRowSortable } from './row-reorder.js';
 import { buildNewTaskPayload, getTaskByAnyId, normalizeToDayStart } from './new-task-payload.js';
 import { installSequentialIdGenerator } from './id-generator.js';
 import { ensureHolidaysCached, prefetchHolidays } from '../calendar/holidayFetcher.js';
-import { getAllCustomDays, getCalendarSettings, db } from '../../core/storage.js';
+import { getAllCustomDays, getCalendarSettings, getHolidaysByYears } from '../../core/storage.js';
 import { syncGanttWorkTimeCalendar } from './calendar-worktime.js';
 import { getCalendarDayClasses } from './calendar-day-class.js';
 import { getTaskSearchClass, isTaskVisibleForSearch } from './task-search.js';
@@ -381,7 +381,8 @@ export function initGantt() {
         const lines = [];
 
         // 任务名称（优先显示任务名，避免只显示 ID）
-        const taskTitle = String(task.text || '').trim() || `#${task.id}`;
+        // 任务字段可能来自 Excel 导入/备份还原/云文档，进 innerHTML 前必须转义
+        const taskTitle = escapeTaskBarText(String(task.text || '').trim() || `#${task.id}`);
         lines.push(
             `<div class="gantt-tooltip-title">📋 ${i18n.t('tooltip.task')}: ${taskTitle}</div>`
         );
@@ -400,7 +401,7 @@ export function initGantt() {
         // 负责人
         if (task.assignee) {
             lines.push(
-                `<div class="gantt-tooltip-row">👤 <span class="gantt-tooltip-label">${i18n.t('tooltip.assignee')}:</span> ${task.assignee}</div>`
+                `<div class="gantt-tooltip-row">👤 <span class="gantt-tooltip-label">${i18n.t('tooltip.assignee')}:</span> ${escapeTaskBarText(task.assignee)}</div>`
             );
         }
 
@@ -449,7 +450,7 @@ export function initGantt() {
             const priorityEmoji =
                 task.priority === 'high' ? '🔴' : task.priority === 'medium' ? '🟡' : '🟢';
             lines.push(
-                `<div class="gantt-tooltip-row">${priorityEmoji} <span class="gantt-tooltip-label">${i18n.t('tooltip.priority')}:</span> ${getPriorityText(task.priority)}</div>`
+                `<div class="gantt-tooltip-row">${priorityEmoji} <span class="gantt-tooltip-label">${i18n.t('tooltip.priority')}:</span> ${escapeTaskBarText(getPriorityText(task.priority))}</div>`
             );
         }
 
@@ -464,7 +465,7 @@ export function initGantt() {
                         ? '❌'
                         : '⏸️';
             lines.push(
-                `<div class="gantt-tooltip-row">${statusEmoji} <span class="gantt-tooltip-label">${i18n.t('tooltip.status')}:</span> ${getStatusText(task.status)}</div>`
+                `<div class="gantt-tooltip-row">${statusEmoji} <span class="gantt-tooltip-label">${i18n.t('tooltip.status')}:</span> ${escapeTaskBarText(getStatusText(task.status))}</div>`
             );
         }
 
@@ -482,7 +483,9 @@ export function initGantt() {
                     `<div style="color: #f59e0b; margin-top: 8px; border-top: 1px solid #fcd34d; padding-top: 8px;">`
                 );
                 lines.push(`⚠️ ${i18n.t('resource.overload')}<br/>`);
-                lines.push(`${worst.assignee} ${i18n.t('resource.on')} ${worst.date}<br/>`);
+                lines.push(
+                    `${escapeTaskBarText(worst.assignee)} ${i18n.t('resource.on')} ${escapeTaskBarText(worst.date)}<br/>`
+                );
                 lines.push(
                     `${i18n.t('resource.workload')}: ${worst.totalHours.toFixed(1)} ${i18n.t('resource.hours')}<br/>`
                 );
@@ -498,7 +501,7 @@ export function initGantt() {
             const summaryText =
                 task.summary.length > 50 ? task.summary.substring(0, 50) + '...' : task.summary;
             lines.push(
-                `<div class="gantt-tooltip-row">📝 <span class="gantt-tooltip-label">${i18n.t('columns.summary') || '概述'}:</span> ${summaryText}</div>`
+                `<div class="gantt-tooltip-row">📝 <span class="gantt-tooltip-label">${i18n.t('columns.summary') || '概述'}:</span> ${escapeTaskBarText(summaryText)}</div>`
             );
         }
 
@@ -1258,11 +1261,7 @@ export async function refreshHolidayHighlightCache() {
     const years = collectHolidayHighlightYears(gantt);
     await Promise.all(years.map((year) => ensureHolidaysCached(year, countryCode)));
 
-    const holidays = await db.calendar_holidays
-        .where('year')
-        .anyOf(years)
-        .filter((h) => h.countryCode === countryCode)
-        .toArray();
+    const holidays = await getHolidaysByYears(years, countryCode);
 
     for (const h of holidays) {
         if (!cache.has(h.date)) {

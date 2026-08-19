@@ -36,6 +36,18 @@ class CommandResultError extends Error {
  */
 const idempotencyResults = new Map();
 
+// 防止长会话下缓存无限增长：超限时按插入序淘汰最旧条目（Map 保序）。
+// 淘汰后的 key 重放会重新执行——幂等窗口有限是协议已知约束。
+const IDEMPOTENCY_CACHE_LIMIT = 500;
+
+function storeIdempotencyResult(key, result) {
+    while (idempotencyResults.size >= IDEMPOTENCY_CACHE_LIMIT) {
+        const oldestKey = idempotencyResults.keys().next().value;
+        idempotencyResults.delete(oldestKey);
+    }
+    idempotencyResults.set(key, result);
+}
+
 function scopedIdempotencyKey(projectId, command, key) {
     const normalized = String(key ?? '').trim();
     if (!normalized) {
@@ -497,7 +509,7 @@ async function dispatchUnlocked(name, args = {}, context = {}) {
             // Cache only real (non-dry-run) successful writes for idempotent replay.
             const wasDryRun = Boolean(context.dryRun || resolvedArgs.dryRun);
             if (idemKey && cacheIdempotentResult && result.ok && !wasDryRun) {
-                idempotencyResults.set(idemKey, result);
+                storeIdempotencyResult(idemKey, result);
             }
 
             recordCommandLog({

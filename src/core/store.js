@@ -495,21 +495,8 @@ export function getCustomFieldByName(fieldName) {
     return state.customFields.find((f) => f.name === fieldName);
 }
 
-// 字段顺序管理
-export function reorderFields(oldIndex, newIndex) {
-    const movedField = state.customFields.splice(oldIndex, 1)[0];
-    state.customFields.splice(newIndex, 0, movedField);
-
-    // 更新 fieldOrder
-    state.fieldOrder = [
-        'text',
-        ...state.customFields.map((f) => f.name),
-        'description',
-        'start_date',
-        'duration',
-        'progress',
-    ];
-}
+// 字段顺序调整由 gantt 列拖拽同步（column-reorder-sync.js）承载；
+// 旧的 reorderFields 已删除——它硬编码重建 fieldOrder 会丢掉 end_date 等系统字段。
 
 // ========================================
 // AI 配置管理

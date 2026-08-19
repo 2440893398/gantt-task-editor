@@ -37,11 +37,11 @@ export function addOptionInput(value = '') {
     optionDiv.innerHTML = `
         <div class="option-drag-handle cursor-move opacity-0 group-hover:opacity-100 transition-opacity">
             <svg class="h-4 w-4 text-base-content/40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                     d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
             </svg>
         </div>
-        <input type="text" value="${value}" placeholder="${i18n.t('fieldManagement.optionValue')}" 
+        <input type="text" value="${escapeAttr(value)}" placeholder="${i18n.t('fieldManagement.optionValue')}"
                class="input input-sm input-bordered flex-1 text-sm bg-white">
         <button type="button" class="btn btn-ghost btn-xs btn-circle text-error hover:bg-error/10 remove-option-btn">
             <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -352,7 +352,7 @@ function plainTextToRichHtml(content) {
     return paragraphs.join('');
 }
 
-function sanitizeRichTextHtml(html) {
+export function sanitizeRichTextHtml(html) {
     if (!html || typeof html !== 'string') return '';
 
     const template = document.createElement('template');

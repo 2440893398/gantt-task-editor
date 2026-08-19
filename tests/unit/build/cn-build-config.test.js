@@ -34,9 +34,8 @@ describe('CN build configuration', () => {
 
         expect(configSource).toContain('/lib/dhtmlxgantt.css');
         expect(configSource).toContain('/lib/dhtmlxgantt.js');
-        expect(configSource).toContain('/lib/locale_cn.js');
-        expect(configSource).toContain('https://cdn.dhtmlx.com/gantt/edge/dhtmlxgantt.css');
-        expect(configSource).toContain('https://cdn.dhtmlx.com/gantt/edge/dhtmlxgantt.js');
+        expect(configSource).toContain('https://cdn.dhtmlx.com/gantt/10.0/dhtmlxgantt.css');
+        expect(configSource).toContain('https://cdn.dhtmlx.com/gantt/10.0/dhtmlxgantt.js');
         expect(configSource).toContain('fonts\\.googleapis\\.com');
         expect(configSource).toContain('fonts\\.gstatic\\.com');
     });
@@ -47,7 +46,7 @@ describe('CN build configuration', () => {
         fs.mkdirSync(path.join(outputDir, 'assets'), { recursive: true });
         fs.writeFileSync(
             path.join(outputDir, 'index.html'),
-            '<script src="/lib/dhtmlxgantt.js"></script><link href="/lib/dhtmlxgantt.css"><script src="/lib/locale_cn.js"></script>'
+            '<script src="/lib/dhtmlxgantt.js"></script><link href="/lib/dhtmlxgantt.css">'
         );
         fs.writeFileSync(
             path.join(outputDir, '_worker.js'),
@@ -74,7 +73,7 @@ describe('CN build configuration', () => {
         fs.mkdirSync(outputDir, { recursive: true });
         fs.writeFileSync(
             path.join(outputDir, 'index.html'),
-            '<script src="/lib/dhtmlxgantt.js"></script><link href="/lib/dhtmlxgantt.css"><script src="/lib/locale_cn.js"></script>'
+            '<script src="/lib/dhtmlxgantt.js"></script><link href="/lib/dhtmlxgantt.css">'
         );
         fs.writeFileSync(
             path.join(outputDir, '_worker.js'),
@@ -95,7 +94,7 @@ describe('CN build configuration', () => {
         fs.mkdirSync(outputDir, { recursive: true });
         fs.writeFileSync(
             path.join(outputDir, 'index.html'),
-            '<script src="/lib/dhtmlxgantt.js"></script><link href="/lib/dhtmlxgantt.css"><script src="/lib/locale_cn.js"></script>'
+            '<script src="/lib/dhtmlxgantt.js"></script><link href="/lib/dhtmlxgantt.css">'
         );
         fs.writeFileSync(
             path.join(outputDir, '_worker.js'),
@@ -119,7 +118,7 @@ describe('CN build configuration', () => {
         fs.mkdirSync(outputDir, { recursive: true });
         fs.writeFileSync(
             path.join(outputDir, 'index.html'),
-            '<script src="/lib/dhtmlxgantt.js"></script><link href="/lib/dhtmlxgantt.css"><script src="/lib/locale_cn.js"></script>'
+            '<script src="/lib/dhtmlxgantt.js"></script><link href="/lib/dhtmlxgantt.css">'
         );
 
         await prepareCloudflarePagesArtifacts(outputDir);

@@ -19,6 +19,8 @@ import {
 import { ALL_EVENT_TYPES } from '../packages/feedback-platform/protocol/v0.js';
 
 const TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
+// 匿名可写的分享快照上限（KV 单值上限 25MB，正常项目快照远小于此）
+const MAX_SHARE_SNAPSHOT_BYTES = 5 * 1024 * 1024;
 const FEEDBACK_TTL_SECONDS = 180 * 24 * 60 * 60; // 180 days
 const OWNER_CAPABILITY_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
 const CLOUD_DOC_TTL_SECONDS = 365 * 24 * 60 * 60; // 365 days
@@ -1138,6 +1140,8 @@ async function signValueHex(value, secret) {
 }
 
 function getAdminSecret(env) {
+    // 回退用登录密码当 HMAC 密钥仅为兼容旧部署：密码一旦泄露即可伪造 token。
+    // 生产应显式设置 FEEDBACK_ADMIN_TOKEN_SECRET（wrangler secret put）。
     return env.FEEDBACK_ADMIN_TOKEN_SECRET || env.FEEDBACK_ADMIN_PASSWORD || '';
 }
 
@@ -1161,7 +1165,8 @@ async function isValidAdminToken(request, env) {
     if (!payload || !signature) return false;
 
     const expected = await signValue(payload, getAdminSecret(env));
-    if (expected !== signature) return false;
+    // 常数时间比较，与附件/owner capability 校验保持同一标准
+    if (!feedbackHashesMatch(expected, signature)) return false;
 
     try {
         const parsed = JSON.parse(base64UrlDecode(payload));
@@ -11330,7 +11335,14 @@ export default {
         if (request.method === 'POST' && url.pathname === '/api/feedback/admin/session') {
             try {
                 const body = await request.json();
-                if (!env.FEEDBACK_ADMIN_PASSWORD || body.password !== env.FEEDBACK_ADMIN_PASSWORD) {
+                // 哈希后常数时间比较，避免明文直比的时序侧信道
+                const passwordMatches =
+                    Boolean(env.FEEDBACK_ADMIN_PASSWORD) &&
+                    feedbackHashesMatch(
+                        await hashFeedbackValue(String(body.password ?? '')),
+                        await hashFeedbackValue(env.FEEDBACK_ADMIN_PASSWORD)
+                    );
+                if (!passwordMatches) {
                     return errorResponse('Unauthorized', 401, headers);
                 }
 
@@ -11429,7 +11441,11 @@ export default {
         // POST /api/share — 上传快照
         if (request.method === 'POST' && url.pathname === '/api/share') {
             try {
-                const body = await request.json();
+                const rawBody = await request.text();
+                if (rawBody.length > MAX_SHARE_SNAPSHOT_BYTES) {
+                    return new Response('Payload too large', { status: 413, headers });
+                }
+                const body = JSON.parse(rawBody);
                 const key = genKey(); // Always server-generated; never trust client-supplied keys
                 const data = body.data;
                 if (!data || !data.tasks) {
