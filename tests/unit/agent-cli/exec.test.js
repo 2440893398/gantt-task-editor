@@ -91,6 +91,23 @@ describe('agent exec parser', () => {
         expect(result.args.name).toBe('Design review workshop');
     });
 
+    it('unescapes the active quote char and doubled backslashes inside quotes', () => {
+        const escapedQuote = parseExec('task.create --name "say \\"hi\\""', { getCommand });
+        expect(escapedQuote.ok).toBe(true);
+        expect(escapedQuote.args.name).toBe('say "hi"');
+
+        const doubledBackslash = parseExec('task.create --name "a\\\\b"', { getCommand });
+        expect(doubledBackslash.ok).toBe(true);
+        expect(doubledBackslash.args.name).toBe('a\\b');
+    });
+
+    it('keeps lone backslashes literal so Windows paths need no escaping', () => {
+        const result = parseExec('task.create --name "C:\\tmp\\new"', { getCommand });
+
+        expect(result.ok).toBe(true);
+        expect(result.args.name).toBe('C:\\tmp\\new');
+    });
+
     it('supports boolean flags without explicit values', () => {
         expect(parseExec('task.create --name Design --milestone', { getCommand })).toEqual({
             ok: true,

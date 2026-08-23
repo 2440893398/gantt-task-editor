@@ -168,6 +168,16 @@ describe('session commands', () => {
         });
     });
 
+    it('records read commands in the command log for replay', async () => {
+        await dispatch('session.history', {}, { projectId });
+
+        // Design spec §7.7: the log is replay/eval material, so reads are
+        // recorded too — not just mutating commands.
+        expect(getCommandLog({ limit: 1 })).toEqual([
+            expect.objectContaining({ name: 'session.history', args: {}, ok: true, rev: 0 }),
+        ]);
+    });
+
     it('returns recent command log entries', async () => {
         recordCommandLog({ name: 'task.create', args: { name: 'A' }, ok: true, rev: 1, ms: 4 });
         recordCommandLog({ name: 'task.update', args: { id: 1 }, ok: false, rev: 1, ms: 2 });

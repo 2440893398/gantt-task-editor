@@ -7,8 +7,9 @@
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { beforeEach, describe, expect, it } from 'vitest';
-import worker from '../../../workers/share-worker.js';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import worker, { FeedbackWorkflow } from '../../../workers/share-worker.js';
+import { buildFeedbackPrompt } from '../../../src/features/feedback/feedback-prompt.js';
 
 const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
 const projectRoot = resolve(import.meta.dirname, '../../..');
@@ -84,17 +85,21 @@ function applyMigrations() {
     return sqlite;
 }
 
+/** 种子 Issue 的标题与正文——Prompt 用例要断言这两段真的出现在 Prompt 里。 */
+const SEEDED_ISSUE_TITLE = 'Executor test';
+const SEEDED_ISSUE_DESCRIPTION = '拖到 3 月 5 日结束时工期显示 2 天，期望 3 天。';
+
 function seedQueuedRun(sqlite, runId = 'run_executor_1') {
     const now = '2026-08-16T08:00:00.000Z';
     sqlite
         .prepare(
             `INSERT INTO feedback_issues (
-                id, title, business_type, scope, automation_decision, status,
+                id, title, description, business_type, scope, automation_decision, status,
                 created_at, updated_at, project_id
-             ) VALUES (?, 'Executor test', 'bug', 'small', 'implement_and_verify',
+             ) VALUES (?, ?, ?, 'bug', 'small', 'implement_and_verify',
                        'queued', ?, ?, 'proj_gantt')`
         )
-        .run('issue_executor_1', now, now);
+        .run('issue_executor_1', SEEDED_ISSUE_TITLE, SEEDED_ISSUE_DESCRIPTION, now, now);
     sqlite
         .prepare(
             `INSERT INTO feedback_workflows (
@@ -150,6 +155,134 @@ async function claim(env, executorId = 'executor-a') {
     });
 }
 
+/**
+ * [SCN-FWB-033] V3 缺口 #0：派发侧按 `feedback_projects.default_adapter` 决定
+ * `runner_type`。在此之前创建 Run 处硬编码 'github_hosted'，lease 端点只领
+ * 'executor'——没有任何代码能造出执行器可领的 Run，执行器进程写完也永远轮询到空。
+ *
+ * 这些测试跑真实迁移 + 真实 Worker 派发路径（假 D1 是前缀匹配器，不解析 SQL，
+ * 桩跑绿不代表 SQL 对）。坏行为画像：路由缺失时，第一条用例在 runner_type 断言
+ * 处见红（仍是 github_hosted）、在 lease 断言处见红（204 领不到活）。
+ */
+describe('[SCN-FWB-033] dispatch routes runner_type from project data', () => {
+    const issueId = 'feedback:exec-route-1';
+    const instanceId = 'feedback-exec-route-1-g1';
+    let sqlite;
+    let env;
+
+    function seedRoutableIssue() {
+        sqlite
+            .prepare(
+                `INSERT INTO feedback_issues (
+                    id, title, business_type, scope, automation_decision, status,
+                    created_at, updated_at, project_id
+                 ) VALUES (?, 'Route by adapter', 'bug', 'small', 'auto_fix',
+                           'queued', ?, ?, 'proj_gantt')`
+            )
+            .run(issueId, '2026-08-19T08:00:00.000Z', '2026-08-19T08:00:00.000Z');
+    }
+
+    async function dispatchWorkflow() {
+        const step = {
+            async do(name, configOrCallback, maybeCallback) {
+                const callback =
+                    typeof configOrCallback === 'function' ? configOrCallback : maybeCallback;
+                return callback();
+            },
+            async waitForEvent() {
+                throw new Error('WORKFLOW_TEST_STOP_AFTER_DISPATCH');
+            },
+        };
+        try {
+            return await new FeedbackWorkflow({}, env).run(
+                { instanceId, payload: { issueId, generation: 1, contextVersion: 1 } },
+                step
+            );
+        } catch (error) {
+            if (error.message !== 'WORKFLOW_TEST_STOP_AFTER_DISPATCH') throw error;
+            return null;
+        }
+    }
+
+    function createdRun() {
+        return sqlite
+            .prepare(
+                `SELECT id, runner_type, status, error_code FROM feedback_runs
+                 WHERE issue_id = ?`
+            )
+            .get(issueId);
+    }
+
+    beforeEach(() => {
+        sqlite = applyMigrations();
+        seedRoutableIssue();
+        env = {
+            ...createEnv(sqlite),
+            FEEDBACK_RUN_TOKEN_SECRET: 'unit-test-secret',
+        };
+    });
+
+    it('[SCN-FWB-033] default_adapter=executor creates a leaseable Run without GitHub dispatch', async () => {
+        sqlite
+            .prepare(
+                "UPDATE feedback_projects SET default_adapter = 'executor' WHERE id = 'proj_gantt'"
+            )
+            .run();
+
+        await dispatchWorkflow();
+
+        const run = createdRun();
+        expect(run).toBeTruthy();
+        expect(run.runner_type).toBe('executor');
+        // 停在 created 等 lease，而不是被 GitHub 派发路径碰过：error_code 必须为空
+        // （actions 路径在缺 GitHub 配置时会记 GITHUB_DISPATCH_NOT_CONFIGURED），
+        // 也不得留下 automation.suppressed 事件。否则就是双重执行或误报。
+        expect(run.status).toBe('created');
+        expect(run.error_code).toBeNull();
+        expect(
+            sqlite
+                .prepare(
+                    "SELECT COUNT(*) AS count FROM feedback_events WHERE type = 'automation.suppressed'"
+                )
+                .get().count
+        ).toBe(0);
+
+        const leased = await claim(env, 'executor-a');
+        expect(leased.response.status).toBe(201);
+        expect(leased.payload.runId).toBe(run.id);
+        expect(
+            sqlite
+                .prepare('SELECT status, runner_label FROM feedback_runs WHERE id = ?')
+                .get(run.id)
+        ).toEqual(expect.objectContaining({ status: 'running', runner_label: 'executor-a' }));
+    });
+
+    it('[SCN-FWB-033] default_adapter=actions keeps the GitHub path and lease finds nothing', async () => {
+        await dispatchWorkflow();
+
+        const run = createdRun();
+        expect(run).toBeTruthy();
+        expect(run.runner_type).toBe('github_hosted');
+
+        const leased = await claim(env, 'executor-a');
+        expect(leased.response.status).toBe(204);
+    });
+
+    it('[SCN-FWB-033] an unknown adapter value falls back to github_hosted, never executor', async () => {
+        // SQLite 的 ADD COLUMN 加不了 CHECK；取值合法性只能在应用层判定。
+        // 一个手滑写进表里的值绝不能把 Run 送进没人认领的 executor 队列。
+        sqlite
+            .prepare(
+                "UPDATE feedback_projects SET default_adapter = 'rogue' WHERE id = 'proj_gantt'"
+            )
+            .run();
+
+        await dispatchWorkflow();
+
+        expect(createdRun().runner_type).toBe('github_hosted');
+    });
+});
+
 describe('[SCN-FWB-034] M3 control-plane schema', () => {
     it('[SCN-FWB-034] persists executors, epoch leases, session snapshots, and turns', () => {
         const sqlite = applyMigrations();
@@ -180,6 +313,33 @@ describe('[SCN-FWB-034] M3 control-plane schema', () => {
     });
 });
 
+describe('[SCN-FWB-035] 租约 context 必须能喂饱 Prompt 构建器', () => {
+    let sqlite;
+    let env;
+
+    beforeEach(() => {
+        sqlite = applyMigrations();
+        seedQueuedRun(sqlite);
+        env = createEnv(sqlite);
+    });
+
+    it('claimLease 返回的 context 交给 buildFeedbackPrompt 后，用户正文必须在 Prompt 里', async () => {
+        // 2026-08-21 真机联调实测：执行器路径的 context 与 GitHub 路径的形状不一致——
+        // `description` 给的是裸字符串，而 `buildFeedbackPrompt` 读的是
+        // `issue.description?.untrustedUserContent`，`?? ''` 把用户正文**静默吞掉**；
+        // `issue.id/businessType/scope` 缺席则渲染成字面量 "undefined"。
+        // 结果是 Agent 被要求分析一段它根本看不到的反馈，只能照标题编——
+        // 产出看起来完全正常，却没有任何依据。这是最贵的一类失败。
+        const { payload } = await claim(env);
+        const prompt = buildFeedbackPrompt(payload.context);
+
+        expect(prompt).toContain(SEEDED_ISSUE_DESCRIPTION);
+        expect(prompt).toContain(SEEDED_ISSUE_TITLE);
+        // 字面量 undefined 出现在 Prompt 里，说明字段名对不上。
+        expect(prompt).not.toMatch(/undefined/);
+    });
+});
+
 describe('[SCN-FWB-035] executor leases and heartbeats', () => {
     let sqlite;
     let env;
@@ -204,6 +364,31 @@ describe('[SCN-FWB-035] executor leases and heartbeats', () => {
         expect(
             sqlite.prepare('SELECT COUNT(*) AS count FROM feedback_executor_leases').get().count
         ).toBe(0);
+    });
+
+    it('[SCN-FWB-035] 存储侧密钥的尾随空白不得造成 401——请求侧 trim 了，两侧必须一致', async () => {
+        // `echo x | wrangler secret put` 会把结尾的换行符一起存进去，而 `getBearerToken`
+        // 对请求侧做了 `.trim()`。两侧不一致时，拿着**完全正确**的 token 也只会得到
+        // 401，且 401 里没有任何线索指向「密钥尾部多了一个不可见字符」——排障会一路
+        // 走向「是不是 token 记错了」。这里锁住对称性，而不是锁住某一次事故。
+        const padded = { ...env, FEEDBACK_EXECUTOR_TOKEN: `${executorToken}\n` };
+        const unaffected = await post(
+            padded,
+            '/api/executor/lease',
+            { executorId: 'executor-a', capabilities: {} },
+            { token: executorToken }
+        );
+        expect(unaffected.response.status).not.toBe(401);
+
+        // 但空白本身不能变成通行证：只有空白的密钥仍然一律拒绝。
+        const blank = { ...env, FEEDBACK_EXECUTOR_TOKEN: '   ' };
+        const rejected = await post(
+            blank,
+            '/api/executor/lease',
+            { executorId: 'executor-a', capabilities: {} },
+            { token: '   ' }
+        );
+        expect(rejected.response.status).toBe(401);
     });
 
     it('[SCN-FWB-035] lets only one executor claim a Run and returns its control-plane context', async () => {
@@ -411,5 +596,719 @@ describe('[SCN-FWB-034] [SCN-FWB-035] executor event and approval ingress', () =
         // exists, the generic HumanAction responder must fail closed instead
         // of resuming the legacy Workflow path.
         expect(JSON.parse(actions[0].allowed_return_states_json)).toEqual([]);
+    });
+});
+
+describe('[SCN-FWB-035] 终态归还租约', () => {
+    let sqlite;
+    let env;
+    let lease;
+
+    beforeEach(async () => {
+        sqlite = applyMigrations();
+        seedQueuedRun(sqlite);
+        env = createEnv(sqlite);
+        lease = (await claim(env)).payload;
+    });
+
+    // 0007 一开始就为归还留了 status='released' 与 released_at，但直到 2026-08-21
+    // 评审为止没有任何代码写它。缺这一步的后果有两层，都不会自己冒头：
+    // (1) 执行器跑完回到轮询，claimLease 的「已有活跃租约」分支把同一条已终态的
+    //     Run 原样再发一次（reused: true），守护进程无限重跑它；决定性 eventId
+    //     让重发事件被幂等去重，每一轮都报成功，真实额度就这么烧掉；
+    // (2) 进程停掉后这条租约走过期路径，会对一条 succeeded 的 Run 记 executor_lost
+    //     并把 Issue 打成 needs_human。
+    it('[SCN-FWB-035] 终态事件当场归还租约，同一执行器不会再领到这条已完成的 Run', async () => {
+        const terminal = await post(
+            env,
+            `/api/executor/runs/${encodeURIComponent(lease.runId)}/events`,
+            {
+                executorId: lease.executorId,
+                leaseId: lease.leaseId,
+                epoch: lease.epoch,
+                event: {
+                    eventId: 'executor-terminal-1',
+                    type: 'run.failed',
+                    occurredAt: '2026-08-21T09:00:00.000Z',
+                    payload: { errorCode: 'provider_turn_failed', summary: '这一轮失败了。' },
+                },
+            }
+        );
+        expect(terminal.response.status).toBe(201);
+
+        const leaseRow = sqlite
+            .prepare('SELECT status, released_at FROM feedback_executor_leases WHERE id = ?')
+            .get(lease.leaseId);
+        expect(leaseRow.status).toBe('released');
+        expect(leaseRow.released_at).toBe('2026-08-21T09:00:00.000Z');
+
+        // 归还之后再领：这条 Run 已终态，队列里没有别的活 → 204，而不是把同一条
+        // 已完成的 Run 再发一次。
+        const again = await claim(env);
+        expect(again.response.status).toBe(204);
+
+        // Run 停在自己的终态，绝不能被过期路径改写成 executor_lost。
+        expect(
+            sqlite.prepare('SELECT status FROM feedback_runs WHERE id = ?').get(lease.runId)
+        ).toEqual({ status: 'failed' });
+    });
+});
+
+/**
+ * [SCN-FWB-022] §7.4 的 provider 健康判据必须跟着执行路径走。
+ *
+ * 判据此前只认「Action 冒烟回调写入的 connected」，而 `default_adapter='executor'`
+ * 的项目根本不会派发 Action：执行器在开发机上拉活，控制面里唯一能看到的存活证据是
+ * `feedback_executors` 的心跳与 capabilities。坏行为画像：判据不分流时，第 1 条用例
+ * 见红（执行器在线、心跳新鲜，仍被降级为 candidate_review——自治交付被一条它不走的
+ * 通路卡死），第 2 条用例见红（一个执行器都没有，却凭 GitHub 通路的冒烟记录放行）。
+ */
+describe('[SCN-FWB-022] auto delivery reads provider health from the active execution path', () => {
+    const issueId = 'feedback:auto-deliver-1';
+    const instanceId = 'feedback-auto-deliver-1-g1';
+    const triggerEventId = 'evt_auto_deliver_admin';
+    let sqlite;
+    let env;
+
+    function seedAutoFixIssue() {
+        const now = '2026-08-22T09:00:00.000Z';
+        sqlite
+            .prepare(
+                `INSERT INTO feedback_issues (
+                    id, title, business_type, scope, automation_decision, status,
+                    created_at, updated_at, project_id
+                 ) VALUES (?, 'Auto deliver gate', 'bug', 'small', 'auto_fix',
+                           'queued', ?, ?, 'proj_gantt')`
+            )
+            .run(issueId, now, now);
+        sqlite
+            .prepare(
+                `INSERT INTO feedback_events (
+                    id, issue_id, sequence, type, actor_type, actor_id, visibility,
+                    occurred_at, body_json, metadata_json
+                 ) VALUES (?, ?, 1, 'status.changed', 'admin', NULL, 'public', ?, '{}', '{}')`
+            )
+            .run(triggerEventId, issueId, now);
+    }
+
+    function useAdapter(adapter) {
+        sqlite
+            .prepare('UPDATE feedback_projects SET default_adapter = ? WHERE id = ?')
+            .run(adapter, 'proj_gantt');
+    }
+
+    /** Action 冒烟的健康快照——executor 路径下它既不必要也不充分。 */
+    function setSmokeHealth({ connected }) {
+        sqlite
+            .prepare(
+                `INSERT INTO feedback_settings (name, value_json, version, updated_at, updated_by)
+                 VALUES ('runners', ?, 1, '2026-08-22T08:59:00.000Z', 'admin')
+                 ON CONFLICT(name) DO UPDATE SET value_json = excluded.value_json`
+            )
+            .run(
+                JSON.stringify({
+                    defaultProvider: 'codex',
+                    autoDeliver: { enabled: true, preflight: { ok: true, checks: [] } },
+                    providers: {
+                        codex: {
+                            connectionState: connected ? 'connected' : 'unverified',
+                            lastTestResult: { ok: connected },
+                        },
+                    },
+                })
+            );
+    }
+
+    function registerExecutor({
+        id = 'executor-a',
+        providers = ['codex'],
+        status = 'online',
+        heartbeatAgoMs = 30 * 1000,
+    } = {}) {
+        const nowIso = new Date().toISOString();
+        sqlite
+            .prepare(
+                `INSERT INTO feedback_executors (
+                    id, capabilities_json, status, last_heartbeat_at, created_at, updated_at
+                 ) VALUES (?, ?, ?, ?, ?, ?)`
+            )
+            .run(
+                id,
+                JSON.stringify({ providers, policies: ['implement_and_verify'] }),
+                status,
+                new Date(Date.now() - heartbeatAgoMs).toISOString(),
+                nowIso,
+                nowIso
+            );
+    }
+
+    async function dispatchAndReadRun() {
+        const step = {
+            async do(name, configOrCallback, maybeCallback) {
+                const callback =
+                    typeof configOrCallback === 'function' ? configOrCallback : maybeCallback;
+                return callback();
+            },
+            async waitForEvent() {
+                throw new Error('WORKFLOW_TEST_STOP_AFTER_DISPATCH');
+            },
+        };
+        try {
+            await new FeedbackWorkflow({}, env).run(
+                {
+                    instanceId,
+                    payload: {
+                        issueId,
+                        generation: 1,
+                        contextVersion: 1,
+                        eventId: triggerEventId,
+                    },
+                },
+                step
+            );
+        } catch (error) {
+            if (error.message !== 'WORKFLOW_TEST_STOP_AFTER_DISPATCH') throw error;
+        }
+        return sqlite
+            .prepare(
+                'SELECT delivery_mode, runner_type, provider FROM feedback_runs WHERE issue_id = ?'
+            )
+            .get(issueId);
+    }
+
+    beforeEach(() => {
+        sqlite = applyMigrations();
+        seedAutoFixIssue();
+        env = {
+            ...createEnv(sqlite),
+            FEEDBACK_RUN_TOKEN_SECRET: 'unit-test-secret',
+            FEEDBACK_RELEASE_TOKEN_SECRET: 'unit-test-secret',
+            FEEDBACK_CALLBACK_ORIGIN: 'https://worker.test',
+            FEEDBACK_GITHUB_TOKEN: 'ghp_test',
+            FEEDBACK_AUTO_DELIVER_ENABLED: 'true',
+            FEEDBACK_AUTO_DELIVER_PREFLIGHT_OK: 'true',
+        };
+    });
+
+    it('[SCN-FWB-022] executor 路径认在线执行器，不要求跑过 Action 冒烟', async () => {
+        useAdapter('executor');
+        setSmokeHealth({ connected: false });
+        registerExecutor();
+
+        const run = await dispatchAndReadRun();
+        expect(run.runner_type).toBe('executor');
+        expect(run.delivery_mode).toBe('auto_deliver');
+    });
+
+    it('[SCN-FWB-022] executor 路径不接受 Action 冒烟当健康证明', async () => {
+        useAdapter('executor');
+        setSmokeHealth({ connected: true });
+        // 一个执行器都没注册：这条 Run 会停在 created 等人来领，绝不能自治交付。
+
+        expect((await dispatchAndReadRun()).delivery_mode).toBe('candidate_review');
+    });
+
+    it('[SCN-FWB-022] 心跳过期或已离线的执行器不算健康', async () => {
+        useAdapter('executor');
+        setSmokeHealth({ connected: true });
+        registerExecutor({ id: 'executor-stale', heartbeatAgoMs: 6 * 60 * 1000 });
+        registerExecutor({ id: 'executor-offline', status: 'offline' });
+
+        expect((await dispatchAndReadRun()).delivery_mode).toBe('candidate_review');
+    });
+
+    it('[SCN-FWB-022] 在线执行器不具备该 provider 能力时同样降级', async () => {
+        useAdapter('executor');
+        setSmokeHealth({ connected: false });
+        registerExecutor({ providers: ['claude'] });
+
+        const run = await dispatchAndReadRun();
+        expect(run.provider).toBe('codex');
+        expect(run.delivery_mode).toBe('candidate_review');
+    });
+
+    it('[SCN-FWB-022] executor 路径的凭据要的是控制面 bearer，不是 GitHub token', async () => {
+        useAdapter('executor');
+        setSmokeHealth({ connected: false });
+        registerExecutor();
+
+        // 这条 Run 不派 Action，也就不该因为 Worker 上没有 Action 派发凭据被降级。
+        delete env.FEEDBACK_GITHUB_TOKEN;
+        expect((await dispatchAndReadRun()).delivery_mode).toBe('auto_deliver');
+
+        sqlite.prepare('DELETE FROM feedback_runs').run();
+        sqlite.prepare('DELETE FROM feedback_workflows').run();
+
+        // 但没有控制面 bearer，执行器连租约都领不到：那才是这条路径的硬前提。
+        delete env.FEEDBACK_EXECUTOR_TOKEN;
+        expect((await dispatchAndReadRun()).delivery_mode).toBe('candidate_review');
+    });
+
+    it('[SCN-FWB-022] actions 路径仍只认 Action 冒烟，在线执行器不作数', async () => {
+        setSmokeHealth({ connected: false });
+        registerExecutor();
+        expect((await dispatchAndReadRun()).delivery_mode).toBe('candidate_review');
+
+        sqlite.prepare('DELETE FROM feedback_runs').run();
+        sqlite.prepare('DELETE FROM feedback_workflows').run();
+        setSmokeHealth({ connected: true });
+        const run = await dispatchAndReadRun();
+        expect(run.runner_type).toBe('github_hosted');
+        expect(run.delivery_mode).toBe('auto_deliver');
+    });
+});
+
+/**
+ * [SCN-FWB-016] 管理端「AI 执行器」页必须描述当前执行路径。
+ *
+ * `default_adapter='executor'` 的项目不派 Action：页面若仍展示 Action ref、GitHub-hosted
+ * 运行器和 Action 冒烟得来的连接状态，用户就会照着一条不存在的通路排障——真实发生过
+ * （2026-08-22：页面显示「运行器 GitHub-hosted / 冒烟测试中」，而线上跑的是本地执行器）。
+ * 坏行为画像：分流缺失时，第 1 条用例在 runtime.runner 与 provider.action 处见红，第 2 条
+ * 在 connectionState 处见红（Action 冒烟的 connected 被照抄成执行器健康），第 3 条会看到
+ * 一次真实的 GitHub 派发尝试。
+ */
+describe('[SCN-FWB-016] the runners settings page describes the active execution path', () => {
+    let sqlite;
+    let env;
+
+    async function adminHeaders() {
+        const response = await worker.fetch(
+            new Request('https://worker.test/api/feedback/admin/session', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: 'admin-pass' }),
+            }),
+            env
+        );
+        const session = await response.json();
+        return { Authorization: `Bearer ${session.token}`, 'Content-Type': 'application/json' };
+    }
+
+    async function readSettings() {
+        const response = await worker.fetch(
+            new Request('https://worker.test/api/feedback/runners/settings', {
+                headers: await adminHeaders(),
+            }),
+            env
+        );
+        return (await response.json()).settings;
+    }
+
+    async function testProvider(provider) {
+        const response = await worker.fetch(
+            new Request('https://worker.test/api/feedback/runners/test', {
+                method: 'POST',
+                headers: await adminHeaders(),
+                body: JSON.stringify({ provider }),
+            }),
+            env
+        );
+        return { status: response.status, payload: await response.json() };
+    }
+
+    function useAdapter(adapter) {
+        sqlite
+            .prepare('UPDATE feedback_projects SET default_adapter = ? WHERE id = ?')
+            .run(adapter, 'proj_gantt');
+    }
+
+    /** 一条「Action 冒烟绿过」的历史状态：executor 路径不得拿它当健康证明。 */
+    function seedConnectedSmoke() {
+        sqlite
+            .prepare(
+                `INSERT INTO feedback_settings (name, value_json, version, updated_at, updated_by)
+                 VALUES ('runners', ?, 1, '2026-08-22T08:00:00.000Z', 'admin')`
+            )
+            .run(
+                JSON.stringify({
+                    defaultProvider: 'codex',
+                    providers: {
+                        codex: {
+                            connectionState: 'connected',
+                            lastTestResult: {
+                                ok: true,
+                                smokeId: 'smk_old',
+                                actionCommit: 'abc123',
+                            },
+                        },
+                    },
+                })
+            );
+    }
+
+    function registerExecutor({
+        id = 'executor-a',
+        providers = ['codex'],
+        status = 'online',
+        heartbeatAgoMs = 30 * 1000,
+    } = {}) {
+        const nowIso = new Date().toISOString();
+        sqlite
+            .prepare(
+                `INSERT INTO feedback_executors (
+                    id, capabilities_json, status, last_heartbeat_at, created_at, updated_at
+                 ) VALUES (?, ?, ?, ?, ?, ?)`
+            )
+            .run(
+                id,
+                JSON.stringify({ providers, policies: ['implement_and_verify'] }),
+                status,
+                new Date(Date.now() - heartbeatAgoMs).toISOString(),
+                nowIso,
+                nowIso
+            );
+    }
+
+    beforeEach(() => {
+        sqlite = applyMigrations();
+        env = {
+            ...createEnv(sqlite),
+            FEEDBACK_ADMIN_PASSWORD: 'admin-pass',
+            FEEDBACK_ADMIN_TOKEN_SECRET: 'unit-test-secret',
+        };
+    });
+
+    it('[SCN-FWB-016] executor 项目展示执行器 Adapter 与在线执行器，而不是 Action 与 GitHub-hosted', async () => {
+        useAdapter('executor');
+        registerExecutor();
+
+        const settings = await readSettings();
+        expect(settings.runtime.adapter).toBe('executor');
+        expect(settings.runtime.runner).not.toContain('GitHub');
+        expect(settings.runtime.executors.map((executor) => executor.live)).toEqual([true]);
+        expect(settings.providers.codex.action).toBe('executor:codex');
+        expect(settings.providers.claude.action).toBe('executor:claude-code');
+        expect(settings.providers.codex.healthSource).toBe('executor');
+        expect(settings.providers.codex.connectionState).toBe('connected');
+        expect(settings.providers.codex.executor.executorId).toBe('executor-a');
+        // 凭据在开发机上，Worker 看不到，就不该替它宣称已配置
+        expect(settings.providers.codex.secretScope).toBe('executor_host');
+        expect(settings.providers.codex.secretConfigured).toBeNull();
+    });
+
+    it('[SCN-FWB-016] executor 项目不把 Action 冒烟的 connected 当执行器健康', async () => {
+        useAdapter('executor');
+        seedConnectedSmoke();
+
+        const noExecutor = await readSettings();
+        expect(noExecutor.providers.codex.connectionState).toBe('unverified');
+        expect(noExecutor.runtime.dispatchConfigured).toBe(false);
+
+        // 登记过但心跳过期：这是「失败」，不是「待验证」，更不是「已连接」
+        registerExecutor({ heartbeatAgoMs: 6 * 60 * 1000 });
+        expect((await readSettings()).providers.codex.connectionState).toBe('failed');
+    });
+
+    it('[SCN-FWB-016] executor 项目的连接测试探控制面，不派 Action', async () => {
+        useAdapter('executor');
+        const fetchSpy = vi.spyOn(globalThis, 'fetch');
+        try {
+            const missing = await testProvider('codex');
+            expect(missing.status).toBe(503);
+            expect(missing.payload.result.mode).toBe('executor_probe');
+            expect(missing.payload.result.errorCode).toBe('EXECUTOR_NOT_REGISTERED');
+
+            registerExecutor();
+            const probed = await testProvider('codex');
+            expect(probed.status).toBe(200);
+            expect(probed.payload.result.ok).toBe(true);
+            expect(probed.payload.result.executorId).toBe('executor-a');
+            expect(probed.payload.result.action).toBe('executor:codex');
+            // 历史里不留 Action commit：那是另一条通路的字段
+            const history = probed.payload.settings.providers.codex.smokeHistory;
+            expect(history.at(-1).mode).toBe('executor_probe');
+            expect(history.at(-1).actionCommit).toBe('');
+            expect(fetchSpy).not.toHaveBeenCalled();
+        } finally {
+            fetchSpy.mockRestore();
+        }
+    });
+
+    it('[SCN-FWB-016] actions 项目仍展示 Action ref 与 GitHub-hosted', async () => {
+        registerExecutor();
+
+        const settings = await readSettings();
+        expect(settings.runtime.adapter).toBe('actions');
+        expect(settings.runtime.runner).toBe('GitHub-hosted');
+        expect(settings.providers.codex.action).toBe(
+            'openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56'
+        );
+        expect(settings.providers.codex.healthSource).toBe('action_smoke');
+        // 在线执行器与 actions 路径无关，不得混进来充当健康证明
+        expect(settings.providers.codex.connectionState).toBe('unverified');
+        expect(settings.runtime.executors).toEqual([]);
+    });
+});
+
+/**
+ * [SCN-FWB-022] 交付预检也必须按执行路径取证。
+ *
+ * executor 项目的集成、push 与部署都由执行器用它自己那份凭据完成，Worker 侧的
+ * `FEEDBACK_GITHUB_TOKEN` / `FEEDBACK_MERGE_TOKEN` / 部署凭据既不被使用，也证明不了执行器
+ * 那边配好了——拿它们当准入条件，是用一条不走的通路给另一条通路发通行证。
+ * 坏行为画像：预检不分流时，第 1 条用例见红（executor 项目配齐了自己路径需要的一切，
+ * 仍因为缺三个用不到的 Worker 变量而 `ok:false`），第 3 条见红（actions 项目的凭据检查
+ * 被一并删掉，缺 token 也放行）。
+ */
+describe('[SCN-FWB-022] the auto-delivery preflight checks the active execution path', () => {
+    let sqlite;
+    let env;
+
+    async function adminHeaders() {
+        const response = await worker.fetch(
+            new Request('https://worker.test/api/feedback/admin/session', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: 'admin-pass' }),
+            }),
+            env
+        );
+        const session = await response.json();
+        return { Authorization: `Bearer ${session.token}`, 'Content-Type': 'application/json' };
+    }
+
+    async function runPreflight() {
+        const response = await worker.fetch(
+            new Request('https://worker.test/api/feedback/runners/auto-deliver/preflight', {
+                method: 'POST',
+                headers: await adminHeaders(),
+                body: '{}',
+            }),
+            env
+        );
+        return (await response.json()).preflight;
+    }
+
+    function failed(preflight) {
+        return preflight.checks.filter((check) => !check.ok).map((check) => check.id);
+    }
+
+    function useAdapter(adapter) {
+        sqlite
+            .prepare('UPDATE feedback_projects SET default_adapter = ? WHERE id = ?')
+            .run(adapter, 'proj_gantt');
+    }
+
+    function registerExecutor({ providers = ['codex'], heartbeatAgoMs = 30 * 1000 } = {}) {
+        const nowIso = new Date().toISOString();
+        sqlite
+            .prepare(
+                `INSERT INTO feedback_executors (
+                    id, capabilities_json, status, last_heartbeat_at, created_at, updated_at
+                 ) VALUES ('executor-a', ?, 'online', ?, ?, ?)`
+            )
+            .run(
+                JSON.stringify({ providers, policies: ['implement_and_verify'] }),
+                new Date(Date.now() - heartbeatAgoMs).toISOString(),
+                nowIso,
+                nowIso
+            );
+    }
+
+    beforeEach(() => {
+        sqlite = applyMigrations();
+        env = {
+            ...createEnv(sqlite),
+            FEEDBACK_ADMIN_PASSWORD: 'admin-pass',
+            FEEDBACK_ADMIN_TOKEN_SECRET: 'unit-test-secret',
+            // executor 路径真正要用到的：回调目标、Release 认领密钥、控制面 bearer、冒烟目标
+            FEEDBACK_CALLBACK_ORIGIN: 'https://worker.test',
+            FEEDBACK_RELEASE_TOKEN_SECRET: 'release-secret',
+            FEEDBACK_PRODUCTION_ORIGIN: 'https://gantt-task-editor.pages.dev',
+            FEEDBACK_PRODUCTION_API_URL: 'https://worker.test/api/feedback/issues',
+        };
+    });
+
+    it('[SCN-FWB-022] executor 项目不再要求 Worker 侧的 GitHub 派发/合并/部署凭据', async () => {
+        useAdapter('executor');
+        registerExecutor();
+
+        const preflight = await runPreflight();
+        expect(failed(preflight)).toEqual([]);
+        expect(preflight.ok).toBe(true);
+        // 这三项属于 Actions 通路，executor 预检里不该再出现
+        expect(preflight.checks.map((check) => check.id)).not.toContain('github_dispatch');
+        expect(preflight.checks.map((check) => check.id)).not.toContain('merge_credentials');
+        expect(preflight.checks.map((check) => check.id)).not.toContain('deployment_credentials');
+    });
+
+    it('[SCN-FWB-022] executor 预检认执行器在线与控制面 bearer', async () => {
+        useAdapter('executor');
+
+        const offline = await runPreflight();
+        expect(offline.ok).toBe(false);
+        expect(failed(offline)).toContain('executor_online');
+
+        registerExecutor();
+        delete env.FEEDBACK_EXECUTOR_TOKEN;
+        const noBearer = await runPreflight();
+        expect(noBearer.ok).toBe(false);
+        expect(failed(noBearer)).toContain('executor_control_plane');
+    });
+
+    it('[SCN-FWB-022] actions 项目仍要求 GitHub 派发、合并与部署凭据', async () => {
+        registerExecutor();
+
+        const missing = await runPreflight();
+        expect(missing.ok).toBe(false);
+        expect(failed(missing)).toEqual(
+            expect.arrayContaining([
+                'github_dispatch',
+                'merge_credentials',
+                'deployment_credentials',
+            ])
+        );
+        // 在线执行器与 actions 路径无关，不得替它凑齐条件
+        expect(missing.checks.map((check) => check.id)).not.toContain('executor_online');
+    });
+});
+
+/**
+ * [SCN-FWB-022] 执行器上报的 provider 词表与 Worker 的不是同一套。
+ *
+ * 执行器按引擎命名（`FEEDBACK_EXECUTOR_PROVIDER`：`claude-code` / `codex`，见
+ * `packages/feedback-platform/executor/main.js`），Worker 按 Run.provider 命名
+ * （`claude` / `codex`）。2026-08-22 生产库里在线执行器上报的正是 `["claude-code"]`：
+ * 逐字符匹配会让所有 claude 工单永远等不到「有能力的执行器」，自治交付全线降级、
+ * 管理端两张卡片同时显示不可用。坏行为画像：不做词表对齐时，本用例见红。
+ */
+describe('[SCN-FWB-022] executor capabilities are matched across both provider vocabularies', () => {
+    const issueId = 'feedback:capability-alias-1';
+    const triggerEventId = 'evt_capability_alias';
+    let sqlite;
+    let env;
+
+    function seedAutoFixIssue() {
+        const now = '2026-08-22T09:00:00.000Z';
+        sqlite
+            .prepare(
+                `INSERT INTO feedback_issues (
+                    id, title, business_type, scope, automation_decision, status,
+                    created_at, updated_at, project_id
+                 ) VALUES (?, 'Capability alias', 'bug', 'small', 'auto_fix',
+                           'queued', ?, ?, 'proj_gantt')`
+            )
+            .run(issueId, now, now);
+        sqlite
+            .prepare(
+                `INSERT INTO feedback_events (
+                    id, issue_id, sequence, type, actor_type, actor_id, visibility,
+                    occurred_at, body_json, metadata_json
+                 ) VALUES (?, ?, 1, 'status.changed', 'admin', NULL, 'public', ?, '{}', '{}')`
+            )
+            .run(triggerEventId, issueId, now);
+        sqlite
+            .prepare(
+                `INSERT INTO feedback_settings (name, value_json, version, updated_at, updated_by)
+                 VALUES ('runners', ?, 1, '2026-08-22T08:59:00.000Z', 'admin')`
+            )
+            .run(
+                JSON.stringify({
+                    defaultProvider: 'claude',
+                    autoDeliver: { enabled: true, preflight: { ok: true, checks: [] } },
+                    providers: {},
+                })
+            );
+        sqlite
+            .prepare('UPDATE feedback_projects SET default_adapter = ? WHERE id = ?')
+            .run('executor', 'proj_gantt');
+    }
+
+    /** 生产上真实出现过的能力声明：引擎名，不是 Run.provider 名。 */
+    function registerEngineNamedExecutor() {
+        const nowIso = new Date().toISOString();
+        sqlite
+            .prepare(
+                `INSERT INTO feedback_executors (
+                    id, capabilities_json, status, last_heartbeat_at, created_at, updated_at
+                 ) VALUES ('executor-desktop', ?, 'online', ?, ?, ?)`
+            )
+            .run(
+                JSON.stringify({
+                    providers: ['claude-code'],
+                    policies: ['analyze', 'review', 'implement', 'implement_and_verify'],
+                }),
+                new Date(Date.now() - 20 * 1000).toISOString(),
+                nowIso,
+                nowIso
+            );
+    }
+
+    beforeEach(() => {
+        sqlite = applyMigrations();
+        seedAutoFixIssue();
+        registerEngineNamedExecutor();
+        env = {
+            ...createEnv(sqlite),
+            FEEDBACK_RUN_TOKEN_SECRET: 'unit-test-secret',
+            FEEDBACK_RELEASE_TOKEN_SECRET: 'unit-test-secret',
+            FEEDBACK_CALLBACK_ORIGIN: 'https://worker.test',
+            FEEDBACK_ADMIN_PASSWORD: 'admin-pass',
+            FEEDBACK_ADMIN_TOKEN_SECRET: 'unit-test-secret',
+            FEEDBACK_AUTO_DELIVER_ENABLED: 'true',
+            FEEDBACK_AUTO_DELIVER_PREFLIGHT_OK: 'true',
+        };
+    });
+
+    it('[SCN-FWB-022] claude-code 执行器满足 claude 工单的健康判据', async () => {
+        const step = {
+            async do(name, configOrCallback, maybeCallback) {
+                const callback =
+                    typeof configOrCallback === 'function' ? configOrCallback : maybeCallback;
+                return callback();
+            },
+            async waitForEvent() {
+                throw new Error('WORKFLOW_TEST_STOP_AFTER_DISPATCH');
+            },
+        };
+        try {
+            await new FeedbackWorkflow({}, env).run(
+                {
+                    instanceId: 'feedback-capability-alias-1-g1',
+                    payload: {
+                        issueId,
+                        generation: 1,
+                        contextVersion: 1,
+                        eventId: triggerEventId,
+                    },
+                },
+                step
+            );
+        } catch (error) {
+            if (error.message !== 'WORKFLOW_TEST_STOP_AFTER_DISPATCH') throw error;
+        }
+
+        const run = sqlite
+            .prepare('SELECT provider, delivery_mode FROM feedback_runs WHERE issue_id = ?')
+            .get(issueId);
+        expect(run.provider).toBe('claude');
+        expect(run.delivery_mode).toBe('auto_deliver');
+    });
+
+    it('[SCN-FWB-022] 管理端据此显示 claude 已连接、codex 不可用', async () => {
+        const session = await (
+            await worker.fetch(
+                new Request('https://worker.test/api/feedback/admin/session', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password: 'admin-pass' }),
+                }),
+                env
+            )
+        ).json();
+        const settings = await (
+            await worker.fetch(
+                new Request('https://worker.test/api/feedback/runners/settings', {
+                    headers: { Authorization: `Bearer ${session.token}` },
+                }),
+                env
+            )
+        ).json();
+
+        expect(settings.settings.providers.claude.connectionState).toBe('connected');
+        expect(settings.settings.providers.claude.executor.executorId).toBe('executor-desktop');
+        // 同一台执行器没声明 codex：不能顺带把另一个 provider 也点亮
+        expect(settings.settings.providers.codex.connectionState).toBe('unverified');
     });
 });

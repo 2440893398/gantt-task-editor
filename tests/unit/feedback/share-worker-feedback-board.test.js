@@ -1063,6 +1063,28 @@ class MemoryD1 {
 
         // --- reconcile sweep ---
         if (normalized.startsWith('select w.instance_id')) {
+            // Run 超时兜底：Workflow 实例死于未捕获异常，recordRunTimeout 从未执行。
+            // 必须排在下面两条之前——三条查询都以 `select w.instance_id` 开头。
+            if (normalized.includes('w.waiting_until <')) {
+                const rows = Array.from(this.tables.feedback_workflows.values()).filter((row) => {
+                    const run = this.tables.feedback_runs.get(row.active_run_id);
+                    return (
+                        row.status === 'running' &&
+                        row.waiting_until != null &&
+                        String(row.waiting_until) < values[0] &&
+                        run &&
+                        !['succeeded', 'failed', 'cancelled', 'timed_out'].includes(run.status)
+                    );
+                });
+                return ok(
+                    rows.map((row) => ({
+                        instance_id: row.instance_id,
+                        issue_id: row.issue_id,
+                        active_run_id: row.active_run_id,
+                        waiting_until: row.waiting_until,
+                    }))
+                );
+            }
             if (normalized.includes("i.status = 'queued'")) {
                 const rows = Array.from(this.tables.feedback_workflows.values()).filter((row) => {
                     const issue = this.tables.feedback_issues.get(row.issue_id);
@@ -10218,7 +10240,11 @@ describe('feedback workbench V2 Run and Callback', () => {
                     type: 'feedback-run-result',
                     timeout: '60 minutes',
                 });
-                throw new Error('workflow wait timeout');
+                // 生产上 Workflows 抛的原文是「timed out」而不是「timeout」——
+                // 2026-08-15 的两条僵尸 Run 就死在这个字面差异上（实例 ❌ Errored:
+                // `Execution timed out after 1800000ms`，recordRunTimeout 从未执行）。
+                // 这里必须用真实措辞，编造的 message 会让判定的漏洞测不出来。
+                throw new Error('Execution timed out after 1800000ms');
             },
         };
 
@@ -12245,6 +12271,109 @@ describe('feedback workbench V2 reconcile sweep', () => {
             },
         ]);
         expect(env.FEEDBACK_DB.tables.feedback_runs.size).toBe(0);
+    });
+
+    it('[SCN-FWB-030] reaps a Run whose Workflow died before reaching its timeout step', async () => {
+        // 2026-08-15 的真实事故：waitForEvent 超时抛 `Execution timed out after
+        // 1800000ms`，判定不认这个措辞 → 异常上抛打死实例 → recordRunTimeout 从未
+        // 执行 → Run 与 Workflow 永久 running。人工等待分支捞不到它（那条要求
+        // needs_human，这里是 in_progress），四天无人收尸。
+        const env = createV2Env(
+            {},
+            {
+                feedback_issues: [
+                    createD1IssueRow({
+                        status: 'in_progress',
+                        active_workflow_id: workflowInstanceId(feedbackKey, 1),
+                    }),
+                ],
+                feedback_workflows: [
+                    {
+                        issue_id: feedbackKey,
+                        generation: 1,
+                        instance_id: workflowInstanceId(feedbackKey, 1),
+                        status: 'running',
+                        active_run_id: 'run_zombie',
+                        started_at: '2026-08-15T02:49:37.567Z',
+                        waiting_until: '2026-08-15T03:19:41.727Z',
+                        finished_at: null,
+                        terminal_reason: null,
+                    },
+                ],
+                feedback_runs: [
+                    {
+                        id: 'run_zombie',
+                        issue_id: feedbackKey,
+                        workflow_id: workflowInstanceId(feedbackKey, 1),
+                        status: 'running',
+                        policy: 'analyze',
+                        started_at: '2026-08-15T02:49:53.548Z',
+                        finished_at: null,
+                        error_code: null,
+                    },
+                ],
+            }
+        );
+
+        const summary = await runScheduled(env, Date.parse('2026-08-19T03:00:00.000Z'));
+
+        expect(summary.reapedRunTimeouts).toBe(1);
+        const run = env.FEEDBACK_DB.tables.feedback_runs.get('run_zombie');
+        expect(run.status).toBe('timed_out');
+        expect(run.error_code).toBe('run_timeout');
+        // 收口时刻取真实的超时闸，不是巡检碰巧运行的此刻——否则终态会谎报晚了四天。
+        expect(run.finished_at).toBe('2026-08-15T03:19:41.727Z');
+        const workflow = env.FEEDBACK_DB.tables.feedback_workflows.get(
+            workflowInstanceId(feedbackKey, 1)
+        );
+        expect(workflow.status).toBe('terminated');
+        expect(workflow.terminal_reason).toBe('run_timeout');
+        const issue = env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey);
+        expect(issue.active_workflow_id).toBeNull();
+    });
+
+    it('[SCN-FWB-030] leaves a Run alone while it is still inside its timeout gate', async () => {
+        const env = createV2Env(
+            {},
+            {
+                feedback_issues: [
+                    createD1IssueRow({
+                        status: 'in_progress',
+                        active_workflow_id: workflowInstanceId(feedbackKey, 1),
+                    }),
+                ],
+                feedback_workflows: [
+                    {
+                        issue_id: feedbackKey,
+                        generation: 1,
+                        instance_id: workflowInstanceId(feedbackKey, 1),
+                        status: 'running',
+                        active_run_id: 'run_healthy',
+                        started_at: '2026-08-19T02:50:00.000Z',
+                        waiting_until: '2026-08-19T03:20:00.000Z',
+                        finished_at: null,
+                        terminal_reason: null,
+                    },
+                ],
+                feedback_runs: [
+                    {
+                        id: 'run_healthy',
+                        issue_id: feedbackKey,
+                        workflow_id: workflowInstanceId(feedbackKey, 1),
+                        status: 'running',
+                        policy: 'analyze',
+                        started_at: '2026-08-19T02:50:10.000Z',
+                        finished_at: null,
+                        error_code: null,
+                    },
+                ],
+            }
+        );
+
+        const summary = await runScheduled(env, Date.parse('2026-08-19T03:00:00.000Z'));
+
+        expect(summary.reapedRunTimeouts).toBe(0);
+        expect(env.FEEDBACK_DB.tables.feedback_runs.get('run_healthy').status).toBe('running');
     });
 
     it('[SCN-FWB-019] expires a 7-day wait without closing the Issue', async () => {

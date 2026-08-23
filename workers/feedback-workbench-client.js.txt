@@ -1795,17 +1795,45 @@
             ? history
                   .map(function (entry) {
                       var testedAt = entry.completedAt || entry.testedAt || '';
+                      var head =
+                          '<div class="provider-history-head"><strong>' +
+                          escapeHtml(smokeHistoryStatus(entry)) +
+                          '</strong><span>' +
+                          escapeHtml(testedAt ? relativeTime(testedAt) : '时间未知') +
+                          '</span></div>';
+
+                      /* 执行器探测没有 Action commit、model 和 endpoint mode——那三项属于
+                         GitHub 通路。把它们渲染成「未回写」会读成 Action 跑砸了。 */
+                      if (entry.mode === 'executor_probe') {
+                          return (
+                              '<div class="provider-history-row">' +
+                              head +
+                              '<div class="provider-history-meta"><span>探测 ' +
+                              escapeHtml(entry.smokeId || '未命名') +
+                              '</span><span>' +
+                              escapeHtml(entry.action || 'executor') +
+                              '</span></div>' +
+                              '<div class="provider-history-commit">执行器 · ' +
+                              escapeHtml(entry.executorId || '未登记') +
+                              '</div>' +
+                              '<div class="provider-history-url">最后心跳 · ' +
+                              escapeHtml(
+                                  entry.lastHeartbeatAt
+                                      ? relativeTime(entry.lastHeartbeatAt)
+                                      : '无'
+                              ) +
+                              '</div>' +
+                              '</div>'
+                          );
+                      }
+
                       var commit = entry.actionCommit
                           ? entry.actionCommit.slice(0, 12)
                           : '未回写 Action commit';
                       var model = entry.model || '未回写 model';
                       return (
                           '<div class="provider-history-row">' +
-                          '<div class="provider-history-head"><strong>' +
-                          escapeHtml(smokeHistoryStatus(entry)) +
-                          '</strong><span>' +
-                          escapeHtml(testedAt ? relativeTime(testedAt) : '时间未知') +
-                          '</span></div>' +
+                          head +
                           '<div class="provider-history-meta"><span>Smoke ' +
                           escapeHtml(entry.smokeId || '未命名') +
                           '</span><span>' +
@@ -1843,6 +1871,7 @@
         if (!settings) return;
 
         var order = ['codex', 'claude'];
+        var onExecutor = (settings.runtime || {}).adapter === 'executor';
         $('providerGrid').innerHTML = order
             .map(function (id) {
                 var provider = settings.providers[id];
@@ -1901,7 +1930,9 @@
                     '</button>' +
                     '<button class="button" type="button" data-test-provider="' +
                     id +
-                    '">测试连接</button></span></div>' +
+                    '">' +
+                    (onExecutor ? '检测执行器' : '测试连接') +
+                    '</button></span></div>' +
                     renderProviderHistory(provider) +
                     '<details class="provider-config advanced-details"><summary><span>连接配置</span>' +
                     '<svg class="summary-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>' +
@@ -1912,7 +1943,12 @@
                     '</strong></div><span class="badge' +
                     (provider.secretConfigured ? ' green' : '') +
                     '">' +
-                    (provider.secretConfigured ? '已配置' : '在 GitHub Secrets 管理') +
+                    /* 执行器的凭据在开发机上，Worker 看不到，页面就不替它宣称已配置。 */
+                    (provider.secretScope === 'executor_host'
+                        ? '在执行器主机管理'
+                        : provider.secretConfigured
+                          ? '已配置'
+                          : '在 GitHub Secrets 管理') +
                     '</span></div>' +
                     '</div></details></article>'
                 );
@@ -1944,6 +1980,9 @@
         var runtime = settings.runtime || {};
         $('runtimeBadge').className = 'badge ' + (runtime.orchestratorBound ? 'green' : '');
         $('runtimeBadge').textContent = runtime.orchestratorBound ? '正常' : '待配置';
+        var liveExecutors = (runtime.executors || []).filter(function (executor) {
+            return executor.live;
+        });
         $('runtimeList').innerHTML =
             '<div><span>编排</span><strong>' +
             escapeHtml(runtime.orchestrator || '') +
@@ -1952,9 +1991,17 @@
             '<div><span>运行器</span><strong>' +
             escapeHtml(runtime.runner || '') +
             '</strong></div>' +
-            '<div><span>分发</span><strong>' +
-            (runtime.dispatchConfigured ? '已配置' : '未配置') +
-            '</strong></div>';
+            (runtime.adapter === 'executor'
+                ? '<div><span>在线执行器</span><strong>' +
+                  liveExecutors.length +
+                  ' 个' +
+                  (liveExecutors.length
+                      ? '（' + escapeHtml(liveExecutors[0].id) + '）'
+                      : '（工单会停在等待领取）') +
+                  '</strong></div>'
+                : '<div><span>分发</span><strong>' +
+                  (runtime.dispatchConfigured ? '已配置' : '未配置') +
+                  '</strong></div>');
 
         renderAutoDeliver(settings.autoDeliver || {});
     }

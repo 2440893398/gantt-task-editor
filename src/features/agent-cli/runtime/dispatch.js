@@ -17,6 +17,7 @@ import {
 import { validateArgs } from './guards.js';
 import { recordCommandLog } from './log.js';
 import { fail, ok, withErrorNavigation } from './result.js';
+import { stableStringify } from './stable-key.js';
 
 class CommandResultError extends Error {
     constructor(result) {
@@ -29,10 +30,13 @@ class CommandResultError extends Error {
  * Command-level idempotency (design spec §4/§6, milestone M2).
  *
  * A successful mutating dispatch that carries an `idempotencyKey` caches its
- * result under `(projectId, key)`. A later dispatch with the SAME key returns
- * the stored result verbatim WITHOUT re-planning or re-committing, so an agent
- * retry never double-writes. This mirrors the operation-manager idempotency on
- * the long-running `app.operation()` path, but for the direct command path.
+ * result under `(projectId, key)`. A later dispatch with the SAME key and the
+ * SAME arguments returns the stored result verbatim WITHOUT re-planning or
+ * re-committing, so an agent retry never double-writes. Reusing a key with
+ * DIFFERENT arguments is an agent bug (the cached result would misreport what
+ * was written) and fails with CONFLICT instead of silently replaying. This
+ * mirrors the operation-manager idempotency on the long-running
+ * `app.operation()` path, but for the direct command path.
  */
 const idempotencyResults = new Map();
 
@@ -40,12 +44,19 @@ const idempotencyResults = new Map();
 // 淘汰后的 key 重放会重新执行——幂等窗口有限是协议已知约束。
 const IDEMPOTENCY_CACHE_LIMIT = 500;
 
-function storeIdempotencyResult(key, result) {
+function storeIdempotencyResult(key, argsKey, result) {
     while (idempotencyResults.size >= IDEMPOTENCY_CACHE_LIMIT) {
         const oldestKey = idempotencyResults.keys().next().value;
         idempotencyResults.delete(oldestKey);
     }
-    idempotencyResults.set(key, result);
+    idempotencyResults.set(key, { argsKey, result });
+}
+
+function idempotencyArgsMismatch(rev) {
+    return fail('CONFLICT', 'idempotencyKey was already used with different arguments.', {
+        hint: 'An idempotencyKey identifies ONE write. Use a new key for a different write, or retry with the original arguments.',
+        rev,
+    });
 }
 
 function scopedIdempotencyKey(projectId, command, key) {
@@ -379,8 +390,13 @@ async function dispatchUnlocked(name, args = {}, context = {}) {
             resolvedArgs.idempotencyKey ?? context.idempotencyKey
         );
         if (idemKey && idempotencyResults.has(idemKey)) {
+            const cached = idempotencyResults.get(idemKey);
+            if (cached.argsKey !== stableStringify(resolvedArgs)) {
+                result = idempotencyArgsMismatch(getProjectRev(projectId));
+                return result;
+            }
             // Idempotent replay: return the stored result without re-executing.
-            result = idempotencyResults.get(idemKey);
+            result = cached.result;
             return result;
         }
         cacheIdempotentResult = Boolean(idemKey);
@@ -505,13 +521,16 @@ async function dispatchUnlocked(name, args = {}, context = {}) {
             });
         return result;
     } finally {
-        if (command.mutating && result) {
+        if (result) {
             // Cache only real (non-dry-run) successful writes for idempotent replay.
             const wasDryRun = Boolean(context.dryRun || resolvedArgs.dryRun);
-            if (idemKey && cacheIdempotentResult && result.ok && !wasDryRun) {
-                storeIdempotencyResult(idemKey, result);
+            if (command.mutating && idemKey && cacheIdempotentResult && result.ok && !wasDryRun) {
+                storeIdempotencyResult(idemKey, stableStringify(resolvedArgs), result);
             }
 
+            // Design spec §7.7: the command log is replay/eval material, so read
+            // commands are recorded too — without them the log cannot reproduce
+            // the agent's decision trail.
             recordCommandLog({
                 name,
                 args: resolvedArgs,

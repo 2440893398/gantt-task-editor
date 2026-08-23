@@ -1,0 +1,294 @@
+/**
+ * [SCN-FWB-033] 执行器交付管线（阶段二）——集成 → 验证 → push → （按面部署+冒烟）→ 终态。
+ *
+ * 事件序列与 payload 形状照 GitHub 交付线（feedback-delivery.yml）与 Worker 状态机：
+ * 每个 payload 都带身份回显（integration.started 逐字段核验）、
+ * `integration.verification_completed` 与 `release.completed` 必须带 `passed`、
+ * 部署证据的 `deployedCommit` 必须等于集成提交。
+ */
+import { describe, expect, it } from 'vitest';
+import { createReleasePipeline } from '../executor/release-pipeline.js';
+
+const BASE = 'a'.repeat(40);
+const CHANGE = 'b'.repeat(40);
+const PICKED = 'e'.repeat(40);
+const SHA = 'c'.repeat(64);
+
+function claimFor(overrides = {}) {
+    return {
+        releaseId: 'rel_x1',
+        issueId: 'issue_x1',
+        candidateId: 'cnd_x1',
+        status: 'integrating',
+        releaseToken: 'tok.sig',
+        deployConfig: { pagesProject: 'gantt-task-editor', branch: 'master' },
+        payload: {
+            releaseId: 'rel_x1',
+            issueId: 'issue_x1',
+            candidateId: 'cnd_x1',
+            repository: '2440893398/gantt-task-editor',
+            baseRef: 'master',
+            baseCommit: BASE,
+            candidateRef: 'feedback/candidate/run_x1',
+            changeCommit: CHANGE,
+            changedFiles: ['doc/guide/x.md'],
+            diffManifestSha256: SHA,
+            deploymentRequired: false,
+            deploymentTarget: null,
+            productionOrigin: 'https://prod.example.test',
+            smokeUrls: [],
+            ...overrides,
+        },
+    };
+}
+
+function fakeGit({ originHead = BASE, cherryPickFails = false, pushFails = false } = {}) {
+    const calls = [];
+    const git = async (...args) => {
+        const joined = args.join(' ');
+        calls.push(joined);
+        if (joined.startsWith('rev-parse origin/'))
+            return { code: 0, stdout: `${originHead}\n`, stderr: '' };
+        if (joined.startsWith('rev-parse HEAD'))
+            return { code: 0, stdout: `${PICKED}\n`, stderr: '' };
+        if (joined.startsWith('cherry-pick') && cherryPickFails && !joined.includes('--abort')) {
+            const error = new Error('EXECUTOR_GIT_FAILED: conflict');
+            error.code = 'EXECUTOR_GIT_FAILED';
+            throw error;
+        }
+        if (joined.startsWith('push') && pushFails) {
+            const error = new Error('EXECUTOR_GIT_FAILED: non-fast-forward');
+            error.code = 'EXECUTOR_GIT_FAILED';
+            throw error;
+        }
+        return { code: 0, stdout: '', stderr: '' };
+    };
+    git.calls = calls;
+    return git;
+}
+
+function makePipeline({
+    git = fakeGit(),
+    verification = null,
+    commandResults = {},
+    fetchResponses = [],
+} = {}) {
+    const events = [];
+    const commands = [];
+    const controlPlane = {
+        async postReleaseEvent({ releaseId, releaseToken, event }) {
+            events.push({ releaseId, releaseToken, type: event.type, payload: event.payload });
+            return { duplicate: false };
+        },
+    };
+    const pipeline = createReleasePipeline({
+        workspaceDir: 'C:/ws',
+        childEnv: { PATH: 'p' },
+        log: () => {},
+        gitFactory: () => git,
+        runVerification: async () =>
+            verification ?? {
+                passed: true,
+                report: {
+                    targetedTests: { command: 'npm test', required: true, passed: true },
+                    build: { command: 'npm run build', required: true, passed: true },
+                    playwright: { command: 'npm run test:e2e', required: false, passed: true },
+                },
+            },
+        runCommandImpl: async ({ command }) => {
+            commands.push(command);
+            return (
+                commandResults[command] ?? { ok: true, exitCode: 0, timedOut: false, output: '' }
+            );
+        },
+        fsImpl: { existsSync: (p) => true },
+        fetchImpl: async (url) => {
+            const next = fetchResponses.shift() ?? { status: 200 };
+            return { status: next.status, url };
+        },
+    });
+    return { pipeline, events, commands, controlPlane, git };
+}
+
+describe('[SCN-FWB-033] docs-only 交付（deploymentRequired=false）', () => {
+    it('base 未动：fast-forward 候选提交本身，push 真实 ref，事件序列完整', async () => {
+        const git = fakeGit({ originHead: BASE });
+        const { pipeline, events, controlPlane } = makePipeline({ git });
+        const result = await pipeline.deliver({ claim: claimFor(), controlPlane });
+
+        expect(result.outcome).toBe('completed');
+        expect(events.map((e) => e.type)).toEqual([
+            'integration.started',
+            'integration.rebased',
+            'integration.verification_completed',
+            'integration.merged',
+            'release.completed',
+        ]);
+        // fetch 实时 origin，不信本地 ref
+        expect(git.calls.some((c) => c.startsWith('fetch origin master'))).toBe(true);
+        // ff：集成提交就是候选提交
+        expect(events[1].payload.integrationCommit).toBe(CHANGE);
+        expect(git.calls).toContain(`push origin ${CHANGE}:refs/heads/master`);
+        // 身份回显 + passed
+        expect(events[0].payload).toMatchObject({
+            candidateId: 'cnd_x1',
+            baseCommit: BASE,
+            changeCommit: CHANGE,
+            diffManifestSha256: SHA,
+            deploymentRequired: false,
+        });
+        expect(events[2].payload.passed).toBe(true);
+        expect(events[4].payload.passed).toBe(true);
+        expect(events[4].payload.integrationCommit).toBe(CHANGE);
+    });
+
+    it('base 前移：cherry-pick 重放，集成提交是新头', async () => {
+        const moved = 'f'.repeat(40);
+        const git = fakeGit({ originHead: moved });
+        const { pipeline, events, controlPlane } = makePipeline({ git });
+        const result = await pipeline.deliver({ claim: claimFor(), controlPlane });
+
+        expect(result.outcome).toBe('completed');
+        expect(
+            git.calls.some((c) => c.startsWith(`checkout -B feedback/release/rel_x1 ${moved}`))
+        ).toBe(true);
+        expect(git.calls.some((c) => c.startsWith(`cherry-pick ${CHANGE}`))).toBe(true);
+        expect(events[1].payload.integrationCommit).toBe(PICKED);
+        expect(git.calls).toContain(`push origin ${PICKED}:refs/heads/master`);
+    });
+
+    it('cherry-pick 冲突：abort 后以 review_required 失败——服务端会产生 HumanAction', async () => {
+        const git = fakeGit({ originHead: 'f'.repeat(40), cherryPickFails: true });
+        const { pipeline, events, controlPlane } = makePipeline({ git });
+        const result = await pipeline.deliver({ claim: claimFor(), controlPlane });
+
+        expect(result.outcome).toBe('failed');
+        expect(result.errorCode).toBe('review_required');
+        expect(git.calls).toContain('cherry-pick --abort');
+        expect(events.at(-1).type).toBe('release.failed');
+        expect(events.at(-1).payload.errorCode).toBe('review_required');
+        expect(git.calls.every((c) => !c.startsWith('push'))).toBe(true);
+    });
+
+    it('集成验证失败：verification_completed 如实 passed=false，release.failed，不 push', async () => {
+        const { pipeline, events, controlPlane, git } = makePipeline({
+            verification: {
+                passed: false,
+                failedStep: 'targetedTests',
+                failureOutput: '2 failed',
+                report: {
+                    targetedTests: { command: 'npm test', required: true, passed: false },
+                    build: { command: 'npm run build', required: true, passed: false },
+                    playwright: { command: 'npm run test:e2e', required: false, passed: true },
+                },
+            },
+        });
+        const result = await pipeline.deliver({ claim: claimFor(), controlPlane });
+
+        expect(result.outcome).toBe('failed');
+        expect(result.errorCode).toBe('integration_verification_failed');
+        const verificationEvent = events.find(
+            (e) => e.type === 'integration.verification_completed'
+        );
+        expect(verificationEvent.payload.passed).toBe(false);
+        expect(events.at(-1).type).toBe('release.failed');
+        expect(git.calls.every((c) => !c.startsWith('push'))).toBe(true);
+    });
+
+    it('push 被拒：default_branch_drift（可恢复失败，Release 状态由服务端保持不变）', async () => {
+        const git = fakeGit({ originHead: BASE, pushFails: true });
+        const { pipeline, events, controlPlane } = makePipeline({ git });
+        const result = await pipeline.deliver({ claim: claimFor(), controlPlane });
+
+        expect(result.outcome).toBe('failed');
+        expect(result.errorCode).toBe('default_branch_drift');
+        expect(events.at(-1).type).toBe('release.failed');
+        expect(events.at(-1).payload.errorCode).toBe('default_branch_drift');
+    });
+});
+
+describe('[SCN-FWB-033] pages 交付（deploymentRequired=true）', () => {
+    const pagesClaim = () =>
+        claimFor({
+            changedFiles: ['src/app.js'],
+            deploymentRequired: true,
+            deploymentTarget: 'pages',
+            smokeUrls: ['/'],
+        });
+    const DEPLOYMENT_ID = '12345678-1234-4234-9234-123456789abc';
+
+    it('部署→冒烟→完成：deployedCommit 恒等于集成提交，冒烟检查逐路径断言', async () => {
+        const { pipeline, events, commands, controlPlane } = makePipeline({
+            commandResults: {},
+            fetchResponses: [{ status: 200 }],
+        });
+        const result = await pipeline.deliver({
+            claim: pagesClaim(),
+            controlPlane,
+            resolveDeploymentIdImpl: async () => DEPLOYMENT_ID,
+        });
+
+        expect(result.outcome).toBe('completed');
+        expect(events.map((e) => e.type)).toEqual([
+            'integration.started',
+            'integration.rebased',
+            'integration.verification_completed',
+            'integration.merged',
+            'deployment.started',
+            'deployment.completed',
+            'smoke.completed',
+            'release.completed',
+        ]);
+        expect(commands.some((c) => c.includes('pages deploy'))).toBe(true);
+        const deployment = events.find((e) => e.type === 'deployment.completed');
+        expect(deployment.payload).toMatchObject({
+            deploymentTarget: 'pages',
+            deploymentId: DEPLOYMENT_ID,
+            deployedCommit: CHANGE,
+        });
+        const smoke = events.find((e) => e.type === 'smoke.completed');
+        expect(smoke.payload.passed).toBe(true);
+        expect(smoke.payload.checks).toEqual([{ path: '/', status: 200, assertion: 'status_2xx' }]);
+        expect(smoke.payload.deploymentId).toBe(DEPLOYMENT_ID);
+    });
+
+    it('冒烟失败：smoke.completed 如实 passed=false，随后 release.failed', async () => {
+        const { pipeline, events, controlPlane } = makePipeline({
+            fetchResponses: [{ status: 500 }],
+        });
+        const result = await pipeline.deliver({
+            claim: pagesClaim(),
+            controlPlane,
+            resolveDeploymentIdImpl: async () => DEPLOYMENT_ID,
+        });
+
+        expect(result.outcome).toBe('failed');
+        expect(result.errorCode).toBe('smoke_failed');
+        const smoke = events.find((e) => e.type === 'smoke.completed');
+        expect(smoke.payload.passed).toBe(false);
+        expect(events.at(-1).type).toBe('release.failed');
+    });
+
+    it('/api/feedback/issues 的 401 是合格冒烟——受保护端点要求认证正是预期行为', async () => {
+        const { pipeline, events, controlPlane } = makePipeline({
+            fetchResponses: [{ status: 200 }, { status: 401 }],
+        });
+        const result = await pipeline.deliver({
+            claim: claimFor({
+                changedFiles: ['workers/share-worker.js'],
+                deploymentRequired: true,
+                deploymentTarget: 'worker',
+                smokeUrls: ['/feedback', '/api/feedback/issues'],
+            }),
+            controlPlane,
+            resolveDeploymentIdImpl: async () => DEPLOYMENT_ID,
+        });
+
+        expect(result.outcome).toBe('completed');
+        const smoke = events.find((e) => e.type === 'smoke.completed');
+        expect(smoke.payload.checks).toEqual([
+            { path: '/feedback', status: 200, assertion: 'status_2xx' },
+            { path: '/api/feedback/issues', status: 401, assertion: 'protected_auth_required' },
+        ]);
+    });
+});

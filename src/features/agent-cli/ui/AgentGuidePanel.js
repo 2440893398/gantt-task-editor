@@ -285,11 +285,6 @@ function shouldRunParsedAsOperation(app, parsed) {
     return Boolean(getManifestCommand(app, parsed.command)?.mutating);
 }
 
-function shouldRunInputAsOperation(app, input) {
-    const parsed = parseRunnerPayload(input);
-    return parsed.ok && shouldRunParsedAsOperation(app, parsed);
-}
-
 function delay(ms) {
     return new Promise((resolve) => {
         setTimeout(resolve, ms);
@@ -418,8 +413,7 @@ async function runOperationCommand(app, parsed, input, callbacks = {}) {
     return app.operation.result({ id: operationId });
 }
 
-async function runGuideCommand(app, input, callbacks = {}) {
-    const parsed = parseRunnerPayload(input);
+async function runGuideCommand(app, input, callbacks = {}, parsed = parseRunnerPayload(input)) {
     if (!parsed.ok) {
         return parsed;
     }
@@ -1102,7 +1096,8 @@ export function initAgentGuideUi({ app, readOnly = false } = {}) {
             cancelRequested: false,
         };
         const input = commandInput.value;
-        const usesOperation = shouldRunInputAsOperation(app, input);
+        const parsedInput = parseRunnerPayload(input);
+        const usesOperation = parsedInput.ok && shouldRunParsedAsOperation(app, parsedInput);
         const stopStatusUpdates = usesOperation
             ? () => undefined
             : startRunnerStatusUpdates({
@@ -1120,21 +1115,26 @@ export function initAgentGuideUi({ app, readOnly = false } = {}) {
         }
 
         try {
-            const result = await runGuideCommand(app, input, {
-                onOperationStatus: (status) => {
-                    if (status.operationId) {
-                        activeRunnerOperation.operationId = status.operationId;
-                    }
-                    if (
-                        cancelButton &&
-                        !activeRunnerOperation.cancelRequested &&
-                        status.operationId
-                    ) {
-                        cancelButton.disabled = isTerminalOperationStatus(status.status);
-                    }
-                    runOutput.textContent = stringifyRunnerResult(status);
+            const result = await runGuideCommand(
+                app,
+                input,
+                {
+                    onOperationStatus: (status) => {
+                        if (status.operationId) {
+                            activeRunnerOperation.operationId = status.operationId;
+                        }
+                        if (
+                            cancelButton &&
+                            !activeRunnerOperation.cancelRequested &&
+                            status.operationId
+                        ) {
+                            cancelButton.disabled = isTerminalOperationStatus(status.status);
+                        }
+                        runOutput.textContent = stringifyRunnerResult(status);
+                    },
                 },
-            });
+                parsedInput
+            );
             runOutput.textContent = stringifyRunnerResult(result);
         } finally {
             stopStatusUpdates();

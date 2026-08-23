@@ -1,5 +1,10 @@
 # DESIGN SPEC · 面向 Agent 的命令层（Agent-Operable Command Layer）v1
 
+> ⚠️ **命令清单与协议细节已被 v2 取代**：当前命令面（form.\*/project.\*/calendar.\*/operation.\* 等）
+> 与渐进披露协议以 [progressive-disclosure-v2-design.md](../../src/features/agent-cli/progressive-disclosure-v2-design.md)
+> 为准；本文档保留作为架构立论（AX 设计、单一注册表、事务/settle/rev 语义）的权威来源。
+> §6 的 v1 命令清单（`task.today`、`state.snapshot` level 等）与现实现不一致，勿按此编码。
+
 - 日期：2026-06-28
 - 状态：已定稿（待实现计划）
 - 适用范围：`gantt-task-editor`（纯前端 + 少量后端）

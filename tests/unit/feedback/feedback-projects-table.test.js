@@ -88,6 +88,33 @@ describe('[SCN-FWB-033] 项目配置入表', () => {
         expect(row.project_id).toBe('proj_gantt');
     });
 
+    it('[SCN-FWB-033] 0008：default_adapter 列存在，默认与种子行均为 actions', () => {
+        // V3 缺口 #0：没有这一列时，全仓没有任何代码能造出 runner_type='executor' 的
+        // Run，lease 端点永远轮询到空；计划 §5「切回 actions 即可回滚」也无从谈起。
+        const db = applyMigrations();
+        const columns = db
+            .prepare('PRAGMA table_info(feedback_projects)')
+            .all()
+            .map((column) => column.name);
+        expect(columns).toContain('default_adapter');
+
+        const seed = db
+            .prepare("SELECT default_adapter FROM feedback_projects WHERE id = 'proj_gantt'")
+            .get();
+        // 种子行保持 actions：迁移本身行为零变化，切 executor 是之后改一行数据的事。
+        expect(seed.default_adapter).toBe('actions');
+
+        // SQLite 的 ADD COLUMN 加不了 CHECK，默认值是唯一的 schema 层保证。
+        db.prepare('INSERT INTO feedback_projects (id, repo) VALUES (?, ?)').run(
+            'proj_other',
+            'acme/other-repo'
+        );
+        const inserted = db
+            .prepare("SELECT default_adapter FROM feedback_projects WHERE id = 'proj_other'")
+            .get();
+        expect(inserted.default_adapter).toBe('actions');
+    });
+
     it('[SCN-FWB-033] is_self 与 enabled 只接受 0/1，同一 repo 不得建两行', () => {
         const db = applyMigrations();
         expect(() =>

@@ -781,6 +781,44 @@ describe('agent dispatch write commands', () => {
         expect(getProjectRev(projectId)).toBe(1);
     });
 
+    it('rejects reuse of an idempotencyKey with different arguments', async () => {
+        const command = registerWriteCommand();
+
+        const first = await dispatch(
+            'task.create',
+            { name: 'Created', idempotencyKey: 'reuse-1' },
+            { projectId, gantt: {} }
+        );
+        expect(first.ok).toBe(true);
+
+        const mismatched = await dispatch(
+            'task.create',
+            { name: 'Renamed', idempotencyKey: 'reuse-1' },
+            { projectId, gantt: {} }
+        );
+
+        expect(mismatched).toMatchObject({
+            ok: false,
+            error: {
+                code: 'CONFLICT',
+                message: 'idempotencyKey was already used with different arguments.',
+            },
+            rev: 1,
+        });
+        // The mismatched retry neither committed nor bumped the revision.
+        expect(command.commit).toHaveBeenCalledTimes(1);
+        expect(getProjectRev(projectId)).toBe(1);
+
+        // A faithful retry with the original arguments still replays the cache.
+        const replay = await dispatch(
+            'task.create',
+            { name: 'Created', idempotencyKey: 'reuse-1' },
+            { projectId, gantt: {} }
+        );
+        expect(replay).toEqual(first);
+        expect(command.commit).toHaveBeenCalledTimes(1);
+    });
+
     it('returns conflict before planning task updates when ifRev mismatches', async () => {
         registerTaskCommands();
         const gantt = createGantt([]);

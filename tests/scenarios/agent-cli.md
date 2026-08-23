@@ -3,8 +3,9 @@
 域缩写：`AGT`。机制规范见 [README.md](./README.md)。
 
 范围：外部 Agent 通过 `window.app` 命令层完成业务操作的端到端行为，包括入口发现、
-渐进披露、批量导入、排期调整、错误恢复、会话与安全边界。不含内置 AI 对话入口
-（另建 `ai-chat.md`），不含命令层内部实现细节（由 `tests/unit/agent-cli/` 覆盖）。
+渐进披露、批量导入、排期调整、错误恢复、会话与安全边界；以及同一命令层的
+WebMCP 出口（`document.modelContext.registerTool`，SCN-AGT-028+）。不含内置 AI
+对话入口（另建 `ai-chat.md`），不含命令层内部实现细节（由 `tests/unit/agent-cli/` 覆盖）。
 
 ## 场景表
 
@@ -25,7 +26,7 @@
 | SCN-AGT-013 | P1 | 项目隔离：`project.create` 后新项目不泄漏旧项目任务，直链 URL 可切换 | 已由 [tests/e2e/agent-cli.spec.js](../e2e/agent-cli.spec.js) 覆盖（project.create 用例） | todo |
 | SCN-AGT-014 | P1 | 并发防护：携带过期 `ifRev` 的写操作被拒绝 | 返回 rev 冲突错误；数据未变更 | todo |
 | SCN-AGT-015 | P1 | schema 漂移防护：携带过期 `schemaRev` 的 batch 被拒绝并报 `SCHEMA_CONFLICT` | 错误码 `SCHEMA_CONFLICT`，附 current 值 | todo |
-| SCN-AGT-016 | P2 | 幂等重试：同一 `idempotencyKey` 重复提交不产生重复任务 | 第二次提交不增加任务数 | todo |
+| SCN-AGT-016 | P2 | 幂等重试：同一 `idempotencyKey` 重复提交不产生重复任务；同键换参数视为 Agent 误用被拒 | 同键同参第二次提交不增加任务数、返回缓存结果；同键不同参返回 `CONFLICT`（direct 与 operation.start 两条路径一致）；幂等窗口有限（缓存淘汰后重放会重新执行）为已知约束 | todo |
 | SCN-AGT-017 | P1 | 日期语义一致：task.create 传含端点 end_date 与传 duration 等价 | 两种写法产生相同 start/end/duration | active |
 | SCN-AGT-018 | P1 | 导出往返：state.export(json) 的数据能完整描述当前业务状态 | 导出内容含全部任务与 parent 字段，与 snapshot 一致 | todo |
 | SCN-AGT-019 | P2 | 大批量导入：100+ 任务 batch 在超时阈值内完成且状态正确 | 完成时间 < 30s；taskCount 精确 | todo |
@@ -37,6 +38,12 @@
 | SCN-AGT-025 | P1 | `schedule.setDates` 用任意两个排期字段补齐第三个，且预演准确披露派生变更 | 无开始日期任务传 `end+duration` 后生成 start；仅传 duration 时 dry-run diff 同时包含派生的 end，真实提交与预演一致 | active |
 | SCN-AGT-026 | P1 | 小数日工期在 FS 依赖重排后保持精度 | 下游 duration=0.5 时，重排后 start/end 相差 12 小时且 duration 仍为 0.5，不得坍缩为零长度 | active |
 | SCN-AGT-027 | P0 | 层级与依赖组合循环防护：父子/祖孙任务之间不得创建依赖 | UI 连线与 `link.add` 均拒绝祖先与后代之间的依赖，返回可恢复错误；链接数和任务日期不变，页面保持响应且不持续重绘 | active |
+| SCN-AGT-028 | P0 | WebMCP 出口注册：支持 `modelContext` 的环境中，命令层全量以 MCP 工具形态注册，与 manifest 命令集一一对应 | `registerTool` 调用数 = manifest 命令数（含 batch/operation 合成命令）；名称按 `task.create`→`task_create` 映射且可逆；每个工具 `inputSchema` 与 `help(命令).params` 深度相等 | todo |
+| SCN-AGT-029 | P0 | WebMCP 调用等价性：经 WebMCP 工具执行的读写与经 `window.app` 执行结果等价（同一 dispatch 管线） | 经工具 execute 建任务后 `task.get` 业务状态与 window.app 路径深度相等；rev 恰好 +1；同样的非法参数返回同一错误码 | todo |
+| SCN-AGT-030 | P0 | WebMCP 结果信封：成功与失败都返回合法 CallToolResult，错误不丢结构化信息 | 成功时 `content[0].text` 可 JSON.parse 出 `ok:true` 与 rev；失败时 `isError:true` 且 text 内保留错误 code 与 `nextAction`；execute 不抛裸异常 | todo |
+| SCN-AGT-031 | P0 | WebMCP 零暴露边界：浏览器无 `modelContext` 时静默跳过且主通道不受影响；`?agentApi=off` 时与 window.app 一样完全不注册 | 无 modelContext 时初始化不抛错、`window.app` 功能完整；`agentApi=off` 时 `registerTool` 零调用 | todo |
+| SCN-AGT-032 | P1 | WebMCP 只读模式：`?agentReadOnly=1` 下仅注册非 mutating 工具，写能力对 WebMCP Agent 不可见 | 注册的工具集中不含任何 `mutating:true` 命令；读工具（如 `state_snapshot`）执行返回 ok | todo |
+| SCN-AGT-033 | P2 | WebMCP 渐进披露指引：写工具 description 携带先行读命令指引，Agent 无 `help()` 也能走对顺序 | `task_create` 工具 description 含调用 `form_describe` 取 schemaRev 的指引；指引内容与 `help('task.create').discovery` 一致 | todo |
 
 ## 已知缺陷（全部已于 2026-07-15 修复；守望标记已摘除，对应测试转为回归保护）
 
@@ -69,3 +76,5 @@
 | 2026-07-16 | 修复冲击面全量验证：stash 前后各跑一次全量 e2e 做集合对比。基线（改动前）已有 120 个存量失败；本次改动净效果 = 修好 6 个（Excel 导出数据/层级等）+ 引入 0 个回归（唯一新增失败是断言旧 work_time 配置的测试，已按拍板语义更新；另一条 gantt-ux TC-011 复跑通过属偶发） | results-baseline.json / results-after-fix.json 集合对比；114 条存量失败与本次无关，已另行立项 |
 | 2026-07-17 | 新增 SCN-AGT-025/026，覆盖排期字段补齐、dry-run 派生 diff 与小数日依赖重排 | 未提交改动独立审查发现计划/提交不一致、无 start 早退及 `Date#setDate` 截断小数日 |
 | 2026-07-27 | 新增 SCN-AGT-027，覆盖父子/祖孙任务间依赖的隐式调度循环 | 反馈 `feedback:1785133854652:wmrdjik6e1` 的 rrweb 证据显示父任务→子任务 FS 依赖导致日期跨异常年份循环漂移，并在 0.76 秒内触发 60 次甘特图重建 |
+| 2026-08-19 | 协议加固（agent-cli 功能评审落地）：① 幂等键同键不同参改为显式 `CONFLICT`（此前静默返回缓存结果，Agent 会误认新写入成功），SCN-AGT-016 验证点扩展；② operation 层幂等映射随历史淘汰清理，幂等窗口有限入注释成为已知约束（与 dispatch 层对齐）；③ `session.log` 按设计 §7.7 补记读命令（此前只记写，回放还原不出决策轨迹）；④ 注册期断言 params schema 只用 guards 已实现的关键字，杜绝「发布了但不校验」漂移；⑤ exec 引号内支持 `\"`/`\\` 转义。均为可自行推断的协议卫生项，未涉契约黄金答案 | 2026-08-19 功能评审发现 1/3/4/5/7；无例外队列项 |
+| 2026-08-20 | 新增 SCN-AGT-028~033，覆盖 WebMCP（`document.modelContext`）出口：注册映射、调用等价性、CallToolResult 信封、零暴露边界、只读过滤、披露指引。可自行推断的决策一并定下：① 复用现有 `agentApi`/`agentReadOnly` 开关，不新增开关；② readOnly 下采用「不注册 mutating 工具」而非「注册后拒绝」；③ 渐进披露经 `form_describe` 等读工具保留，注册期不内联动态 schema、无需重注册；④ WebMCP 标准仍在实验期（Chrome 145+ flag），自动化验证用 `addInitScript` 桩 `modelContext` 捕获注册与调用，真实浏览器走查暂列人工检查，标准定稿后再升级。无新增例外队列项 | Cloudflare WebMCP 调研（InfoQ 2026-08 / blog.cloudflare.com/webmcp）；实现计划见 `src/features/agent-cli/webmcp-adapter-implementation-plan.md` |

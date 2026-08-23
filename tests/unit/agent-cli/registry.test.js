@@ -49,6 +49,49 @@ describe('agent command registry', () => {
     it('returns null for unknown commands', () => {
         expect(getCommand('task.missing')).toBeNull();
     });
+
+    it('rejects params schemas using keywords guards do not enforce', () => {
+        expect(() =>
+            defineCommand({
+                name: 'task.bad',
+                summary: 'Unenforced keyword',
+                params: {
+                    type: 'object',
+                    properties: {
+                        limit: { type: 'integer', maximum: 100 },
+                    },
+                },
+            })
+        ).toThrow('unsupported schema keyword "maximum" at params.properties.limit');
+    });
+
+    it('accepts nested params schemas built from enforced keywords only', () => {
+        expect(() =>
+            defineCommand({
+                name: 'task.good',
+                summary: 'Enforced keywords only',
+                params: {
+                    type: 'object',
+                    properties: {
+                        id: { type: 'integer', 'x-batch-ref': true, minimum: 1 },
+                        rows: {
+                            type: 'array',
+                            items: {
+                                type: 'object',
+                                properties: {
+                                    name: { type: 'string', description: 'Row name' },
+                                },
+                                required: ['name'],
+                                additionalProperties: false,
+                            },
+                        },
+                    },
+                    required: ['id'],
+                    additionalProperties: false,
+                },
+            })
+        ).not.toThrow();
+    });
 });
 
 describe('agent command manifest', () => {

@@ -65,6 +65,31 @@ const FEEDBACK_PROVIDER_ACTIONS = {
     codex: 'openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56',
     claude: 'anthropics/claude-code-action@be7b93b1907a4abad570368f3c74b6fe3807510b',
 };
+// executor 路径上真正跑活的是本地执行器里的 Adapter，不是 GitHub Action。
+// 管理端展示的执行器标识必须跟着执行路径走，否则页面在说一条它根本不走的通路。
+const FEEDBACK_EXECUTOR_ADAPTER_IDS = {
+    codex: 'executor:codex',
+    claude: 'executor:claude-code',
+};
+// 执行器按**引擎**命名自己的能力（`FEEDBACK_EXECUTOR_PROVIDER`：`claude-code` / `codex`，
+// 见 packages/feedback-platform/executor/main.js 的 lease payload），Worker 按 **Run.provider**
+// 命名（`claude` / `codex`）。两套词表不对齐，claude 工单就永远等不到「有能力的执行器」——
+// 2026-08-22 生产库里在线执行器上报的正是 `["claude-code"]`。
+const FEEDBACK_EXECUTOR_PROVIDER_ALIASES = {
+    codex: ['codex', 'executor:codex'],
+    claude: ['claude', 'claude-code', 'executor:claude-code'],
+};
+
+function feedbackExecutorCoversProvider(capabilityProviders, provider) {
+    const aliases = FEEDBACK_EXECUTOR_PROVIDER_ALIASES[provider] || [provider];
+    return capabilityProviders.some((declared) =>
+        aliases.includes(
+            String(declared || '')
+                .trim()
+                .toLowerCase()
+        )
+    );
+}
 const FEEDBACK_MENTION_ROUTES = {
     '@codex-agent': 'codex',
     '@claude-agent': 'claude',
@@ -175,6 +200,11 @@ const FEEDBACK_RUN_TOKEN_TTL_SECONDS = 4 * 60 * 60;
 const FEEDBACK_EXECUTOR_DEFAULT_LEASE_SECONDS = 60;
 const FEEDBACK_EXECUTOR_MIN_LEASE_SECONDS = 15;
 const FEEDBACK_EXECUTOR_MAX_LEASE_SECONDS = 5 * 60;
+// §7.4 判执行器是否活着的时间窗。执行器空闲时每 15s 领一次租约、跑活时每 20s 心跳，
+// 两者都会刷新 `feedback_executors.last_heartbeat_at`；租约最长也只能 5 分钟不心跳，
+// 超过就会被回收。所以「5 分钟内有心跳」是控制面能给出的最宽松的存活证据。
+// 只看 status='online' 不够：执行器在没持租约时死掉，没有任何路径会把它翻成 offline。
+const FEEDBACK_EXECUTOR_HEALTH_WINDOW_MS = FEEDBACK_EXECUTOR_MAX_LEASE_SECONDS * 1000;
 const FEEDBACK_EXECUTOR_APPROVAL_KINDS = new Set([
     'file_change',
     'command_execution',
@@ -575,10 +605,14 @@ export class CloudDocDurableObject {
     }
 }
 
+// Workflows 的 waitForEvent 超时在生产上抛的是 `Execution timed out after
+// 1800000ms`——「timed out」带空格，不含「timeout」这个子串。只匹配后者会让这里
+// 返回 false，异常被原样抛出打死整个实例，紧随其后的 recordRunTimeout 永远不执行，
+// D1 里的 Run 与 Workflow 就永久停在 running（2026-08-15 的两条僵尸 Run 即此因）。
+// 两种措辞都要认。
 function isFeedbackWorkflowTimeout(error) {
-    return String(error?.message || error)
-        .toLowerCase()
-        .includes('timeout');
+    const message = String(error?.message || error).toLowerCase();
+    return message.includes('timeout') || message.includes('timed out');
 }
 
 export class FeedbackWorkflow extends WorkflowEntrypoint {
@@ -639,6 +673,15 @@ export class FeedbackWorkflow extends WorkflowEntrypoint {
                     ...started,
                     delivery: await this.deliverConfiguredEvent(step, triggerEvent, stepSuffix),
                     run,
+                };
+            } else if (run?.runId && run.runnerType === 'executor') {
+                // SCN-FWB-033（V3 缺口 #0）：executor Run 不向 GitHub 派发——同一条
+                // Run 被两条执行路径认领就是双重执行。它保持 status='created'，由
+                // /api/executor/lease 出站领取；领不到时按既有超时收口为 timed_out。
+                latestResult = {
+                    ...started,
+                    delivery: await this.deliverConfiguredEvent(step, triggerEvent, stepSuffix),
+                    run: { runId: run.runId, dispatched: false, runnerType: run.runnerType },
                 };
             } else if (run?.runId) {
                 // §13.1 step 8. Dispatch failure is recorded on the Run rather than
@@ -3339,35 +3382,31 @@ function normalizeFeedbackAutoDeliverSettings(raw) {
 }
 
 /**
- * §19.5: enabling autonomous delivery requires GitHub merge, deployment and
- * production smoke prerequisites to be present. These are existence checks on
+ * §19.5: enabling autonomous delivery requires the prerequisites of **the path
+ * that will actually run** to be present. These are existence checks on
  * server-held configuration — deliberately not a claim that a deploy succeeded.
+ *
+ * executor 路径上集成、push 与部署都由执行器用它自己那份凭据完成（release-pipeline.js），
+ * Worker 侧的 `FEEDBACK_GITHUB_TOKEN` / `FEEDBACK_MERGE_TOKEN` / 部署凭据既不被读到，也
+ * 证明不了执行器那边配好了——把它们当准入条件，等于拿一条不走的通路发通行证。所以这里
+ * 换成 Worker 真能核验的事实：目标项目数据完整、控制面 bearer 在、执行器此刻在线。
+ *
+ * Provider health is deliberately absent here: §7.4 re-checks it per Run for
+ * the provider that Run actually uses, which is stricter than a snapshot.
  */
 async function evaluateFeedbackAutoDeliverPreflight(env) {
     const has = (name) => Boolean(String(env[name] || '').trim());
     // §M2：目标仓库来自 `feedback_projects`，不再是环境变量。
     const project = await resolveFeedbackProject(env);
+    const onExecutor = project.defaultAdapter === 'executor';
 
-    // Provider health is deliberately absent here: §7.4 re-checks it per Run for
-    // the provider that Run actually uses, which is stricter than a snapshot.
-    const checks = [
-        {
-            id: 'github_dispatch',
-            label: 'GitHub 派发凭据',
-            ok: Boolean(project.repo) && has('FEEDBACK_GITHUB_TOKEN'),
-            reason: 'feedback_projects 无启用项目，或缺少 FEEDBACK_GITHUB_TOKEN',
-        },
+    // 两条路径共有：回调目标、Release 认领密钥、生产冒烟目标。它们跟执行引擎无关。
+    const sharedChecks = [
         {
             id: 'callback_origin',
             label: 'Callback origin',
             ok: has('FEEDBACK_CALLBACK_ORIGIN'),
             reason: '缺少 FEEDBACK_CALLBACK_ORIGIN',
-        },
-        {
-            id: 'merge_credentials',
-            label: 'GitHub merge 凭据',
-            ok: has('FEEDBACK_MERGE_TOKEN'),
-            reason: '缺少 FEEDBACK_MERGE_TOKEN，无法完成干净集成',
         },
         {
             id: 'release_token',
@@ -3376,21 +3415,66 @@ async function evaluateFeedbackAutoDeliverPreflight(env) {
             reason: '缺少 FEEDBACK_RELEASE_TOKEN_SECRET',
         },
         {
-            id: 'deployment_credentials',
-            label: 'Worker/Pages 部署凭据',
-            ok: has('FEEDBACK_DEPLOY_TOKEN') || has('CLOUDFLARE_API_TOKEN'),
-            reason: '缺少 FEEDBACK_DEPLOY_TOKEN 或 CLOUDFLARE_API_TOKEN',
-        },
-        {
             id: 'production_smoke',
             label: '生产 smoke 目标',
             ok: has('FEEDBACK_PRODUCTION_ORIGIN') && has('FEEDBACK_PRODUCTION_API_URL'),
             reason: '缺少 FEEDBACK_PRODUCTION_ORIGIN 或 FEEDBACK_PRODUCTION_API_URL',
         },
-    ].map((check) => ({ ...check, reason: check.ok ? '' : check.reason }));
+    ];
+
+    const pathChecks = onExecutor
+        ? [
+              {
+                  id: 'project_delivery_config',
+                  label: '项目交付配置',
+                  ok:
+                      Boolean(project.repo) &&
+                      Boolean(project.defaultBranch) &&
+                      Object.keys(project.deployConfig || {}).length > 0,
+                  reason: 'feedback_projects 缺 repo、default_branch 或 deploy_config_json',
+              },
+              {
+                  id: 'executor_control_plane',
+                  label: '执行器控制面凭据',
+                  ok: has('FEEDBACK_EXECUTOR_TOKEN'),
+                  reason: '缺少 FEEDBACK_EXECUTOR_TOKEN，执行器领不到活',
+              },
+              {
+                  id: 'executor_online',
+                  label: '执行器在线',
+                  ok: (await readFeedbackExecutorHealth(env)).some((executor) => executor.live),
+                  reason: '没有心跳新鲜的在线执行器，工单会停在等待领取',
+              },
+          ]
+        : [
+              {
+                  id: 'github_dispatch',
+                  label: 'GitHub 派发凭据',
+                  ok: Boolean(project.repo) && has('FEEDBACK_GITHUB_TOKEN'),
+                  reason: 'feedback_projects 无启用项目，或缺少 FEEDBACK_GITHUB_TOKEN',
+              },
+              {
+                  id: 'merge_credentials',
+                  label: 'GitHub merge 凭据',
+                  ok: has('FEEDBACK_MERGE_TOKEN'),
+                  reason: '缺少 FEEDBACK_MERGE_TOKEN，无法完成干净集成',
+              },
+              {
+                  id: 'deployment_credentials',
+                  label: 'Worker/Pages 部署凭据',
+                  ok: has('FEEDBACK_DEPLOY_TOKEN') || has('CLOUDFLARE_API_TOKEN'),
+                  reason: '缺少 FEEDBACK_DEPLOY_TOKEN 或 CLOUDFLARE_API_TOKEN',
+              },
+          ];
+
+    const checks = [...pathChecks, ...sharedChecks].map((check) => ({
+        ...check,
+        reason: check.ok ? '' : check.reason,
+    }));
 
     return {
         ok: checks.every((check) => check.ok),
+        adapter: onExecutor ? 'executor' : 'actions',
         checkedAt: new Date().toISOString(),
         checks,
     };
@@ -3408,19 +3492,34 @@ function normalizeFeedbackSmokeResult(raw, provider) {
 
     const ok = raw.ok === true;
     const status = raw.status === 'running' ? 'running' : ok ? 'succeeded' : 'failed';
+    // §19.5 的测试历史现在有两类记录：Action 冒烟（GitHub 通路）与执行器探测（控制面
+    // 心跳）。不分开存，就会有人拿 Action commit 去解释一条根本没跑过 Action 的记录。
+    const mode = raw.mode === 'executor_probe' ? 'executor_probe' : 'action_smoke';
+    const probe = mode === 'executor_probe';
     return {
         ok,
         status,
+        mode,
         smokeId: limitText(raw.smokeId, 60),
         provider,
-        action: limitText(raw.action, 160) || FEEDBACK_PROVIDER_ACTIONS[provider],
-        actionCommit: limitText(raw.actionCommit, 80),
-        model: limitText(raw.model, 80),
+        action:
+            limitText(raw.action, 160) ||
+            (probe ? FEEDBACK_EXECUTOR_ADAPTER_IDS[provider] : FEEDBACK_PROVIDER_ACTIONS[provider]),
+        actionCommit: probe ? '' : limitText(raw.actionCommit, 80),
+        executorId: probe ? limitText(raw.executorId, 120) : '',
+        lastHeartbeatAt: probe ? limitText(raw.lastHeartbeatAt, 40) : '',
+        model: probe ? '' : limitText(raw.model, 80),
         endpointMode: raw.endpointMode === 'relay' ? 'relay' : 'official',
         testedAt: limitText(raw.testedAt, 40),
         completedAt: limitText(raw.completedAt, 40),
-        errorCode: ok || status === 'running' ? '' : normalizeFeedbackSmokeErrorCode(raw.errorCode),
-        runUrl: limitText(raw.runUrl, 300),
+        errorCode:
+            ok || status === 'running'
+                ? ''
+                : normalizeFeedbackSmokeErrorCode(
+                      raw.errorCode,
+                      probe ? 'EXECUTOR_PROBE_FAILED' : 'ACTION_SMOKE_FAILED'
+                  ),
+        runUrl: probe ? '' : limitText(raw.runUrl, 300),
     };
 }
 
@@ -3517,8 +3616,59 @@ function serializeAutomationSettings(env, stored) {
     };
 }
 
-function serializeRunnerSettings(env, stored) {
+/**
+ * §19.5 管理端必须描述**当前执行路径**，而不是只会描述 Actions。
+ * `default_adapter='executor'` 的项目不派 Action：再展示 Action ref、GitHub-hosted 运行器
+ * 和 Action 冒烟得来的连接状态，就是让人照着一条不存在的通路去排障（SCN-FWB-016/033）。
+ */
+async function serializeRunnerSettings(env, stored) {
     const settings = stored.settings;
+    const project = await resolveFeedbackProject(env);
+    const onExecutor = project.defaultAdapter === 'executor';
+    const executors = onExecutor ? await readFeedbackExecutorHealth(env) : [];
+    const serializeProvider = (id, label, mention, secretRef) => {
+        const providerSettings = settings.providers[id];
+        const liveExecutor = executors.find(
+            (executor) => executor.live && feedbackExecutorCoversProvider(executor.providers, id)
+        );
+        const knownExecutor = executors.find((executor) =>
+            feedbackExecutorCoversProvider(executor.providers, id)
+        );
+        return {
+            ...providerSettings,
+            id,
+            label,
+            mention,
+            healthSource: onExecutor ? 'executor' : 'action_smoke',
+            action: onExecutor ? FEEDBACK_EXECUTOR_ADAPTER_IDS[id] : FEEDBACK_PROVIDER_ACTIONS[id],
+            // executor 路径不照抄 Action 冒烟留下的 connectionState：那条通路的证据在这里
+            // 既不必要也不充分，照抄会显示一个与 §7.4 判据相反的「已连接」。
+            connectionState: onExecutor
+                ? liveExecutor
+                    ? 'connected'
+                    : knownExecutor
+                      ? 'failed'
+                      : 'unverified'
+                : providerSettings.connectionState,
+            executor: onExecutor
+                ? {
+                      online: Boolean(liveExecutor),
+                      executorId: (liveExecutor || knownExecutor)?.id || '',
+                      lastHeartbeatAt: (liveExecutor || knownExecutor)?.lastHeartbeatAt || '',
+                  }
+                : null,
+            secretScope: onExecutor ? 'executor_host' : 'github',
+            secretRef: onExecutor ? '执行器主机 executor.env' : secretRef,
+            // 执行器的凭据在开发机上，Worker 看不到，也就不该替它宣称「已配置」。
+            secretConfigured: onExecutor
+                ? null
+                : Boolean(
+                      id === 'codex'
+                          ? env.FEEDBACK_CODEX_SMOKE_TOKEN || env.GITHUB_TOKEN
+                          : env.FEEDBACK_CLAUDE_SMOKE_TOKEN || env.GITHUB_TOKEN
+                  ),
+        };
+    };
     return {
         defaultProvider: settings.defaultProvider,
         resumeSameWorkflow: settings.resumeSameWorkflow,
@@ -3538,30 +3688,25 @@ function serializeRunnerSettings(env, stored) {
             },
         },
         providers: {
-            codex: {
-                ...settings.providers.codex,
-                id: 'codex',
-                label: 'Codex',
-                action: FEEDBACK_PROVIDER_ACTIONS.codex,
-                mention: '@codex-agent',
-                secretRef: 'OPENAI_API_KEY',
-                secretConfigured: Boolean(env.FEEDBACK_CODEX_SMOKE_TOKEN || env.GITHUB_TOKEN),
-            },
-            claude: {
-                ...settings.providers.claude,
-                id: 'claude',
-                label: 'Claude Agent',
-                action: FEEDBACK_PROVIDER_ACTIONS.claude,
-                mention: '@claude-agent',
-                secretRef: 'WIF / ANTHROPIC_API_KEY',
-                secretConfigured: Boolean(env.FEEDBACK_CLAUDE_SMOKE_TOKEN || env.GITHUB_TOKEN),
-            },
+            codex: serializeProvider('codex', 'Codex', '@codex-agent', 'OPENAI_API_KEY'),
+            claude: serializeProvider(
+                'claude',
+                'Claude Agent',
+                '@claude-agent',
+                'WIF / ANTHROPIC_API_KEY'
+            ),
         },
         runtime: {
             orchestrator: 'Cloudflare Workflows',
             orchestratorBound: Boolean(env.FEEDBACK_WORKFLOW),
-            runner: 'GitHub-hosted',
-            dispatchConfigured: Boolean(env.FEEDBACK_GITHUB_DISPATCH_URL),
+            adapter: onExecutor ? 'executor' : 'actions',
+            runner: onExecutor ? '本地执行器（拉取式）' : 'GitHub-hosted',
+            // 「分发」在两条路径上问的不是同一件事：Actions 问派发地址配没配，
+            // executor 问此刻有没有执行器在拉活。
+            dispatchConfigured: onExecutor
+                ? executors.some((executor) => executor.live)
+                : Boolean(env.FEEDBACK_GITHUB_DISPATCH_URL),
+            executors,
         },
     };
 }
@@ -4020,12 +4165,16 @@ async function resolveFeedbackDeliveryMode(
               .bind(triggerEventId, issue.id)
               .first()
         : null;
-    const providerHealth = runnerSettings.providers[provider];
+    const project = await resolveFeedbackProject(env);
+    // executor 路径不读 FEEDBACK_GITHUB_TOKEN：那是派发 Action 用的，这条 Run 不派 Action。
+    // 它要的是控制面 bearer——没有它执行器连租约都领不到。
     const credentialsReady = Boolean(
-        (await resolveFeedbackProject(env)).repo &&
-        env.FEEDBACK_GITHUB_TOKEN &&
+        project.repo &&
         env.FEEDBACK_CALLBACK_ORIGIN &&
-        env.FEEDBACK_RELEASE_TOKEN_SECRET
+        env.FEEDBACK_RELEASE_TOKEN_SECRET &&
+        (project.defaultAdapter === 'executor'
+            ? env.FEEDBACK_EXECUTOR_TOKEN
+            : env.FEEDBACK_GITHUB_TOKEN)
     );
     // §19.5: autonomy is switched on by an admin save backed by a passing
     // preflight. The environment flags remain an outer kill switch, so removing
@@ -4043,11 +4192,74 @@ async function resolveFeedbackDeliveryMode(
         issue.scope === 'small' &&
         ['bug', 'improvement'].includes(issue.business_type) &&
         issue.automation_decision === 'auto_fix' &&
-        !approvedDesign &&
-        providerHealth?.connectionState === 'connected' &&
-        providerHealth?.lastTestResult?.ok === true;
+        !approvedDesign;
 
-    return eligible ? 'auto_deliver' : 'candidate_review';
+    // provider 健康单独放到最后：executor 路径要查一次 D1，前面任一条不成立就没必要查。
+    if (!eligible) return 'candidate_review';
+    return (await isFeedbackProviderReadyForDelivery(env, { project, provider, runnerSettings }))
+        ? 'auto_deliver'
+        : 'candidate_review';
+}
+
+/**
+ * §7.4 的 provider 健康必须跟着执行路径走（SCN-FWB-022/033）。
+ *
+ * Action 冒烟只证明 GitHub 通路可用：对 `default_adapter='executor'` 的项目，它既不
+ * 必要（那条 Run 根本不派发 Action）也不充分（执行器在开发机上，冒烟绿着它也可能没
+ * 起）。拿另一条通路的健康证明放行，等于这一条判据没判。
+ */
+async function isFeedbackProviderReadyForDelivery(env, { project, provider, runnerSettings }) {
+    if (project.defaultAdapter === 'executor') {
+        return hasLiveFeedbackExecutorForProvider(env, provider);
+    }
+    const providerHealth = runnerSettings.providers[provider];
+    return (
+        providerHealth?.connectionState === 'connected' &&
+        providerHealth?.lastTestResult?.ok === true
+    );
+}
+
+/**
+ * 控制面能观察到的执行器存活证据：心跳在窗口内 + capabilities 明确覆盖这个 provider。
+ * capabilities 缺 providers 字段时判为不覆盖——执行器进程一直如实上报它能跑的 provider，
+ * 读不到就当它不能跑，比默认放行安全。
+ *
+ * §7.4 的判据、管理端运行环境面板与「检测执行器」共用这一个 `live` 定义：三处各写一遍
+ * 心跳阈值，迟早出现页面显示在线、判据却降级的自相矛盾。
+ */
+async function readFeedbackExecutorHealth(env) {
+    if (!env.FEEDBACK_DB) return [];
+    const cutoff = Date.now() - FEEDBACK_EXECUTOR_HEALTH_WINDOW_MS;
+    const { results } = await env.FEEDBACK_DB.prepare(
+        `SELECT id, status, last_heartbeat_at, capabilities_json
+         FROM feedback_executors
+         ORDER BY last_heartbeat_at DESC
+         LIMIT 50`
+    ).all();
+    return (results || []).map((row) => {
+        let capabilities = {};
+        try {
+            capabilities = JSON.parse(row.capabilities_json || '{}') || {};
+        } catch {
+            capabilities = {};
+        }
+        const heartbeatAt = row.last_heartbeat_at || '';
+        const fresh = heartbeatAt ? Date.parse(heartbeatAt) >= cutoff : false;
+        return {
+            id: row.id,
+            status: row.status,
+            lastHeartbeatAt: heartbeatAt,
+            providers: Array.isArray(capabilities.providers) ? capabilities.providers : [],
+            live: row.status === 'online' && fresh,
+        };
+    });
+}
+
+async function hasLiveFeedbackExecutorForProvider(env, provider) {
+    const executors = await readFeedbackExecutorHealth(env);
+    return executors.some(
+        (executor) => executor.live && feedbackExecutorCoversProvider(executor.providers, provider)
+    );
 }
 
 /**
@@ -4119,9 +4331,12 @@ async function verifyFeedbackRunToken(request, env, { runId, audience }) {
 async function resolveFeedbackProject(env) {
     let row = null;
     try {
+        // SELECT * 而不是点名列：0008 的 default_adapter 在未迁移的库（生产回滚
+        // 窗口、本地 wrangler dev）里不存在，点名会让整条查询失败并把一个已迁到
+        // 0006/0007 的库错误地打回环境变量回落——而那些变量在生产已被删除。
+        // 缺列读到 undefined，按下方 'actions' 回落处理，部署顺序因此不受约束。
         row = await env.FEEDBACK_DB?.prepare(
-            `SELECT id, repo, default_branch, commands_json, deploy_config_json, is_self
-             FROM feedback_projects WHERE enabled = 1 ORDER BY id LIMIT 1`
+            `SELECT * FROM feedback_projects WHERE enabled = 1 ORDER BY id LIMIT 1`
         ).first();
     } catch {
         row = null;
@@ -4135,6 +4350,10 @@ async function resolveFeedbackProject(env) {
             commands: parseStoredJson(row.commands_json, {}),
             deployConfig: parseStoredJson(row.deploy_config_json, {}),
             isSelf: Number(row.is_self) === 1,
+            // ADD COLUMN 加不了 CHECK：取值合法性在这里判定。任何非 'executor'
+            // 的值（含缺列、手滑写错）一律回落 'actions'，绝不把 Run 送进没人
+            // 认领的 executor 队列。
+            defaultAdapter: row.default_adapter === 'executor' ? 'executor' : 'actions',
             source: 'table',
         };
     }
@@ -4146,6 +4365,7 @@ async function resolveFeedbackProject(env) {
         commands: {},
         deployConfig: {},
         isSelf: false,
+        defaultAdapter: 'actions',
         source: 'env',
     };
 }
@@ -4192,11 +4412,16 @@ async function createFeedbackRun(env, { issueId, workflowId, provider, triggerEv
         runnerSettings,
     });
 
+    // SCN-FWB-033（V3 缺口 #0）：执行路径是项目数据。default_adapter='executor' 的
+    // Run 以 runner_type='executor' 落库、停在 created 等 /api/executor/lease 领取；
+    // 其余一律维持 github_hosted。切换或回滚执行引擎就是改这一行数据。
+    const project = await resolveFeedbackProject(env);
+    const runnerType = project.defaultAdapter === 'executor' ? 'executor' : 'github_hosted';
+
     if (FEEDBACK_WRITE_POLICIES.has(policy)) {
         // §1.2 自举约束的机械实现：平台自身的项目不得产生写入型 Run。
         // 2026-08-09 平台的测试挂掉一次就让所有反馈处理瘫痪；让平台去改自己的代码，
         // 等于把那次事故变成可自我触发的。判定在数据层，不靠 prompt 也不靠人记得。
-        const project = await resolveFeedbackProject(env);
         if (project.isSelf) {
             throw feedbackStorageError('FEEDBACK_SELF_TARGET_WRITE_FORBIDDEN');
         }
@@ -4227,7 +4452,7 @@ async function createFeedbackRun(env, { issueId, workflowId, provider, triggerEv
             id, issue_id, workflow_id, candidate_id, design_id, policy, delivery_mode, provider,
             runner_type, runner_label, status, attempt, base_commit, change_commit,
             provider_session_id, started_at, finished_at, error_code
-        ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, 'github_hosted', NULL, 'created', 1,
+        ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, NULL, 'created', 1,
                   NULL, NULL, NULL, ?, NULL, NULL)`
     )
         .bind(
@@ -4238,6 +4463,7 @@ async function createFeedbackRun(env, { issueId, workflowId, provider, triggerEv
             policy,
             deliveryMode,
             resolvedProvider,
+            runnerType,
             now
         )
         .run();
@@ -4264,7 +4490,7 @@ async function createFeedbackRun(env, { issueId, workflowId, provider, triggerEv
         deliveryMode,
         designId: design?.id || null,
         provider: resolvedProvider,
-        runnerType: 'github_hosted',
+        runnerType,
         contextToken,
         callbackToken,
         // §13.2: tokens travel as separate Action inputs, not inside the
@@ -4420,13 +4646,54 @@ async function dispatchFeedbackRunnerSmoke(env, { provider, smokeId, settings })
  * routinely quotes the failing request, so anything past the leading token is
  * dropped rather than trusted to be secret-free.
  */
-function normalizeFeedbackSmokeErrorCode(value) {
+function normalizeFeedbackSmokeErrorCode(value, fallback = 'ACTION_SMOKE_FAILED') {
     const first = String(value || '')
         .trim()
         .split(/\s+/)[0]
         .toUpperCase()
         .replace(/[^A-Z0-9_]/g, '');
-    return first.slice(0, 60) || 'ACTION_SMOKE_FAILED';
+    return first.slice(0, 60) || fallback;
+}
+
+/**
+ * executor 路径的「连接测试」：控制面唯一能观察到的事实是心跳与 capabilities，
+ * 所以它如实报告这个——不派任何 Action，也不假装自己验证过执行器能跑通一轮。
+ */
+async function probeFeedbackExecutorProvider(env, { provider, testedAt }) {
+    const executors = await readFeedbackExecutorHealth(env);
+    const live = executors.find(
+        (executor) => executor.live && feedbackExecutorCoversProvider(executor.providers, provider)
+    );
+    const known = executors.find((executor) =>
+        feedbackExecutorCoversProvider(executor.providers, provider)
+    );
+    const errorCode = live
+        ? ''
+        : known
+          ? 'EXECUTOR_OFFLINE'
+          : executors.length
+            ? 'EXECUTOR_PROVIDER_UNAVAILABLE'
+            : 'EXECUTOR_NOT_REGISTERED';
+    const messages = {
+        '': '执行器在线，心跳新鲜且声明可跑该 provider',
+        EXECUTOR_OFFLINE: '执行器登记在案但心跳已过期或已离线，工单会停在等待领取',
+        EXECUTOR_PROVIDER_UNAVAILABLE: '在线执行器未声明可跑该 provider',
+        EXECUTOR_NOT_REGISTERED: '尚无执行器向控制面登记过；请在开发机上启动执行器',
+    };
+    return {
+        ok: Boolean(live),
+        status: live ? 'succeeded' : 'failed',
+        mode: 'executor_probe',
+        provider,
+        action: FEEDBACK_EXECUTOR_ADAPTER_IDS[provider],
+        smokeId: `exe_${crypto.randomUUID()}`,
+        executorId: (live || known)?.id || '',
+        lastHeartbeatAt: (live || known)?.lastHeartbeatAt || '',
+        testedAt,
+        completedAt: testedAt,
+        errorCode,
+        message: messages[errorCode],
+    };
 }
 
 async function createFeedbackSmokeToken(env, { smokeId, provider }) {
@@ -5785,18 +6052,13 @@ async function markFeedbackCandidateForReview(
     return preparedAction.actionId;
 }
 
-async function dispatchFeedbackReleaseToGitHub(env, { release, candidate }) {
-    const project = await resolveFeedbackProject(env);
-    const repository = String(candidate.repository || project.repo || '');
-    const token = String(env.FEEDBACK_GITHUB_TOKEN || '');
-    const callbackOrigin = String(env.FEEDBACK_CALLBACK_ORIGIN || '').replace(/\/$/, '');
-    if (!repository || !token || !callbackOrigin) {
-        return { dispatched: false, errorCode: 'GITHUB_RELEASE_DISPATCH_NOT_CONFIGURED' };
-    }
-
-    const ref = project.defaultBranch;
-    const url = `https://api.github.com/repos/${repository}/actions/workflows/${FEEDBACK_RELEASE_WORKFLOW_FILE}/dispatches`;
-    const payload = {
+/**
+ * Release 派发 payload 的唯一构造函数。GitHub dispatch 与执行器认领（SCN-FWB-033
+ * 阶段二）必须共用同一份：`integration.started` 的身份核验按候选行逐字段精确比对，
+ * 两条路径各拼一份 payload 就是两份可以各自漂移的身份。
+ */
+function buildFeedbackReleaseDispatchPayload(env, { release, candidate, repository }) {
+    return {
         releaseId: release.releaseId,
         issueId: release.issueId,
         candidateId: release.candidateId,
@@ -5812,6 +6074,20 @@ async function dispatchFeedbackReleaseToGitHub(env, { release, candidate }) {
         productionOrigin: String(env.FEEDBACK_PRODUCTION_ORIGIN || '').replace(/\/$/, ''),
         smokeUrls: Array.isArray(release.smokeUrls) ? release.smokeUrls : [],
     };
+}
+
+async function dispatchFeedbackReleaseToGitHub(env, { release, candidate }) {
+    const project = await resolveFeedbackProject(env);
+    const repository = String(candidate.repository || project.repo || '');
+    const token = String(env.FEEDBACK_GITHUB_TOKEN || '');
+    const callbackOrigin = String(env.FEEDBACK_CALLBACK_ORIGIN || '').replace(/\/$/, '');
+    if (!repository || !token || !callbackOrigin) {
+        return { dispatched: false, errorCode: 'GITHUB_RELEASE_DISPATCH_NOT_CONFIGURED' };
+    }
+
+    const ref = project.defaultBranch;
+    const url = `https://api.github.com/repos/${repository}/actions/workflows/${FEEDBACK_RELEASE_WORKFLOW_FILE}/dispatches`;
+    const payload = buildFeedbackReleaseDispatchPayload(env, { release, candidate, repository });
 
     try {
         const response = await fetch(url, {
@@ -5844,6 +6120,17 @@ async function dispatchFeedbackReleaseToGitHub(env, { release, candidate }) {
 }
 
 async function dispatchFeedbackCreatedRelease(env, { release, candidate, run }) {
+    // SCN-FWB-033（阶段二）：Release 与 Run 同一条路由规则。executor 项目不向
+    // GitHub 派发（同一个 Release 被两条交付路径认领就是双重集成/双重部署），
+    // Release 保持 deliverFeedbackCandidate 建好的 integrating 态，由
+    // POST /api/executor/release 出站认领。重试/恢复路径走到这里同样命中本分支。
+    if ((await resolveFeedbackProject(env)).defaultAdapter === 'executor') {
+        await env.FEEDBACK_DB.prepare('UPDATE feedback_releases SET error_code = NULL WHERE id = ?')
+            .bind(release.releaseId)
+            .run();
+        return { dispatched: true, mode: 'executor_pull', releaseId: release.releaseId };
+    }
+
     const dispatch = await dispatchFeedbackReleaseToGitHub(env, {
         release,
         candidate,
@@ -8188,6 +8475,7 @@ async function runFeedbackReconcile(env, now = new Date()) {
         releaseResumeFailures: 0,
         queuedReleases: 0,
         expiredWaits: 0,
+        reapedRunTimeouts: 0,
         clearedWorkflowMappings: 0,
         expiredArtifacts: 0,
         deadLetterCount: 0,
@@ -8329,6 +8617,46 @@ async function runFeedbackReconcile(env, now = new Date()) {
             ).bind(row.issue_id),
         ]);
         summary.expiredWaits += 1;
+        summary.clearedWorkflowMappings += 1;
+    }
+
+    // 兜底：Run 的超时闸由 Workflow 实例自己执行（recordRunTimeout）。实例一旦死于
+    // 未捕获异常，那一步就永远不会跑，Run 和 Workflow 会永久停在 running——上面的
+    // 人工等待分支捞不到它们（那条要求 i.status='needs_human'，而这些是 in_progress）。
+    // 2026-08-15 的两条僵尸 Run 因此躺了四天。这里按 waiting_until 收口，字段与
+    // recordRunTimeout 逐条一致，让兜底产生的终态与健康路径不可区分。
+    const stuckRuns = await env.FEEDBACK_DB.prepare(
+        `SELECT w.instance_id, w.issue_id, w.active_run_id, w.waiting_until
+         FROM feedback_workflows w
+         JOIN feedback_runs r ON r.id = w.active_run_id
+         WHERE w.status = 'running'
+           AND w.waiting_until IS NOT NULL
+           AND w.waiting_until < ?
+         LIMIT 25`
+    )
+        .bind(summary.ranAt)
+        .all();
+
+    for (const row of stuckRuns.results || []) {
+        const finishedAt = row.waiting_until;
+        await env.FEEDBACK_DB.batch([
+            env.FEEDBACK_DB.prepare(
+                `UPDATE feedback_runs
+                 SET status = 'timed_out', finished_at = ?, error_code = 'run_timeout'
+                 WHERE id = ?
+                   AND status NOT IN ('succeeded', 'failed', 'cancelled', 'timed_out')`
+            ).bind(finishedAt, row.active_run_id),
+            env.FEEDBACK_DB.prepare(
+                `UPDATE feedback_workflows
+                 SET status = 'terminated', active_run_id = NULL, waiting_until = NULL,
+                     finished_at = ?, terminal_reason = 'run_timeout'
+                 WHERE instance_id = ?`
+            ).bind(finishedAt, row.instance_id),
+            env.FEEDBACK_DB.prepare(
+                'UPDATE feedback_issues SET active_workflow_id = NULL WHERE id = ? AND active_workflow_id = ?'
+            ).bind(row.issue_id, row.instance_id),
+        ]);
+        summary.reapedRunTimeouts += 1;
         summary.clearedWorkflowMappings += 1;
     }
 
@@ -8584,7 +8912,10 @@ function feedbackExecutorErrorResponse(error, headers) {
 }
 
 function isValidFeedbackExecutorToken(request, env) {
-    const expected = String(env.FEEDBACK_EXECUTOR_TOKEN || '');
+    // 两侧都 trim：`getBearerToken` 已经对请求侧做了 `.trim()`，存储侧不做就不对称。
+    // `echo x | wrangler secret put` 会把结尾的换行符一并存进密钥，于是拿着完全
+    // 正确的 token 也只会得到 401，而 401 里没有任何线索指向那个不可见字符。
+    const expected = String(env.FEEDBACK_EXECUTOR_TOKEN || '').trim();
     return Boolean(expected && feedbackHashesMatch(getBearerToken(request), expected));
 }
 
@@ -8617,7 +8948,8 @@ async function readFeedbackExecutorContext(env, runId) {
         `SELECT
             r.id AS run_id, r.issue_id, r.workflow_id, r.policy, r.provider,
             r.delivery_mode, r.status AS run_status,
-            i.project_id, i.title, i.description, i.context_json,
+            i.project_id, i.version, i.title, i.description, i.context_json,
+            i.business_type, i.scope, i.automation_decision, i.status AS issue_status,
             p.repo, p.default_branch, p.commands_json, p.deploy_config_json
          FROM feedback_runs r
          JOIN feedback_issues i ON i.id = r.issue_id
@@ -8649,18 +8981,41 @@ async function readFeedbackExecutorContext(env, runId) {
         defaultBranch: row.default_branch || 'master',
         commands: parseStoredJson(row.commands_json, {}),
         deployConfig: parseStoredJson(row.deploy_config_json, {}),
+        // §16.4/SCN-FWB-020：只读 Run 也可能要交 Design 而不是解释。
+        requiresDesign: requiresFeedbackDesign({
+            businessType: row.business_type,
+            scope: row.scope,
+            automationDecision: row.automation_decision,
+        }),
+        // 形状必须与 GitHub 路径的 `readFeedbackRunContext` 逐字段一致：Prompt 构建器
+        // 只有一份，读的是 `issue.description?.untrustedUserContent` 与
+        // `issue.id/businessType/scope`。这里曾经给的是裸字符串且缺那三个字段，
+        // `?? ''` 把用户正文**静默吞掉**、缺席字段渲染成字面量 "undefined"——
+        // Agent 被要求分析一段它根本看不到的反馈，只能照标题编，产出看起来完全正常
+        // 却没有任何依据。两条路径共用一个 Prompt 构建器的前提是 context 同形。
         issue: {
+            id: row.issue_id,
+            version: Number(row.version) || 1,
+            status: row.issue_status,
             title: row.title,
-            description: row.description,
+            // §18.2：不可信的报告人文本要打标签，让 Prompt 能把数据和指令分开。
+            description: { untrustedUserContent: row.description },
+            businessType: row.business_type,
+            scope: row.scope,
             context: parseStoredJson(row.context_json, {}),
         },
-        timeline: (timelineResult.results || []).map((event) => ({
-            type: event.type,
-            actorType: event.actor_type,
-            actorId: event.actor_id || '',
-            occurredAt: event.occurred_at,
-            body: parseStoredJson(event.body_json, {}),
-        })),
+        timeline: (timelineResult.results || []).map((event) => {
+            const body = parseStoredJson(event.body_json, {});
+            return {
+                type: event.type,
+                actorType: event.actor_type,
+                actorId: event.actor_id || '',
+                occurredAt: event.occurred_at,
+                // Prompt 渲染读的是 `text`；只给 `body` 会让整条时间线渲染成空。
+                text: limitText(body.text || body.publicNote, 4000),
+                body,
+            };
+        }),
     };
 }
 
@@ -8925,6 +9280,50 @@ async function claimFeedbackExecutorLease(env, body) {
     };
 }
 
+/**
+ * 执行器认领活跃 Release（SCN-FWB-033 阶段二）。
+ *
+ * 只有 `default_adapter='executor'` 的项目会出活；payload 与 GitHub dispatch 用同一
+ * 构造函数（身份核验一视同仁），release token 每次认领重新铸造（长交付不受 TTL 限制）。
+ * 分支锁（每仓每分支至多一个活跃 Release）由 deliverFeedbackCandidate 保证，所以
+ * 这里至多返回一行。**MVP 已接受缺口**：Release 无租约——单执行器 + 守护进程对同
+ * id 的退避 + `release.failed` 终态不可再认领三者兜底；多执行器之前必须补租约。
+ */
+async function claimFeedbackExecutorRelease(env) {
+    if (!env.FEEDBACK_DB) throw feedbackExecutorError('FEEDBACK_DB_REQUIRED');
+    const project = await resolveFeedbackProject(env);
+    if (project.defaultAdapter !== 'executor') return null;
+
+    const releaseRow = await env.FEEDBACK_DB.prepare(
+        `SELECT * FROM feedback_releases
+         WHERE status IN ('integrating', 'merged', 'deploying', 'smoke_testing')
+         ORDER BY started_at LIMIT 1`
+    ).first();
+    if (!releaseRow) return null;
+
+    const candidate = await env.FEEDBACK_DB.prepare(
+        'SELECT * FROM feedback_candidates WHERE id = ?'
+    )
+        .bind(releaseRow.candidate_id)
+        .first();
+    if (!candidate) return null;
+
+    const release = feedbackReleaseFromRow(releaseRow);
+    const repository = String(candidate.repository || project.repo || '');
+    return {
+        releaseId: release.releaseId,
+        issueId: release.issueId,
+        candidateId: release.candidateId,
+        status: releaseRow.status,
+        releaseToken: (await createFeedbackReleaseToken(env, release.releaseId)).token,
+        payload: buildFeedbackReleaseDispatchPayload(env, { release, candidate, repository }),
+        // 执行器侧集成验证与部署要用的项目数据（GitHub 交付线从 vars/secrets 拿，
+        // 执行器从项目表拿——SCN-FWB-033：执行路径是项目数据）。
+        commands: project.commands,
+        deployConfig: project.deployConfig,
+    };
+}
+
 async function verifyFeedbackExecutorLease(env, body, runId = body?.runId) {
     if (!env.FEEDBACK_DB) throw feedbackExecutorError('FEEDBACK_DB_REQUIRED');
     const executorId = normalizeFeedbackExecutorId(body?.executorId);
@@ -9007,6 +9406,22 @@ async function recordFeedbackExecutorEventState(env, runId, event) {
              WHERE run_id = ?`
         )
             .bind(terminalStatuses[event.type], JSON.stringify(event.payload || {}), nowIso, runId)
+            .run();
+        // 终态 = 租约的工作已经做完，必须当场归还。0007 早就为此留了
+        // status='released' 与 released_at，但此前没有任何代码写它，后果有两层：
+        // (1) 执行器跑完回到轮询时，claimLease 的「已有活跃租约」分支会把同一条
+        //     已终态的 Run 原样再发一次（reused: true），守护进程于是无限重跑它，
+        //     而决定性 eventId 让重发事件被幂等去重，每一轮都报成功——烧掉真实
+        //     额度却一个错都不冒头；
+        // (2) 进程停掉后这条租约走 expireFeedbackExecutorLeases，会对一条
+        //     succeeded 的 Run 记 executor_lost 并把 Issue 打成 needs_human。
+        // 归还只认当前活跃租约，过期/已归还的行不再改动。
+        await env.FEEDBACK_DB.prepare(
+            `UPDATE feedback_executor_leases
+             SET status = 'released', released_at = ?
+             WHERE run_id = ? AND status = 'active'`
+        )
+            .bind(nowIso, runId)
             .run();
     } else if (event?.type === 'agent.message') {
         await env.FEEDBACK_DB.prepare('UPDATE feedback_turns SET output_json = ? WHERE run_id = ?')
@@ -11263,6 +11678,12 @@ export default {
                 if (url.pathname === '/api/executor/heartbeat') {
                     return jsonResponse(await heartbeatFeedbackExecutor(env, body), { headers });
                 }
+                if (url.pathname === '/api/executor/release') {
+                    const releaseClaim = await claimFeedbackExecutorRelease(env);
+                    return releaseClaim
+                        ? jsonResponse(releaseClaim, { headers })
+                        : new Response(null, { status: 204, headers });
+                }
                 if (url.pathname === '/api/executor/approvals') {
                     const approval = await createFeedbackExecutorApproval(env, body);
                     if (!approval) return errorResponse('Not found', 404, headers);
@@ -11659,7 +12080,7 @@ export default {
                 if (request.method === 'GET') {
                     const stored = await readFeedbackSettings(env, 'runners');
                     return jsonResponse(
-                        { settings: serializeRunnerSettings(env, stored) },
+                        { settings: await serializeRunnerSettings(env, stored) },
                         { headers }
                     );
                 }
@@ -11749,7 +12170,7 @@ export default {
                         current.version
                     );
                     return jsonResponse(
-                        { settings: serializeRunnerSettings(env, saved) },
+                        { settings: await serializeRunnerSettings(env, saved) },
                         { headers }
                     );
                 }
@@ -11807,7 +12228,7 @@ export default {
                 );
 
                 return jsonResponse(
-                    { preflight, settings: serializeRunnerSettings(env, saved) },
+                    { preflight, settings: await serializeRunnerSettings(env, saved) },
                     { headers }
                 );
             } catch (error) {
@@ -11829,6 +12250,46 @@ export default {
 
                 const current = await readFeedbackSettings(env, 'runners');
                 const testedAt = new Date().toISOString();
+
+                // §19.5/SCN-FWB-016：这个按钮要测的是**这个项目实际会走的通路**。
+                // executor 项目派一次 Action 冒烟，测的是一条它永远不会用到的路径：
+                // 绿了不代表执行器起着，红了也不代表处理不了工单。
+                const project = await resolveFeedbackProject(env);
+                if (project.defaultAdapter === 'executor') {
+                    const result = await probeFeedbackExecutorProvider(env, {
+                        provider,
+                        testedAt,
+                    });
+                    const saved = await writeFeedbackSettings(
+                        env,
+                        'runners',
+                        {
+                            ...current.settings,
+                            providers: {
+                                ...current.settings.providers,
+                                [provider]: {
+                                    ...current.settings.providers[provider],
+                                    lastTestedAt: testedAt,
+                                    lastTestResult: result,
+                                    smokeHistory: appendFeedbackSmokeHistory(
+                                        current.settings.providers[provider],
+                                        provider,
+                                        result
+                                    ),
+                                    // 探测是同步的，没有等待中的回调可被后到的结果改写。
+                                    pendingSmoke: null,
+                                },
+                            },
+                        },
+                        current.version
+                    );
+
+                    return jsonResponse(
+                        { result, settings: await serializeRunnerSettings(env, saved) },
+                        { status: result.ok ? 200 : 503, headers }
+                    );
+                }
+
                 if (provider === 'codex') {
                     const endpointCheck = validateResponsesEndpoint(
                         current.settings.providers.codex.responsesEndpoint
@@ -11904,7 +12365,7 @@ export default {
                     );
 
                     return jsonResponse(
-                        { result, settings: serializeRunnerSettings(env, saved) },
+                        { result, settings: await serializeRunnerSettings(env, saved) },
                         { status: 503, headers }
                     );
                 }
@@ -11946,7 +12407,7 @@ export default {
                 );
 
                 return jsonResponse(
-                    { result, settings: serializeRunnerSettings(env, saved) },
+                    { result, settings: await serializeRunnerSettings(env, saved) },
                     { status: 202, headers }
                 );
             } catch (error) {
@@ -11981,7 +12442,7 @@ export default {
                 // its health; a replayed older smoke is accepted and ignored.
                 if (stored.pendingSmoke?.smokeId !== smokeId) {
                     return jsonResponse(
-                        { stale: true, settings: serializeRunnerSettings(env, current) },
+                        { stale: true, settings: await serializeRunnerSettings(env, current) },
                         { headers }
                     );
                 }
@@ -12027,7 +12488,7 @@ export default {
                 );
 
                 return jsonResponse(
-                    { result, settings: serializeRunnerSettings(env, saved) },
+                    { result, settings: await serializeRunnerSettings(env, saved) },
                     { headers }
                 );
             } catch (error) {

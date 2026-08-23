@@ -1,0 +1,14 @@
+-- V3 缺口 #0：派发侧路由（SCN-FWB-033，2026-08-19）
+--
+-- 在此之前，创建 Run 处硬编码 runner_type='github_hosted'，而 lease 端点只领
+-- runner_type='executor'——没有任何代码能造出执行器可领的 Run，计划 §5「把默认
+-- adapter 切回 actions 即可恢复现状」也无从谈起。这一列让执行路径成为一行数据：
+-- 切 executor / 回滚 actions 都不需要改代码重新部署。
+--
+-- SQLite 的 ALTER TABLE ADD COLUMN 不支持 CHECK 约束，取值 ∈ {'actions','executor'}
+-- 由应用层保证：解析器把任何非 'executor' 的值（含缺列）一律当作 'actions'，
+-- 非法值只会回落到既有 GitHub 路径，绝不会把 Run 送进没人认领的 executor 队列。
+--
+-- 种子行保持 'actions'：迁移本身行为零变化。解析器读 SELECT * 并对缺列回落，
+-- 因此本迁移没有 0006 那样的「先 apply 迁移，再部署 Worker」顺序约束。
+ALTER TABLE feedback_projects ADD COLUMN default_adapter TEXT NOT NULL DEFAULT 'actions';

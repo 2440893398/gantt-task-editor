@@ -10,6 +10,14 @@ function tokenize(input) {
         const character = input[index];
 
         if (quote) {
+            // Inside quotes, backslash escapes the active quote char and itself
+            // (\" or \\); any other backslash stays literal so Windows paths
+            // like "C:\tmp" keep working unescaped.
+            if (character === '\\' && (input[index + 1] === quote || input[index + 1] === '\\')) {
+                current += input[index + 1];
+                index += 1;
+                continue;
+            }
             if (character === quote) {
                 quote = null;
             } else {

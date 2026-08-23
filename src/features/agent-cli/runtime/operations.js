@@ -1,5 +1,6 @@
 import { getProjectRev } from '../../gantt/domain/rev.js';
 import { fail, ok, withErrorNavigation } from './result.js';
+import { stableStringify } from './stable-key.js';
 
 const TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'cancelled']);
 const MAX_OPERATION_HISTORY = 50;
@@ -178,6 +179,18 @@ export function createOperationManager({
     const operationsByIdempotencyKey = new Map();
     let seq = 0;
 
+    function deleteOperation(operation) {
+        operations.delete(operation.id);
+
+        const scopedKey = normalizeIdempotencyKey(operation.projectId, operation.idempotencyKey);
+        if (scopedKey && operationsByIdempotencyKey.get(scopedKey) === operation.id) {
+            operationsByIdempotencyKey.delete(scopedKey);
+        }
+    }
+
+    // 与 dispatch 层的幂等缓存同理：历史有上限，被淘汰的 idempotencyKey 重放会
+    // 重新执行——幂等窗口有限（MAX_OPERATION_HISTORY 条终态操作）是协议已知约束。
+    // 淘汰时必须连同 key 映射一起清理，否则映射表在长会话下无限增长。
     function pruneHistory() {
         if (operations.size <= MAX_OPERATION_HISTORY) {
             return;
@@ -188,7 +201,7 @@ export function createOperationManager({
             .sort((a, b) => a.startedAtMs - b.startedAtMs);
 
         while (operations.size > MAX_OPERATION_HISTORY && removable.length) {
-            operations.delete(removable.shift().id);
+            deleteOperation(removable.shift());
         }
     }
 
@@ -265,12 +278,31 @@ export function createOperationManager({
         }
 
         const mutating = isMutatingRequest(normalized);
+        // Request fingerprint for idempotent replay. `options` (ifRev/schemaRev/
+        // policyRev) are excluded on purpose: a legitimate retry may refresh
+        // revision guards, but command/args/steps must be identical.
+        const requestKey = stableStringify({
+            command: normalized.command,
+            args: normalized.args,
+            ...(normalized.steps ? { steps: normalized.steps } : {}),
+        });
         const scopedIdempotencyKey = normalizeIdempotencyKey(projectId, normalized.idempotencyKey);
         const existingOperationId = scopedIdempotencyKey
             ? operationsByIdempotencyKey.get(scopedIdempotencyKey)
             : null;
         const existingOperation = getOperation(existingOperationId);
         if (existingOperation) {
+            if (existingOperation.requestKey !== requestKey) {
+                return fail(
+                    'CONFLICT',
+                    'idempotencyKey was already used with a different request.',
+                    {
+                        hint: 'An idempotencyKey identifies ONE operation. Use a new key for a different request, or retry with the original command, args, and steps.',
+                        operationId: existingOperation.id,
+                        rev,
+                    }
+                );
+            }
             return ok(publicOperation(existingOperation), operationResultRev(existingOperation));
         }
 
@@ -301,6 +333,7 @@ export function createOperationManager({
             mutating,
             cancelRequested: false,
             idempotencyKey: normalized.idempotencyKey,
+            requestKey,
             startedAtMs: nowMs(),
             lastProgressAtMs: nowMs(),
             progressSeq: 0,

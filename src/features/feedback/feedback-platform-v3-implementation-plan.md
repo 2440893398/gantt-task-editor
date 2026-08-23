@@ -17,10 +17,10 @@
 
 **本计划要解决的两个病灶**（评审结论 §1.1）：
 
-| 病灶 | 当前证据 | 本计划的对策 |
-| ---- | -------- | ------------ |
-| 执行层运行时被手写进 YAML | `feedback-agent-codex.yml` 860 行 + `feedback-agent-claude.yml` 877 行 + `feedback-delivery.yml` 1278 行 | M1 Executor Protocol + 符合性测试 |
-| 每一轮都是冷启动的无状态执行 | Spec §16.2「不依赖原生 provider session」，每轮重放完整时间线 | M0 验证 → M3 CodexAdapter 原生会话 |
+| 病灶                         | 当前证据                                                                                                 | 本计划的对策                       |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| 执行层运行时被手写进 YAML    | `feedback-agent-codex.yml` 860 行 + `feedback-agent-claude.yml` 877 行 + `feedback-delivery.yml` 1278 行 | M1 Executor Protocol + 符合性测试  |
+| 每一轮都是冷启动的无状态执行 | Spec §16.2「不依赖原生 provider session」，每轮重放完整时间线                                            | M0 验证 → M3 CodexAdapter 原生会话 |
 
 **非目标（V3 首期明确不做）**：
 
@@ -39,7 +39,7 @@
 ### 1.1 执行器运行在日常开发机、当前用户身份（已拍板）
 
 这是速度优先的选择，代价是它违反 Spec §18.2 自己写下的约束：
-*"Self-hosted Runner 不得与个人日常开发资料、SSH Agent 或浏览器配置共享环境"*。
+_"Self-hosted Runner 不得与个人日常开发资料、SSH Agent 或浏览器配置共享环境"_。
 
 因此本计划把它**限定为 PoC/单人自用阶段的临时形态**，并附带三条不可协商的补偿措施
 （§S）和一个明确的上线门槛（§S-G）。计划中任何一处都不得假设执行器环境是可信隔离的。
@@ -80,14 +80,14 @@ M0 技术验证 ──(生死线 gate)── M1 协议正名 ── M2 项目配
 
 **任务**
 
-| # | 验证项 | 通过标准 |
-| - | ------ | -------- |
-| V1 | `codex app-server` stdio 起服，`initialize` 带 `experimentalApi: true` | 握手成功，记录 `codex --version` 与被拒绝的方法清单 |
-| V2 | `thread/start` → `turn/start` → `turn/steer` → `turn/completed` | steer 的内容影响了同一 turn 的产出 |
-| **V3** | **`thread/resume` 跨 app-server 进程重启** | **kill 进程后重启，resume 同一 threadId 仍带上下文** |
-| V4 | nonce 实验（评审 §7.5） | 第一轮给随机码，第二轮**不重放时间线**只问该码，答对 |
-| V5 | `item/fileChange/requestApproval` | 能阻塞等待外部决议，且拒绝后 Agent 继续但不写该文件 |
-| V6 | Claude Agent SDK 的会话/恢复语义 | 只做文档核对 + 最小实验，产出一页结论 |
+| #      | 验证项                                                                 | 通过标准                                             |
+| ------ | ---------------------------------------------------------------------- | ---------------------------------------------------- |
+| V1     | `codex app-server` stdio 起服，`initialize` 带 `experimentalApi: true` | 握手成功，记录 `codex --version` 与被拒绝的方法清单  |
+| V2     | `thread/start` → `turn/start` → `turn/steer` → `turn/completed`        | steer 的内容影响了同一 turn 的产出                   |
+| **V3** | **`thread/resume` 跨 app-server 进程重启**                             | **kill 进程后重启，resume 同一 threadId 仍带上下文** |
+| V4     | nonce 实验（评审 §7.5）                                                | 第一轮给随机码，第二轮**不重放时间线**只问该码，答对 |
+| V5     | `item/fileChange/requestApproval`                                      | 能阻塞等待外部决议，且拒绝后 Agent 继续但不写该文件  |
+| V6     | Claude Agent SDK 的会话/恢复语义                                       | 只做文档核对 + 最小实验，产出一页结论                |
 
 **V3 是生死线。** V4 用来区分"真续接"和"只是重放上下文"——两者在用户看来几乎一样，
 必须机械区分。
@@ -105,12 +105,12 @@ M0 技术验证 ──(生死线 gate)── M1 协议正名 ── M2 项目配
 
 ### M0-G 分支门（必须在这里停下来判断）
 
-| M0 结果 | 后续路线 |
-| ------- | -------- |
-| V3 + V4 均通过 | 按本计划走 M1 → M5（推荐路径） |
-| V3 通过、V4 失败 | 会话可恢复但上下文靠重放；仍做 M3，但**不承诺"连续会话"这个产品说法**，M5 checklist 价值不变 |
-| V3 失败 | **路线 B 的前提不成立**。停止 M3，改做：M1 + M2 + 在现有 GitHub Actions 路径上补 checklist 与审批前置（M4/M5 的降级实现） |
-| V5 失败 | M4 推迟，不影响 M3 |
+| M0 结果          | 后续路线                                                                                                                  |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| V3 + V4 均通过   | 按本计划走 M1 → M5（推荐路径）                                                                                            |
+| V3 通过、V4 失败 | 会话可恢复但上下文靠重放；仍做 M3，但**不承诺"连续会话"这个产品说法**，M5 checklist 价值不变                              |
+| V3 失败          | **路线 B 的前提不成立**。停止 M3，改做：M1 + M2 + 在现有 GitHub Actions 路径上补 checklist 与审批前置（M4/M5 的降级实现） |
+| V5 失败          | M4 推迟，不影响 M3                                                                                                        |
 
 #### M0-G 判定（2026-08-16，已拍板）
 
@@ -157,13 +157,13 @@ workflow 文件和场景清单变更日志里。不先固化成可执行资产�
   （`agentMessage`/`userMessage`/`reasoning`）不是蛇形，归一化层要固定住。
 - **T4 — 符合性测试套件**：把下列 5 条血泪写成任何 Adapter 都必须通过的可执行测试：
 
-  | # | 规则 | 来源 |
-  | - | ---- | ---- |
-  | C1 | 单一 Prompt 构建器按 policy 分支；只读 Run 不得被要求写文件/跑测试 | SCN-FWB-029 |
-  | C2 | diff gate 预检前置于验证；预检失败**跳过**验证而不是让 job 挂掉 | SCN-FWB-031 |
-  | C3 | 证据目录必须是本次验证专用；枚举顺序与文件系统无关 | SCN-FWB-006/031 |
-  | C4 | 终态回调必须可达；reporter 缺席时走最后手段直投，且不发布未净化证据 | SCN-FWB-010 |
-  | C5 | 契约变更授权由控制面下发，SCN-ID 从 diff 读出而非调用方声明 | SCN-FWB-012 |
+    | #   | 规则                                                                | 来源            |
+    | --- | ------------------------------------------------------------------- | --------------- |
+    | C1  | 单一 Prompt 构建器按 policy 分支；只读 Run 不得被要求写文件/跑测试  | SCN-FWB-029     |
+    | C2  | diff gate 预检前置于验证；预检失败**跳过**验证而不是让 job 挂掉     | SCN-FWB-031     |
+    | C3  | 证据目录必须是本次验证专用；枚举顺序与文件系统无关                  | SCN-FWB-006/031 |
+    | C4  | 终态回调必须可达；reporter 缺席时走最后手段直投，且不发布未净化证据 | SCN-FWB-010     |
+    | C5  | 契约变更授权由控制面下发，SCN-ID 从 diff 读出而非调用方声明         | SCN-FWB-012     |
 
 - **T5 — GitHub Adapter 归位**：现有两个 workflow 保持不动，但在 Worker 侧包一层
   `ActionsAdapter`，使其成为协议的实现之一而不是唯一路径。
@@ -207,8 +207,8 @@ codex 与 claude 两个 provider 各跑一遍 C1～C5；`check:scenarios` 通过
 **任务**
 
 - T1 — 新表 `projects`（`id, repo, default_branch, commands_json, deploy_config_json,
-  is_self, enabled`）与 `execution_profiles`（`id, project_id, allowed_paths, network,
-  tools`）。migration 编号接 `0006_`。
+is_self, enabled`）与 `execution_profiles`（`id, project_id, allowed_paths, network,
+tools`）。migration 编号接 `0006_`。
 - T2 — 把 `wrangler.toml` 的硬编码变量搬进 `projects` 单行数据；Worker 读表。
   **落地时修正为 3 个而不是 4 个**：`FEEDBACK_GITHUB_REPOSITORY`、`_REF` 进表；
   `_WORKFLOW` 是**死配置**（全仓无人读，派发实际用 `FEEDBACK_PROVIDER_WORKFLOW_FILES`
@@ -224,7 +224,7 @@ codex 与 claude 两个 provider 各跑一遍 C1～C5；`check:scenarios` 通过
 ### M2 完成状态（2026-08-16）
 
 T1～T4 全部落地，场景 `SCN-FWB-033`（M3/M4 的三条场景号顺延为 034/035/036）。
-迁移 `0006` 已应用到**本地** D1；**生产 D1 尚未 apply**——那是不可逆的对外动作，留待授权。
+迁移 `0006` 已应用到**本地** D1。**2026-08-19 19:36 已 apply 到生产 D1**（连同 `0005`/`0007`，见 `SCN-FWB-033` 变更日志）：26 条存量 Issue 全部回填 `project_id='proj_gantt'`，孤儿 0，附件与 Run 计数不变。迁移前 Time Travel 书签 `0000005a-00000000-000050cc-cc802f0aa2322b6120581346031f7e4e`（30 天内可还原）。
 
 迁移测试用 `node:sqlite` 把 0001～0006 在真实 SQLite 上依次跑一遍，断言 schema、种子与回填，
 而不是断言 SQL 源码文本（M1 刚证明过文本断言可能恒真）。Vite 不解析 `node:sqlite`，
@@ -241,8 +241,10 @@ T1～T4 全部落地，场景 `SCN-FWB-033`（M3/M4 的三条场景号顺延为 
 一个 Run 本可以把执行器协议和 C1～C5 改成恒真再交付。已归入 `ADMIN_APPROVAL_PATTERNS`，
 与 `.github/workflows/`、`scripts/` 同级——需显式授权、强制 Candidate 复核、永不 auto_deliver。
 
-> ⚠️ **部署顺序有约束**：先把 `0006` apply 到生产 D1，再部署删掉了环境变量的 Worker。
-> 反过来会在两者之间的窗口里让派发拿不到仓库名（解析器回落到已被删除的变量）。
+> ⚠️ **部署顺序有约束（历史记录：本次实际执行反了）**：应先把 `0006` apply 到生产 D1，
+> 再部署删掉了环境变量的 Worker；反过来会在两者之间的窗口里让派发拿不到仓库名
+> （解析器回落到已被删除的变量）。实际是 Worker 于 2026-08-19 13:40 先行部署、
+> 迁移 19:36 才 apply，中间约 6 小时派发失效。经查窗口内无新建 Issue、无派发，未造成影响。
 
 ---
 
@@ -282,13 +284,13 @@ T1～T4 全部落地，场景 `SCN-FWB-033`（M3/M4 的三条场景号顺延为 
 
 **完成定义**
 
-| 验证 | 方法 | 通过标准 |
-| ---- | ---- | -------- |
-| 会话续接 | nonce 实验（不重放时间线） | 答对 |
+| 验证                      | 方法                                        | 通过标准                                                                                                   |
+| ------------------------- | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| 会话续接                  | nonce 实验（不重放时间线）                  | 答对                                                                                                       |
 | 会话丢失（`EXC-FWB-004`） | 人为作废 `provider_thread_id` 后 owner 回复 | 时间线出现**用户可见**的"上下文已重置"；新 thread 由快照播种后仍能答出重置前商定的事实，**不要求用户重述** |
-| 断线恢复 | turn 进行中 `kill -9` 执行器 | 进入 `executor_lost` + 产生 HumanAction；重启后**不自动续跑** |
-| 重复领取 | 两执行器同抢一个 run | 只有一个拿到；旧 `epoch` 回写被拒 |
-| 离线可见 | 停执行器后提交反馈 | 工作台显示离线与排队，非"处理中" |
+| 断线恢复                  | turn 进行中 `kill -9` 执行器                | 进入 `executor_lost` + 产生 HumanAction；重启后**不自动续跑**                                              |
+| 重复领取                  | 两执行器同抢一个 run                        | 只有一个拿到；旧 `epoch` 回写被拒                                                                          |
+| 离线可见                  | 停执行器后提交反馈                          | 工作台显示离线与排队，非"处理中"                                                                           |
 
 ---
 
@@ -303,6 +305,242 @@ T1～T4 全部落地，场景 `SCN-FWB-033`（M3/M4 的三条场景号顺延为 
 - 过期租约收敛为 `executor_lost` + `executor_lost` HumanAction，绝不自动续跑；运行中审批本批只入库且 `allowed_return_states_json=[]`，M4 再实现决议下行。
 
 这不代表 M3 完成：S1～S3、`feedback-executor` 常驻进程、CodexAdapter、真实会话续接、断线后的离线 UI 仍未实现，`SCN-FWB-034/035` 保持 `todo`。
+
+### M3 派发侧路由（2026-08-19，V3 缺口 #0）
+
+控制面切片落地时留了一个掉在 M2/M3 缝里的断点：创建 Run 处硬编码
+`runner_type='github_hosted'`，lease 端点只领 `'executor'`，而 `feedback_projects`
+没有 adapter 列——**没有任何代码能造出执行器可领的 Run**，§5「把默认 adapter 切回
+`actions` 即可恢复现状」当时是空头支票。已补齐：
+
+- 迁移 `0008`：`feedback_projects.default_adapter TEXT NOT NULL DEFAULT 'actions'`。
+  种子行保持 `'actions'`，行为零变化。`ADD COLUMN` 加不了 `CHECK`，取值合法性在
+  应用层判定——任何非 `'executor'` 的值一律按 `'actions'` 处理。
+- `resolveFeedbackProject` 改读 `SELECT *` 并对缺列回落 `'actions'`：0008 未 apply
+  的库不会因点名新列而整条查询失败、被错误打回已删除的环境变量。**因此 0008 没有
+  0006 那样的部署顺序约束。**
+- `createFeedbackRun` 按项目的 `default_adapter` 决定 `runner_type`；executor Run
+  在 Workflow 里**跳过 GitHub 派发**（否则双重执行），停在 `created` 等
+  `/api/executor/lease` 领取，领不到按既有 run 超时收口。
+- 验证：真实 SQLite + 真实 Worker 派发路径的行为测试（`default_adapter='executor'`
+  → Run 可被 lease 领到并转 `running`；`'actions'`/非法值 → 维持 GitHub 路径，
+  lease 领不到）。验证点并入 `SCN-FWB-033`，见场景清单 2026-08-19 变更日志。
+- **已上生产（2026-08-20）**：迁移前 Time Travel 书签
+  `00000060-00000000-000050cc-3ab27361bdcd906842758630b033e9d8`；0008 已 apply，
+  读回 `proj_gantt.default_adapter='actions'`；Worker Version
+  `ccc9d784-39b4-4616-8e75-5fffde49c3e3`。冒烟：`/feedback` 302 到 Pages、
+  `/api/feedback/issues` 与 `/api/executor/lease` 无凭据均 401。切换执行路径
+  从此是改一行数据：`UPDATE feedback_projects SET default_adapter='executor'`。
+
+### M3 执行器 MVP 切片（2026-08-20，缺口 #1/#2/#3）
+
+落点全部在 `packages/feedback-platform/`（平台包独立测试入口，不进根 `npm test`）：
+
+- **S1～S3 = 启动准入**（`executor/admission.js`）：工作区必须是独立克隆（主仓及其
+  子/父目录一律拒）；remote 只认 HTTPS + 显式 PAT，git 子进程清空 credential helper
+  与 sshCommand；`.dev.vars`/`.env*`/`~/.ssh`/`~/.aws`/浏览器 profile 拒读，Agent
+  子进程环境变量走白名单（控制面 token、PAT、开发者密钥都不进 codex 进程）。
+  任一条不过，进程拒绝启动。
+- **常驻进程**（`executor/main.js` + `run-loop.js` + `control-plane.js` +
+  `app-server-client.js`，`npm run executor -w packages/feedback-platform`）：
+  出站领租约 → 起 app-server → 跑 turn → 协议 v0 事件回写（0/5/15/45s 重试）→
+  心跳续租；审批 fail-closed（全部 requestApproval 类请求拒绝 + 上报 HumanAction）；
+  旧 epoch 立即停手；写入型 policy 以 `executor_write_policy_not_implemented`
+  诚实失败（验证管线/Candidate 未接）。
+- **CodexAdapter**（`adapters/codex.js`）：与 ActionsAdapter 共用同一 Prompt 构建器、
+  证据枚举器、SCN-ID 读取；C2/C4 的步骤计划来自 run-loop 真实迭代的
+  `executor/run-plan.js`；过全部 C1～C5 且通过注册表当场检查。平台包测试 54 → 96。
+- **真机冒烟（握手 + thread/start，零 token）已通过**，并抓到两个缺陷当场修掉：
+  Windows `spawn('codex')` ENOENT（npm .cmd 包装，需解析 vendor exe）+ spawn 失败
+  事件不接会打死进程；共享 `~/.codex` 状态库被在跑的 codex 进程锁死 → 执行器用
+  **独立 `CODEX_HOME`**（默认 `<workspace>-codex-home`，与 M0 发现 4 一致：rollout
+  文件就是会话本体）。
+
+**尚未完成（SCN-FWB-034/035 保持 todo 的原因）**：T6 会话续接（`thread/resume`/
+`turn/steer` + `EXC-FWB-004` 快照播种路径）、T7 离线展示 UI、写入型管线、
+以及对真实控制面的完整一轮（需要运维三件事：独立克隆、专属 CODEX_HOME 下
+`codex login`、`FEEDBACK_EXECUTOR_TOKEN`）。requiresDesign 的只读 Run 目前不发
+`design_decision` 交接（发的是普通完成），设计闸场景在执行器路径上未接——
+生产 default_adapter 仍是 `actions`，不受影响。
+
+### M3 第二执行引擎 ClaudeCodeAdapter（2026-08-20，缺口 #6）
+
+**起因是运维现实，不是架构偏好**：本机 `~/.codex/auth.json` 是 `chatgpt_plan_type:
+"free"`，CodexAdapter 对当前使用者不可用；`claude` CLI 已在本机且账号可用。执行器
+路径若只有 codex 一个引擎，它永远跑不起来。M0-G 当时把 ClaudeAdapter 列为首期非
+目标，此处推翻该判断并记录理由。
+
+**落地**（全部在 `packages/feedback-platform/`，Worker 未改动）：
+
+- `adapters/claude-code.js` —— `executor:claude-code`，与 ActionsAdapter/CodexAdapter
+  共用同一 Prompt 构建器、证据枚举器、SCN-ID 读取器与 `EXECUTOR_RUN_PLAN`，
+  过全部 C1～C5（同一套 `registerConformanceSuite`，一行未改）并通过注册表当场检查。
+  测试另外钉死「两个执行器 Adapter 对同一 policy 的 Prompt 逐字相同」——
+  这是「血泪规则只有一份」的可执行断言，而不是靠代码评审看出来。
+- `executor/provider-events.js` —— 归一化层拆成「翻译器可换 + 策略单一份」。
+  `normalize.js` 只保留四条策略（终态只认 turn 终态、中间文本只收集不转发、
+  空输出 `empty_agent_response`、eventId 决定性），codex 行为逐字不变。
+- `executor/codex-session.js` / `executor/claude-cli-session.js` —— ProviderSession
+  接口（`start` / `onEvent` / `onApprovalRequest` / `onExit` / `openSession` /
+  `startTurn` / `kill`）。run-loop 从此只认这个接口，租约信封、重试、心跳、C4 兜底
+  与 provider 无关，仍只有一份。开会话与开一轮分两步，是为了 sessionId 在任何 turn
+  事件之前确定——否则先到的事件会缺 `providerSessionId`，而那是会话续接唯一的凭据。
+- `executor/tool-policy.js` —— §S 新增 **S6 工具暴露面闸**（见下）。
+- `executor/provider-command.js` —— 两个引擎共用的 Windows `.cmd` 包装解析。
+- `executor/main.js` —— `FEEDBACK_EXECUTOR_PROVIDER` 选引擎，**默认 `claude-code`**；
+  provider 三件套（Adapter / 会话工厂 / 配置目录）集中在一张表里，加第三个引擎
+  只改这一处。
+
+**真机探针抓到的三条事实，全部已固化为契约与测试**（`SCN-FWB-032`/`035`
+2026-08-20 变更日志有完整记录）：
+
+1. **`--allowed-tools` 不是沙箱**。只传 `--allowed-tools "Read,Grep,Glob"` 时 init
+   实报仍是 `Bash`/`Edit`/`Write`/`Task`/`ToolSearch`/`Workflow`/`Cron*` 全家桶，
+   Agent 当场就去调 `ToolSearch` 找别的工具；`--permission-mode manual` 被静默降级为
+   `default`。只有 `--disallowed-tools` 点名的工具会真正消失。因此定下分工：
+   **拒绝清单是最小化手段，init 校验闸才是保证**——与注册表「测行为不测声明」同一条
+   原则。实测传全量拒绝清单后工具面收缩到恰好 `["Glob","Grep","Read"]`，闸放行。
+2. **`subtype` 会撒谎**。认证失败时 `is_error: true`、`terminal_reason: "api_error"`
+   而 `subtype` 仍是 `"success"`；失败判定必须以 `is_error` 为准。
+3. **合成消息不是 Agent 产出**。CLI 把自身运维故障包成 `model: "<synthetic>"`、
+   `is_api_error_message: true` 的 assistant 消息发出（实测正文
+   `Not logged in · Please run /login`），收进最终文本就会把 provider 故障当成对用户的
+   回答投递出去。翻译层丢弃并让该 Run 走失败终态。
+
+三条都做了变异验证（把实现改回「错误但看似合理」的版本，确认对应测试立刻转红）。
+
+**S7 provider 配置目录隔离**（2026-08-21 实测更正）：codex 侧是被迫的（共享状态库被
+锁死）；Claude Code 侧**不是安全边界**。原先的依据「共享 `~/.claude` 时 init 会加载
+开发者的插件与技能」，取自 `--setting-sources project` + `--strict-mcp-config` 就位
+**之前**的一次探针；补齐 flag 后再测，沿用开发者自己的 `~/.claude` 时 init 实报的
+`plugins`/`skills`/`mcp_servers` 仍全空、`slash_commands` 为 0、`permissionMode` 为
+`default`（而开发者用户级 settings 里写的是 `auto`）——用户级配置确已被排除。因此
+claude-code 默认继承开发者已登录的配置目录，隔离降级为可选项（`FEEDBACK_EXECUTOR_
+PROVIDER_HOME`，迁入共享/隔离宿主时开）。这条更正省掉的是一次「为执行器专门再登录
+一次」的仪式，而那次仪式换来的安全性经实测并不存在。
+
+继承模式有一个反直觉的实现约束：**不能把 `CLAUDE_CONFIG_DIR` 显式设成默认目录**。
+设了之后 CLI 改去 `<dir>/.claude.json` 找主配置，而默认那份在 `~/.claude.json`（不在
+配置目录里），实测会在配置目录里造出一份重复的 `.claude.json`，并往 stderr 打
+「配置文件丢失，可从 backup 恢复」——把排障引向一场不存在的故障。所以继承模式下
+一个配置目录变量都不注入，只有开发者自己设过才照搬。
+
+**S8 只读工具不预授权**：`--allowed-tools Glob,Grep,Read` 里的 `Read` 是**无路径限制**
+的预授权，会把 provider 本来就有的工作目录边界一起拆掉——探针以工作区为 cwd 成功读到
+`~/.claude/` 下的文件，终态 `permission_denials` 为空。S3 的读取拒绝清单只约束执行器
+自己的读取，对 Agent 完全不生效，于是「拒读 `.dev.vars`/`~/.ssh`」这条承诺在 Agent 这
+一侧是空的。去掉预授权后，工作区内的 Glob/Grep/Read 照常、init 实报工具面仍是
+`Glob/Grep/Read`，而越界读取被拒并落进 `permission_denials`，经会话层转成 HumanAction
+对 owner 可见。结论：`--allowed-tools` 是纯负收益的 flag——不收窄工具面（S6），却拆掉
+已有边界（S8），从命令行彻底移除。
+
+**S3 环境变量白名单必须放行代理变量**：实测本机经本地代理出网，剥掉 `HTTPS_PROXY`
+后 provider 直连被拒，终态是 `403 Request not allowed` + `is_error: true`。这条报错读
+起来像凭据失效，会把排障引向反复重新登录，而凭据完好。一个把功能打死、且报错指向
+错误方向的安全白名单，比不安全更贵。代理地址可能含 userinfo，故按凭据对待：放行给
+子进程，但不写进日志。
+
+### M3 写入型管线（2026-08-22，阶段一落地）
+
+用户拍板方向：**遇到问题能自己解决、自己提交、自己部署；需要人工介入时再介入**。
+阶段一（本次）：修改 → 执行器自跑验证 → 本地候选分支提交 → 服务端注册 Candidate，
+不推远端。阶段二（未做）：干净集成 worktree → 部署 → 冒烟 → resolved（已授权无人
+值守部署）。
+
+架构由三次实测锁定（详见 `tests/scenarios/feedback-workbench.md` 2026-08-22 变更日志）：
+- **Agent 零命令通道**：命令 specifier 无约束力、路径边界有效 → 写入型工具面是
+  `Glob/Grep/Read/Edit/Write` + `--permission-mode acceptEdits`（探针证实不被降级、
+  区内免审、区外写入被拒进 `permission_denials`），验证由执行器进程跑（run-plan 的
+  「权威门禁在 Agent 接触不到的一侧重跑」字面成立）。
+- **argv 与 S6 闸同源**：`createClaudeCliSession` 直接收 `policy`，闸内取
+  `toolAllowlistFor(policy)`——「argv 写入态、闸只读态」的接线洞从构造上不可能。
+- **验证子进程只拿 S3 白名单环境 + `CI=1`**：验证跑的是 Agent 刚改过的代码，全量
+  env 等于把密钥交给候选变更；`CI=1` 让 playwright 拒绝复用开发机上在跑的 vite
+  （否则验证的是主仓工作树而非候选提交）。
+
+落地模块：`verification.js`（命令执行 + 步骤编排）、`candidate.js`（git 操作；
+executor-ws 实为主仓 linked worktree，故 prepare 不按名字 checkout 默认分支，用
+`rev-parse` + `checkout -B <候选分支> <提交>`）、`write-pipeline.js`（五步编排 +
+与 GitHub 路径逐键同形的 diffManifest，哈希与 `scripts/feedback-diff-gate.mjs` 同
+算法）、normalize 层 `deferTerminal`（turn 完成 ≠ 终态）。候选注册是纯服务端行为
+（`registerFeedbackCandidate` 以 repo+commits+签名 manifest 为身份）。同日顺手修了
+执行器出站代理（Node fetch 不读代理变量）与同 Run 连续租回的指数退避（防热循环兜底）。
+
+### M3 执行器交付（2026-08-22，阶段二落地并真机跑通）
+
+Worker：Release 派发按 `default_adapter` 路由（executor 项目不派 GitHub，保持
+`integrating` 由 `POST /api/executor/release` 出站认领；payload 与 GitHub dispatch
+同一构造函数、release token 认领时重铸、随带项目 commands/deployConfig），进度上报
+**复用** `/api/feedback/releases/:id/events` 与全部既有状态机——服务端零新增事件管线。
+执行器：`release-pipeline.js`（实时 fetch `origin/<defaultBranch>` 为基线、ff/cherry-pick
+集成、冲突→`review_required`、验证失败→如实 `passed:false`、**merged=真实 push origin**、
+push 被拒→`default_branch_drift` 可恢复失败、按面部署 + UUID 部署证据 + 逐路径冒烟）。
+
+真机全链路（2026-08-22）：工单 → 写入回合产出候选（e2e `--workers=4` 后全程 ~11 分钟）
+→ 批准+交付 → 执行器认领 → ff 集成 → npm test/build → **push GitHub master
+（`d4a502c2`）** → `release.completed` → Candidate `integrated`、Issue **`resolved`**。
+用户目标「自己解决、自己提交、自己部署、需要人再介入」四环闭合（本轮 docs-only 无需
+部署；pages/worker 部署分支已实现并有测试，待真实前端/Worker 修复到来时真机验证）。
+
+**已接受缺口 / 仍未完成**：Release 无租约（单执行器 + 同 id 退避 + 终态不可再认领
+兜底，多执行器前必须补）；候选「批准+交付」在执行器路径靠工作台 admin 操作（本轮
+真机用 D1 直写忠实复刻了 `deliverFeedbackCandidate` 落库）；worker 面的 Release 部署
+在平台改动全部落 master 前不安全（changed-surface 判定天然限制）；T6 会话续接、
+T7 离线 UI、M4 审批下行未动；`implement_and_verify` 的视觉证据在执行器路径暂无法
+产出，要求视觉证据的变更集以 `verification_failed` 诚实失败。
+
+### M3 执行器运维脚本（2026-08-22）
+
+执行器是拉取式常驻进程，必须能后台无感长跑。`scripts/executor/executor.ps1`
+（`npm run executor:start|stop|status|logs`）收口五件事：
+
+- **配置在仓库外**：`%USERPROFILE%\.gantt-executor\executor.env`，首次 start 生成模板。
+  密钥不进仓库、不进日志，脚本只判空不回显。
+- **前台预检**：node/入口/工作区存在性、工作区不是主工作区、remote 是 HTTPS——准入
+  本来就会拦，但那是在后台进程里抛的，错误只落日志，用户看到的是「起了又没了」。
+- **不套包装器**：直接 `Start-Process node`。套 npm/cmd 的话停止时杀掉的是包装器，
+  node 变成还在认领任务的孤儿进程（本会话两次踩到）。
+- **日志逐行时间戳**（入口注入 `log`）：一轮写入回合里 build 与 e2e 之间可静默十几
+  分钟，没有时间戳分不清「正常地慢」和「死了」——真机上用户正是因此判为卡死。
+  执行器无一处 `console.log`，故 stderr 文件即完整日志；读取一律 `-Encoding UTF8`
+  （PowerShell 5.1 默认按 ANSI 读，中文会花屏）。
+- **优雅停止**：Windows 无可投递的 SIGTERM，后台进程只能硬杀，而硬杀会截断正在跑的
+  写入回合（留下等 120s 租约超时的 Run + 脏工作区）。`main.js` 新增
+  `FEEDBACK_EXECUTOR_STOP_FILE` 哨兵，`stop` 写哨兵后等它跑完当前这轮再退，
+  退出前打 `loop exited cleanly` 以区分收工与猝死；急停用 `stop -Force`（taskkill /T）。
+
+### M3 判据与管理端去 Actions 耦合（2026-08-22）
+
+阶段二跑通后复查发现两处仍把 Actions 当唯一执行路径，`default_adapter='executor'` 的项目
+因此被一条它不走的通路误导：
+
+- **§7.4 交付判据**：`providerHealth.connectionState === 'connected'` 是准入条件之一，而全仓
+  唯一把它写成 `connected` 的地方是 Action 冒烟的结果回调。executor 项目上执行器再健康也永远
+  降级 `candidate_review`；反过来冒烟绿着、一个执行器都没起时判据又会放行。改为按路径取证：
+  actions 认冒烟回调，executor 认 `feedback_executors` 里心跳在 `FEEDBACK_EXECUTOR_HEALTH_WINDOW_MS`
+  （= 租约上限 5 分钟）内、`status='online'` 且 capabilities 覆盖该 provider 的行。
+- **管理端 AI 执行器页**：`runtime.runner` 是常量 `GitHub-hosted`，卡片展示 Action ref，
+  「测试连接」无条件派 `feedback-runner-smoke.yml`。改为 `serializeRunnerSettings` 读项目
+  adapter：executor 路径出 `executor:codex` / `executor:claude-code`、本地执行器、在线执行器
+  与心跳，`connectionState` 由控制面推导，凭据标注归属执行器主机；「测试连接」变成控制面探测
+  （`mode='executor_probe'`，零出站请求），测试历史按 `mode` 区分渲染。
+
+「谁算活着」收成唯一的 `readFeedbackExecutorHealth`，判据、面板与探测共用，避免页面显示在线
+而判据降级。验证并入 `SCN-FWB-022`（真实 SQLite + 真实派发路径，5 条）与 `SCN-FWB-016`
+（4 条），见场景清单 2026-08-22 变更日志。
+
+- **交付预检与 `credentialsReady`**（`EXC-FWB-006`，2026-08-22 用户拍板后落地）：executor 路径
+  删除全部 Actions 口径准入条件（`FEEDBACK_GITHUB_TOKEN`/`FEEDBACK_MERGE_TOKEN`/部署凭据），
+  换成 Worker 真能核验的等价物——项目交付配置完整、`FEEDBACK_EXECUTOR_TOKEN` 存在、执行器在线；
+  两条路径共有的 Callback origin、Release token secret、生产 smoke 目标保留，actions 路径原样不动。
+  执行器侧的凭据边界由启动准入（`admission.js` 的 S1～S3）负责，Worker 不再代为断言。
+**浏览器级验证缺口**：executor 路径的页面渲染目前只有 Worker 载荷级断言，workbench e2e 仍跑
+actions 项目（14 条全绿，无回归），executor 形态的浏览器用例待补。
+
+**成本约束（新增，M4 前必须有结论）**：Claude Code 每条 Run 起新会话都要付一次系统
+提示的 cache creation 底（实测 trivial 一轮 ~29k tokens），且与开发者交互会话共享同一
+个五小时额度窗口。`main.js` 已透出 `FEEDBACK_EXECUTOR_MODEL` / `_MAX_TURNS` /
+`_MAX_USD` 三个旋钮，但**并发压到 1 与降档策略尚未定**。
 
 ---
 
@@ -351,13 +589,16 @@ T1～T4 全部落地，场景 `SCN-FWB-033`（M3/M4 的三条场景号顺延为 
 
 已拍板在日常开发机当前用户下运行，因此下列补偿措施**不是可选项**：
 
-| # | 措施 | 说明 |
-| - | ---- | ---- |
-| **S1** | **独立 checkout 目录** | 执行器工作区不得是你的主工作区 `C:\Users\24408\IdeaProjects\gantt-task-editor`。用独立克隆，避免 Agent 撞上你未提交的改动（Spec §14.6 已有"不得在开发者本地脏 Primary Worktree 上合并/构建/部署"的同源纪律）。 |
-| **S2** | **专用 git 凭据** | 为 Agent 单独签发 fine-grained PAT，只对该仓库、只给必要权限。**不得使用你的 SSH key 或全局 credential helper。** |
-| **S3** | **读取路径拒绝清单** | 执行器进程显式拒绝读 `.dev.vars`、`.env*`、`~/.ssh`、`~/.aws`、浏览器 profile。ExecutionProfile 的 `allowed_paths` 机械执行，不靠 prompt。 |
-| **S4** | **`auto_deliver` 全程关闭** | V3 首期不启用分级自治。所有 Candidate 走人工审批。 |
-| **S5** | **执行器不处理平台自身** | M2-T4 的 `is_self` 机械实现。 |
+| #      | 措施                               | 说明                                                                                                                                                                                                                                                                                                                                                                                           |
+| ------ | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **S1** | **独立 checkout 目录**             | 执行器工作区不得是你的主工作区 `C:\Users\24408\IdeaProjects\gantt-task-editor`。用独立克隆，避免 Agent 撞上你未提交的改动（Spec §14.6 已有"不得在开发者本地脏 Primary Worktree 上合并/构建/部署"的同源纪律）。                                                                                                                                                                                 |
+| **S2** | **专用 git 凭据**                  | 为 Agent 单独签发 fine-grained PAT，只对该仓库、只给必要权限。**不得使用你的 SSH key 或全局 credential helper。**                                                                                                                                                                                                                                                                              |
+| **S3** | **读取路径拒绝清单**               | 执行器进程显式拒绝读 `.dev.vars`、`.env*`、`~/.ssh`、`~/.aws`、浏览器 profile。ExecutionProfile 的 `allowed_paths` 机械执行，不靠 prompt。                                                                                                                                                                                                                                                     |
+| **S4** | **`auto_deliver` 全程关闭**        | V3 首期不启用分级自治。所有 Candidate 走人工审批。                                                                                                                                                                                                                                                                                                                                             |
+| **S5** | **执行器不处理平台自身**           | M2-T4 的 `is_self` 机械实现。                                                                                                                                                                                                                                                                                                                                                                  |
+| **S6** | **工具暴露面以 provider 实报为准** | 执行器读 provider 会话初始化事件里**实际暴露**的工具集，出现只读白名单（`Read`/`Grep`/`Glob`）以外的任何工具就拒绝开跑，终态 `executor_tool_surface_not_allowed`。命令行上的允许清单只是最小化手段：实测 `claude --allowed-tools "Read,Grep,Glob"` 之后 init 仍暴露 `Bash`/`Edit`/`Write`/`ToolSearch`，`--permission-mode manual` 被静默降级。与 Adapter 注册表同一条原则——测行为，不测声明。 |
+| **S7** | **provider 配置目录**              | codex 必须用独立 `CODEX_HOME`（共享状态库会被在跑的进程锁死）。Claude Code 默认**继承**开发者已登录的目录：`--setting-sources project` + `--strict-mcp-config` + `--disable-slash-commands` 经实测已把用户级 settings、插件、技能、MCP 排除干净（init 实报四项全空、`permissionMode` 为 `default`），隔离在此不构成安全边界，降级为 `FEEDBACK_EXECUTOR_PROVIDER_HOME` 可选项。继承模式下不得显式注入配置目录变量——设成默认目录会让 CLI 去错的位置找主配置并造出重复文件。
+| **S8** | **只读工具不经 `--allowed-tools` 预授权** | `Read` 的预授权无路径限制，会拆掉 provider 本有的工作目录边界（实测：工作区 cwd 下成功读到 `~/.claude/` 下的文件、零拒绝记录），使 S3 的读取拒绝清单对 Agent 完全失效。去掉预授权后工作区内读取与 init 工具面均不变，越界读取被拒并落进 `permission_denials` → HumanAction。`--allowed-tools` 既不收窄工具面（S6）又拆边界（S8），从命令行移除。                                                                                                                                           |
 
 ### S-G 上线门槛（明确的退出条件，防止临时方案永久化）
 
@@ -388,14 +629,14 @@ T1～T4 全部落地，场景 `SCN-FWB-033`（M3/M4 的三条场景号顺延为 
 
 按 CLAUDE.md 纪律，每个改变业务行为的里程碑**先改场景清单**。提议新增 4 条：
 
-| SCN | 里程碑 | 提议验证点（草案，落库前需确认措辞） |
-| --- | ------ | ------------------------------------ |
-| `SCN-FWB-032` | M1 | 任一 Adapter 必须通过 C1–C5 符合性测试；协议事件类型与 payload 由单一定义校验，Worker 与 Adapter 不得各持一份；新增 Adapter 未过符合性测试不得注册 |
-| `SCN-FWB-033` | M2 | 目标仓库/分支/命令/交付配置来自 `feedback_projects` 单行数据，`wrangler.toml` 不得再出现 `FEEDBACK_GITHUB_REPOSITORY`/`_REF`；迁移未 apply 时回落环境变量（部署顺序：先迁移后部署）；`feedback_issues.project_id` 存在且存量回填；`is_self=1` 拒绝创建写入型 Run；`packages/feedback-platform/` 归入需管理员授权的路径 |
-| `SCN-FWB-034` | M3 | owner 回复续接同一 `provider_thread_id`；**nonce 实验**：第二轮不重放时间线仍能答出第一轮的随机码；provider session 丢失时业务不得中断，且必须（a）向用户显式播报"上下文已重置"，（b）用控制面已记录的全部上下文重新播种新会话——见已拍板的 `EXC-FWB-004`；
-**口径**：可见文案只承诺上下文连续，不得出现"省 token / 不再重放上下文"类表述（见 M0-G 判定） |
-| `SCN-FWB-035` | M3 | 租约以 `epoch` 防重复领取，旧 epoch 回写被拒；租约过期 → `executor_lost` + HumanAction，**不自动重试**；执行器离线时工作台显示离线与排队而非"处理中"；执行器隔离形态的例外说明与 S-G 退出条件 |
-| `SCN-FWB-036` | M4 | 写文件前拦截并创建 HumanAction；拒绝后 Agent 继续但不写该文件；审批超时默认拒绝；approval 不替代 diff gate，二者都必须生效 |
+| SCN                                                                                           | 里程碑 | 提议验证点（草案，落库前需确认措辞）                                                                                                                                                                                                                                                                                   |
+| --------------------------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SCN-FWB-032`                                                                                 | M1     | 任一 Adapter 必须通过 C1–C5 符合性测试；协议事件类型与 payload 由单一定义校验，Worker 与 Adapter 不得各持一份；新增 Adapter 未过符合性测试不得注册                                                                                                                                                                     |
+| `SCN-FWB-033`                                                                                 | M2     | 目标仓库/分支/命令/交付配置来自 `feedback_projects` 单行数据，`wrangler.toml` 不得再出现 `FEEDBACK_GITHUB_REPOSITORY`/`_REF`；迁移未 apply 时回落环境变量（部署顺序：先迁移后部署）；`feedback_issues.project_id` 存在且存量回填；`is_self=1` 拒绝创建写入型 Run；`packages/feedback-platform/` 归入需管理员授权的路径 |
+| `SCN-FWB-034`                                                                                 | M3     | owner 回复续接同一 `provider_thread_id`；**nonce 实验**：第二轮不重放时间线仍能答出第一轮的随机码；provider session 丢失时业务不得中断，且必须（a）向用户显式播报"上下文已重置"，（b）用控制面已记录的全部上下文重新播种新会话——见已拍板的 `EXC-FWB-004`；                                                             |
+| **口径**：可见文案只承诺上下文连续，不得出现"省 token / 不再重放上下文"类表述（见 M0-G 判定） |
+| `SCN-FWB-035`                                                                                 | M3     | 租约以 `epoch` 防重复领取，旧 epoch 回写被拒；租约过期 → `executor_lost` + HumanAction，**不自动重试**；执行器离线时工作台显示离线与排队而非"处理中"；执行器隔离形态的例外说明与 S-G 退出条件                                                                                                                          |
+| `SCN-FWB-036`                                                                                 | M4     | 写文件前拦截并创建 HumanAction；拒绝后 Agent 继续但不写该文件；审批超时默认拒绝；approval 不替代 diff gate，二者都必须生效                                                                                                                                                                                             |
 
 **例外队列**：
 
@@ -416,13 +657,13 @@ T1～T4 全部落地，场景 `SCN-FWB-033`（M3/M4 的三条场景号顺延为 
 
 ## 5. 风险与回滚
 
-| 风险 | 缓解 | 回滚路径 |
-| ---- | ---- | -------- |
-| M0 判定路线 B 不成立 | M1/M2 不依赖 M0，产出保留 | 走 M0-G 的降级分支 |
+| 风险                                       | 缓解                                                          | 回滚路径            |
+| ------------------------------------------ | ------------------------------------------------------------- | ------------------- |
+| M0 判定路线 B 不成立                       | M1/M2 不依赖 M0，产出保留                                     | 走 M0-G 的降级分支  |
 | App Server 协议漂移（官方标 experimental） | Adapter 隔离 + 每个 Run 记 `codex --version` + 每日契约 smoke | 切回 ActionsAdapter |
-| 执行器环境不隔离（已知退步） | §S 的 S1–S5 + S-G 门槛 | 迁容器 |
-| 自举风险未解除 | 平台包独立测试入口 + `is_self` 禁止 | §6 分家 |
-| 范围蔓延 | §3 明确不做清单 | — |
+| 执行器环境不隔离（已知退步）               | §S 的 S1–S8 + S-G 门槛                                        | 迁容器              |
+| 自举风险未解除                             | 平台包独立测试入口 + `is_self` 禁止                           | §6 分家             |
+| 范围蔓延                                   | §3 明确不做清单                                               | —                   |
 
 **全期回滚保证**：GitHub 路径始终保留且始终通过符合性测试。任何一步出问题，
 把 `projects` 的默认 adapter 切回 `actions` 即可恢复现状。

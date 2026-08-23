@@ -5,7 +5,11 @@
     "type": "module",
     "description": "反馈编排平台：执行器协议 v0 与 Adapter 符合性测试套件。",
     "scripts": {
-        "test": "vitest run --config vitest.config.js"
+        "test": "vitest run --config vitest.config.js",
+        "executor": "node executor/main.js"
     },
-    "//": "独立测试入口。故意不并入根 npm test —— 2026-08-09 平台自身的测试挂掉导致所有反馈处理瘫痪过一次，自举风险在本期不解除，只能靠隔离测试路径来限制爆炸半径。见实施计划 §1.2。"
+    "//": "独立测试入口。故意不并入根 npm test —— 2026-08-09 平台自身的测试挂掉导致所有反馈处理瘫痪过一次，自举风险在本期不解除，只能靠隔离测试路径来限制爆炸半径。见实施计划 §1.2。",
+    "dependencies": {
+        "undici": "^7.29.0"
+    }
 }

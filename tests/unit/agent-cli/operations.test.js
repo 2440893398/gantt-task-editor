@@ -298,6 +298,84 @@ describe('agent operation runtime', () => {
         pending.resolve({ ok: true, data: { id: 1 }, rev: 1 });
     });
 
+    it('rejects reuse of an idempotencyKey with a different request', async () => {
+        const pending = deferred();
+        const executeCommand = vi.fn(() => pending.promise);
+        const app = buildApi({ executeCommand, context: { projectId, adapter: {} } });
+
+        const first = await app.operation.start({
+            command: 'task.create',
+            args: { name: 'Original' },
+            idempotencyKey: 'agent-op-mismatch',
+        });
+        const mismatched = await app.operation.start({
+            command: 'task.create',
+            args: { name: 'Changed' },
+            idempotencyKey: 'agent-op-mismatch',
+        });
+
+        expect(first.ok).toBe(true);
+        expect(mismatched).toMatchObject({
+            ok: false,
+            error: {
+                code: 'CONFLICT',
+                message: 'idempotencyKey was already used with a different request.',
+                operationId: first.data.operationId,
+            },
+        });
+        expect(executeCommand).toHaveBeenCalledTimes(1);
+
+        pending.resolve({ ok: true, data: { id: 1 }, rev: 1 });
+    });
+
+    it('re-executes a pruned idempotencyKey as a new operation (limited replay window)', async () => {
+        const executeCommand = vi.fn(async () => ({ ok: true, data: { id: 1 }, rev: 1 }));
+        const app = buildApi({ executeCommand, context: { projectId, adapter: {} } });
+
+        const waitForTerminal = async (operationId) => {
+            for (let attempt = 0; attempt < 50; attempt += 1) {
+                const status = await app.operation.status({ id: operationId });
+                if (['succeeded', 'failed', 'cancelled'].includes(status.data.status)) {
+                    return;
+                }
+                await new Promise((resolve) => {
+                    setTimeout(resolve, 0);
+                });
+            }
+            throw new Error(`Operation ${operationId} never reached a terminal status.`);
+        };
+
+        const first = await app.operation.start({
+            command: 'task.create',
+            args: { name: 'Pruned' },
+            idempotencyKey: 'prune-0',
+        });
+        await waitForTerminal(first.data.operationId);
+
+        // Push the first operation past MAX_OPERATION_HISTORY terminal entries.
+        for (let index = 1; index <= 60; index += 1) {
+            const started = await app.operation.start({
+                command: 'task.create',
+                args: { name: 'Pruned' },
+                idempotencyKey: `prune-${index}`,
+            });
+            expect(started.ok).toBe(true);
+            await waitForTerminal(started.data.operationId);
+        }
+
+        const replay = await app.operation.start({
+            command: 'task.create',
+            args: { name: 'Pruned' },
+            idempotencyKey: 'prune-0',
+        });
+
+        // The pruned key no longer replays: it starts a NEW operation. A bounded
+        // replay window is the documented protocol constraint.
+        expect(replay.ok).toBe(true);
+        expect(replay.data.operationId).not.toBe(first.data.operationId);
+        await waitForTerminal(replay.data.operationId);
+    });
+
     it('marks cancellation as requested and finishes cancelled when the command returns CANCELLED', async () => {
         let commandSignal;
         const executeCommand = vi.fn(
