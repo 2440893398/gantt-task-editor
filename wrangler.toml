@@ -13,6 +13,9 @@ enabled = true
 #   FEEDBACK_GITHUB_REPOSITORY / FEEDBACK_GITHUB_REF —— 迁进 feedback_projects
 #   FEEDBACK_GITHUB_WORKFLOW   —— 死配置。代码里一次都没读过；派发用的是
 #                                 FEEDBACK_PROVIDER_WORKFLOW_FILES 那张 provider→文件映射。
+#   FEEDBACK_GITHUB_API_VERSION（2026-08-23 删）—— 死配置，且值是错的。全仓只有这一行，
+#                                 四处 GitHub 调用写的都是硬编码 'X-GitHub-Api-Version:
+#                                 2022-11-28'，跟这里声明的 "2026-03-10" 对不上。
 #
 # 刻意保留在这里的：
 #   FEEDBACK_PRODUCTION_ORIGIN —— 被同步的 getFeedbackPublicOrigin(request, env) 在请求
@@ -25,7 +28,9 @@ enabled = true
 #     Worker 13:40 先上、迁移 19:36 才 apply，窗口内无流量，未造成影响。）
 [vars]
 FEEDBACK_CALLBACK_ORIGIN = "https://gantt-share.ch451314.workers.dev"
-FEEDBACK_GITHUB_API_VERSION = "2026-03-10"
+# FEEDBACK_PRODUCTION_API_URL 在 Worker 里只被 §19.5 预检的 production_smoke 存在性检查
+# 读到（`has(...)`），删了预检就永远过不去；真正拿它当 URL 用的是 Actions 工作流里的
+# 同名 repo variable。
 FEEDBACK_PRODUCTION_API_URL = "https://gantt-share.ch451314.workers.dev"
 FEEDBACK_PRODUCTION_ORIGIN = "https://gantt-task-editor.pages.dev"
 
@@ -40,10 +45,10 @@ binding = "SHARE_KV"
 id = "7d9a0ab283ec48b7b9f106d0175b3f01"
 preview_id = "fcfc0a97ee1046aaaaa66de0059f22b5"
 
-[[kv_namespaces]]
-binding = "FEEDBACK_KV"
-id = "6f5d4a8a6aa14ff6bde111b5469d9df5"
-preview_id = "d2737e958a7c469c9982372db65c5ab7"
+# FEEDBACK_KV（2026-08-23 解绑）—— 命名空间 6f5d4a8a… 里 0 个 key。它只被
+# getFeedbackStore(env) 的 `env.FEEDBACK_KV || env.SHARE_KV` 读到，四个调用点全是
+# legacy 回填的 store.get，没有任何 put/delete。解绑后回退到 SHARE_KV，那边 feedback:*
+# 前缀同样是 0 个 key，两边都 miss，行为不变。命名空间本身保留未删。
 
 [[durable_objects.bindings]]
 name = "CLOUD_DOCS"

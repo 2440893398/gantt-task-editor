@@ -8,11 +8,6 @@
       "binding": "SHARE_KV",
       "id": "7d9a0ab283ec48b7b9f106d0175b3f01",
       "preview_id": "fcfc0a97ee1046aaaaa66de0059f22b5"
-    },
-    {
-      "binding": "FEEDBACK_KV",
-      "id": "6f5d4a8a6aa14ff6bde111b5469d9df5",
-      "preview_id": "d2737e958a7c469c9982372db65c5ab7"
     }
   ],
   "durable_objects": {
