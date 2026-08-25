@@ -47,6 +47,10 @@
         'status.changed': '用于外部通知和同步',
     };
     var TERMINAL_STATUSES = ['resolved', 'closed'];
+    /* SCN-FWB-036: 这两种等待在问「还缺什么」，服务端要求它们的重新处理必须携带新信息。
+       名单与 Worker 的 FEEDBACK_HUMAN_ACTION_NEEDS_NEW_INPUT 一致——两边不一致的后果是
+       用户填了框却被拒，或者看不到框却被要求填。 */
+    var NEEDS_NEW_INPUT_ACTIONS = ['need_reproduction', 'confirm_policy'];
     var FIELD_LABELS = {
         priority: '优先级',
         assignee: '处理者',
@@ -132,6 +136,196 @@
                 return '<p>' + escapeHtml(block.trim()).replace(/\n/g, '<br />') + '</p>';
             })
             .join('');
+    }
+
+    /*
+     * Markdown rendering for authored bodies (§19.2).
+     *
+     * Agent results are written in GFM — headings, tables, fenced code — and
+     * `paragraphs()` escaped all of it, so an Agent result read as raw syntax.
+     * The page loads the vendored `marked` UMD build (same dependency the AI drawer
+     * uses) from a same-origin asset path; this script is served inline and
+     * cannot import it.
+     */
+    var MARKDOWN_OPTIONS = { gfm: true, breaks: true, async: false };
+
+    /*
+     * `marked` deliberately does not sanitize, and every body reaching it is
+     * untrusted: Issue descriptions come from an anonymous endpoint and Agent
+     * output can be steered by the task data it read (prompt injection). The
+     * allowlist below is the only thing between that text and `innerHTML`.
+     */
+    var MARKDOWN_ALLOWED_TAGS = {
+        p: [],
+        br: [],
+        hr: [],
+        strong: [],
+        b: [],
+        em: [],
+        i: [],
+        del: [],
+        s: [],
+        sup: [],
+        sub: [],
+        code: [],
+        pre: [],
+        blockquote: [],
+        ul: [],
+        ol: ['start'],
+        li: [],
+        h1: [],
+        h2: [],
+        h3: [],
+        h4: [],
+        h5: [],
+        h6: [],
+        table: [],
+        thead: [],
+        tbody: [],
+        tfoot: [],
+        tr: [],
+        th: ['align'],
+        td: ['align'],
+        a: ['href', 'title'],
+        img: ['src', 'alt', 'title'],
+        input: ['type', 'checked', 'disabled'],
+    };
+
+    // Removed with their subtree; everything else unknown is unwrapped so the
+    // text inside a stray tag still reaches the reader.
+    var MARKDOWN_DROPPED_TAGS = {
+        script: true,
+        style: true,
+        iframe: true,
+        object: true,
+        embed: true,
+        link: true,
+        meta: true,
+        base: true,
+        form: true,
+        button: true,
+        select: true,
+        textarea: true,
+        template: true,
+        svg: true,
+        math: true,
+    };
+
+    var MARKDOWN_URL_ATTRIBUTES = { href: true, src: true };
+
+    function markdownUrlIsSafe(value) {
+        return /^(?:https?:|mailto:|tel:|\/|#|\?)/.test(
+            String(value == null ? '' : value)
+                .trim()
+                .toLowerCase()
+        );
+    }
+
+    function unwrapElement(element) {
+        var parent = element.parentNode;
+        if (!parent) return;
+        while (element.firstChild) parent.insertBefore(element.firstChild, element);
+        parent.removeChild(element);
+    }
+
+    function sanitizeMarkdownElement(element) {
+        var tag = element.tagName.toLowerCase();
+        var allowedAttributes = MARKDOWN_ALLOWED_TAGS[tag] || [];
+
+        Array.prototype.slice.call(element.attributes).forEach(function (attribute) {
+            var name = attribute.name.toLowerCase();
+            if (allowedAttributes.indexOf(name) < 0) {
+                element.removeAttribute(attribute.name);
+                return;
+            }
+            if (MARKDOWN_URL_ATTRIBUTES[name] && !markdownUrlIsSafe(attribute.value)) {
+                element.removeAttribute(attribute.name);
+            }
+        });
+
+        if (tag === 'a' && element.getAttribute('href')) {
+            element.setAttribute('target', '_blank');
+            element.setAttribute('rel', 'noopener noreferrer nofollow ugc');
+        }
+
+        // A checkbox that stays clickable would look like a control the reader
+        // can toggle, but nothing persists it — task lists are display only.
+        if (tag === 'input') {
+            element.setAttribute('type', 'checkbox');
+            element.setAttribute('disabled', 'disabled');
+        }
+    }
+
+    function sanitizeMarkdownHtml(html) {
+        var template = document.createElement('template');
+        template.innerHTML = String(html == null ? '' : html);
+
+        var walker = document.createTreeWalker(template.content, NodeFilter.SHOW_ELEMENT, null);
+        var dropped = [];
+        var unwrapped = [];
+
+        while (walker.nextNode()) {
+            var element = walker.currentNode;
+            var tag = element.tagName.toLowerCase();
+
+            if (MARKDOWN_DROPPED_TAGS[tag]) {
+                dropped.push(element);
+                continue;
+            }
+
+            sanitizeMarkdownElement(element);
+
+            if (!MARKDOWN_ALLOWED_TAGS[tag]) unwrapped.push(element);
+        }
+
+        dropped.forEach(function (element) {
+            if (element.parentNode) element.parentNode.removeChild(element);
+        });
+        unwrapped.forEach(unwrapElement);
+
+        // GFM task lists arrive as a bare checkbox inside a bulleted <li>;
+        // marking them lets the stylesheet drop the redundant bullet.
+        Array.prototype.forEach.call(
+            template.content.querySelectorAll('li > input[type="checkbox"]'),
+            function (checkbox) {
+                var item = checkbox.parentNode;
+                item.classList.add('markdown-task-item');
+                if (item.parentNode && item.parentNode.classList) {
+                    item.parentNode.classList.add('markdown-task-list');
+                }
+            }
+        );
+
+        // A wide table cannot shrink below its content, so it needs a scroll
+        // container of its own or it widens the whole card at 375px (§19.6).
+        Array.prototype.forEach.call(
+            template.content.querySelectorAll('table'),
+            function (table) {
+                if (!table.parentNode) return;
+                var wrapper = document.createElement('div');
+                wrapper.className = 'markdown-table';
+                table.parentNode.insertBefore(wrapper, table);
+                wrapper.appendChild(table);
+            }
+        );
+
+        return template.innerHTML;
+    }
+
+    function renderMarkdown(value) {
+        var text = String(value == null ? '' : value);
+        if (!text.trim()) return '';
+
+        var parser = window.marked;
+        if (!parser || typeof parser.parse !== 'function') return paragraphs(text);
+
+        try {
+            return sanitizeMarkdownHtml(parser.parse(text, MARKDOWN_OPTIONS));
+        } catch (error) {
+            // Never let a malformed body blank out the timeline: fall back to
+            // the escaped-paragraph rendering this replaced.
+            return paragraphs(text);
+        }
     }
 
     function relativeTime(value) {
@@ -255,8 +449,20 @@
         var capability = params.get('capability') || '';
         if (!issueId || !capability) return null;
 
-        // Keep the capability out of history, logs and Referer (§21.1).
-        window.history.replaceState({}, '', window.location.pathname + window.location.search);
+        // §21.1 keeps the capability out of query, logs and Referer; a
+        // fragment reaches none of those, but it should not sit in the address
+        // bar either, because that is what people copy and paste around. The
+        // issue id does stay, so the tab is identifiable in history and the
+        // owner has a number to quote — the credential link itself is handed
+        // out by the copy control on the owner notice instead.
+        window.history.replaceState(
+            {},
+            '',
+            window.location.pathname +
+                window.location.search +
+                '#issue=' +
+                encodeURIComponent(issueId)
+        );
         return { issueId: issueId, capability: capability };
     }
 
@@ -450,6 +656,12 @@
                 escapeHtml(actorName(event.actorType)) +
                 '</strong> ' +
                 (changeText || escapeHtml(event.type)) +
+                // SCN-FWB-036: 回应等待时写的补充说明就存在这条 status.changed 上，
+                // 而下一轮 Run 的 context 读的正是它。只渲染「将状态改为已排队」会让
+                // 用户看不到自己刚说过的话，也看不出这一轮和上一轮到底有什么不同。
+                (event.text
+                    ? '<span class="event-note">' + escapeHtml(event.text) + '</span>'
+                    : '') +
                 '</span><span title="' +
                 escapeHtml(absoluteTime(event.occurredAt)) +
                 '">' +
@@ -494,9 +706,9 @@
                   })
                 : [];
         var bodyHtml = isCreation
-            ? paragraphs(issue && issue.description) +
+            ? renderMarkdown(issue && issue.description) +
               attachmentsHtml({ attachments: creationAttachments })
-            : paragraphs(event.text || event.title) +
+            : renderMarkdown(event.text || event.title) +
               attachmentsHtml({ attachments: event.attachments });
         var evidenceHtml =
             resultEvidenceHtml(event.resultEvidence) + artifactEvidenceHtml(event.artifact);
@@ -827,15 +1039,19 @@
             ],
             [
                 '类型',
-                '<span class="property-value badge blue">' +
-                    escapeHtml(BUSINESS_TYPE_LABELS[issue.businessType] || '待分类') +
-                    '</span>',
+                state.actor === 'admin'
+                    ? classificationSelect('businessType', BUSINESS_TYPE_LABELS, issue.businessType)
+                    : '<span class="property-value badge blue">' +
+                      escapeHtml(BUSINESS_TYPE_LABELS[issue.businessType] || '待分类') +
+                      '</span>',
             ],
             [
                 '范围',
-                '<span class="property-value">' +
-                    escapeHtml(SCOPE_LABELS[issue.scope] || '待评估') +
-                    '</span>',
+                state.actor === 'admin'
+                    ? classificationSelect('scope', SCOPE_LABELS, issue.scope)
+                    : '<span class="property-value">' +
+                      escapeHtml(SCOPE_LABELS[issue.scope] || '待评估') +
+                      '</span>',
             ],
         ];
         if (issue.pagePath) {
@@ -844,12 +1060,107 @@
                 '<span class="property-value">' + escapeHtml(issue.pagePath) + '</span>',
             ]);
         }
+        // SCN-FWB-036: 分类不是展示字段，它是 §7.2 的路由判据——`scope` 停在「待评估」
+        // 的 Issue 会被永远路由回只读 analyze。管理员解开它的入口此前只在 /feedback/legacy，
+        // 而卡住的那张卡片在这一页，于是唯一看得见的出路就是那个原样重跑的按钮。
+        if (state.actor === 'admin') {
+            rows.push([
+                '',
+                '<button class="button" type="button" data-action="save-classification"' +
+                    ' id="saveClassification" disabled>保存分类并重新处理</button>' +
+                    '<p class="help" style="margin-top:6px">分类只在入库时自动算一次。' +
+                    '改成明确的类型与范围，下一轮就能按新判据路由。</p>',
+            ]);
+        }
 
         $('propertyList').innerHTML = rows
             .map(function (row) {
                 return '<div class="property-row"><span>' + row[0] + '</span>' + row[1] + '</div>';
             })
             .join('');
+    }
+
+    /* SCN-FWB-036: 管理员就地改分类。`ai.businessType`/`ai.scope` 是 §7.2 的路由输入，
+       服务端已有 admin-only 的 `PATCH /api/feedback/issues/:key` 与并发保护，这里只补
+       上工作台缺的那个入口。 */
+    function classificationSelect(field, labels, current) {
+        var value = current || 'unclear';
+        return (
+            '<select class="property-select" data-classification="' +
+            escapeHtml(field) +
+            '" aria-label="' +
+            (field === 'scope' ? '范围' : '类型') +
+            '">' +
+            Object.keys(labels)
+                .map(function (key) {
+                    return (
+                        '<option value="' +
+                        escapeHtml(key) +
+                        '"' +
+                        (key === value ? ' selected' : '') +
+                        '>' +
+                        escapeHtml(labels[key]) +
+                        '</option>'
+                    );
+                })
+                .join('') +
+            '</select>'
+        );
+    }
+
+    function saveClassification(button) {
+        if (state.submitting || !state.issue) return;
+
+        var selects = document.querySelectorAll('[data-classification]');
+        var ai = {};
+        Array.prototype.forEach.call(selects, function (select) {
+            ai[select.dataset.classification] = select.value;
+        });
+
+        state.submitting = true;
+        button.disabled = true;
+        request('/api/feedback/issues/' + encodeURIComponent(state.issue.key), {
+            method: 'PATCH',
+            body: { expectedVersion: state.issue.version, ai: ai },
+        })
+            .then(function () {
+                toastTimer('分类已更新，下一轮处理会按新判据路由');
+                return Promise.all([selectIssue(state.issue.key), loadIssues()]);
+            })
+            .catch(handleAuthError)
+            .finally(function () {
+                state.submitting = false;
+            });
+    }
+
+    /* §16.3: an evidence item is `{label, summary}`. Historical rows carry raw
+       diagnostic objects instead (`{policy, runId}`, `{executorId, epoch}`…),
+       and rendering only `label`/`summary` turned every one of them into an
+       empty box under a correct "N 项" count — worse than showing nothing,
+       because it reads as "you missed something". Those rows are already in
+       production D1 and are never rewritten, so the client degrades to showing
+       the raw key/value rather than a blank. */
+    function evidenceLabel(item) {
+        if (!item || typeof item !== 'object') return '证据';
+        if (item.label || item.type) return item.label || item.type;
+        var keys = Object.keys(item);
+        return keys.length ? keys[0] : '证据';
+    }
+
+    function evidenceSummary(item) {
+        if (item === null || item === undefined) return '';
+        if (typeof item !== 'object') return String(item);
+        if (item.summary || item.value) return item.summary || item.value;
+        return Object.keys(item)
+            .map(function (key) {
+                var value = item[key];
+                return (
+                    key +
+                    '=' +
+                    (value && typeof value === 'object' ? JSON.stringify(value) : String(value))
+                );
+            })
+            .join('；');
     }
 
     /* §19.2/§19.3: the next step comes from the structured HumanAction, never
@@ -875,9 +1186,9 @@
                 .map(function (item) {
                     return (
                         '<div class="evidence-item"><span>' +
-                        escapeHtml(item.label || item.type || '证据') +
+                        escapeHtml(evidenceLabel(item)) +
                         '</span><strong>' +
-                        escapeHtml(item.summary || item.value || '') +
+                        escapeHtml(evidenceSummary(item)) +
                         '</strong></div>'
                     );
                 })
@@ -930,9 +1241,24 @@
                         : '');
                 return;
             }
+            // SCN-FWB-036: 这类等待问的是「还缺什么」，所以它需要一个能当场写的输入框。
+            // 没有它，卡片正文要求的动作（补充信息）在卡片上根本没有对应控件，用户能点
+            // 的只有那个把同一轮原样重跑的按钮。
+            var needsNewInput = NEEDS_NEW_INPUT_ACTIONS.indexOf(action.type) !== -1;
+            if (needsNewInput) {
+                $('nextActionCopy').innerHTML +=
+                    '<label class="help" for="humanActionNote" style="display:block;margin-top:12px">补充信息后重新处理</label>' +
+                    '<textarea id="humanActionNote" aria-label="补充信息" style="width:100%;min-height:88px;margin-top:6px" placeholder="写清触发步骤与你期望的结果。这段文字会随反馈一起进入下一轮分析。"></textarea>';
+            }
             $('nextActionButtons').innerHTML = (action.allowedReturnStates || [])
                 .map(function (nextState, index) {
+                    // SCN-FWB-020: 文案按 action.type 取，不按返回状态取。同一个 `queued`
+                    // 在「批准方案」和「原样重跑」上是两回事，共用「批准并继续处理」会让
+                    // 用户以为自己批准了什么——而在 need_reproduction 上他什么也没批准。
+                    var label = humanActionLabel(nextState, action.type);
+                    var requiresNote = needsNewInput && nextState === 'queued';
                     var tone = nextState === 'closed' ? 'danger' : index === 0 ? 'blue' : '';
+                    if (requiresNote) tone = 'blue';
                     return (
                         '<button class="button ' +
                         tone +
@@ -941,11 +1267,12 @@
                         '" data-decision="' +
                         escapeHtml(nextState) +
                         '"' +
+                        (requiresNote ? ' data-needs-note="1"' : '') +
                         (action.candidateId
                             ? ' data-candidate="' + escapeHtml(action.candidateId) + '"'
                             : '') +
                         '>' +
-                        escapeHtml(humanActionLabel(nextState)) +
+                        escapeHtml(label) +
                         '</button>'
                     );
                 })
@@ -968,7 +1295,21 @@
                   : '');
     }
 
-    function humanActionLabel(nextState) {
+    /* SCN-FWB-020: 按钮文案是 action.type × 返回状态的函数，不是返回状态单独的函数。
+       此前只按返回状态取，于是 `need_reproduction` 的 `queued`（原样重跑）和
+       `design_decision` 的 `queued`（批准方案）都被渲染成「批准并继续处理」——用户
+       合理地问「那我批准有什么用」，因为在前一种情况下他确实什么也没批准（#czi9c6）。 */
+    var HUMAN_ACTION_LABELS_BY_TYPE = {
+        need_reproduction: { queued: '补充信息并重新分析' },
+        confirm_policy: { queued: '补充信息并重新处理' },
+        blocked_external: { queued: '已修复外部问题，重试' },
+        executor_lost: { queued: '重新开始处理' },
+        developer_fix_required: { queued: '已处理，重新排队' },
+    };
+
+    function humanActionLabel(nextState, actionType) {
+        var byType = HUMAN_ACTION_LABELS_BY_TYPE[actionType] || {};
+        if (byType[nextState]) return byType[nextState];
         var labels = {
             queued: '批准并继续处理',
             ready_for_deploy: '批准并交付',
@@ -1019,7 +1360,53 @@
         notice.className = 'policy-callout';
         notice.innerHTML =
             '<strong>请保存此页面链接</strong>：它是你查看和回复这条反馈的唯一凭据。' +
-            '当前版本不会发送邮件、短信或 IM 通知，需要你补充信息时请凭该链接回访。';
+            '当前版本不会发送邮件、短信或 IM 通知，需要你补充信息时请凭该链接回访。' +
+            // The address bar only carries the issue id, so "save this link"
+            // needs somewhere to actually get the link from.
+            '<div class="owner-link-row">' +
+            '<input class="owner-link-input" id="ownerLinkInput" type="text" readonly' +
+            ' aria-label="回访链接（含访问凭据）" value="' +
+            escapeHtml(ownerReturnLink()) +
+            '" />' +
+            '<button class="button" type="button" data-action="copy-owner-link">复制链接</button>' +
+            '</div>';
+    }
+
+    function ownerReturnLink() {
+        return (
+            window.location.origin +
+            window.location.pathname +
+            '#issue=' +
+            encodeURIComponent(state.ownerIssueId) +
+            '&capability=' +
+            encodeURIComponent(state.ownerCapability)
+        );
+    }
+
+    function copyOwnerReturnLink() {
+        var input = $('ownerLinkInput');
+        if (!input) return;
+
+        // Select first: that leaves the manual Ctrl/⌘ + C path ready whenever
+        // the async clipboard write is unavailable, denied or rejected.
+        input.focus();
+        input.select();
+        input.setSelectionRange(0, input.value.length);
+
+        var clipboard = window.navigator.clipboard;
+        if (!clipboard || typeof clipboard.writeText !== 'function') {
+            toastTimer('已选中链接，请按 Ctrl/⌘ + C 复制');
+            return;
+        }
+
+        clipboard
+            .writeText(input.value)
+            .then(function () {
+                toastTimer('回访链接已复制，请妥善保存');
+            })
+            .catch(function () {
+                toastTimer('已选中链接，请按 Ctrl/⌘ + C 复制');
+            });
     }
 
     function renderComposer() {
@@ -2242,6 +2629,10 @@
                 toastTimer('请填写关闭理由后提交回复');
             } else if (action === 'reopen') {
                 reopenIssue(actionButton);
+            } else if (action === 'copy-owner-link') {
+                copyOwnerReturnLink();
+            } else if (action === 'save-classification') {
+                saveClassification(actionButton);
             }
             return;
         }
@@ -2446,7 +2837,7 @@
             $('replyInput').style.display = preview ? 'none' : '';
             if (preview) {
                 $('replyPreview').innerHTML =
-                    paragraphs($('replyInput').value) || '<p class="help">暂无内容</p>';
+                    renderMarkdown($('replyInput').value) || '<p class="help">暂无内容</p>';
             }
         });
     });
@@ -2558,6 +2949,19 @@
             payload.designId = button.dataset.design;
             payload.note = note;
         }
+
+        // SCN-FWB-036: 没有新信息就重新处理，只会拿回逐字相同的结论。服务端会拒，
+        // 这里先拦一道并把光标放到该填的地方——让用户在按钮上撞 409 是很差的解释方式。
+        if (button.dataset.needsNote) {
+            var followUpInput = $('humanActionNote');
+            var followUp = followUpInput ? followUpInput.value.trim() : '';
+            if (!followUp) {
+                toastTimer('请先补充信息：没有新信息，重新处理会得到与上一轮相同的结论');
+                if (followUpInput) followUpInput.focus();
+                return;
+            }
+            payload.note = followUp;
+        }
         state.submitting = true;
         button.disabled = true;
         request(
@@ -2576,7 +2980,11 @@
                     toastTimer(
                         button.dataset.designDecision
                             ? '方案决定已提交'
-                            : '已提交决定：' + humanActionLabel(decision)
+                            : '已提交决定：' +
+                                  humanActionLabel(
+                                      decision,
+                                      state.humanAction && state.humanAction.type
+                                  )
                     );
                 }
                 return Promise.all([selectIssue(state.issue.key), loadIssues()]);
@@ -2621,6 +3029,12 @@
 
     document.addEventListener('change', function (event) {
         if (event.target.name === 'automationEvent') markDirty('automation');
+        if (event.target.dataset && event.target.dataset.classification) {
+            // 只在真的改动过之后才可提交：一个永远可点的「保存」按钮会诱导出
+            // 一次什么都没改的 PATCH，而那次 PATCH 会照样 bump version 并重新派发。
+            var save = $('saveClassification');
+            if (save) save.disabled = false;
+        }
         if (event.target.id === 'defaultRunnerSelect') {
             state.runners.defaultProvider = event.target.value;
             renderRunners();

@@ -40,11 +40,18 @@ export function planHumanActionBackfill(row) {
         return { skip: true, reason: 'already_waiting' };
     }
 
-    const { actionType, requestedAction } = describeFeedbackAnalysisHandoff(row);
+    // §16.3：证据里的「已读取 N 条时间线」「有没有附件」是**事实陈述**，必须来自查询。
+    // 回填的 Issue 全部走过只读 analyze——它们正是 run.completed 修复前卡下的那批。
+    const { actionType, requestedAction, evidence } = describeFeedbackAnalysisHandoff(row, {
+        policy: 'analyze',
+        timelineCount: Number(row.timeline_count) || 0,
+        attachmentCount: Number(row.attachment_count) || 0,
+    });
     return {
         skip: false,
         actionType,
         requestedAction,
+        evidence,
         // 确定性 id：重复跑同一条 Issue 不会插出第二行。
         actionId: `hac_backfill_${String(row.id).split(':').at(-1)}`,
     };
@@ -55,7 +62,15 @@ function sqlString(value) {
 }
 
 export function buildHumanActionStatements(row, plan, createdAt) {
-    const evidence = JSON.stringify([{ backfill: 'SCN-FWB-020', issueStatus: row.status }]);
+    // §16.3：证据按 `label`/`summary` 渲染。回填出来的条目也必须是人能读的——
+    // 补一条等待却让它显示成空框，等于把「卡住了」换成「卡住了，而且看不懂」。
+    const evidence = JSON.stringify([
+        ...(plan.evidence || []),
+        {
+            label: '这条等待的来历',
+            summary: '由存量修复补齐（SCN-FWB-020）：该 Issue 此前停在等待人工却没有待办项。',
+        },
+    ]);
     const allowed = JSON.stringify(RETURN_STATES[plan.actionType] || ['queued', 'closed']);
 
     return [
@@ -147,7 +162,11 @@ function main() {
             `SELECT i.id, i.version, i.status, i.business_type, i.scope, i.automation_decision,
                     i.active_human_action_id, i.updated_at,
                     (SELECT COUNT(*) FROM feedback_human_actions h
-                     WHERE h.issue_id = i.id AND h.status = 'active') AS active_actions
+                     WHERE h.issue_id = i.id AND h.status = 'active') AS active_actions,
+                    (SELECT COUNT(*) FROM feedback_events e
+                     WHERE e.issue_id = i.id AND e.visibility = 'public') AS timeline_count,
+                    (SELECT COUNT(*) FROM feedback_attachments a
+                     WHERE a.issue_id = i.id) AS attachment_count
              FROM feedback_issues i ORDER BY i.created_at`,
         ])
     );

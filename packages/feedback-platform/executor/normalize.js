@@ -25,12 +25,18 @@ export function createTurnNormalizer({
     // 验证与候选提交。true 时 COMPLETED 信号只置 turnCompleted，终态由
     // run-loop 在管线跑完后经 completeTurn / buildFailure 显式收尾。
     deferTerminal = false,
+    // C6（SCN-FWB-020）：只读 Run 的「完成」有两种。产出了合规 Design 的那一种，
+    // 终态是 `agent.waiting_human` + `design_decision`——因为 Design 是 §7.2 通向
+    // 写入型 policy 的唯一入口，发 `run.completed` 等于把 Issue 永远钉在 analyze 上。
+    // 判据由 run-loop 注入（`design-escalation.js` 那一份），归一化层只负责按结论投事件。
+    planEscalation = () => ({ escalates: false }),
 } = {}) {
     if (!runId) throw new Error('EXECUTOR_NORMALIZER_RUN_ID_REQUIRED');
     const clock = typeof now === 'function' ? now : () => new Date().toISOString();
     let sequence = 0;
     let terminalEmitted = false;
     let turnCompleted = false;
+    let waitingHumanEmitted = false;
     let providerSessionId = threadId;
     const agentTexts = [];
 
@@ -67,6 +73,22 @@ export function createTurnNormalizer({
                 }),
             ];
         }
+        const escalation = planEscalation(finalText) || { escalates: false };
+        if (escalation.escalates) {
+            waitingHumanEmitted = true;
+            return [
+                envelope(EVENT_TYPES.AGENT_MESSAGE, {
+                    message: escalation.publicMessage || finalText,
+                }),
+                envelope(EVENT_TYPES.AGENT_WAITING_HUMAN, {
+                    actionType: escalation.actionType,
+                    requestedAction: escalation.requestedAction,
+                    summary: escalation.summary,
+                    design: escalation.design,
+                }),
+            ];
+        }
+
         return [
             envelope(EVENT_TYPES.AGENT_MESSAGE, { message: finalText }),
             envelope(EVENT_TYPES.RUN_COMPLETED, {
@@ -85,6 +107,11 @@ export function createTurnNormalizer({
         },
         get turnCompleted() {
             return turnCompleted;
+        },
+
+        /** C6：本轮以「等待人工批准方案」收尾，不是普通完成。 */
+        get waitingHumanEmitted() {
+            return waitingHumanEmitted;
         },
         get providerSessionId() {
             return providerSessionId;

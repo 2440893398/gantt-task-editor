@@ -83,6 +83,10 @@ export const PAYLOAD_RULES = Object.freeze({
         enums: Object.freeze({ phase: ALL_RUN_PHASES }),
         note: 'SCN-FWB-030：时间线必须能说出「正在跑哪一步」，不能只说「进入下一阶段」。',
     }),
+    [EVENT_TYPES.AGENT_WAITING_HUMAN]: Object.freeze({
+        required: ['actionType'],
+        note: 'C6/§16.3：Worker 的 normalizeFeedbackHumanActionType 对未知取值静默回落成 need_reproduction——一次「等你批准方案」会被无声改写成「请补充复现步骤」，方案则连同 Design 一起丢掉。缺了就该拒收，不该被翻译成另一种等待。',
+    }),
     [EVENT_TYPES.ARTIFACT_CREATED]: Object.freeze({
         required: ['artifact'],
         note: '§15.2：artifact 至少要能定位（type/name），否则工作台无从展示。',
@@ -213,6 +217,14 @@ export const CONFORMANCE_RULES = Object.freeze([
         rule: '授权在派发时由控制面下发，SCN-ID 从 diff 读出而非调用方声明。',
         incident:
             '`contractRunApproved` 没有任何来源、恒为 false，SCN-FWB-012 承诺的「可信需求 Run 可审计更新场景」在生产上从来没有可达过；Agent 按 CLAUDE.md「需求变更先改场景清单」照做，结果被自己的门禁阻断。',
+    }),
+    Object.freeze({
+        id: 'C6',
+        source: 'SCN-FWB-020',
+        title: '人工升级路径对每个 adapter 必须可达',
+        rule: '只读 Run 在 requiresDesign 时：执行侧交给 Prompt 构建器的 context 必须真的带 requiresDesign；Agent 产出合规 Design 时终态发 agent.waiting_human + design_decision 而非 run.completed；Design 提取只能委托到唯一实现 extractFeedbackDesign。',
+        incident:
+            'Issue #czi9c6：执行器路径的 run-loop 调 buildPrompt({policy, issue, timeline}) 漏传 requiresDesign，Agent 从未被要求产出 Design；归一化层也只发 run.completed，AGENT_WAITING_HUMAN 定义了却全仓无人发。Design 建不出来，§7.2 就永远把 Issue 路由回 analyze——EXC-FWB-003 在 2026-08-09 修掉的「回复→再分析→还是只读」活锁，在新执行引擎上原样复活，而 C1～C5 没有一条能发现它。',
     }),
 ]);
 

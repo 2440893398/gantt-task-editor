@@ -15,6 +15,10 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CONFORMANCE_RULES } from '../protocol/v0.js';
+import { extractFeedbackDesign } from '../../../scripts/feedback-extract-design.mjs';
+import { planDesignEscalation } from '../executor/design-escalation.js';
+
+const NEWLINE = String.fromCharCode(10);
 
 const ruleTitle = (id) => {
     const rule = CONFORMANCE_RULES.find((r) => r.id === id);
@@ -199,6 +203,87 @@ export function registerConformanceSuite(adapter) {
                 expect(approved.approved).toBe(true);
                 expect(approved.source).toBe('control-plane');
                 expect(denied.approved).toBe(false);
+            });
+        });
+        describe(ruleTitle('C6'), () => {
+            const designContext = {
+                policy: 'analyze',
+                requiresDesign: true,
+                issue: { id: 'i-c6', businessType: 'improvement', scope: 'unclear', title: 't' },
+                timeline: [],
+            };
+            const validDesign = {
+                problem: '基线功能已无人使用，但代码与数据仍散落在三处持久化面。',
+                acceptanceCriteria: ['工具栏不再出现基线按钮', '旧文档打开时不报错'],
+            };
+            const designMessage = [
+                '## 结论',
+                '可以整体摘除。',
+                '```feedback-design',
+                JSON.stringify(validDesign),
+                '```',
+            ].join(NEWLINE);
+
+            it('requiresDesign 的只读 Run，Prompt 必须真的要求交付 Design', () => {
+                const prompt = adapter.buildPrompt(designContext);
+                expect(prompt).toMatch(/feedback-design/);
+                expect(prompt).toMatch(/acceptanceCriteria/);
+                expect(prompt).toMatch(/design proposal/i);
+            });
+
+            it('Design 提取委托到唯一实现，而不是 adapter 自带的第二份判据', () => {
+                expect(adapter.extractDesign(designMessage)).toEqual(
+                    extractFeedbackDesign(designMessage)
+                );
+                expect(adapter.extractDesign(designMessage).design).toMatchObject({
+                    problem: validDesign.problem,
+                    acceptanceCriteria: validDesign.acceptanceCriteria,
+                });
+            });
+
+            it('缺验收标准的 Design 不得被认作合规——送出去会被 Worker 拒掉并连累整个终态', () => {
+                const bad = [
+                    '```feedback-design',
+                    JSON.stringify({ problem: '只有问题' }),
+                    '```',
+                ].join(NEWLINE);
+                const result = adapter.extractDesign(bad);
+                expect(result.found).toBe(false);
+                expect(result.reason).toBe('design_missing_acceptance_criteria');
+            });
+
+            it('产出合规 Design 时终态是 design_decision 的等待，不是 run.completed', () => {
+                const escalation = planDesignEscalation({
+                    policy: designContext.policy,
+                    requiresDesign: true,
+                    message: designMessage,
+                    extractDesign: adapter.extractDesign,
+                });
+                expect(escalation.escalates).toBe(true);
+                expect(escalation.actionType).toBe('design_decision');
+                expect(escalation.design).toMatchObject({ problem: validDesign.problem });
+            });
+
+            it('没产出 Design 时不得伪造等待，仍走普通只读交接', () => {
+                expect(
+                    planDesignEscalation({
+                        policy: designContext.policy,
+                        requiresDesign: true,
+                        message: '我读完了代码，但信息不足以写出验收标准。',
+                        extractDesign: adapter.extractDesign,
+                    }).escalates
+                ).toBe(false);
+            });
+
+            it('写入型 Run 不走 Design 升级——它已经有写权限了', () => {
+                expect(
+                    planDesignEscalation({
+                        policy: 'implement_and_verify',
+                        requiresDesign: true,
+                        message: designMessage,
+                        extractDesign: adapter.extractDesign,
+                    }).escalates
+                ).toBe(false);
             });
         });
     });

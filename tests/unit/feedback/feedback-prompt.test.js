@@ -147,4 +147,28 @@ describe('[SCN-FWB-029] runner prompt construction', () => {
             );
         }
     });
+
+    it('[SCN-FWB-020] lists attachments and says plainly that it cannot read them', () => {
+        // 坏行为：Agent 既看不到截图、也不知道有截图，于是照纯文本作答；交接文案再
+        // 回头请用户「补个截图」，而那张图早就躺在 Issue 上没人读过（#czi9c6）。
+        const prompt = buildFeedbackPrompt(
+            createContext('analyze', {
+                attachments: [
+                    { name: 'image.png', contentType: 'image/png', size: 115712 },
+                    { name: 'replay.json', contentType: 'application/json', size: 4096 },
+                ],
+            })
+        );
+
+        expect(prompt).toContain('## Attachments');
+        expect(prompt).toContain('2 attachment(s)');
+        expect(prompt).toContain('image.png (image/png, 115712 bytes)');
+        expect(prompt).toContain('content is NOT available to you');
+        expect(prompt).toContain('do not claim to have inspected them');
+        expect(prompt).toContain('asking for another screenshot');
+    });
+
+    it('[SCN-FWB-020] says nothing about attachments when the Issue has none', () => {
+        expect(buildFeedbackPrompt(createContext('analyze'))).not.toContain('## Attachments');
+    });
 });

@@ -589,8 +589,18 @@ describe('[SCN-FWB-034] [SCN-FWB-035] executor event and approval ingress', () =
                 status: 'active',
             })
         );
+        // §16.3：证据按 `label`/`summary` 渲染。裸 `{kind, ...details}` 会在工作台上
+        // 变成一个空框——计数对、内容空（#czi9c6）。诊断字段保留在 `detail` 里。
         expect(JSON.parse(actions[0].evidence_json)).toEqual([
-            { kind: 'file_change', paths: ['src/features/example.js'] },
+            expect.objectContaining({
+                label: '被拒的请求',
+                summary: expect.stringContaining('修改文件'),
+                detail: { kind: 'file_change' },
+            }),
+            expect.objectContaining({
+                label: '请求详情',
+                detail: { paths: ['src/features/example.js'] },
+            }),
         ]);
         // M4 owns approval resolution and heartbeat command delivery. Until it
         // exists, the generic HumanAction responder must fail closed instead
@@ -651,6 +661,76 @@ describe('[SCN-FWB-035] 终态归还租约', () => {
         expect(
             sqlite.prepare('SELECT status FROM feedback_runs WHERE id = ?').get(lease.runId)
         ).toEqual({ status: 'failed' });
+    });
+
+    // C6 让只读 Run 多了一种收尾：产出方案后发 `agent.waiting_human`。对 Run 来说
+    // 它不是终态（Run 变成 waiting_human，Workflow 在等人），但对**这一轮 turn** 和
+    // 这次租约来说工作已经做完了。漏掉归还就会踩上面那两个坑：一条正在等人批准的
+    // Run 被反复重领重跑，或者租约过期把「等你批准方案」改写成 executor_lost。
+    it('[SCN-FWB-020] 产出方案的等待同样归还租约，不会被反复重领', async () => {
+        const waiting = await post(
+            env,
+            `/api/executor/runs/${encodeURIComponent(lease.runId)}/events`,
+            {
+                executorId: lease.executorId,
+                leaseId: lease.leaseId,
+                epoch: lease.epoch,
+                event: {
+                    eventId: 'executor-waiting-1',
+                    type: 'agent.message',
+                    occurredAt: '2026-08-24T09:00:00.000Z',
+                    payload: { message: '分析完成，方案见下。' },
+                },
+            }
+        );
+        expect(waiting.response.status).toBe(201);
+
+        const escalated = await post(
+            env,
+            `/api/executor/runs/${encodeURIComponent(lease.runId)}/events`,
+            {
+                executorId: lease.executorId,
+                leaseId: lease.leaseId,
+                epoch: lease.epoch,
+                event: {
+                    eventId: 'executor-waiting-2',
+                    type: 'agent.waiting_human',
+                    occurredAt: '2026-08-24T09:00:01.000Z',
+                    payload: {
+                        actionType: 'design_decision',
+                        requestedAction: '已产出方案，请管理员确认。',
+                        summary: '已完成只读分析并产出方案，等待确认。',
+                        design: {
+                            problem: '基线功能已无人使用。',
+                            acceptanceCriteria: ['工具栏不再出现基线按钮'],
+                        },
+                    },
+                },
+            }
+        );
+        expect(escalated.response.status).toBe(201);
+
+        expect(
+            sqlite
+                .prepare('SELECT status FROM feedback_executor_leases WHERE id = ?')
+                .get(lease.leaseId).status
+        ).toBe('released');
+        expect(
+            sqlite.prepare('SELECT status FROM feedback_runs WHERE id = ?').get(lease.runId).status
+        ).toBe('waiting_human');
+        // Design 真的建出来了，等待也指向它——这才是 §7.2 通往写入型 policy 的入口。
+        expect(sqlite.prepare('SELECT COUNT(*) AS total FROM feedback_designs').get().total).toBe(
+            1
+        );
+        expect(
+            sqlite
+                .prepare("SELECT type FROM feedback_human_actions WHERE status = 'active'")
+                .all()
+                .map((row) => row.type)
+        ).toEqual(['design_decision']);
+
+        const again = await claim(env);
+        expect(again.response.status).toBe(204);
     });
 });
 

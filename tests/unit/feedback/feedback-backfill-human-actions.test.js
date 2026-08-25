@@ -66,6 +66,18 @@ describe('[SCN-FWB-020] stranded needs_human backfill', () => {
         }
     });
 
+    it('[SCN-FWB-020] evidence states the queried counts, not a hardcoded "nothing"', () => {
+        // §16.3: "已读取 N 条时间线" and the attachment line are statements of
+        // fact. A backfilled Issue with an attachment must not be told it has
+        // none — that is the same class of lie the evidence rework removed.
+        const plan = planHumanActionBackfill(issueRow({ timeline_count: 7, attachment_count: 2 }));
+        const summaries = plan.evidence.map((item) => item.summary).join('\n');
+
+        expect(summaries).toContain('7 条公开时间线记录');
+        expect(summaries).toContain('2 个附件');
+        expect(summaries).not.toContain('没有附件');
+    });
+
     it('[SCN-FWB-020] guards the INSERT on the version and on nothing else waiting', () => {
         const row = issueRow();
         const plan = planHumanActionBackfill(row);

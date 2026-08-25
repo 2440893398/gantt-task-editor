@@ -84,6 +84,13 @@ const workerModuleFiles = [
         sourceImport: '../src/features/feedback/vendor/rrweb-replay-2.0.0-alpha.20.style.min.txt',
         outputName: 'feedback-rrweb-replay-2.0.0-alpha.20.style.min.txt',
     },
+    {
+        // 工作台的 Markdown 渲染器。客户端脚本是内联 <script> 字符串、没有模块图，
+        // 只能从同源资产路径加载这份 UMD 产物，所以 CN 产物也必须带上它。
+        sourcePath: 'src/features/feedback/vendor/marked-17.0.1.umd.txt',
+        sourceImport: '../src/features/feedback/vendor/marked-17.0.1.umd.txt',
+        outputName: 'feedback-marked-17.0.1.umd.txt',
+    },
 ];
 
 async function assertFileExists(filePath) {

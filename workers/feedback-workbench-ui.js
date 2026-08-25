@@ -13,6 +13,16 @@
 import workbenchStyles from './feedback-workbench.css.txt';
 import workbenchClientScript from './feedback-workbench-client.js.txt';
 
+/**
+ * Same-origin path for the vendored `marked` UMD build.
+ *
+ * The client script below is served as an inline `<script>` string, not as a
+ * bundled module, so it cannot `import` the npm package the AI drawer uses.
+ * `workers/share-worker.js` serves the vendored copy at this path and this
+ * module is the single place the path is spelled.
+ */
+export const FEEDBACK_MARKDOWN_SCRIPT_PATH = '/feedback/assets/marked-17.0.1.js';
+
 const ICONS = {
     brand: '<path d="M4 5h16M4 12h10M4 19h7"></path>',
     issue: '<circle cx="12" cy="12" r="9"></circle><path d="M12 8v4m0 4h.01"></path>',
@@ -119,6 +129,20 @@ const SPEC_OVERRIDE_STYLES = `
     }
 }
 
+/*
+ * §19.6: the owner view has no queue panel, and a \`display: none\` element does
+ * not create a grid item — so \`main\` slid into the 316px queue track and the
+ * side card took the 800px one, leaving the third track empty and the timeline
+ * about 265px wide. Dropping the queue track while it is hidden gives both
+ * actors the same reading column. Scoped above 1220px because the reflow block
+ * further up owns every narrower width.
+ */
+@media (min-width: 1221px) {
+    .layout:has(> .queue[hidden]) {
+        grid-template-columns: minmax(560px, 800px) 294px;
+    }
+}
+
 .badge.red .status-dot {
     background: var(--danger);
 }
@@ -129,6 +153,185 @@ const SPEC_OVERRIDE_STYLES = `
 
 .property-row .property-value {
     overflow-wrap: anywhere;
+}
+
+/* §19.2: the owner notice tells people to save the link, so it has to hand one
+   over — the address bar deliberately keeps only the issue id. */
+.owner-link-row {
+    display: flex;
+    align-items: center;
+    margin-top: 10px;
+    gap: 8px;
+}
+
+.owner-link-input {
+    min-width: 0;
+    flex: 1;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    background: var(--panel);
+    padding: 6px 9px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    text-overflow: ellipsis;
+}
+
+@media (max-width: 680px) {
+    .owner-link-row {
+        flex-direction: column;
+        align-items: stretch;
+    }
+}
+`;
+
+/**
+ * Markdown output styling for comment bodies and the reply preview.
+ *
+ * The prototype stylesheet only ever saw `<p>` and `<ul>`, because the client
+ * used to render every body as escaped paragraphs. Agent results are written in
+ * GFM (headings, tables, fenced code), so the elements `marked` emits need rules
+ * here or an Agent result renders as an unreadable wall of raw syntax.
+ */
+const MARKDOWN_STYLES = `
+.comment-body > :first-child {
+    margin-top: 0;
+}
+
+.comment-body > :last-child {
+    margin-bottom: 0;
+}
+
+.comment-body h1,
+.comment-body h2,
+.comment-body h3,
+.comment-body h4,
+.comment-body h5,
+.comment-body h6 {
+    margin: 18px 0 10px;
+    font-weight: 600;
+    line-height: 1.4;
+    color: var(--text);
+}
+
+.comment-body h1 {
+    font-size: 18px;
+}
+
+.comment-body h2 {
+    font-size: 16px;
+}
+
+.comment-body h3 {
+    font-size: 15px;
+}
+
+.comment-body h4,
+.comment-body h5,
+.comment-body h6 {
+    font-size: 14px;
+}
+
+.comment-body ol {
+    margin: 8px 0 12px;
+    padding-left: 22px;
+}
+
+.comment-body li > p {
+    margin: 0 0 6px;
+}
+
+.comment-body li ul,
+.comment-body li ol {
+    margin: 5px 0 0;
+}
+
+.comment-body blockquote {
+    margin: 10px 0 12px;
+    border-left: 3px solid var(--border);
+    padding: 2px 0 2px 12px;
+    color: var(--muted);
+}
+
+.comment-body code {
+    border-radius: 4px;
+    background: var(--panel-subtle);
+    padding: 1px 5px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.92em;
+    overflow-wrap: anywhere;
+}
+
+.comment-body pre {
+    margin: 10px 0 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--panel-subtle);
+    padding: 11px 12px;
+    /* Long log lines and stack traces scroll inside the block instead of
+       widening the card — §19.6 requires no horizontal overflow at 375px. */
+    overflow-x: auto;
+}
+
+.comment-body pre code {
+    display: block;
+    background: none;
+    padding: 0;
+    white-space: pre;
+}
+
+/* The table itself cannot shrink below its content, so the scroll container has
+   to be the wrapper the client emits around it. */
+.comment-body .markdown-table {
+    margin: 10px 0 12px;
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+.comment-body table {
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.comment-body th,
+.comment-body td {
+    border: 1px solid var(--border);
+    padding: 6px 10px;
+    text-align: left;
+    vertical-align: top;
+}
+
+.comment-body th {
+    background: var(--panel-subtle);
+    font-weight: 600;
+}
+
+.comment-body hr {
+    margin: 14px 0;
+    border: 0;
+    border-top: 1px solid var(--border);
+}
+
+.comment-body img {
+    max-width: 100%;
+    height: auto;
+}
+
+.comment-body a {
+    overflow-wrap: anywhere;
+}
+
+.composer-format-hint {
+    margin: 0 0 10px auto;
+}
+
+.comment-body ul.contains-task-list {
+    padding-left: 2px;
+    list-style: none;
+}
+
+.comment-body .task-list-item input {
+    margin-right: 6px;
 }
 `;
 
@@ -245,6 +448,7 @@ function issueMain() {
                     <div class="composer-tabs" role="tablist" aria-label="回复编辑模式">
                         <button class="composer-tab active" type="button" role="tab" aria-selected="true" data-composer-tab="write">写回复</button>
                         <button class="composer-tab" type="button" role="tab" aria-selected="false" data-composer-tab="preview">预览</button>
+                        <span class="help composer-format-hint">支持 Markdown</span>
                     </div>
                     <div class="composer-editor">
                         <div class="mention-bar" id="mentionBar"></div>
@@ -694,6 +898,7 @@ export function renderFeedbackWorkbenchPage(apiBase = '') {
         <style>
 ${workbenchStyles}
 ${SPEC_OVERRIDE_STYLES}
+${MARKDOWN_STYLES}
         </style>
     </head>
     <body>
@@ -711,6 +916,9 @@ ${loginDialog()}
         </div>
 
         <script type="application/json" id="workbenchConfig">${config}</script>
+        <!-- Classic (non-deferred) so \`window.marked\` exists before the inline
+             client script below runs its first render. -->
+        <script src="${FEEDBACK_MARKDOWN_SCRIPT_PATH}"></script>
         <script>
 ${workbenchClientScript}
         </script>

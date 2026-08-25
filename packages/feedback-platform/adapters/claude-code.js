@@ -32,6 +32,7 @@ import {
 } from '../../../src/features/feedback/feedback-prompt.js';
 import { sanitizeVisualEvidence } from '../../../src/features/feedback/feedback-callback-reporter.js';
 import { scnIdFromDiff } from '../../../src/features/feedback/diff-gate.js';
+import { extractFeedbackDesign } from '../../../scripts/feedback-extract-design.mjs';
 import {
     EXECUTOR_RUN_PLAN,
     REPORTER_RESOLUTION_STEP,
@@ -51,6 +52,15 @@ export function createClaudeCodeAdapter() {
         },
 
         isWriteCapablePolicy,
+
+        /**
+         * C6：Design 提取委托到唯一实现。Adapter 不得自带一份判据——两份判据意味着
+         * 「Worker 会不会接受这个 Design」在两条执行路径上给出不同答案，而被 Worker
+         * 拒掉的 Design 会连整个终态回调一起丢掉。
+         */
+        extractDesign(message) {
+            return extractFeedbackDesign(message);
+        },
 
         /** C2：执行器实际迭代的计划，不是为测试摆的样子。 */
         listVerificationSteps() {

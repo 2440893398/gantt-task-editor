@@ -7,7 +7,11 @@
 import { WorkflowEntrypoint } from 'cloudflare:workers';
 import rrwebReplayBrowserScript from '../src/features/feedback/vendor/rrweb-replay-2.0.0-alpha.20.umd.min.txt';
 import rrwebReplayBrowserStyles from '../src/features/feedback/vendor/rrweb-replay-2.0.0-alpha.20.style.min.txt';
-import { renderFeedbackWorkbenchPage } from './feedback-workbench-ui.js';
+import markedBrowserScript from '../src/features/feedback/vendor/marked-17.0.1.umd.txt';
+import {
+    FEEDBACK_MARKDOWN_SCRIPT_PATH,
+    renderFeedbackWorkbenchPage,
+} from './feedback-workbench-ui.js';
 import { evaluateDiffGate } from '../src/features/feedback/diff-gate.js';
 import { classifyFeedbackSubmission } from '../src/features/feedback/issue-classifier.js';
 import {
@@ -289,6 +293,21 @@ const FEEDBACK_HUMAN_ACTION_RETURN_STATES = Object.freeze({
     runtime_approval: [],
     executor_lost: ['queued', 'closed'],
 });
+/**
+ * SCN-FWB-036：这两种等待问的是「还缺什么信息」，所以它们的 `queued` 必须携带新信息。
+ *
+ * 名单之外的类型不受限，因为它们的 `queued` 有别的正当语义：`design_decision` 的批准
+ * 本身就是新信息（它解锁写入型 policy）；`blocked_external`/`executor_lost`/
+ * `developer_fix_required` 的重试语义是「外部/环境已经修好了，再来一次」——那种重试
+ * 确实会得到不同结果，拦住它才是错的。
+ */
+const FEEDBACK_HUMAN_ACTION_NEEDS_NEW_INPUT = new Set(['need_reproduction', 'confirm_policy']);
+/** §16.3：执行器上报的审批类别，写成审核者读得懂的一句话。 */
+const FEEDBACK_RUNTIME_APPROVAL_KINDS = {
+    file_change: 'Agent 请求修改文件（本轮 Run 无写权限，已拒绝）',
+    command_execution: 'Agent 请求执行命令（本轮 Run 无命令通道，已拒绝）',
+    permissions: 'Agent 请求提升权限（已拒绝）',
+};
 const FEEDBACK_DESIGN_DECISIONS = new Set(['approve', 'revise', 'reject']);
 const FEEDBACK_SOURCE_TYPES = new Set(['manual', 'auto_error', 'admin']);
 const FEEDBACK_BUSINESS_TYPES = new Set(['bug', 'improvement', 'requirement', 'other', 'unclear']);
@@ -4936,6 +4955,7 @@ async function readFeedbackRunContext(env, runId) {
               .bind(row.design_id)
               .first()
         : null;
+    const attachments = await readFeedbackRunContextAttachments(env, row.issue_id);
 
     return {
         runId: row.run_id,
@@ -4964,6 +4984,7 @@ async function readFeedbackRunContext(env, runId) {
             businessType: row.business_type,
             scope: row.scope,
         },
+        attachments,
         timeline: (events.results || []).map((event) => {
             const body = parseStoredJson(event.body_json, {});
             return {
@@ -4974,6 +4995,30 @@ async function readFeedbackRunContext(env, runId) {
             };
         }),
     };
+}
+
+/**
+ * 附件的**清单**，不含内容（§13.1 step 5 明确把附件正文排除在 Run context 之外）。
+ *
+ * 为什么要给清单：此前 context 里连附件存在这件事都没有，于是 Agent 既看不到截图，
+ * 也不知道有截图，只能按纯文本作答；而交接文案还会回头请用户「补个截图」——那张图
+ * 早就在 Issue 上躺着，从头到尾没有任何一个 Run 看过它（#czi9c6 带了一张 113KB 的
+ * image.png）。给出清单让 Prompt 能如实说明「有 N 个附件但读不到」，Agent 就能说出
+ * 「关键信息请写进正文」而不是重复索要一个用不上的东西。
+ */
+async function readFeedbackRunContextAttachments(env, issueId) {
+    const result = await env.FEEDBACK_DB.prepare(
+        `SELECT name, content_type, size FROM feedback_attachments
+         WHERE issue_id = ? ORDER BY created_at, id LIMIT 20`
+    )
+        .bind(issueId)
+        .all();
+    return (result.results || []).map((row) => ({
+        name: limitText(row.name, 160),
+        contentType: limitText(row.content_type, 80),
+        size: Number(row.size) || 0,
+        contentAvailable: false,
+    }));
 }
 
 /**
@@ -4995,6 +5040,11 @@ async function dispatchFeedbackEvent(
     const deliverToHook =
         Boolean(settings.hookUrl) && settings.subscribedEvents.includes(eventType);
 
+    // SCN-FWB-036：`bypassQuota` 的本意是「人的决定不能被日配额悄悄吞掉」，不是
+    // 「这次派发不存在」。此前用量记账挂在 `if (quota)` 上，于是绕过配额的派发连计数
+    // 一起跳过了——#czi9c6 的重跑循环因此在 `feedback_usage_daily` 上完全不可见：
+    // 真实额度一轮轮烧，账面用量停在 0。配额检查可以跳过，记账不行。
+    const usageDate = new Date().toISOString().slice(0, 10);
     const quota = bypassQuota ? null : await checkFeedbackDispatchQuota(env, issueId);
     if (quota && !quota.allowed) {
         await appendFeedbackSystemEvent(env, issueId, {
@@ -5045,7 +5095,7 @@ async function dispatchFeedbackEvent(
         }
     }
 
-    if (quota) await recordFeedbackDispatchUsage(env, issueId, quota.usageDate);
+    await recordFeedbackDispatchUsage(env, issueId, quota?.usageDate || usageDate);
     const workflow = orchestrate
         ? await ensureFeedbackWorkflowForEvent(env, issueId, {
               deliveryId: deliverToHook ? deliveryId : null,
@@ -5604,6 +5654,25 @@ function normalizeFeedbackHumanActionType(value) {
     return FEEDBACK_HUMAN_ACTION_TYPES.has(type) ? type : 'need_reproduction';
 }
 
+/**
+ * §16.3：HumanAction 的证据是**给人看的**——工作台按 `label` + `summary` 渲染每一条。
+ *
+ * 此前七个产出点写的全是 `{policy, runId}`、`{executorId, epoch}` 这类裸调试对象，
+ * 一个 `label`/`summary` 都没有，于是每条等待都渲染成「N 项」加 N 个空框（#czi9c6）：
+ * 计数永远对，内容永远空，比不显示更糟——它让人以为自己漏看了什么。
+ * 诊断字段不是不能带，但要放进 `detail`，不能占着 `label`/`summary` 的位置。
+ */
+function feedbackEvidenceItem(label, summary, detail = null) {
+    const item = {
+        label: limitText(label, 60) || '证据',
+        summary: limitText(summary, 600),
+    };
+    if (detail && typeof detail === 'object' && Object.keys(detail).length) {
+        item.detail = detail;
+    }
+    return item;
+}
+
 function prepareFeedbackHumanAction(
     env,
     { issueId, runId, payload, designId = null, guardEventId = null }
@@ -5687,19 +5756,38 @@ async function ensureFeedbackAnalysisHandoff(env, { run }) {
         .first();
     if (existing) return existing.id;
 
-    const issue = await env.FEEDBACK_DB.prepare(
-        'SELECT business_type, scope, automation_decision FROM feedback_issues WHERE id = ?'
-    )
-        .bind(run.issue_id)
-        .first();
-    const { actionType, requestedAction } = describeFeedbackAnalysisHandoff(issue);
+    // §16.3 的证据要说「本轮真的检查了什么」，所以这两个计数是查出来的，不是猜的。
+    const [issue, counts] = await Promise.all([
+        env.FEEDBACK_DB.prepare(
+            'SELECT business_type, scope, automation_decision FROM feedback_issues WHERE id = ?'
+        )
+            .bind(run.issue_id)
+            .first(),
+        env.FEEDBACK_DB.prepare(
+            `SELECT
+                 (SELECT COUNT(*) FROM feedback_events
+                  WHERE issue_id = ? AND visibility = 'public') AS timeline_count,
+                 (SELECT COUNT(*) FROM feedback_attachments
+                  WHERE issue_id = ?) AS attachment_count`
+        )
+            .bind(run.issue_id, run.issue_id)
+            .first(),
+    ]);
+    const { actionType, requestedAction, evidence } = describeFeedbackAnalysisHandoff(issue, {
+        policy: run.policy,
+        timelineCount: Number(counts?.timeline_count) || 0,
+        attachmentCount: Number(counts?.attachment_count) || 0,
+    });
     const prepared = prepareFeedbackHumanAction(env, {
         issueId: run.issue_id,
         runId: run.id,
         payload: {
             actionType,
             requestedAction,
-            evidence: [{ policy: run.policy, runId: run.id }],
+            evidence: [
+                ...evidence.map((item) => feedbackEvidenceItem(item.label, item.summary)),
+                feedbackEvidenceItem('本轮 Run', run.id, { runId: run.id, policy: run.policy }),
+            ],
         },
     });
     await env.FEEDBACK_DB.batch(prepared.statements);
@@ -5977,6 +6065,22 @@ function feedbackVerificationPassed(value) {
 }
 
 /**
+ * §16.3：自动交付被降级为人工审核的原因，写成审核者能直接读懂的一句话。
+ * 原始错误码保留在证据条目的 `detail` 里，供排查用。
+ */
+const FEEDBACK_AUTO_DELIVER_DOWNGRADE_REASONS = {
+    QUALITY_TIER_REQUIRES_REVIEW: '改动的质量等级超过自治交付上限（Tier 3），必须由人确认。',
+    PROTECTED_PATH_REQUIRES_REVIEW: '改动触及需要人工批准的受保护路径。',
+    VISUAL_EVIDENCE_REQUIRED: '这类改动要求视觉证据（截图/录屏），本轮没有产出。',
+    TARGETED_TEST_EVIDENCE_REQUIRED: '目标测试没有通过或没有留下证据。',
+    BUILD_EVIDENCE_REQUIRED: '构建没有通过或没有留下证据。',
+    PLAYWRIGHT_EVIDENCE_REQUIRED: '浏览器回归验证没有通过或没有留下证据。',
+    DIFF_GATE_REQUIRES_REVIEW: '差异门禁判定这份改动必须经人工审核后才能交付。',
+    DELIVERY_MODE_REQUIRES_REVIEW: '本次 Run 的交付模式本身就是「候选先审核」。',
+    CANDIDATE_REVIEW_ALREADY_ACTIVE: '该候选已有一条进行中的审核等待。',
+};
+
+/**
  * §7.4 second decision point. The pre-Run route only decides whether a Run may
  * attempt autonomous delivery. The resulting diff and fresh evidence can still
  * force an exact Candidate review; the Agent cannot lower its own quality tier.
@@ -6026,7 +6130,14 @@ async function markFeedbackCandidateForReview(
             actionType: 'review_required',
             candidateId,
             requestedAction: '请审核自动交付降级后的准确 Candidate，再决定是否进入交付。',
-            evidence: [{ reason, candidateId }],
+            evidence: [
+                feedbackEvidenceItem(
+                    '降级原因',
+                    FEEDBACK_AUTO_DELIVER_DOWNGRADE_REASONS[reason] || reason,
+                    { reason }
+                ),
+                feedbackEvidenceItem('待审候选', `Candidate ${candidateId}`, { candidateId }),
+            ],
         },
     });
 
@@ -6276,14 +6387,18 @@ async function recordFeedbackReleaseDispatchFailure(
             candidateId,
             requestedAction: 'Release 未能派发到 GitHub，请修复外部连接后重试。',
             evidence: [
-                {
-                    reason,
-                    retryable: Boolean(dispatch.retryable),
+                feedbackEvidenceItem('派发失败原因', reason, { reason }),
+                feedbackEvidenceItem(
+                    '已重试',
+                    `${attemptCount}/${FEEDBACK_DELIVERY_MAX_ATTEMPTS} 次${
+                        exhausted ? '，重试预算已耗尽' : ''
+                    }${dispatch.retryable ? '' : '；该错误不可重试'}`,
+                    { attemptCount, maxAttempts: FEEDBACK_DELIVERY_MAX_ATTEMPTS, exhausted }
+                ),
+                feedbackEvidenceItem('受影响的交付', `Release ${releaseId}`, {
                     releaseId,
-                    attemptCount,
-                    maxAttempts: FEEDBACK_DELIVERY_MAX_ATTEMPTS,
-                    exhausted,
-                },
+                    candidateId,
+                }),
             ],
         },
     });
@@ -6652,11 +6767,19 @@ async function deliverFeedbackCandidate(env, candidateId, { actorType }) {
                 requestedAction:
                     '该 Candidate 同时涉及 Worker 与 Pages，请拆分为可独立验证的交付后重新审核。',
                 evidence: [
-                    {
-                        reason: 'FEEDBACK_MULTIPLE_DEPLOYMENT_TARGETS',
-                        candidateId,
-                        changedFiles,
-                    },
+                    feedbackEvidenceItem(
+                        '阻断原因',
+                        '同一份改动同时落在 Worker 与 Pages 两个部署目标上，无法作为一次可独立验证的交付。',
+                        { reason: 'FEEDBACK_MULTIPLE_DEPLOYMENT_TARGETS' }
+                    ),
+                    feedbackEvidenceItem(
+                        '涉及文件',
+                        `${changedFiles.length} 个：${changedFiles.slice(0, 8).join('、')}${
+                            changedFiles.length > 8 ? ' 等' : ''
+                        }`,
+                        { changedFiles }
+                    ),
+                    feedbackEvidenceItem('待审候选', `Candidate ${candidateId}`, { candidateId }),
                 ],
             },
         });
@@ -6929,11 +7052,18 @@ async function appendFeedbackReleaseEvent(env, releaseId, body) {
                           ? 'Release 被外部凭据或部署连接阻断，请修复连接后重新排队。'
                           : 'Candidate 无法安全集成到当前基线，请审核准确候选和冲突证据。',
                       evidence: [
-                          {
-                              releaseId,
-                              candidateId: release.candidate_id,
-                              errorCode: payload.errorCode,
-                          },
+                          feedbackEvidenceItem(
+                              '失败于',
+                              blockedExternalFailure
+                                  ? `外部凭据或部署连接（${payload.errorCode || 'unknown'}）`
+                                  : `集成到当前基线（${payload.errorCode || 'unknown'}）`,
+                              { errorCode: payload.errorCode }
+                          ),
+                          feedbackEvidenceItem(
+                              '受影响的交付',
+                              `Release ${releaseId}；Candidate ${release.candidate_id}`,
+                              { releaseId, candidateId: release.candidate_id }
+                          ),
                       ],
                   },
               })
@@ -8095,6 +8225,31 @@ async function terminateFeedbackWorkflowInstance(env, instanceId) {
  * §21.4: a HumanAction may only return a state it declared, and approving a
  * candidate has to name the exact candidateId — it can never be a bare PATCH.
  */
+/**
+ * SCN-FWB-036：自 `sinceIso` 起，Issue 上有没有出现过能改变下一轮结论的东西。
+ *
+ * 只认两类，因为 §7.2 的路由和交接文案只读这两类的产物：人写的评论（进 Run context 的
+ * 时间线）和分类变更（改 `businessType/scope/automationDecision`，也就是改 policy）。
+ * Agent 自己的回复不算——它正是上一轮的输出，拿它当「新信息」就等于让循环自证有进展。
+ */
+async function hasFeedbackInputSince(env, issueId, sinceIso) {
+    const since = limitText(sinceIso, 40);
+    if (!since) return false;
+
+    const row = await env.FEEDBACK_DB.prepare(
+        `SELECT id FROM feedback_events
+         WHERE issue_id = ? AND occurred_at > ?
+           AND (
+               (type = 'comment.created' AND actor_type IN ('user', 'admin'))
+               OR type = 'classification.changed'
+           )
+         LIMIT 1`
+    )
+        .bind(issueId, since)
+        .first();
+    return Boolean(row);
+}
+
 async function respondToHumanAction(
     env,
     actionId,
@@ -8115,6 +8270,17 @@ async function respondToHumanAction(
     }
     if (!action.allowedReturnStates.includes(decision)) {
         throw feedbackStorageError('FEEDBACK_HUMAN_ACTION_STATE_NOT_ALLOWED');
+    }
+    // SCN-FWB-036: 这两种等待是在问「还缺什么」，`queued` 的语义是「带着新信息重新处理」。
+    // 没有新信息就重新派发，下一轮 Run 拿到的输入与上一轮**逐字相同**——分类只在入库时
+    // 算一次，`describeFeedbackAnalysisHandoff` 的判据也只读那三个字段，所以它必然得出
+    // 同一条结论、生成同一条等待。#czi9c6 上这就是一个真死循环：每点一次「继续处理」
+    // 烧掉一整轮 provider 额度，换回一字不差的同一张卡片。
+    if (decision === 'queued' && FEEDBACK_HUMAN_ACTION_NEEDS_NEW_INPUT.has(action.type)) {
+        const hasNote = Boolean(limitText(note, 2000).trim());
+        if (!hasNote && !(await hasFeedbackInputSince(env, action.issueId, action.createdAt))) {
+            throw feedbackStorageError('FEEDBACK_HUMAN_ACTION_NO_NEW_INPUT');
+        }
     }
     let approvedCandidate = null;
     if (decision === 'ready_for_deploy') {
@@ -8816,6 +8982,10 @@ const FEEDBACK_ERROR_RESPONSES = {
     FEEDBACK_ISSUE_NOT_TERMINAL: [409, 'Issue is not closed'],
     FEEDBACK_HUMAN_ACTION_RESOLVED: [409, 'Human action is already resolved'],
     FEEDBACK_HUMAN_ACTION_STATE_NOT_ALLOWED: [400, 'Return state is not allowed'],
+    FEEDBACK_HUMAN_ACTION_NO_NEW_INPUT: [
+        409,
+        '这一步在等你补充信息。没有新信息就重新处理，只会得到与上一轮逐字相同的结论——请补充说明后再提交，或直接关闭。',
+    ],
     FEEDBACK_CANDIDATE_ID_REQUIRED: [400, 'candidateId is required'],
     FEEDBACK_CANDIDATE_ID_MISMATCH: [409, 'candidateId does not match the reviewed candidate'],
     FEEDBACK_DESIGN_INVALID: [400, 'A structured Design with acceptance criteria is required'],
@@ -8960,14 +9130,17 @@ async function readFeedbackExecutorContext(env, runId) {
         .first();
     if (!row) return null;
 
-    const timelineResult = await env.FEEDBACK_DB.prepare(
-        `SELECT type, actor_type, actor_id, occurred_at, body_json
-         FROM feedback_events
-         WHERE issue_id = ? AND visibility = 'public'
-         ORDER BY sequence`
-    )
-        .bind(row.issue_id)
-        .all();
+    const [timelineResult, attachments] = await Promise.all([
+        env.FEEDBACK_DB.prepare(
+            `SELECT type, actor_type, actor_id, occurred_at, body_json
+             FROM feedback_events
+             WHERE issue_id = ? AND visibility = 'public'
+             ORDER BY sequence`
+        )
+            .bind(row.issue_id)
+            .all(),
+        readFeedbackRunContextAttachments(env, row.issue_id),
+    ]);
 
     return {
         runId: row.run_id,
@@ -9004,6 +9177,7 @@ async function readFeedbackExecutorContext(env, runId) {
             scope: row.scope,
             context: parseStoredJson(row.context_json, {}),
         },
+        attachments,
         timeline: (timelineResult.results || []).map((event) => {
             const body = parseStoredJson(event.body_json, {});
             return {
@@ -9053,7 +9227,18 @@ async function expireFeedbackExecutorLeases(env, now = new Date()) {
                     lease.workflow_id,
                     lease.run_id,
                     '执行器租约已过期。请检查工作区副作用后决定是否重新开始。',
-                    JSON.stringify([{ executorId: lease.executor_id, epoch: lease.epoch }]),
+                    JSON.stringify([
+                        feedbackEvidenceItem(
+                            '断线的执行器',
+                            `${lease.executor_id}（第 ${lease.epoch} 次租约）`,
+                            { executorId: lease.executor_id, epoch: lease.epoch }
+                        ),
+                        feedbackEvidenceItem(
+                            '中断的 Run',
+                            `${lease.run_id}——心跳停止，工作区可能留有未完成的改动`,
+                            { runId: lease.run_id }
+                        ),
+                    ]),
                     JSON.stringify(['queued', 'closed']),
                     nowIso
                 )
@@ -9390,6 +9575,12 @@ async function recordFeedbackExecutorEventState(env, runId, event) {
         'run.completed': 'completed',
         'run.failed': 'failed',
         'run.cancelled': 'cancelled',
+        // C6：`agent.waiting_human` 对**这一轮 turn** 同样是终态——provider 的 turn 跑完了，
+        // 在等的是人，不是执行器。它必须和三个 run 终态走同一条收尾：不归还租约的话，
+        // claimLease 会把这条已经在等人的 Run 原样再发给执行器（下面第 (1) 条），
+        // 而租约到期又会把一次正常的「等你批准方案」记成 executor_lost（第 (2) 条）。
+        // Run 自身的状态由 projectRunEventToIssue 置为 waiting_human，与此处无关。
+        'agent.waiting_human': 'completed',
     };
     if (event?.type === 'run.started') {
         await env.FEEDBACK_DB.prepare(
@@ -9487,7 +9678,17 @@ async function createFeedbackExecutorApproval(env, body) {
             run.workflow_id,
             runId,
             summary,
-            JSON.stringify([{ kind, ...details }]),
+            JSON.stringify([
+                feedbackEvidenceItem('被拒的请求', FEEDBACK_RUNTIME_APPROVAL_KINDS[kind] || kind, {
+                    kind,
+                }),
+                feedbackEvidenceItem(
+                    '请求详情',
+                    limitText(details.method || details.command || details.path, 300) ||
+                        '执行器未提供更多细节',
+                    details
+                ),
+            ]),
             JSON.stringify([]),
             nowIso
         ),
@@ -11641,10 +11842,17 @@ export default {
         if (
             request.method === 'GET' &&
             (url.pathname === FEEDBACK_REPLAY_SCRIPT_PATH ||
-                url.pathname === FEEDBACK_REPLAY_STYLE_PATH)
+                url.pathname === FEEDBACK_REPLAY_STYLE_PATH ||
+                url.pathname === FEEDBACK_MARKDOWN_SCRIPT_PATH)
         ) {
-            const isScript = url.pathname === FEEDBACK_REPLAY_SCRIPT_PATH;
-            return new Response(isScript ? rrwebReplayBrowserScript : rrwebReplayBrowserStyles, {
+            const isScript = url.pathname !== FEEDBACK_REPLAY_STYLE_PATH;
+            const asset =
+                url.pathname === FEEDBACK_MARKDOWN_SCRIPT_PATH
+                    ? markedBrowserScript
+                    : isScript
+                      ? rrwebReplayBrowserScript
+                      : rrwebReplayBrowserStyles;
+            return new Response(asset, {
                 headers: {
                     ...headers,
                     'Content-Type': isScript

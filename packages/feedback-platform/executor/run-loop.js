@@ -15,6 +15,11 @@
  */
 import { createTurnNormalizer } from './normalize.js';
 import { EVENT_TRANSLATORS } from './provider-events.js';
+import {
+    planDesignEscalation,
+    DESIGN_WAIT_REQUESTED_ACTION,
+    DESIGN_WAIT_SUMMARY,
+} from './design-escalation.js';
 
 /**
  * 写入型 Run 到达时执行器没接写入管线——fail-closed。用只读流程跑写入型 Run
@@ -97,6 +102,19 @@ export async function executeLeasedRun({
         translate: translate ?? (() => null),
         // 写入型：turn 完成不等于终态——验证与候选还没跑（SCN-FWB-032）。
         deferTerminal: writeCapable,
+        // C6：`requiresDesign` 由控制面下发，执行器不自己算——它是 §7.2 的路由判据，
+        // 让执行侧重新推导一遍就等于让两边各持一份路由规则。
+        planEscalation: (message) => ({
+            ...planDesignEscalation({
+                policy: context?.policy,
+                requiresDesign: context?.requiresDesign === true,
+                message,
+                extractDesign: adapter?.extractDesign,
+                isWriteCapablePolicy: (value) => adapter?.isWriteCapablePolicy?.(value) === true,
+            }),
+            requestedAction: DESIGN_WAIT_REQUESTED_ACTION,
+            summary: DESIGN_WAIT_SUMMARY,
+        }),
     });
     let staleLease = false;
 
@@ -234,6 +252,10 @@ export async function executeLeasedRun({
             policy: context.policy,
             issue: context.issue,
             timeline: context.timeline ?? [],
+            // C6：漏掉这一个字段，`buildFeedbackPrompt` 的 `designWanted` 恒为 false，
+            // Agent 从来不会被要求交付 Design——`#czi9c6` 的活锁就是从这里开始的。
+            requiresDesign: context.requiresDesign === true,
+            attachments: context.attachments ?? [],
         });
         const opened = await session.openSession({ prompt, timeoutMs: turnTimeoutMs });
         normalizer.setProviderSessionId(opened?.sessionId);
@@ -299,7 +321,9 @@ export async function executeLeasedRun({
             return { status: 'failed', errorCode: writeOutcome.errorCode };
         }
         return {
-            status: 'completed',
+            // C6：产出方案的一轮不是「完成」——Run 在等人批准，Workflow 也在等。
+            // 报 completed 会让守护进程的日志与工作台各说一套。
+            status: normalizer.waitingHumanEmitted ? 'waiting_human' : 'completed',
             threadId: normalizer.providerSessionId,
             finalText: normalizer.finalAgentText,
         };

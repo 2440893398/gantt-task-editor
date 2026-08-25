@@ -137,8 +137,8 @@ describe('Executor Protocol v0 — 校验', () => {
 });
 
 describe('Executor Protocol v0 — 符合性规则表', () => {
-    it('C1～C5 五条齐全，每条都指向一次真实事故', () => {
-        expect(CONFORMANCE_RULE_IDS).toEqual(['C1', 'C2', 'C3', 'C4', 'C5']);
+    it('C1～C6 六条齐全，每条都指向一次真实事故', () => {
+        expect(CONFORMANCE_RULE_IDS).toEqual(['C1', 'C2', 'C3', 'C4', 'C5', 'C6']);
         for (const rule of CONFORMANCE_RULES) {
             expect(rule.source, `${rule.id} 缺少来源场景`).toMatch(/SCN-FWB-/);
             expect(rule.incident.length, `${rule.id} 缺少事故记录`).toBeGreaterThan(40);

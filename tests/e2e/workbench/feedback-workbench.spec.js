@@ -272,6 +272,131 @@ test.describe('[SCN-FWB-020] Design 版本审批', () => {
     });
 });
 
+test.describe('[SCN-FWB-036] 需要补充信息的等待不会被空批准原地重跑', () => {
+    test('[SCN-FWB-036] 按钮说的是「补充信息」，空提交被拦下且不产生新 Run', async ({
+        page,
+        request,
+    }) => {
+        // 坏行为（#czi9c6 真实发生）：卡片正文让你补充信息，按钮却写「批准并继续处理」，
+        // 点下去原样重跑同一轮只读分析，回来还是同一张卡片。这个测试在两处会失败：
+        // 按钮文案退回按返回状态取，或者服务端重新接受不带新信息的 queued。
+        const token = await adminToken(request);
+        await clearLocalHook(request, token);
+        const title = `补充信息等待 ${Date.now()}`;
+        const created = await createIssue(request, {
+            title,
+            description: '基线这个功能用的不多，直接去掉吧',
+            submittedType: 'improvement',
+        });
+        const escapedIssueId = created.issueId.replace(/'/g, "''");
+
+        await expect
+            .poll(
+                () =>
+                    queryLocalFeedbackDb(
+                        `SELECT last_run_id FROM feedback_issues WHERE id = '${escapedIssueId}'`
+                    )[0]?.last_run_id || '',
+                { timeout: 15_000 }
+            )
+            .not.toBe('');
+        const initialRunId = queryLocalFeedbackDb(
+            `SELECT last_run_id FROM feedback_issues WHERE id = '${escapedIssueId}'`
+        )[0].last_run_id;
+
+        // 只读 Run 正常结束、没有产出可批准方案 —— 交接成「还缺什么」的等待。
+        const message = await request.post(
+            `/api/feedback/runs/${encodeURIComponent(initialRunId)}/events`,
+            {
+                headers: { Authorization: `Bearer ${createRunCallbackToken(initialRunId)}` },
+                data: {
+                    eventId: `e2e-msg-${Date.now()}`,
+                    type: 'agent.message',
+                    payload: { message: '读完了代码，但还判断不出要改到什么程度。' },
+                },
+            }
+        );
+        expect(message.status()).toBe(201);
+        const completed = await request.post(
+            `/api/feedback/runs/${encodeURIComponent(initialRunId)}/events`,
+            {
+                headers: { Authorization: `Bearer ${createRunCallbackToken(initialRunId)}` },
+                data: {
+                    eventId: `e2e-done-${Date.now()}`,
+                    type: 'run.completed',
+                    payload: { summary: '已完成只读分析：本次不修改仓库文件。' },
+                },
+            }
+        );
+        expect(completed.status()).toBe(201);
+
+        await signInAsAdmin(page, token);
+        await page.goto(`/feedback#issue=${encodeURIComponent(created.issueId)}`);
+        await expect(page.getByRole('heading', { name: title })).toBeVisible();
+
+        // SCN-FWB-020：文案按 action.type 取。这条等待没有任何东西可批准。
+        await expect(page.locator('#nextActionButtons')).not.toContainText('批准并继续处理');
+        const rerun = page.locator('#nextActionButtons button').first();
+        await expect(rerun).toContainText('补充信息并重新');
+        // 卡片自己带输入框：正文要求的动作必须在这张卡上做得了。
+        await expect(page.locator('#humanActionNote')).toBeVisible();
+
+        // §16.3：证据要有内容，不是「N 项」加 N 个空框。
+        await page.locator('#nextActionCopy details.evidence summary').click();
+        await expect(page.locator('#nextActionCopy .evidence-item').first()).toContainText(
+            '只读分析'
+        );
+
+        const runsBefore = queryLocalFeedbackDb(
+            `SELECT COUNT(*) AS total FROM feedback_runs WHERE issue_id = '${escapedIssueId}'`
+        )[0].total;
+
+        await rerun.click();
+        await expect(page.locator('#toast')).toContainText('请先补充信息');
+        // 空提交必须什么都不发生：没有新 Run，等待还在原地。
+        expect(
+            queryLocalFeedbackDb(
+                `SELECT COUNT(*) AS total FROM feedback_runs WHERE issue_id = '${escapedIssueId}'`
+            )[0].total
+        ).toBe(runsBefore);
+        await expect(page.locator('#humanActionNote')).toBeVisible();
+
+        await page
+            .locator('#humanActionNote')
+            .fill('删到工具栏不再出现基线按钮，旧文档能正常打开。');
+        await rerun.click();
+
+        // 带上新信息才推进：新一轮 Run 起来了。
+        await expect
+            .poll(
+                () =>
+                    queryLocalFeedbackDb(
+                        `SELECT COUNT(*) AS total FROM feedback_runs WHERE issue_id = '${escapedIssueId}'`
+                    )[0].total,
+                { timeout: 15_000 }
+            )
+            .toBeGreaterThan(runsBefore);
+        // 而且那句补充真的进了时间线——下一轮 Run 的 context 读的就是它。
+        await expect(page.locator('#timeline')).toContainText('工具栏不再出现基线按钮');
+
+        // SCN-FWB-036：第二条出路——管理员就地改分类。分类是 §7.2 的路由判据，
+        // 停在「待评估」的 Issue 会被永远路由回只读 analyze；此前解开它的入口只在
+        // /feedback/legacy，卡住的卡片却在这一页。
+        await expect(page.locator('#saveClassification')).toBeDisabled();
+        await page.locator('[data-classification="scope"]').selectOption('small');
+        await expect(page.locator('#saveClassification')).toBeEnabled();
+        await page.locator('#saveClassification').click();
+        await expect
+            .poll(
+                () =>
+                    queryLocalFeedbackDb(
+                        `SELECT scope FROM feedback_issues WHERE id = '${escapedIssueId}'`
+                    )[0]?.scope,
+                { timeout: 10_000 }
+            )
+            .toBe('small');
+    });
+});
+
 test.describe('[SCN-FWB-015] 自动化设置页', () => {
     test.afterEach(async ({ request }) => {
         // The Worker and D1 are shared across this serial suite. Restore the
@@ -506,6 +631,166 @@ test.describe('[SCN-FWB-001] 时间线与回复', () => {
         await expect(page.locator('#timeline')).toContainText('导入 Excel 后立即撤销');
     });
 
+    /**
+     * Agent results are authored in GFM and used to reach the reader as escaped
+     * source text. `marked` does not sanitize, and `POST /api/feedback` takes
+     * anonymous submissions (EXC-FWB-005), so the same test pins both halves:
+     * the Markdown renders, and the injection embedded in it does not survive.
+     */
+    const MARKDOWN_BODY = [
+        '## 结论',
+        '',
+        '基线功能是一条**独立、可整体摘除**的纵切面，删除它不会破坏任何 `当前正常工作` 的行为。',
+        '',
+        '| 层 | 位置 |',
+        '| --- | --- |',
+        '| 渲染/交互 | `src/features/gantt/baseline.js:1-126` |',
+        '| 存储 | `src/core/storage.js:694-740` |',
+        '',
+        '- 第一项',
+        '- 第二项',
+        '',
+        '```js',
+        'gantt.clearAll();',
+        '```',
+        '',
+        '参考 [规范文档](https://example.com/spec)。',
+        '',
+        '<script>window.__markdownPwned = true;</script>',
+        '<img src="x" onerror="window.__markdownPwned = true">',
+        '',
+        '[伪装链接](javascript:window.__markdownPwned=true)',
+    ].join('\n');
+
+    test('[SCN-FWB-001] 时间线按 Markdown 渲染正文，并消毒其中的注入', async ({
+        page,
+        request,
+    }) => {
+        const created = await createIssue(request, {
+            title: `Markdown 正文渲染 ${Date.now()}`,
+            description: MARKDOWN_BODY,
+        });
+        await page.goto(
+            `/feedback#issue=${encodeURIComponent(created.issueId)}&capability=${encodeURIComponent(
+                created.ownerCapability
+            )}`
+        );
+
+        const body = page.locator('#timeline .comment-card .comment-body').first();
+        await expect(body).toBeVisible();
+
+        // Structure, not text: `toContainText('## 结论')` would pass on the
+        // broken rendering this replaced.
+        await expect(body.locator('h2')).toHaveText('结论');
+        await expect(body.locator('strong')).toHaveText('独立、可整体摘除');
+        await expect(body.locator('.markdown-table table th')).toHaveCount(2);
+        await expect(body.locator('.markdown-table table tbody tr')).toHaveCount(2);
+        await expect(body.locator('ul > li')).toHaveCount(2);
+        await expect(body.locator('pre code')).toContainText('gantt.clearAll();');
+        await expect(body.locator('p code').first()).toHaveText('当前正常工作');
+
+        const link = body.locator('a[href="https://example.com/spec"]');
+        await expect(link).toHaveText('规范文档');
+        await expect(link).toHaveAttribute('target', '_blank');
+        await expect(link).toHaveAttribute('rel', /noopener/);
+
+        // Sanitizer contract: the raw HTML block and the javascript: URL are
+        // parsed by `marked` and must not survive into the DOM.
+        await expect(body.locator('script')).toHaveCount(0);
+        await expect(body.locator('[onerror]')).toHaveCount(0);
+        await expect(body.locator('a[href^="javascript:"]')).toHaveCount(0);
+        await expect(body.getByText('伪装链接')).toBeVisible();
+        expect(await page.evaluate(() => window.__markdownPwned)).toBeUndefined();
+    });
+
+    test('[SCN-FWB-001] 375px 下宽表格在自身容器内滚动，页面不横向溢出', async ({
+        request,
+        browser,
+    }) => {
+        const created = await createIssue(request, {
+            title: `Markdown 窄屏 ${Date.now()}`,
+            description: MARKDOWN_BODY,
+        });
+        const context = await browser.newContext({ viewport: { width: 375, height: 812 } });
+        const scoped = await context.newPage();
+
+        try {
+            await scoped.goto(
+                `/feedback#issue=${encodeURIComponent(
+                    created.issueId
+                )}&capability=${encodeURIComponent(created.ownerCapability)}`
+            );
+            const table = scoped.locator('#timeline .comment-body .markdown-table').first();
+            await expect(table).toBeVisible();
+
+            const overflow = await horizontalOverflow(scoped);
+            const details = overflow > 0 ? await describeHorizontalOverflow(scoped) : [];
+            expect(overflow, JSON.stringify(details)).toBeLessThanOrEqual(0);
+        } finally {
+            await context.close();
+        }
+    });
+
+    /*
+     * Doubles as the red-proof for the two tests above: blocking the asset is
+     * exactly the rendering they replaced, and every structural assertion in
+     * them fails here. It also pins the degradation itself — the timeline must
+     * not go blank when the vendored parser is unreachable.
+     */
+    test('[SCN-FWB-001] marked 资产取不到时回退为转义段落而不是空白', async ({ page, request }) => {
+        const created = await createIssue(request, {
+            title: `Markdown 回退 ${Date.now()}`,
+            description: MARKDOWN_BODY,
+        });
+        await page.route('**/feedback/assets/marked-*.js', (route) => route.abort());
+        await page.goto(
+            `/feedback#issue=${encodeURIComponent(created.issueId)}&capability=${encodeURIComponent(
+                created.ownerCapability
+            )}`
+        );
+
+        const body = page.locator('#timeline .comment-card .comment-body').first();
+        await expect(body).toBeVisible();
+        await expect(body.locator('p').first()).toContainText('## 结论');
+        await expect(body.locator('h2')).toHaveCount(0);
+        await expect(body.locator('script')).toHaveCount(0);
+        expect(await page.evaluate(() => window.__markdownPwned)).toBeUndefined();
+    });
+
+    test('[SCN-FWB-001] 回复的预览与提交结果都按 Markdown 渲染', async ({ page, request }) => {
+        const created = await createIssue(request);
+        await page.goto(
+            `/feedback#issue=${encodeURIComponent(created.issueId)}&capability=${encodeURIComponent(
+                created.ownerCapability
+            )}`
+        );
+        await expect(page.locator('#timeline .comment-card').first()).toBeVisible();
+        const before = await page.locator('#timeline .timeline-entry').count();
+
+        await page
+            .locator('#replyInput')
+            .fill('### 复现步骤\n\n1. 导入 Excel\n2. 立即撤销\n\n**每次必现**。');
+
+        await page.getByRole('tab', { name: '预览' }).click();
+        const preview = page.locator('#replyPreview');
+        await expect(preview.locator('h3')).toHaveText('复现步骤');
+        await expect(preview.locator('ol > li')).toHaveCount(2);
+        await expect(preview.locator('strong')).toHaveText('每次必现');
+
+        await page.locator('#replySubmit').click();
+        await expect(page.locator('#replySuccess')).toContainText('已写入时间线');
+        await expect(page.locator('#timeline .timeline-entry')).toHaveCount(before + 1, {
+            timeout: 10_000,
+        });
+
+        // Reloading proves the Markdown source was persisted and re-rendered,
+        // not just echoed from the composer.
+        await page.reload();
+        const posted = page.locator('#timeline .comment-card .comment-body').last();
+        await expect(posted.locator('h3')).toHaveText('复现步骤');
+        await expect(posted.locator('ol > li')).toHaveCount(2);
+    });
+
     test('[SCN-FWB-001] 空回复不会提交', async ({ page, request }) => {
         const created = await createIssue(request);
         await page.goto(
@@ -520,6 +805,63 @@ test.describe('[SCN-FWB-001] 时间线与回复', () => {
 
         await expect(page.locator('#toastText')).toHaveText('请先填写回复内容');
         await expect(page.locator('#timeline .timeline-entry')).toHaveCount(before);
+    });
+});
+
+function measureIssueLayout(page) {
+    return page.evaluate(() => {
+        const layout = document.querySelector('.layout');
+        return {
+            viewport: document.documentElement.clientWidth,
+            columns: getComputedStyle(layout).gridTemplateColumns,
+            main: Math.round(
+                document.querySelector('.layout > main').getBoundingClientRect().width
+            ),
+            aside: Math.round(
+                document.querySelector('.layout > aside:not(.queue)').getBoundingClientRect().width
+            ),
+        };
+    });
+}
+
+test.describe('[SCN-FWB-019] owner 回访链接', () => {
+    test('[SCN-FWB-019] 地址栏保留 issue id，提示条给出可复制的完整回访链接', async ({
+        page,
+        request,
+    }) => {
+        const created = await createIssue(request);
+        await page.goto(
+            `/feedback#issue=${encodeURIComponent(created.issueId)}&capability=${encodeURIComponent(
+                created.ownerCapability
+            )}`
+        );
+        await expect(page.locator('#ownerNotice')).toBeVisible();
+
+        // §21.1 still holds for the credential; the issue id is what makes the
+        // tab identifiable in history and gives the owner a number to quote.
+        expect(page.url()).not.toContain('capability=');
+        expect(page.url()).toContain(`#issue=${encodeURIComponent(created.issueId)}`);
+
+        // "请保存此页面链接" is only true if the page hands the link over.
+        const linkInput = page.locator('#ownerLinkInput');
+        await expect(linkInput).toBeVisible();
+        const returnLink = await linkInput.inputValue();
+        expect(returnLink).toContain(`capability=${encodeURIComponent(created.ownerCapability)}`);
+        expect(returnLink).toContain(`#issue=${encodeURIComponent(created.issueId)}`);
+
+        await page.getByRole('button', { name: '复制链接' }).click();
+        await expect(page.locator('#toastText')).toContainText('链接');
+
+        // The copied string has to be a working credential, not just a plausible
+        // one — open it in a context that has never seen this Issue.
+        const fresh = await page.context().newPage();
+        try {
+            await fresh.goto(returnLink);
+            await expect(fresh.locator('#timeline .comment-card').first()).toBeVisible();
+            await expect(fresh.locator('#composer')).toBeVisible();
+        } finally {
+            await fresh.close();
+        }
     });
 });
 
@@ -580,6 +922,41 @@ test.describe('[SCN-FWB-015][SCN-FWB-016] 响应式与可访问性', () => {
                 await expect(scoped.locator('#nextActionCard')).toBeVisible();
                 await expect(scoped.locator('#propertyCard')).toBeVisible();
                 expect(await horizontalOverflow(scoped)).toBeLessThanOrEqual(0);
+            } finally {
+                await context.close();
+            }
+        });
+    }
+
+    for (const width of [1280, 1440]) {
+        test(`[SCN-FWB-015] ${width} 宽度 owner 视图与管理员视图共用阅读宽度`, async ({
+            request,
+            browser,
+        }) => {
+            const created = await createIssue(request);
+            const context = await browser.newContext({ viewport: { width, height: 900 } });
+            const scoped = await context.newPage();
+
+            try {
+                await scoped.goto(
+                    `/feedback#issue=${encodeURIComponent(
+                        created.issueId
+                    )}&capability=${encodeURIComponent(created.ownerCapability)}`
+                );
+                await expect(scoped.locator('#timeline .comment-card').first()).toBeVisible();
+                await expect(scoped.locator('#queuePanel')).toBeHidden();
+
+                // The hidden queue panel creates no grid item, so without an
+                // explicit track list `main` lands in the 316px queue column and
+                // the side card takes the wide one.
+                const layout = await measureIssueLayout(scoped);
+                expect(layout.main, JSON.stringify(layout)).toBeGreaterThanOrEqual(560);
+                expect(layout.aside, JSON.stringify(layout)).toBeLessThanOrEqual(294);
+                expect(layout.main, JSON.stringify(layout)).toBeGreaterThan(layout.aside);
+
+                const overflow = await horizontalOverflow(scoped);
+                const details = overflow > 0 ? await describeHorizontalOverflow(scoped) : [];
+                expect(overflow, JSON.stringify(details)).toBeLessThanOrEqual(0);
             } finally {
                 await context.close();
             }

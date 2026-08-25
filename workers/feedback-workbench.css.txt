@@ -803,6 +803,22 @@ main {
     font-weight: 600;
 }
 
+/* SCN-FWB-036：回应等待时补充的说明。它是下一轮处理的实际输入，所以要按正文
+   排版（可换行、深色），不能挤在状态行里被 flex 压成一行省略号。
+   带说明的行改为顶对齐，时间戳跟着首行走；不支持 :has() 的浏览器退回居中，
+   也就是这条规则出现之前的行为。 */
+.event-row:has(.event-note) {
+    align-items: flex-start;
+}
+
+.event-row .event-note {
+    display: block;
+    margin-top: 4px;
+    color: var(--text);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
 .evidence {
     margin-top: 12px;
     border: 1px solid var(--border-muted);
@@ -1115,6 +1131,25 @@ aside {
 .property-value {
     text-align: right;
     font-weight: 600;
+}
+
+/* SCN-FWB-036：管理员就地改分类。分类是 §7.2 的路由判据，不是展示字段，所以它在
+   属性栏里长得像一个可操作控件，而不是一段只读文本。 */
+.property-select {
+    min-width: 108px;
+    min-height: 32px;
+    border: 1px solid var(--border-muted);
+    border-radius: 6px;
+    background: #ffffff;
+    padding: 4px 8px;
+    color: var(--text);
+    font: inherit;
+    font-weight: 600;
+}
+
+/* 保存分类那一行没有左侧标签，让按钮和说明占满整行而不是被推到右边。 */
+.property-row:has(#saveClassification) {
+    display: block;
 }
 
 .avatar-mini {

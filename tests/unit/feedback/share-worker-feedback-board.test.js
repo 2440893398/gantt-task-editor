@@ -566,6 +566,44 @@ class MemoryD1 {
             meta: { changes },
         });
 
+        // --- SCN-FWB-036: 「自某时刻起有没有新输入」 ---
+        // 必须精确实现，否则下面那个只按 issue_id 过滤的通用 events 分支会让任何一条
+        // 历史事件都算作「新信息」，止损守卫在测试里就永远不触发。
+        if (
+            normalized.includes('from feedback_events') &&
+            normalized.includes('occurred_at > ?') &&
+            normalized.includes("type = 'classification.changed'")
+        ) {
+            const [issueId, since] = values;
+            const row = Array.from(this.tables.feedback_events.values()).find(
+                (event) =>
+                    event.issue_id === issueId &&
+                    String(event.occurred_at) > String(since) &&
+                    ((event.type === 'comment.created' &&
+                        ['user', 'admin'].includes(event.actor_type)) ||
+                        event.type === 'classification.changed')
+            );
+            return ok(row ? [{ id: row.id }] : []);
+        }
+
+        // --- SCN-FWB-020: 交接证据里的「已读取 / 未读取」计数 ---
+        if (
+            normalized.includes('as timeline_count') &&
+            normalized.includes('as attachment_count')
+        ) {
+            const issueId = values[0];
+            return ok([
+                {
+                    timeline_count: Array.from(this.tables.feedback_events.values()).filter(
+                        (event) => event.issue_id === issueId && event.visibility === 'public'
+                    ).length,
+                    attachment_count: Array.from(this.tables.feedback_attachments.values()).filter(
+                        (attachment) => attachment.issue_id === issueId
+                    ).length,
+                },
+            ]);
+        }
+
         // --- feedback_settings ---
         if (normalized.includes('from feedback_settings where name = ?')) {
             const row = this.tables.feedback_settings.get(values[0]);
@@ -2494,8 +2532,17 @@ describe('feedback issue board Worker routes', () => {
         const notice = dom.window.document.getElementById('ownerNotice').textContent;
         expect(notice).toContain('请保存此页面链接');
         expect(notice).toContain('不会发送邮件、短信或 IM 通知');
-        // §21.1: the capability must not survive in the address bar.
-        expect(dom.window.location.hash).toBe('');
+        // §21.1: the capability must not survive in the address bar. The issue
+        // id does — a bare `/feedback` left the owner with neither a number to
+        // quote nor a link to copy, while the notice claimed that link was their
+        // only credential.
+        expect(dom.window.location.hash).toBe(`#issue=${encodeURIComponent(feedbackKey)}`);
+        expect(dom.window.location.href).not.toContain('capability=');
+
+        // "Save this link" only holds if the page hands one over.
+        const linkInput = dom.window.document.getElementById('ownerLinkInput');
+        expect(linkInput.value).toContain(`#issue=${encodeURIComponent(feedbackKey)}`);
+        expect(linkInput.value).toContain('capability=owner-token');
     });
 
     it('[SCN-FWB-020] renders a Design read-only for its owner', async () => {
@@ -6433,6 +6480,81 @@ describe('feedback workbench V2 routes', () => {
         expect(rejected.status).toBe(400);
         expect(env.FEEDBACK_DB.tables.feedback_human_actions.get('hac_1').status).toBe('active');
 
+        // SCN-FWB-036：`need_reproduction` 的 `queued` 必须携带新信息，所以这里带上
+        // note。不带的那条路径由下面那个用例单独钉住。
+        const accepted = await json(
+            await request(
+                '/api/feedback/human-actions/hac_1/respond',
+                {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({ decision: 'queued', note: '在导入弹窗点确定时复现。' }),
+                },
+                env
+            )
+        );
+
+        expect(accepted.action.status).toBe('resolved');
+        expect(accepted.issue.workflow.status).toBe('queued');
+    });
+
+    it('[SCN-FWB-036] refuses to re-run a "needs more info" wait that carries no new info', async () => {
+        // 坏行为：空批准原地重跑。下一轮 Run 的输入与上一轮逐字相同（分类只在入库时
+        // 算一次），必然得出同一条结论、生成同一条等待——用户每点一次「继续处理」就
+        // 烧掉一整轮 provider 额度换回一模一样的卡片（#czi9c6）。
+        const env = createV2Env(
+            {},
+            {
+                feedback_issues: [
+                    createD1IssueRow({ status: 'needs_human', active_human_action_id: 'hac_1' }),
+                ],
+                feedback_human_actions: [humanActionRow()],
+            }
+        );
+        const headers = await adminHeaders(env);
+
+        const rejected = await request(
+            '/api/feedback/human-actions/hac_1/respond',
+            { method: 'POST', headers, body: JSON.stringify({ decision: 'queued' }) },
+            env
+        );
+
+        expect(rejected.status).toBe(409);
+        expect(await rejected.text()).toContain('没有新信息');
+        // 拒绝必须是「什么都没发生」：动作还在等你，Issue 还停在 needs_human，
+        // 没有新 Workflow、没有新 Run。半推进的状态比不推进更难收拾。
+        expect(env.FEEDBACK_DB.tables.feedback_human_actions.get('hac_1').status).toBe('active');
+        expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe('needs_human');
+        expect(env.FEEDBACK_DB.tables.feedback_workflows.size).toBe(0);
+        expect(env.FEEDBACK_DB.tables.feedback_runs.size).toBe(0);
+    });
+
+    it('[SCN-FWB-036] accepts the same re-run once a new user comment exists', async () => {
+        const env = createV2Env(
+            {},
+            {
+                feedback_issues: [
+                    createD1IssueRow({ status: 'needs_human', active_human_action_id: 'hac_1' }),
+                ],
+                feedback_human_actions: [
+                    humanActionRow({ created_at: '2026-07-28T09:00:00.000Z' }),
+                ],
+                feedback_events: [
+                    {
+                        id: 'evt_new_comment',
+                        issue_id: feedbackKey,
+                        sequence: 9,
+                        type: 'comment.created',
+                        actor_type: 'user',
+                        visibility: 'public',
+                        occurred_at: '2026-07-28T10:00:00.000Z',
+                        body_json: JSON.stringify({ text: '在导入弹窗点确定时复现。' }),
+                    },
+                ],
+            }
+        );
+        const headers = await adminHeaders(env);
+
         const accepted = await json(
             await request(
                 '/api/feedback/human-actions/hac_1/respond',
@@ -6443,6 +6565,31 @@ describe('feedback workbench V2 routes', () => {
 
         expect(accepted.action.status).toBe('resolved');
         expect(accepted.issue.workflow.status).toBe('queued');
+    });
+
+    it('[SCN-FWB-036] leaves a blocked_external retry alone — its re-run really can differ', async () => {
+        // 这里的 `queued` 语义是「外部凭据/连接我修好了，再来一次」。拦住它才是错的：
+        // 环境变了，同一条 Run 会得到不同结果。
+        const env = createV2Env(
+            {},
+            {
+                feedback_issues: [
+                    createD1IssueRow({ status: 'needs_human', active_human_action_id: 'hac_1' }),
+                ],
+                feedback_human_actions: [humanActionRow({ type: 'blocked_external' })],
+            }
+        );
+        const headers = await adminHeaders(env);
+
+        const accepted = await json(
+            await request(
+                '/api/feedback/human-actions/hac_1/respond',
+                { method: 'POST', headers, body: JSON.stringify({ decision: 'queued' }) },
+                env
+            )
+        );
+
+        expect(accepted.action.status).toBe('resolved');
     });
 
     it('[SCN-FWB-020] lists Design revisions and applies a decision to the exact revision', async () => {
@@ -8284,9 +8431,19 @@ describe('feedback workbench V2 Run and Callback', () => {
         expect(issue.status).toBe('needs_human');
         expect(actions).toHaveLength(1);
         expect(actions[0]).toMatchObject({ run_id: run.id, type: 'need_reproduction' });
-        expect(actions[0].requested_action).toContain('请补充复现步骤');
+        expect(actions[0].requested_action).toContain('触发步骤');
         expect(issue.active_human_action_id).toBe(actions[0].id);
         expect(JSON.parse(actions[0].allowed_return_states_json)).toEqual(['queued', 'closed']);
+
+        // §16.3：证据要能被人读懂。工作台只渲染 `label`/`summary`，所以每一条都必须
+        // 带上这两个字段——写 `{policy, runId}` 会渲染成「4 项」加 4 个空框（#czi9c6）。
+        const evidence = JSON.parse(actions[0].evidence_json);
+        expect(evidence.length).toBeGreaterThan(0);
+        for (const item of evidence) {
+            expect(item.label).toBeTruthy();
+            expect(item.summary).toBeTruthy();
+        }
+        expect(evidence.map((item) => item.label)).toContain('仍缺的信息');
     });
 
     it('[SCN-FWB-020] asks a classified Issue to confirm the next step instead of for repro', async () => {
@@ -10399,6 +10556,14 @@ describe('feedback workbench V2 Run and Callback', () => {
         // §16.4/SCN-FWB-020: the prompt builder reads this to decide whether the
         // read-only deliverable is a Design. A small bug needs no Design.
         expect(body.context.requiresDesign).toBe(false);
+        // SCN-FWB-020: the file list travels, the bytes do not (§13.1 step 5).
+        // Without the list the Runner cannot know an attachment exists at all,
+        // and the handoff ends up asking for a screenshot nobody will ever read.
+        expect(Array.isArray(body.context.attachments)).toBe(true);
+        for (const attachment of body.context.attachments) {
+            expect(attachment).toHaveProperty('name');
+            expect(attachment.contentAvailable).toBe(false);
+        }
         expect(contextToken).toBeTruthy();
     });
 
