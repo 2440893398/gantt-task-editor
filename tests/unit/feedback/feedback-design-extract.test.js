@@ -5,8 +5,11 @@ import yaml from 'js-yaml';
 import {
     extractFeedbackDesign,
     findDesignBlock,
+    scrapeNextSteps,
     stripDesignBlock,
+    stripNextStepsBlock,
 } from '../../../scripts/feedback-extract-design.mjs';
+import { extractFeedbackNextSteps } from '../../../src/features/feedback/next-steps.js';
 import {
     DESIGN_BLOCK_MARKER,
     buildFeedbackPrompt,
@@ -144,6 +147,26 @@ describe('[SCN-FWB-020] design proposal from a read-only Run', () => {
         expect(source).not.toMatch(/^#!/);
     });
 
+    it('[SCN-FWB-037] 两处围栏抓取必须认同一个标记，且抓出同样的东西', () => {
+        // 脚本被单文件抽出执行，不能 import src/——所以围栏抓取有两份实现。
+        // 判据只有 Worker 那一份（`normalizeFeedbackNextSteps` 入站重裁），但标记串
+        // 一旦漂移，Actions 路径就会安静地一个选项都抓不到，页面上只是「没有建议」，
+        // 没有任何报错能提示是哪里断的。
+        const message = [
+            '结论在这里。',
+            '```feedback-next-steps',
+            JSON.stringify([{ action: 'implement', label: '删掉基线', detail: '含一条迁移测试' }]),
+            '```',
+        ].join('\n');
+
+        expect(scrapeNextSteps(message)).toEqual([
+            { action: 'implement', label: '删掉基线', detail: '含一条迁移测试' },
+        ]);
+        expect(extractFeedbackNextSteps(message)).toEqual(scrapeNextSteps(message));
+        expect(stripNextStepsBlock(message)).toBe('结论在这里。');
+        expect(stripNextStepsBlock(message)).not.toContain('feedback-next-steps');
+    });
+
     it('[SCN-FWB-020] both workflows wait for a decision instead of completing', () => {
         for (const provider of ['codex', 'claude']) {
             const { run, script } = reporterScript(provider);
@@ -156,19 +179,29 @@ describe('[SCN-FWB-020] design proposal from a read-only Run', () => {
             expect(workflow).toContain(
                 '/usr/bin/git show "$BASE_COMMIT:scripts/feedback-extract-design.mjs"'
             );
-            expect(run).toContain('"$REQUIRES_DESIGN" = "true"');
             // A write Run must never be diverted into a design wait.
             expect(run).toContain('"$WRITE_ALLOWED" != "true"');
+            // SCN-FWB-037: the extractor now runs for every read-only Run because
+            // it also scrapes the next-step options — the extractor output must be
+            // read whenever the Run is read-only, NOT only when a design was
+            // required, or the options are silently dropped on exactly the
+            // analysis-only Runs the next-step card exists for.
+            expect(script).toContain('if (!writeAllowed) {');
+            expect(script).toContain(
+                'if (extracted && success && Array.isArray(extracted.nextSteps)) nextSteps = extracted.nextSteps;'
+            );
+            // The public timeline gets the stripped conclusion, not the raw fenced
+            // JSON the platform already consumed.
+            expect(script).toContain('payload: { message: publicMessage }');
             // The terminal must actually be selected by the extracted design —
             // asserting the branch merely exists would pass on dead code.
             expect(script).toContain('const body = pendingDesign ? {');
             expect(script).toContain('type: "agent.waiting_human"');
             expect(script).toContain('actionType: "design_decision"');
             expect(script).toContain('design: pendingDesign');
-            // Only a successful read-only Run may switch the terminal.
-            expect(script).toContain(
-                'if (success && !writeAllowed && process.env.REQUIRES_DESIGN === "true")'
-            );
+            // Only a successful read-only Run needing a design may switch the
+            // terminal — the invariant moved off the shell guard onto this branch.
+            expect(script).toContain('if (success && process.env.REQUIRES_DESIGN === "true")');
             // The normal terminal must still exist for every other Run.
             expect(script).toContain('type: success ? "run.completed" : "run.failed"');
         }

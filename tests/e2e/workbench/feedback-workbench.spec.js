@@ -333,10 +333,17 @@ test.describe('[SCN-FWB-036] 需要补充信息的等待不会被空批准原地
         await page.goto(`/feedback#issue=${encodeURIComponent(created.issueId)}`);
         await expect(page.getByRole('heading', { name: title })).toBeVisible();
 
-        // SCN-FWB-020：文案按 action.type 取。这条等待没有任何东西可批准。
-        await expect(page.locator('#nextActionButtons')).not.toContainText('批准并继续处理');
-        const rerun = page.locator('#nextActionButtons button').first();
-        await expect(rerun).toContainText('补充信息并重新');
+        // SCN-FWB-037：卡片给的是「决定」，不是一排看不出后果的按钮。
+        await expect(page.locator('#nextActionCopy')).not.toContainText('批准并继续处理');
+        const choices = page.locator('.next-step-choice');
+        await expect(choices).toHaveCount(3);
+        // 「我允许，去实施」必须在这张卡上，否则想开工只能去对话里说一句话。
+        const adopt = choices.filter({ hasText: '采纳分析' });
+        await expect(adopt).toHaveCount(1);
+        // 每个选项都要说清点了会发生什么——用户判断的是后果，不是按钮上那几个字。
+        await expect(adopt.locator('.next-step-detail')).not.toBeEmpty();
+        const rerun = choices.filter({ hasText: '补充信息' });
+        await expect(rerun).toHaveCount(1);
         // 卡片自己带输入框：正文要求的动作必须在这张卡上做得了。
         await expect(page.locator('#humanActionNote')).toBeVisible();
 
@@ -389,11 +396,117 @@ test.describe('[SCN-FWB-036] 需要补充信息的等待不会被空批准原地
             .poll(
                 () =>
                     queryLocalFeedbackDb(
-                        `SELECT scope FROM feedback_issues WHERE id = '${escapedIssueId}'`
-                    )[0]?.scope,
+                        `SELECT scope, automation_decision FROM feedback_issues
+                         WHERE id = '${escapedIssueId}'`
+                    )[0],
                 { timeout: 10_000 }
             )
-            .toBe('small');
+            // 派生字段必须跟着重算。停在 `design_required` 的话，页面显示「小」而
+            // §7.2 仍按需要方案走只读——改了等于没改，且页面上看不出原因。
+            .toEqual({ scope: 'small', automation_decision: 'auto_fix' });
+    });
+
+    test('[SCN-FWB-037] 点「采纳分析，开始实施」就授权实施，不用再说一句话', async ({
+        page,
+        request,
+    }) => {
+        // 用户原话：「那我现在想实施，我该怎么做呢？我是不是必须要在对话里面说
+        // 『同意开始实施』？」——这个测试在那条路又断掉时会红。
+        const token = await adminToken(request);
+        await clearLocalHook(request, token);
+        const title = `采纳分析并实施 ${Date.now()}`;
+        const created = await createIssue(request, {
+            title,
+            description: '基线这个功能用的不多，直接去掉吧',
+            submittedType: 'improvement',
+        });
+        const escapedIssueId = created.issueId.replace(/'/g, "''");
+
+        await expect
+            .poll(
+                () =>
+                    queryLocalFeedbackDb(
+                        `SELECT last_run_id FROM feedback_issues WHERE id = '${escapedIssueId}'`
+                    )[0]?.last_run_id || '',
+                { timeout: 15_000 }
+            )
+            .not.toBe('');
+        const runId = queryLocalFeedbackDb(
+            `SELECT last_run_id FROM feedback_issues WHERE id = '${escapedIssueId}'`
+        )[0].last_run_id;
+
+        // 只读分析结束，并且这一轮自己提议了下一步。
+        const headers = { Authorization: `Bearer ${createRunCallbackToken(runId)}` };
+        const message = await request.post(
+            `/api/feedback/runs/${encodeURIComponent(runId)}/events`,
+            {
+                headers,
+                data: {
+                    eventId: `e2e-adopt-msg-${Date.now()}`,
+                    type: 'agent.message',
+                    payload: { message: '基线是一条可整体摘除的纵切面。' },
+                },
+            }
+        );
+        expect(message.status()).toBe(201);
+        const completed = await request.post(
+            `/api/feedback/runs/${encodeURIComponent(runId)}/events`,
+            {
+                headers,
+                data: {
+                    eventId: `e2e-adopt-done-${Date.now()}`,
+                    type: 'run.completed',
+                    payload: {
+                        summary: '已完成只读分析：本次不修改仓库文件。',
+                        nextSteps: [
+                            {
+                                action: 'implement',
+                                label: '删掉基线纵切面',
+                                detail: '按结论摘除三处持久化面，并补一条迁移测试。',
+                            },
+                            { action: 'clarify', label: '先问清兼容范围' },
+                        ],
+                    },
+                },
+            }
+        );
+        expect(completed.status()).toBe(201);
+
+        await signInAsAdmin(page, token);
+        await page.goto(`/feedback#issue=${encodeURIComponent(created.issueId)}`);
+        await expect(page.getByRole('heading', { name: title })).toBeVisible();
+
+        // Agent 给的文案要真的显示出来——通用文案对这条 Issue 没有信息量。
+        const adopt = page.locator('.next-step-choice').filter({ hasText: '删掉基线纵切面' });
+        await expect(adopt).toHaveCount(1);
+        await expect(adopt).toContainText('补一条迁移测试');
+
+        await adopt.click();
+        await expect(page.locator('#toast')).toContainText('已采纳');
+
+        // 授权落在路由输入上，下一轮 Run 因此是写入型的。
+        await expect
+            .poll(
+                () =>
+                    queryLocalFeedbackDb(
+                        `SELECT automation_decision FROM feedback_issues
+                         WHERE id = '${escapedIssueId}'`
+                    )[0]?.automation_decision,
+                { timeout: 10_000 }
+            )
+            .toBe('implementation_approved');
+        await expect
+            .poll(
+                () =>
+                    queryLocalFeedbackDb(
+                        `SELECT policy FROM feedback_runs WHERE issue_id = '${escapedIssueId}'
+                         ORDER BY started_at DESC LIMIT 1`
+                    )[0]?.policy,
+                { timeout: 15_000 }
+            )
+            .toBe('implement_and_verify');
+        // 谁授权的、什么时候，公开时间线上留得下。
+        await expect(page.locator('#timeline')).toContainText('授权按该结论实施');
     });
 });
 

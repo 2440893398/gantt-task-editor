@@ -12,12 +12,17 @@ import {
     FEEDBACK_MARKDOWN_SCRIPT_PATH,
     renderFeedbackWorkbenchPage,
 } from './feedback-workbench-ui.js';
-import { evaluateDiffGate } from '../src/features/feedback/diff-gate.js';
-import { classifyFeedbackSubmission } from '../src/features/feedback/issue-classifier.js';
+import { evaluateDiffGate, normalizeDiffPath } from '../src/features/feedback/diff-gate.js';
+import {
+    classifyFeedbackSubmission,
+    resolveFeedbackAutomationDecision,
+} from '../src/features/feedback/issue-classifier.js';
 import {
     describeFeedbackAnalysisHandoff,
     requiresFeedbackDesign,
+    FEEDBACK_IMPLEMENTATION_APPROVED,
 } from '../src/features/feedback/analysis-handoff.js';
+import { normalizeFeedbackNextSteps } from '../src/features/feedback/next-steps.js';
 // Executor Protocol v0：事件类型的唯一来源（SCN-FWB-032）。Worker 与所有 Adapter
 // 共用同一份，播报与校验不得再分家。
 import { ALL_EVENT_TYPES } from '../packages/feedback-platform/protocol/v0.js';
@@ -280,6 +285,10 @@ const FEEDBACK_HUMAN_ACTION_TYPES = new Set([
     'confirm_policy',
     'runtime_approval',
     'executor_lost',
+    // SCN-FWB-039：门禁拦截后的授权决策。它只该由 run.failed(security_policy_violation)
+    // 的回调路径创建；Agent 经 waiting_human 伪造一张也没用——授权范围只从服务端存的
+    // 失败事件推导，没有失败事件就没有可授权的东西。
+    'approve_gate_scope',
 ]);
 const FEEDBACK_HUMAN_ACTION_RETURN_STATES = Object.freeze({
     need_reproduction: ['queued', 'closed'],
@@ -292,6 +301,9 @@ const FEEDBACK_HUMAN_ACTION_RETURN_STATES = Object.freeze({
     // Until then an approval is intentionally fail-closed.
     runtime_approval: [],
     executor_lost: ['queued', 'closed'],
+    // SCN-FWB-039：`queued` 必须声明是「授权重跑」还是「退回重新分析」（policyDecision），
+    // 裸 queued 语义不明确，服务端拒绝。
+    approve_gate_scope: ['queued', 'closed'],
 });
 /**
  * SCN-FWB-036：这两种等待问的是「还缺什么信息」，所以它们的 `queued` 必须携带新信息。
@@ -320,6 +332,9 @@ const FEEDBACK_AUTOMATION_DECISIONS = new Set([
     'review_required',
     'developer_fix_required',
     'close',
+    // SCN-FWB-037：管理员在下一步卡片上签的字。它不是分类器能推出来的值，
+    // 只能由 HumanAction 的 `policyDecision: 'implement'` 写入。
+    FEEDBACK_IMPLEMENTATION_APPROVED,
 ]);
 const FEEDBACK_AI_CONFIDENCE = new Set(['', 'low', 'medium', 'high']);
 const FEEDBACK_INLINE_ATTACHMENT_TYPES = new Set([
@@ -770,6 +785,40 @@ export class FeedbackWorkflow extends WorkflowEntrypoint {
             if (callbackType !== 'agent.waiting_human') {
                 if (!['run.completed', 'run.failed', 'run.cancelled'].includes(callbackType)) {
                     throw new Error('FEEDBACK_WORKFLOW_RUN_RESULT_INVALID');
+                }
+                if (callbackType === 'run.failed') {
+                    // SCN-FWB-038：验证红了不是这一代的终点——失败输出已在公开时间线里，
+                    // 预算内直接再跑一轮让 Agent 对着红色输出修（先见红再见绿的平台化）。
+                    // 此前任何 run.failed 都直接 recordTerminal，「测试没过就不管了」。
+                    const repair = await step.do(`plan repair round${stepSuffix}`, async () =>
+                        planFeedbackWorkflowRepairRound(this.env, {
+                            issueId,
+                            instanceId,
+                            runId: run.runId,
+                        })
+                    );
+                    if (repair?.continueRepair) {
+                        triggerEvent = {
+                            payload: {
+                                ...(triggerEvent?.payload || {}),
+                                // 修复轮没有新的 Hook 投递，deliveryId 必须清空，
+                                // 否则 deliverConfiguredEvent 会重投上一轮的投递。
+                                deliveryId: '',
+                                eventId: String(runResult?.payload?.eventId || ''),
+                            },
+                        };
+                        cycle += 1;
+                        continue;
+                    }
+                    // 终止前兜底：回调与 Workflow 各算了一次修复预算，毫秒级窗口内
+                    // 配额可能翻转——保证终态失败必有决策卡（幂等，已有卡则不动）。
+                    await step.do(`ensure failure escalation${stepSuffix}`, async () =>
+                        ensureFeedbackRunFailureEscalation(this.env, {
+                            issueId,
+                            runId: run.runId,
+                            errorCode: repair?.errorCode || '',
+                        })
+                    );
                 }
                 const workflowStatus =
                     callbackType === 'run.completed' ? 'succeeded' : 'terminated';
@@ -2918,11 +2967,25 @@ async function updateD1FeedbackIssue(env, key, patch) {
     }
 
     const beforeAi = normalizeAiClassification(issue);
+    // §7.5/SCN-FWB-036：`automationDecision` 是派生字段。人工改了它的输入（类型/范围）
+    // 却没有显式给出新值时，必须用同一份规则重算——留着旧值会让「页面显示 体验优化/小」
+    // 和「路由仍按 design_required 走只读」同时成立，而 `requiresFeedbackDesign` 的第一个
+    // 条件正是 `automationDecision === 'design_required'`：一个陈旧的派生值足以把管理员
+    // 对 scope 的修改整个吃掉，界面上还看不出为什么。显式给值的调用方（管理端旧表单）不受影响。
+    const reclassified =
+        (Object.hasOwn(aiPatch, 'businessType') || Object.hasOwn(aiPatch, 'scope')) &&
+        !Object.hasOwn(aiPatch, 'automationDecision');
+    const mergedAi = { ...beforeAi, ...aiPatch };
     const nextAi = normalizeAiClassification({
-        ai: {
-            ...beforeAi,
-            ...aiPatch,
-        },
+        ai: reclassified
+            ? {
+                  ...mergedAi,
+                  automationDecision: resolveFeedbackAutomationDecision({
+                      businessType: mergedAi.businessType,
+                      scope: mergedAi.scope,
+                  }),
+              }
+            : mergedAi,
     });
     for (const field of [
         'businessType',
@@ -4130,6 +4193,10 @@ async function ensureFeedbackWorkflowForEvent(env, issueId, { deliveryId, eventI
  */
 function resolveFeedbackPolicy({ businessType, scope, automationDecision, approvedDesign }) {
     const policy = (() => {
+        // SCN-FWB-037：管理员已就上一轮分析授权实施。这一条必须排在最前面——放在
+        // `requiresFeedbackDesign` 之后的话，一条 improvement/unclear 的 Issue 仍然会被
+        // 判成「需要方案」而路由回 analyze，授权就等于没给。
+        if (automationDecision === FEEDBACK_IMPLEMENTATION_APPROVED) return 'implement_and_verify';
         if (automationDecision === 'review_required') return 'review';
         if (automationDecision === 'need_reproduction') return 'analyze';
         if (requiresFeedbackDesign({ businessType, scope, automationDecision })) {
@@ -4918,10 +4985,13 @@ async function verifyRunCompletionManifest({ env, run, payload }) {
         }
     }
 
+    // SCN-FWB-039/§7.3：授权是服务端状态，不信完成载荷的回显。`contractRun` 与
+    // dispatchPayload 同款口径——写入型 Run 就是可改契约的 Run（改动仍强制候选复核）。
+    const grant = await readFeedbackGateGrant(env, run.issue_id);
     return evaluateDiffGate({
         changedFiles,
-        approvedPaths: Array.isArray(payload.approvedPaths) ? payload.approvedPaths : [],
-        contractRunApproved: payload.contractRunApproved === true,
+        approvedPaths: grant.approvedPaths,
+        contractRunApproved: FEEDBACK_WRITE_POLICIES.has(run.policy) || grant.contractRunApproved,
         scnId: limitText(payload.scnId, 40),
         writeAllowed,
     });
@@ -4956,6 +5026,10 @@ async function readFeedbackRunContext(env, runId) {
               .first()
         : null;
     const attachments = await readFeedbackRunContextAttachments(env, row.issue_id);
+    const writeCapableRun = FEEDBACK_WRITE_POLICIES.has(row.policy);
+    const gateGrant = writeCapableRun
+        ? await readFeedbackGateGrant(env, row.issue_id)
+        : { approvedPaths: [], contractRunApproved: false };
 
     return {
         runId: row.run_id,
@@ -4973,6 +5047,11 @@ async function readFeedbackRunContext(env, runId) {
             scope: row.scope,
             automationDecision: row.automation_decision,
         }),
+        // SCN-FWB-039：门禁授权是服务端状态，随 context 下发（write-pipeline 只认
+        // `context.approvedPaths`/`contractRunApproved`，此前控制面从未给过——管道
+        // 两头都在，中间没接）。契约授权与 dispatchPayload.contractRun 同款口径。
+        approvedPaths: gateGrant.approvedPaths,
+        contractRunApproved: writeCapableRun || gateGrant.contractRunApproved,
         issue: {
             id: row.issue_id,
             version: Number(row.version) || 1,
@@ -5122,11 +5201,263 @@ async function dispatchFeedbackEvent(
 }
 
 /**
+ * SCN-FWB-038：每代 Workflow 内 `verification_failed` 的 Run 总数上限。
+ * 3 = 首轮 + 2 轮修复。超过后失败进入人工决策，不再自动烧预算。
+ */
+const FEEDBACK_MAX_VERIFICATION_FAILURES = 3;
+
+/** SCN-FWB-039：授权能放行的验证削弱类型。skip/only/todo 让测试假装还在跑，永不授权。 */
+const FEEDBACK_GRANTABLE_WEAKENING = new Set(['ASSERTION_REMOVED', 'DEEP_COMPARE_WEAKENED']);
+
+/**
+ * SCN-FWB-039：最近一次管理员签发的门禁授权。授权是事件（`gate.scope_granted`），
+ * 不是 Issue 列——事件天然带「谁、何时、授了什么」，审计不用另修一张表。
+ */
+async function readFeedbackGateGrant(env, issueId) {
+    const row = await env.FEEDBACK_DB.prepare(
+        `SELECT body_json FROM feedback_events
+         WHERE issue_id = ? AND type = 'gate.scope_granted'
+         ORDER BY sequence DESC LIMIT 1`
+    )
+        .bind(issueId)
+        .first();
+    const grant = parseStoredJson(row?.body_json, {})?.grant;
+    return {
+        approvedPaths: Array.isArray(grant?.approvedPaths)
+            ? grant.approvedPaths.slice(0, 200).map((path) => normalizeDiffPath(path))
+            : [],
+        contractRunApproved: grant?.contractRunApproved === true,
+    };
+}
+
+/**
+ * SCN-FWB-039：从被拦 Run 的失败事件推导授权范围。管理员批的是「这套变更」，所以
+ * 授权 = 变更文件清单 ∪ 违规文件（violations 归一化有 20 条上限，仅按违规推导会漏授，
+ * 让下一轮在剩余文件上再次被拦）。hard-deny 与 skip/only/todo 不进授权，也授不动——
+ * 门禁对它们不读 approvedPaths。
+ */
+function deriveFeedbackGateGrant({ changedFiles = [], violations = [] } = {}) {
+    const approvedPaths = new Set();
+    let contractRunApproved = false;
+    let ungrantable = 0;
+    let grantableViolations = 0;
+    for (const file of changedFiles) {
+        const normalized = normalizeDiffPath(file);
+        if (normalized) approvedPaths.add(normalized);
+    }
+    for (const violation of violations) {
+        const code = String(violation?.code || '');
+        const file = normalizeDiffPath(violation?.file || '');
+        if (code === 'CONTRACT_CHANGE_NOT_AUTHORIZED' || code === 'CONTRACT_CHANGE_MISSING_SCN') {
+            contractRunApproved = true;
+        }
+        if (code === 'HARD_DENY_PATH') {
+            ungrantable += 1;
+            continue;
+        }
+        if (
+            code === 'VERIFICATION_WEAKENED' &&
+            !FEEDBACK_GRANTABLE_WEAKENING.has(String(violation?.detail || ''))
+        ) {
+            ungrantable += 1;
+            continue;
+        }
+        // 「有没有可授权的东西」看的是违规本身，不是 approvedPaths 攒没攒出文件——
+        // 变更清单几乎永远非空，按它判定会让「全是硬禁止」的 409 在生产上不可达，
+        // 管理员每点一次授权就烧一轮注定在同一处再被拦的 Run。
+        if (
+            code === 'PATH_NOT_IN_APPROVED_SCOPE' ||
+            code === 'CONTRACT_CHANGE_NOT_AUTHORIZED' ||
+            code === 'CONTRACT_CHANGE_MISSING_SCN' ||
+            code === 'VERIFICATION_WEAKENED'
+        ) {
+            grantableViolations += 1;
+        }
+        if (file) approvedPaths.add(file);
+    }
+    return {
+        approvedPaths: Array.from(approvedPaths).slice(0, 200),
+        contractRunApproved,
+        ungrantable,
+        grantable: grantableViolations > 0,
+    };
+}
+
+/**
+ * SCN-FWB-038：这一轮 `verification_failed` 之后还该不该自动再跑一轮。
+ * 回调侧在落库前调用（`includeCurrentFailure: true`，当前失败还没计入），Workflow 在
+ * 落库后调用（false）——两边对同一个数字用同一个谓词，结论必然一致。配额是第二道闸：
+ * 修复轮不是人工决定，不享受 bypassQuota。
+ */
+async function planFeedbackRepairRound(
+    env,
+    { issueId, workflowId, includeCurrentFailure = false }
+) {
+    const row = await env.FEEDBACK_DB.prepare(
+        `SELECT COUNT(*) AS failures FROM feedback_runs
+         WHERE issue_id = ? AND workflow_id = ? AND status = 'failed'
+           AND error_code = 'verification_failed'`
+    )
+        .bind(issueId, workflowId)
+        .first();
+    const failures = (Number(row?.failures) || 0) + (includeCurrentFailure ? 1 : 0);
+    if (failures >= FEEDBACK_MAX_VERIFICATION_FAILURES) {
+        return { continueRepair: false, failures, reason: 'REPAIR_BUDGET_EXHAUSTED' };
+    }
+    const quota = await checkFeedbackDispatchQuota(env, issueId);
+    if (quota && !quota.allowed) {
+        return { continueRepair: false, failures, reason: 'DAILY_QUOTA_EXCEEDED', quota };
+    }
+    return { continueRepair: true, failures };
+}
+
+/**
+ * SCN-FWB-038：Workflow 收到 `run.failed` 后的续跑判定。真相全部读自 D1（Run 的
+ * error_code 是控制面落的库，不信事件载荷回显）。决定续跑时当场记账并留痕——
+ * 修复轮不是人工决定，没有 bypassQuota，也绝不允许「跑了但账上看不见」（SCN-FWB-036）。
+ */
+async function planFeedbackWorkflowRepairRound(env, { issueId, instanceId, runId }) {
+    const run = await env.FEEDBACK_DB.prepare(
+        'SELECT error_code, workflow_id FROM feedback_runs WHERE id = ?'
+    )
+        .bind(runId)
+        .first();
+    const errorCode = String(run?.error_code || '');
+    if (errorCode !== 'verification_failed' || String(run?.workflow_id || '') !== instanceId) {
+        return { continueRepair: false, errorCode };
+    }
+    const plan = await planFeedbackRepairRound(env, { issueId, workflowId: instanceId });
+    if (!plan.continueRepair) {
+        if (plan.reason === 'DAILY_QUOTA_EXCEEDED') {
+            await appendFeedbackSystemEvent(env, issueId, {
+                type: 'automation.suppressed',
+                visibility: 'admin',
+                body: {
+                    reason: 'DAILY_QUOTA_EXCEEDED',
+                    context: 'verification_repair',
+                    used: plan.quota?.used,
+                    limit: plan.quota?.limit,
+                },
+            });
+        }
+        return { ...plan, errorCode };
+    }
+    await recordFeedbackDispatchUsage(env, issueId, new Date().toISOString().slice(0, 10));
+    await appendFeedbackSystemEvent(env, issueId, {
+        type: 'automation.retry',
+        visibility: 'admin',
+        body: {
+            reason: 'verification_failed',
+            failedRunId: runId,
+            attempt: plan.failures + 1,
+            maxAttempts: FEEDBACK_MAX_VERIFICATION_FAILURES,
+        },
+    });
+    return { ...plan, errorCode };
+}
+
+/**
+ * SCN-FWB-038/039：终止性失败对应的决策卡。文案与证据都从失败本身长出来——
+ * 卡片必须能回答「被什么拦的 / 涉及哪些文件 / 你现在能做什么」。
+ */
+function describeFeedbackRunFailureAction({ errorCode, violations = [], changedFiles = [] }) {
+    if (errorCode === 'security_policy_violation') {
+        const grant = deriveFeedbackGateGrant({ changedFiles, violations });
+        const codeCounts = new Map();
+        for (const violation of violations) {
+            const code = String(violation?.code || 'UNKNOWN');
+            codeCounts.set(code, (codeCounts.get(code) || 0) + 1);
+        }
+        const summary = Array.from(codeCounts.entries())
+            .map(([code, count]) => `${code}×${count}`)
+            .join('、');
+        return {
+            actionType: 'approve_gate_scope',
+            requestedAction:
+                '交付被质量门禁拦下。请决定：授权这套变更并重跑（改动仍需你复核候选实现）、退回重新分析，或关闭。',
+            evidence: [
+                feedbackEvidenceItem('拦截原因', summary || '门禁未返回违规明细', {
+                    violations: violations.slice(0, 20),
+                }),
+                feedbackEvidenceItem(
+                    '本轮变更',
+                    changedFiles.length ? `${changedFiles.length} 个文件` : '无变更清单',
+                    { changedFiles: changedFiles.slice(0, 100) }
+                ),
+                grant.grantable
+                    ? feedbackEvidenceItem(
+                          '可授权范围',
+                          `${grant.approvedPaths.length} 个文件${grant.contractRunApproved ? '，含契约变更' : ''}${grant.ungrantable ? `；另有 ${grant.ungrantable} 项硬禁止，授权不放行` : ''}`
+                      )
+                    : feedbackEvidenceItem(
+                          '不可授权',
+                          '违规均为硬禁止项（凭据/黄金答案/test.skip 类），无法通过授权放行'
+                      ),
+            ],
+        };
+    }
+    const reasonLabel =
+        {
+            verification_failed: '定向测试/构建/浏览器验证未通过，失败输出在时间线里',
+            empty_agent_response: '本轮 Agent 没有产出可见结果',
+            run_timeout: '本轮处理超时',
+        }[errorCode] || `处理失败（${errorCode || 'unknown'}）`;
+    return {
+        actionType: 'developer_fix_required',
+        requestedAction: '自动处理未能交付，已停止自动重试。请决定：再试一轮、补充信息，或关闭。',
+        evidence: [feedbackEvidenceItem('失败原因', reasonLabel)],
+    };
+}
+
+/**
+ * SCN-FWB-038：给一条已终态失败却没有决策卡的 Issue 补卡并纠正状态。幂等：已有活跃
+ * 动作就什么都不做。两个调用方——Workflow 终止分支（回调与 Workflow 对修复预算的
+ * 判定存在毫秒级窗口）、每日 reconcile（修存量僵尸，含 `timed_out`）。
+ */
+async function ensureFeedbackRunFailureEscalation(env, { issueId, runId, errorCode }) {
+    const active = await env.FEEDBACK_DB.prepare(
+        `SELECT id FROM feedback_human_actions WHERE issue_id = ? AND status = 'active' LIMIT 1`
+    )
+        .bind(issueId)
+        .first();
+    if (active) return { actionId: active.id, created: false };
+
+    const failureEvent = await env.FEEDBACK_DB.prepare(
+        `SELECT body_json FROM feedback_events
+         WHERE issue_id = ? AND run_id = ? AND type = 'run.failed'
+         ORDER BY sequence DESC LIMIT 1`
+    )
+        .bind(issueId, runId)
+        .first();
+    const resultEvidence = parseStoredJson(failureEvent?.body_json, {})?.resultEvidence || {};
+    const prepared = prepareFeedbackHumanAction(env, {
+        issueId,
+        runId,
+        payload: describeFeedbackRunFailureAction({
+            errorCode: String(errorCode || ''),
+            violations: Array.isArray(resultEvidence.violations) ? resultEvidence.violations : [],
+            changedFiles: Array.isArray(resultEvidence.changedFiles)
+                ? resultEvidence.changedFiles
+                : [],
+        }),
+    });
+    await env.FEEDBACK_DB.batch([
+        ...prepared.statements,
+        env.FEEDBACK_DB.prepare(
+            `UPDATE feedback_issues
+             SET status = 'needs_human', updated_at = ?, version = version + 1
+             WHERE id = ?`
+        ).bind(new Date().toISOString(), issueId),
+    ]);
+    return { actionId: prepared.actionId, created: true };
+}
+
+/**
  * §9.2: a Callback never writes an Issue status directly. This is the only
  * place Run outcomes are projected, and `run.completed` alone can never make an
  * Issue `resolved` — that requires a successful Release.
  */
-function projectRunEventToIssue({ type, policy, payload }) {
+function projectRunEventToIssue({ type, policy, payload, repairPlanned = false }) {
     if (type === 'run.started') return { runStatus: 'running', issueStatus: 'in_progress' };
     if (type === 'run.phase_changed') {
         return {
@@ -5138,14 +5469,16 @@ function projectRunEventToIssue({ type, policy, payload }) {
         return { runStatus: 'waiting_human', issueStatus: 'needs_human' };
     }
     if (type === 'run.failed') {
-        // §17.1: a failed verification is a business outcome (`test_failed`);
-        // infrastructure failures keep the Issue where it is for a retry.
-        return {
-            runStatus: 'failed',
-            issueStatus: ['verification_failed', 'empty_agent_response'].includes(payload.errorCode)
-                ? 'test_failed'
-                : null,
-        };
+        // SCN-FWB-038：任何会终止编排的失败都不得把 Issue 留在 `in_progress`——
+        // Workflow 对 run.failed 一律终态退出，旧映射的 `null`（「留在原地等重试」）
+        // 等的是一个不存在的重试：#czi9c6 的写入 Run 被门禁拦下后，Issue 挂着
+        // 「AI 正在处理」停了 19 小时，而 active_workflow_id 早已是 NULL。
+        // 唯一的过渡态是修复回路尚未用尽预算的 `verification_failed`（`test_failed`，
+        // 编排随即自动重启下一轮）；其余一律 `needs_human`，决策卡与本事件同批创建。
+        if (payload.errorCode === 'verification_failed' && repairPlanned) {
+            return { runStatus: 'failed', issueStatus: 'test_failed' };
+        }
+        return { runStatus: 'failed', issueStatus: 'needs_human' };
     }
     if (type === 'run.cancelled') return { runStatus: 'cancelled', issueStatus: 'open' };
     if (type === 'run.completed') {
@@ -5314,10 +5647,24 @@ async function appendFeedbackCallbackEvent(env, runId, body) {
         ? callback.payload.violations
         : resultManifest.violations;
 
+    // SCN-FWB-038：`verification_failed` 是否还有自动修复预算，决定它是过渡态
+    // `test_failed` 还是终点 `needs_human`。在落库前算（当前失败尚未计入）。
+    const repairPlanned =
+        callback.type === 'run.failed' &&
+        String(callback.payload.errorCode || '') === 'verification_failed' &&
+        (
+            await planFeedbackRepairRound(env, {
+                issueId: run.issue_id,
+                workflowId: run.workflow_id,
+                includeCurrentFailure: true,
+            })
+        ).continueRepair;
+
     const projection = projectRunEventToIssue({
         type: callback.type,
         policy: run.policy,
         payload: callback.payload,
+        repairPlanned,
     });
     if (projection.runStatus && !FEEDBACK_RUN_STATUSES.has(projection.runStatus)) {
         throw feedbackStorageError('FEEDBACK_RUN_STATUS_INVALID');
@@ -5367,6 +5714,33 @@ async function appendFeedbackCallbackEvent(env, runId, body) {
             designId: preparedDesign?.designId || null,
             guardEventId: eventId,
         });
+    } else if (
+        callback.type === 'run.failed' &&
+        projection.issueStatus === 'needs_human' &&
+        // 旧卡未决时新失败落地（管理员改分类绕过卡片重启了处理）：不建第二张卡——
+        // 每 Issue 只有一张活跃卡（唯一约束），旧卡仍是可用的决策点，`needs_human`
+        // ⇔「存在活跃 HumanAction」的不变式（SCN-FWB-020）依然成立。
+        !(await env.FEEDBACK_DB.prepare(
+            `SELECT id FROM feedback_human_actions WHERE issue_id = ? AND status = 'active' LIMIT 1`
+        )
+            .bind(run.issue_id)
+            .first())
+    ) {
+        // SCN-FWB-038/039：终止性失败与它的决策卡同批原子提交——`needs_human` 必须
+        // 与「存在活跃 HumanAction」同时成立（SCN-FWB-020 的不变式），分两次写就有
+        // 一个只有状态没有卡片的窗口。
+        preparedAction = prepareFeedbackHumanAction(env, {
+            issueId: run.issue_id,
+            runId,
+            payload: describeFeedbackRunFailureAction({
+                errorCode: String(callback.payload.errorCode || ''),
+                violations: Array.isArray(resultViolations) ? resultViolations : [],
+                changedFiles: Array.isArray(resultManifest?.changedFiles)
+                    ? resultManifest.changedFiles
+                    : [],
+            }),
+            guardEventId: eventId,
+        });
     }
 
     const statements = [
@@ -5409,6 +5783,14 @@ async function appendFeedbackCallbackEvent(env, runId, body) {
                     resultViolations
                 ),
                 phase: callback.payload.phase || '',
+                // SCN-FWB-037：Agent 提议的下一步只保留能落到这条 HumanAction 允许的
+                // 返回状态上的那些。文案是模型的，权限永远不是——词表外或越权的一律丢掉，
+                // 否则一次提示词注入就能在页面上长出一个状态机里没有的按钮。
+                nextSteps: normalizeFeedbackNextSteps(callback.payload.nextSteps, {
+                    allowedReturnStates:
+                        FEEDBACK_HUMAN_ACTION_RETURN_STATES[normalizedActionType] ||
+                        FEEDBACK_HUMAN_ACTION_RETURN_STATES.confirm_policy,
+                }),
                 errorCode: limitText(callback.payload.errorCode, 80),
                 completion:
                     callback.type === 'run.completed'
@@ -7407,6 +7789,10 @@ function serializeTimelineEvent(row) {
         // surfacing it the timeline can only say "next phase", which is the
         // same as saying nothing.
         phase: limitText(body.phase, 40),
+        // SCN-FWB-037: the options the analysis proposed for its own follow-up.
+        // Already filtered through the state machine on ingest; re-normalising
+        // on read keeps a hand-edited row from reaching the page as a button.
+        nextSteps: normalizeFeedbackNextSteps(body.nextSteps),
         artifact: normalizeFeedbackTimelineArtifact(body.artifact),
         attachments: Array.isArray(body.attachments)
             ? body.attachments.slice(0, MAX_FEEDBACK_COMMENT_ATTACHMENTS).map((attachment) => ({
@@ -8253,7 +8639,7 @@ async function hasFeedbackInputSince(env, issueId, sinceIso) {
 async function respondToHumanAction(
     env,
     actionId,
-    { actorType, decision, candidateId, designId, designDecision, note }
+    { actorType, decision, candidateId, designId, designDecision, policyDecision, note }
 ) {
     if (!env.FEEDBACK_DB) {
         throw feedbackStorageError('FEEDBACK_DB_REQUIRED');
@@ -8271,12 +8657,64 @@ async function respondToHumanAction(
     if (!action.allowedReturnStates.includes(decision)) {
         throw feedbackStorageError('FEEDBACK_HUMAN_ACTION_STATE_NOT_ALLOWED');
     }
+    // SCN-FWB-037: 「采纳这份分析，去实施」。这是管理员的签字，不是分类器的推断，
+    // 所以它压过 §16.4 的 Design 闸——那条规则要的是「有权限的人在动代码前签字」，
+    // 这一下就是。没有它，分析完成的等待只剩「重新分析」和「关闭」两条路，
+    // 想让它开工只能去对话里说一句话，而结构化下一步卡片的全部意义就是替代那句话。
+    const approvesImplementation = policyDecision === 'implement';
+    if (approvesImplementation) {
+        if (!FEEDBACK_HUMAN_ACTION_NEEDS_NEW_INPUT.has(action.type)) {
+            throw feedbackStorageError('FEEDBACK_POLICY_DECISION_NOT_ALLOWED');
+        }
+        if (decision !== 'queued') {
+            throw feedbackStorageError('FEEDBACK_HUMAN_ACTION_STATE_NOT_ALLOWED');
+        }
+        // §21.3/EXC-FWB-003：提出人可以回答「还缺什么」，但不能自助把自己的反馈
+        // 升级成写入型 Run。授权实施只能由管理员给。
+        if (actorType !== 'admin') {
+            throw feedbackStorageError('FEEDBACK_POLICY_DECISION_FORBIDDEN');
+        }
+    }
+    // SCN-FWB-039：门禁决策卡的两种决定。授权是管理员对着违规清单的签字；退回则撤销
+    // 实施授权、必须说明哪里不对。裸 `queued` 在这类卡上语义不明确，直接拒绝。
+    const approvesGateScope = policyDecision === 'approve_scope';
+    const rejectsAnalysis = policyDecision === 'reanalyze';
+    if (approvesGateScope || rejectsAnalysis) {
+        if (action.type !== 'approve_gate_scope') {
+            throw feedbackStorageError('FEEDBACK_POLICY_DECISION_NOT_ALLOWED');
+        }
+        if (decision !== 'queued') {
+            throw feedbackStorageError('FEEDBACK_HUMAN_ACTION_STATE_NOT_ALLOWED');
+        }
+        if (actorType !== 'admin') {
+            throw feedbackStorageError('FEEDBACK_POLICY_DECISION_FORBIDDEN');
+        }
+        if (rejectsAnalysis && !limitText(note, 2000).trim()) {
+            throw feedbackStorageError('FEEDBACK_GATE_REANALYZE_NOTE_REQUIRED');
+        }
+    } else if (policyDecision && !approvesImplementation) {
+        throw feedbackStorageError('FEEDBACK_POLICY_DECISION_NOT_ALLOWED');
+    }
+    if (
+        action.type === 'approve_gate_scope' &&
+        decision === 'queued' &&
+        !approvesGateScope &&
+        !rejectsAnalysis
+    ) {
+        throw feedbackStorageError('FEEDBACK_POLICY_DECISION_REQUIRED');
+    }
     // SCN-FWB-036: 这两种等待是在问「还缺什么」，`queued` 的语义是「带着新信息重新处理」。
     // 没有新信息就重新派发，下一轮 Run 拿到的输入与上一轮**逐字相同**——分类只在入库时
     // 算一次，`describeFeedbackAnalysisHandoff` 的判据也只读那三个字段，所以它必然得出
     // 同一条结论、生成同一条等待。#czi9c6 上这就是一个真死循环：每点一次「继续处理」
     // 烧掉一整轮 provider 额度，换回一字不差的同一张卡片。
-    if (decision === 'queued' && FEEDBACK_HUMAN_ACTION_NEEDS_NEW_INPUT.has(action.type)) {
+    if (
+        decision === 'queued' &&
+        !approvesImplementation &&
+        FEEDBACK_HUMAN_ACTION_NEEDS_NEW_INPUT.has(action.type)
+    ) {
+        // 采纳实施不受这条约束：它本身就改变了路由输入（automation_decision），
+        // 下一轮 Run 与上一轮不再相同，守卫要防的「逐字重跑」不成立。
         const hasNote = Boolean(limitText(note, 2000).trim());
         if (!hasNote && !(await hasFeedbackInputSince(env, action.issueId, action.createdAt))) {
             throw feedbackStorageError('FEEDBACK_HUMAN_ACTION_NO_NEW_INPUT');
@@ -8343,12 +8781,47 @@ async function respondToHumanAction(
     const [issue, issueState] = await Promise.all([
         readFeedbackIssue(env, action.issueId),
         env.FEEDBACK_DB.prepare(
-            'SELECT active_workflow_id, last_run_id FROM feedback_issues WHERE id = ?'
+            `SELECT active_workflow_id, last_run_id, automation_decision, business_type, scope
+             FROM feedback_issues WHERE id = ?`
         )
             .bind(action.issueId)
             .first(),
     ]);
     if (!issue || !issueState) return null;
+
+    // SCN-FWB-039：EXC-FWB-003 的职责分离延伸到重排队。`implementation_approved` 的
+    // Issue 上任何 `queued` 都会催生写入型 Run——owner capability 能回答问题，
+    // 不能（哪怕借一张自己可回答的 need_reproduction 卡）重启写入。
+    if (
+        decision === 'queued' &&
+        actorType !== 'admin' &&
+        String(issueState.automation_decision || '') === FEEDBACK_IMPLEMENTATION_APPROVED
+    ) {
+        throw feedbackStorageError('FEEDBACK_POLICY_DECISION_FORBIDDEN');
+    }
+
+    // SCN-FWB-039：授权范围从服务端存的失败事件推导，请求体里没有任何输入参与——
+    // 伪造的 approve_gate_scope 卡（没有对应 run.failed 事件）在这里授不出任何东西。
+    let gateGrant = null;
+    if (approvesGateScope) {
+        const failureEvent = await env.FEEDBACK_DB.prepare(
+            `SELECT body_json FROM feedback_events
+             WHERE issue_id = ? AND run_id = ? AND type = 'run.failed'
+             ORDER BY sequence DESC LIMIT 1`
+        )
+            .bind(action.issueId, action.runId || '')
+            .first();
+        const resultEvidence = parseStoredJson(failureEvent?.body_json, {})?.resultEvidence || {};
+        gateGrant = deriveFeedbackGateGrant({
+            changedFiles: Array.isArray(resultEvidence.changedFiles)
+                ? resultEvidence.changedFiles
+                : [],
+            violations: Array.isArray(resultEvidence.violations) ? resultEvidence.violations : [],
+        });
+        if (!gateGrant.grantable) {
+            throw feedbackStorageError('FEEDBACK_GATE_SCOPE_NOT_GRANTABLE');
+        }
+    }
 
     const occurredAt = new Date().toISOString();
     const eventId = `evt_${crypto.randomUUID()}`;
@@ -8361,9 +8834,19 @@ async function respondToHumanAction(
         candidateId: candidateId || '',
         designId: designId || '',
         designDecision: designDecision || '',
+        policyDecision: policyDecision || '',
         note: limitText(note, 2000),
         actorType,
     });
+    // SCN-FWB-037：授权实施必须留下公开可追溯的一行——「谁在什么时候、基于哪一轮分析
+    // 让它动的代码」。管理员没写理由时补一句默认的，不能让时间线上只有一个状态跳变。
+    const publicNote =
+        limitText(note, 2000) ||
+        (approvesImplementation
+            ? '已采纳上一轮分析结论，授权按该结论实施。'
+            : approvesGateScope
+              ? '已授权门禁拦下的这套变更，按授权范围重跑交付。'
+              : '');
     const statements = [
         env.FEEDBACK_DB.prepare(
             `UPDATE feedback_human_actions
@@ -8445,6 +8928,44 @@ async function respondToHumanAction(
         );
     }
 
+    if (gateGrant) {
+        // SCN-FWB-039：授权是公开事件——「谁、何时、授了哪些文件」要在时间线上留得下，
+        // 也顺带把「契约文件的改动行要带 SCN-ID」这条门禁要求送进下一轮 Run 的上下文。
+        statements.push(
+            env.FEEDBACK_DB.prepare(
+                `INSERT INTO feedback_events (
+                    id, issue_id, sequence, type, actor_type, actor_id, visibility,
+                    run_id, occurred_at, body_json, metadata_json, legacy_hash
+                )
+                SELECT ?, id,
+                    (SELECT COALESCE(MAX(sequence), 0) + 1
+                     FROM feedback_events WHERE issue_id = feedback_issues.id),
+                    'gate.scope_granted', ?, NULL, 'public', ?, ?, ?, '{}', NULL
+                FROM feedback_issues WHERE id = ?
+                  AND EXISTS (
+                      SELECT 1 FROM feedback_human_actions
+                      WHERE id = ? AND resolution_json = ?
+                  )`
+            ).bind(
+                `evt_${crypto.randomUUID()}`,
+                actorType,
+                action.runId || null,
+                occurredAt,
+                JSON.stringify({
+                    text: `管理员已授权门禁拦下的 ${gateGrant.approvedPaths.length} 个文件${gateGrant.contractRunApproved ? '（含契约变更：修改 tests/scenarios/ 时须在改动行携带对应 SCN-ID，并在变更日志登记）' : ''}，下一轮按授权范围交付；被授权的改动仍需人工复核候选实现。`,
+                    grant: {
+                        approvedPaths: gateGrant.approvedPaths,
+                        contractRunApproved: gateGrant.contractRunApproved,
+                    },
+                    humanActionId: actionId,
+                }),
+                action.issueId,
+                actionId,
+                resolutionJson
+            )
+        );
+    }
+
     statements.push(
         env.FEEDBACK_DB.prepare(
             `INSERT INTO feedback_events (
@@ -8469,7 +8990,7 @@ async function respondToHumanAction(
             occurredAt,
             JSON.stringify({
                 changes: { status: [previousStatus, decision] },
-                publicNote: limitText(note, 2000),
+                publicNote,
                 humanActionId: actionId,
                 candidateId: candidateId || '',
             }),
@@ -8516,6 +9037,7 @@ async function respondToHumanAction(
              SET status = ?, active_human_action_id = NULL,
                  active_candidate_id = COALESCE(?, active_candidate_id),
                  current_design_id = COALESCE(?, current_design_id),
+                 automation_decision = COALESCE(?, automation_decision),
                  active_workflow_id = CASE WHEN ? THEN NULL ELSE active_workflow_id END,
                  updated_at = ?, version = version + 1
              WHERE id = ?
@@ -8528,6 +9050,17 @@ async function respondToHumanAction(
             decision,
             candidateId || null,
             decidedDesign?.id || null,
+            // SCN-FWB-037：授权本身就是路由输入。写在同一条语句里，是为了让
+            // 「动作已解决」和「下一轮可以写代码」要么一起成立、要么一起不成立。
+            // SCN-FWB-039：「分析得不对」则反向——撤销实施授权，按派生规则重算。
+            approvesImplementation
+                ? FEEDBACK_IMPLEMENTATION_APPROVED
+                : rejectsAnalysis
+                  ? resolveFeedbackAutomationDecision({
+                        businessType: issueState.business_type,
+                        scope: issueState.scope,
+                    })
+                  : null,
             isTerminalDecision ? 1 : 0,
             occurredAt,
             action.issueId,
@@ -8645,6 +9178,8 @@ async function runFeedbackReconcile(env, now = new Date()) {
         clearedWorkflowMappings: 0,
         expiredArtifacts: 0,
         deadLetterCount: 0,
+        repairedZombieIssues: 0,
+        zombieRepairFailures: 0,
         runCount: 0,
     };
     if (!env.FEEDBACK_DB) return summary;
@@ -8674,6 +9209,33 @@ async function runFeedbackReconcile(env, now = new Date()) {
             summary.resumedWorkflows += 1;
         } catch {
             summary.resumeFailures += 1;
+        }
+    }
+
+    // SCN-FWB-038：僵尸修复。「Run 已终态失败、编排已死、却没有任何决策卡」的 Issue
+    // 对用户显示为永远的「AI 正在处理」（#czi9c6 在生产上停了 19 小时）。只修这种
+    // 已卡死的耦合断裂——不扫描健康 Issue、不创建 Agent Run（SCN-FWB-002 仍成立），
+    // 也兜住本修复上线之前就已经卡死的存量。
+    const zombieIssues = await env.FEEDBACK_DB.prepare(
+        `SELECT i.id AS issue_id, r.id AS run_id, r.error_code
+         FROM feedback_issues i
+         JOIN feedback_runs r ON r.id = i.last_run_id
+         WHERE i.status IN ('in_progress', 'testing', 'test_failed')
+           AND i.active_workflow_id IS NULL
+           AND i.active_human_action_id IS NULL
+           AND r.status IN ('failed', 'timed_out')
+         LIMIT 25`
+    ).all();
+    for (const zombie of zombieIssues.results || []) {
+        try {
+            const repaired = await ensureFeedbackRunFailureEscalation(env, {
+                issueId: zombie.issue_id,
+                runId: zombie.run_id,
+                errorCode: String(zombie.error_code || ''),
+            });
+            if (repaired.created) summary.repairedZombieIssues += 1;
+        } catch {
+            summary.zombieRepairFailures += 1;
         }
     }
 
@@ -8982,9 +9544,26 @@ const FEEDBACK_ERROR_RESPONSES = {
     FEEDBACK_ISSUE_NOT_TERMINAL: [409, 'Issue is not closed'],
     FEEDBACK_HUMAN_ACTION_RESOLVED: [409, 'Human action is already resolved'],
     FEEDBACK_HUMAN_ACTION_STATE_NOT_ALLOWED: [400, 'Return state is not allowed'],
+    FEEDBACK_POLICY_DECISION_NOT_ALLOWED: [400, '这一步不接受「采纳并实施」的决定'],
+    FEEDBACK_POLICY_DECISION_FORBIDDEN: [
+        403,
+        '只有管理员可以采纳分析并授权实施；你可以补充信息让它重新分析。',
+    ],
     FEEDBACK_HUMAN_ACTION_NO_NEW_INPUT: [
         409,
         '这一步在等你补充信息。没有新信息就重新处理，只会得到与上一轮逐字相同的结论——请补充说明后再提交，或直接关闭。',
+    ],
+    FEEDBACK_POLICY_DECISION_REQUIRED: [
+        400,
+        '这张卡片的「继续处理」必须声明决定：授权这套变更并重跑，或退回重新分析。',
+    ],
+    FEEDBACK_GATE_REANALYZE_NOTE_REQUIRED: [
+        400,
+        '退回重新分析必须写明哪里不对——没有新信息，重新分析只会得到同一份结论。',
+    ],
+    FEEDBACK_GATE_SCOPE_NOT_GRANTABLE: [
+        409,
+        '被拦下的违规均为硬禁止项（凭据、黄金答案、test.skip 类），无法通过授权放行；可退回重新分析或关闭。',
     ],
     FEEDBACK_CANDIDATE_ID_REQUIRED: [400, 'candidateId is required'],
     FEEDBACK_CANDIDATE_ID_MISMATCH: [409, 'candidateId does not match the reviewed candidate'],
@@ -9141,6 +9720,9 @@ async function readFeedbackExecutorContext(env, runId) {
             .all(),
         readFeedbackRunContextAttachments(env, row.issue_id),
     ]);
+    const leaseGateGrant = FEEDBACK_WRITE_POLICIES.has(row.policy)
+        ? await readFeedbackGateGrant(env, row.issue_id)
+        : { approvedPaths: [], contractRunApproved: false };
 
     return {
         runId: row.run_id,
@@ -9160,6 +9742,11 @@ async function readFeedbackExecutorContext(env, runId) {
             scope: row.scope,
             automationDecision: row.automation_decision,
         }),
+        // SCN-FWB-039：与 GitHub 路径的 `readFeedbackRunContext` 同形——write-pipeline
+        // 消费 `context.approvedPaths`/`contractRunApproved`，缺席即为未授权（C5）。
+        approvedPaths: leaseGateGrant.approvedPaths,
+        contractRunApproved:
+            FEEDBACK_WRITE_POLICIES.has(row.policy) || leaseGateGrant.contractRunApproved,
         // 形状必须与 GitHub 路径的 `readFeedbackRunContext` 逐字段一致：Prompt 构建器
         // 只有一份，读的是 `issue.description?.untrustedUserContent` 与
         // `issue.id/businessType/scope`。这里曾经给的是裸字符串且缺那三个字段，
@@ -10891,7 +11478,7 @@ function renderFeedbackBoardPage(apiBase = '') {
     const sourceTypeLabels = { manual: '手动反馈', auto_error: '自动错误', admin: '管理员录入' };
     const businessTypeLabels = { unclear: '不确定', bug: '缺陷', improvement: '优化', requirement: '需求', other: '其他' };
     const scopeLabels = { small: '小', medium: '中', large: '大', unclear: '不确定' };
-    const automationDecisionLabels = { auto_fix: '可自动修复', design_required: '需要设计确认', need_reproduction: '需要补充复现', review_required: '需要人工审核', developer_fix_required: '需要开发处理', close: '可关闭' };
+    const automationDecisionLabels = { auto_fix: '可自动修复', design_required: '需要设计确认', need_reproduction: '需要补充复现', review_required: '需要人工审核', developer_fix_required: '需要开发处理', implementation_approved: '已授权实施', close: '可关闭' };
     const confidenceLabels = { low: '低', medium: '中', high: '高' };
     const candidateStatusLabels = { needs_human: '待人工审批', ready_for_deploy: '待部署', merged: '已合并', abandoned: '已放弃' };
     const humanActionTypeLabels = { design_decision: '设计决策', review_required: '需要人工审核', need_reproduction: '需要补充复现', ready_for_deploy: '待部署确认', close: '关闭确认' };
@@ -12929,6 +13516,7 @@ export default {
                     candidateId: body.candidateId ? String(body.candidateId) : '',
                     designId: body.designId ? String(body.designId) : '',
                     designDecision: body.designDecision ? String(body.designDecision) : '',
+                    policyDecision: body.policyDecision ? String(body.policyDecision) : '',
                     note: body.note,
                 });
                 if (!result) return errorResponse('Not found', 404, headers);

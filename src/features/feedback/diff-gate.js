@@ -260,6 +260,15 @@ export function evaluateDiffGate({
     }
 
     for (const finding of findVerificationWeakening(diffText)) {
+        // SCN-FWB-039：删除断言/放宽比较在**已授权路径**上降档为强制候选复核——
+        // 「删掉某功能」必然删掉它自己的测试断言，不给授权通道这类任务永远无法交付。
+        // skip/only/todo 不在此列：它们让测试假装还在跑，任何授权都不放行。
+        const grantable =
+            finding.code === 'ASSERTION_REMOVED' || finding.code === 'DEEP_COMPARE_WEAKENED';
+        if (grantable && approved.includes(finding.file)) {
+            requiresCandidateReview.push(finding.file);
+            continue;
+        }
         violations.push({
             code: 'VERIFICATION_WEAKENED',
             file: finding.file,

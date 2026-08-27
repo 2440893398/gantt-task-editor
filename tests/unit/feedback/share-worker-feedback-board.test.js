@@ -2,6 +2,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { TextDecoder } from 'node:util';
 import worker, { FeedbackWorkflow } from '../../../workers/share-worker.js';
+import { createTurnNormalizer } from '../../../packages/feedback-platform/executor/normalize.js';
+import {
+    planDesignEscalation,
+    DESIGN_WAIT_REQUESTED_ACTION,
+    DESIGN_WAIT_SUMMARY,
+} from '../../../packages/feedback-platform/executor/design-escalation.js';
+import { createCodexAdapter } from '../../../packages/feedback-platform/adapters/codex.js';
+import {
+    extractFeedbackNextSteps,
+    stripFeedbackNextSteps,
+} from '../../../src/features/feedback/next-steps.js';
 
 async function attachDiffManifestHash(manifest) {
     const unsignedManifest = { ...manifest };
@@ -1052,6 +1063,41 @@ class MemoryD1 {
                 },
             ]);
         }
+        if (
+            normalized.startsWith(
+                'select i.id as issue_id, r.id as run_id, r.error_code from feedback_issues i join feedback_runs r'
+            )
+        ) {
+            const rows = [];
+            for (const issue of this.tables.feedback_issues.values()) {
+                if (!['in_progress', 'testing', 'test_failed'].includes(issue.status)) continue;
+                if (issue.active_workflow_id) continue;
+                if (issue.active_human_action_id) continue;
+                const run = issue.last_run_id
+                    ? this.tables.feedback_runs.get(issue.last_run_id)
+                    : null;
+                if (!run || !['failed', 'timed_out'].includes(run.status)) continue;
+                rows.push({
+                    issue_id: issue.id,
+                    run_id: run.id,
+                    error_code: run.error_code || null,
+                });
+            }
+            return ok(rows.slice(0, 25));
+        }
+        if (
+            normalized ===
+            "select count(*) as failures from feedback_runs where issue_id = ? and workflow_id = ? and status = 'failed' and error_code = 'verification_failed'"
+        ) {
+            const failures = Array.from(this.tables.feedback_runs.values()).filter(
+                (row) =>
+                    row.issue_id === values[0] &&
+                    row.workflow_id === values[1] &&
+                    row.status === 'failed' &&
+                    row.error_code === 'verification_failed'
+            ).length;
+            return ok([{ failures }]);
+        }
         if (normalized.includes('from feedback_runs where id = ?')) {
             const row = this.tables.feedback_runs.get(values[0]);
             return ok(row ? [{ ...row }] : []);
@@ -1362,6 +1408,31 @@ class MemoryD1 {
                     ? [{ body_json: row.body_json }]
                     : []
             );
+        }
+        if (
+            normalized ===
+            "select body_json from feedback_events where issue_id = ? and run_id = ? and type = 'run.failed' order by sequence desc limit 1"
+        ) {
+            const row = Array.from(this.tables.feedback_events.values())
+                .filter(
+                    (event) =>
+                        event.issue_id === values[0] &&
+                        event.run_id === values[1] &&
+                        event.type === 'run.failed'
+                )
+                .sort((left, right) => right.sequence - left.sequence)[0];
+            return ok(row ? [{ body_json: row.body_json }] : []);
+        }
+        if (
+            normalized ===
+            "select body_json from feedback_events where issue_id = ? and type = 'gate.scope_granted' order by sequence desc limit 1"
+        ) {
+            const row = Array.from(this.tables.feedback_events.values())
+                .filter(
+                    (event) => event.issue_id === values[0] && event.type === 'gate.scope_granted'
+                )
+                .sort((left, right) => right.sequence - left.sequence)[0];
+            return ok(row ? [{ body_json: row.body_json }] : []);
         }
         if (
             normalized ===
@@ -9293,13 +9364,24 @@ describe('feedback workbench V2 Run and Callback', () => {
         );
 
         expect(completed.runStatus).toBe('failed');
-        expect(completed.issueStatus).toBe('test_failed');
+        // SCN-FWB-038（2026-08-26 起）：终止性失败不再停在 `test_failed` 死路——
+        // Workflow 对 run.failed 一律终态退出，旧状态没有任何后续动作，Issue 就此搁浅。
+        // 现在它落 `needs_human` 并同批带一张 developer_fix_required 决策卡。
+        expect(completed.issueStatus).toBe('needs_human');
         expect(env.FEEDBACK_DB.tables.feedback_runs.get(run.id).error_code).toBe(
             'empty_agent_response'
         );
-        expect(Array.from(env.FEEDBACK_DB.tables.feedback_events.values()).at(-1).type).toBe(
-            'run.failed'
+        const failureAction = Array.from(
+            env.FEEDBACK_DB.tables.feedback_human_actions.values()
+        ).find((action) => action.status === 'active');
+        expect(failureAction).toEqual(
+            expect.objectContaining({ type: 'developer_fix_required', run_id: run.id })
         );
+        expect(
+            Array.from(env.FEEDBACK_DB.tables.feedback_events.values()).find(
+                (event) => event.type === 'run.failed'
+            )
+        ).toBeTruthy();
     });
 
     it('[SCN-FWB-003] retries a downgraded completion with its stored callback type', async () => {
@@ -10604,6 +10686,984 @@ describe('feedback workbench V2 Run and Callback', () => {
 
         expect(response.status).toBe(400);
         expect(env.FEEDBACK_DB.tables.feedback_events.size).toBe(0);
+    });
+
+    /**
+     * `#czi9c6` 的原样复现：提交 → AI 分析 → 点批准 → 又分析 → 再批准 → 还是分析。
+     *
+     * 这一组不手写回调。Run 的终态事件由**真实归一化层**（`createTurnNormalizer`）
+     * 按真实 C6 判据（`planDesignEscalation`）产出，Workflow 是真的 `FeedbackWorkflow`，
+     * 路由是真的 `resolveFeedbackPolicy`——只有模型换成了脚本。这样跑出来的 policy
+     * 序列才是生产上那条序列，而不是测试自己摆出来的。
+     *
+     * 断言盯的是同一件事的两面：
+     * - 没有 Design 闸时，**即使每轮都补充新信息**，policy 也永远是 `analyze`；
+     * - 接上 Design 闸后，同一串操作在第二轮就拿到 `implement_and_verify`。
+     */
+    describe('[SCN-FWB-020][SCN-FWB-036] #czi9c6 按用户操作重走处理流程', () => {
+        const REPORT = {
+            sourceType: 'manual',
+            submittedType: 'improvement',
+            title: '基线这个功能用的不多，直接去掉吧',
+            description: '基线这个功能用的不多，直接去掉吧',
+        };
+
+        const DESIGN_BLOCK = [
+            '```feedback-design',
+            JSON.stringify({
+                problem: '基线功能已无人使用，但数据落在三处持久化面。',
+                proposedChange: '整体摘除基线纵切面，并为旧文档保留读取兼容。',
+                acceptanceCriteria: [
+                    '工具栏不再出现保存/显示基线按钮',
+                    '含基线数据的旧文档打开时不报错',
+                ],
+            }),
+            '```',
+        ].join('\n');
+
+        function workflowStub() {
+            const stub = { created: [], sentEvents: [] };
+            stub.create = async (options) => {
+                stub.created.push(options);
+                return { id: options.id };
+            };
+            stub.get = async (id) => ({
+                async sendEvent(event) {
+                    stub.sentEvents.push({ id, event });
+                },
+            });
+            return stub;
+        }
+
+        /** 走真实提交端点，让入库分类器对用户原文跑一遍——路由输入必须是真算出来的。 */
+        async function submitReport() {
+            const env = createV2Env();
+            env.FEEDBACK_CALLBACK_ORIGIN = 'https://worker.test';
+            env.FEEDBACK_GITHUB_REPOSITORY = 'acme/gantt-task-editor';
+            env.FEEDBACK_GITHUB_TOKEN = 'ghp_test';
+            env.FEEDBACK_WORKFLOW = workflowStub();
+
+            const created = await json(
+                await request(
+                    '/api/feedback',
+                    {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(REPORT),
+                    },
+                    env
+                )
+            );
+            // 提交接口本来就会发一张 owner capability——用它，而不是自己伪造一张，
+            // 这样「提出人能做什么」测的是真实凭据的真实权限。
+            return { env, key: created.key, ownerCapability: created.ownerCapability };
+        }
+
+        function latestRun(env) {
+            return Array.from(env.FEEDBACK_DB.tables.feedback_runs.values()).at(-1);
+        }
+
+        function activeAction(env) {
+            return Array.from(env.FEEDBACK_DB.tables.feedback_human_actions.values()).find(
+                (action) => action.status === 'active'
+            );
+        }
+
+        /**
+         * 执行器跑完一轮 turn 并回写。事件由归一化层产出，`designGateWired=false`
+         * 就是 C6 之前执行器的形状：不管 Agent 说了什么，终态只会是 `run.completed`。
+         */
+        async function executorTurn(env, run, { finalText, designGateWired }) {
+            const adapter = createCodexAdapter();
+            const normalizer = createTurnNormalizer({
+                runId: run.id,
+                provider: 'codex',
+                planEscalation: designGateWired
+                    ? (message) => ({
+                          ...planDesignEscalation({
+                              policy: run.policy,
+                              // 控制面下发的判据，执行器不自己算。
+                              requiresDesign: true,
+                              message,
+                              extractDesign: adapter.extractDesign,
+                              isWriteCapablePolicy: adapter.isWriteCapablePolicy,
+                          }),
+                          requestedAction: DESIGN_WAIT_REQUESTED_ACTION,
+                          summary: DESIGN_WAIT_SUMMARY,
+                      })
+                    : undefined,
+                // 与 run-loop 的接线一致：只读 Run 才摘建议块。
+                planNextSteps: (message) => ({
+                    options: extractFeedbackNextSteps(message),
+                    publicMessage: stripFeedbackNextSteps(message),
+                }),
+            });
+
+            const token = await callbackTokenFor(env, run.id);
+            let terminalType = '';
+            const notifications = [
+                ['turn/started', {}],
+                ['item/completed', { item: { type: 'agentMessage', text: finalText } }],
+                ['turn/completed', {}],
+            ];
+            for (const [method, params] of notifications) {
+                for (const event of normalizer.handleNotification(method, params)) {
+                    const response = await postCallback(env, run.id, event, token);
+                    expect(response.status).toBe(201);
+                    if (['run.completed', 'agent.waiting_human'].includes(event.type)) {
+                        terminalType = event.type;
+                    }
+                }
+            }
+            return terminalType;
+        }
+
+        /**
+         * 跑一代 Workflow。`step` 只替换等待：等 Run 结果时让执行器真的跑一轮，
+         * 等人时执行 `approve`——那一下就是你在页面上点的按钮。
+         */
+        async function runGeneration(
+            env,
+            key,
+            generation,
+            { finalText, designGateWired, approve, turn }
+        ) {
+            // Run 派发到 GitHub 这一步在本套件里是既有的桩：这里测的是路由与终态语义，
+            // 不是派发本身。不桩掉的话派发会被记成永久失败，Run 直接进终态，
+            // 后面的回调一律 409——那是测试环境的噪音，不是被测行为。
+            const dispatchSpy = mockSuccessfulGitHubRunDispatch();
+            try {
+                return await replayGeneration(env, key, generation, {
+                    finalText,
+                    designGateWired,
+                    approve,
+                    turn,
+                });
+            } finally {
+                dispatchSpy.mockRestore();
+            }
+        }
+
+        async function replayGeneration(
+            env,
+            key,
+            generation,
+            { finalText, designGateWired, approve, turn }
+        ) {
+            const trace = [];
+            const step = {
+                async do(name, configOrCallback, maybeCallback) {
+                    const callback =
+                        typeof configOrCallback === 'function' ? configOrCallback : maybeCallback;
+                    return callback();
+                },
+                async waitForEvent(name) {
+                    if (name.startsWith('wait for run result')) {
+                        const run = latestRun(env);
+                        trace.push({ step: 'run', policy: run.policy, designId: run.design_id });
+                        const callbackType = turn
+                            ? await turn(run)
+                            : await executorTurn(env, run, {
+                                  finalText,
+                                  designGateWired,
+                              });
+                        return { payload: { runId: run.id, callbackType } };
+                    }
+                    // 「等待你的回复」——工作台上那张卡片。
+                    const action = activeAction(env);
+                    trace.push({ step: 'wait', actionType: action?.type || '' });
+                    if (!action || !approve) throw new Error('REPLAY_STOP');
+                    await approve(action);
+                    return { payload: { eventId: `evt_replay_${generation}` } };
+                },
+            };
+
+            try {
+                await new FeedbackWorkflow({}, env).run(
+                    {
+                        instanceId: `${key}:${generation}`,
+                        payload: { issueId: key, generation, contextVersion: 1 },
+                    },
+                    step
+                );
+            } catch (error) {
+                if (error.message !== 'REPLAY_STOP') throw error;
+            }
+            return trace;
+        }
+
+        it('[SCN-FWB-036] 没有 Design 闸时，批准三轮仍然轮轮只读——即使每轮都补充了新信息', async () => {
+            const { env, key } = await submitReport();
+            const headers = await adminHeaders(env);
+            const issue = env.FEEDBACK_DB.tables.feedback_issues.get(key);
+
+            // §7.2 的全部路由输入就这三个字段，且只在入库时算一次。
+            expect({
+                businessType: issue.business_type,
+                scope: issue.scope,
+                automationDecision: issue.automation_decision,
+            }).toEqual({
+                businessType: 'improvement',
+                scope: 'unclear',
+                automationDecision: 'design_required',
+            });
+
+            const trace = [];
+            for (let round = 1; round <= 3; round += 1) {
+                trace.push(
+                    ...(await runGeneration(env, key, round, {
+                        finalText: `第 ${round} 轮：我逐条对着代码验证过，结论成立。`,
+                        designGateWired: false,
+                    }))
+                );
+
+                // 「点批准」。故意带上真实补充说明——把「空批准」这个变量排除掉，
+                // 剩下的差异就只可能来自路由本身。
+                const action = activeAction(env);
+                expect(action).toBeTruthy();
+                const responded = await request(
+                    `/api/feedback/human-actions/${encodeURIComponent(action.id)}/respond`,
+                    {
+                        method: 'POST',
+                        headers,
+                        body: JSON.stringify({
+                            decision: 'queued',
+                            note: `第 ${round} 次补充：删到工具栏不再出现基线按钮。`,
+                        }),
+                    },
+                    env
+                );
+                expect(responded.status).toBe(200);
+            }
+
+            // 三轮全是只读分析。不是模型偷懒，是它从头到尾没被给过写权限。
+            expect(
+                trace.filter((entry) => entry.step === 'run').map((entry) => entry.policy)
+            ).toEqual(['analyze', 'analyze', 'analyze']);
+            // 根因：一个 Design 都没建出来，而 Design 是 §7.2 通向写入型 policy 的唯一入口。
+            expect(env.FEEDBACK_DB.tables.feedback_designs.size).toBe(0);
+            expect(env.FEEDBACK_DB.tables.feedback_issues.get(key).current_design_id).toBeFalsy();
+
+            // 第四轮照旧——再批准多少次都一样，这就是死循环本身。
+            const fourth = await runGeneration(env, key, 4, {
+                finalText: '第 4 轮：结论同上。',
+                designGateWired: false,
+            });
+            expect(fourth[0]).toMatchObject({ step: 'run', policy: 'analyze' });
+        });
+
+        it('[SCN-FWB-020] 接上 Design 闸后，同一串操作在第二轮就拿到写权限', async () => {
+            const { env, key } = await submitReport();
+            const headers = await adminHeaders(env);
+
+            const trace = await runGeneration(env, key, 1, {
+                finalText: `## 结论\n基线是一条可整体摘除的纵切面。\n\n${DESIGN_BLOCK}`,
+                designGateWired: true,
+                // Workflow 这一轮不再终止，而是停在「等你批准方案」——批准就在同一个
+                // 实例里继续下一轮，不用新起 generation。
+                async approve(action) {
+                    expect(action.type).toBe('design_decision');
+                    const responded = await request(
+                        `/api/feedback/human-actions/${encodeURIComponent(action.id)}/respond`,
+                        {
+                            method: 'POST',
+                            headers,
+                            body: JSON.stringify({
+                                decision: 'queued',
+                                designId: action.design_id,
+                                designDecision: 'approve',
+                            }),
+                        },
+                        env
+                    );
+                    expect(responded.status).toBe(200);
+                },
+            });
+
+            const runs = trace.filter((entry) => entry.step === 'run');
+            // 第一轮仍是只读分析——它的交付物是方案，这一点没变。
+            expect(runs[0]).toMatchObject({ policy: 'analyze', designId: null });
+            // 批准之后的第二轮拿到写权限，并且精确绑定刚批准的那一版方案。
+            const design = Array.from(env.FEEDBACK_DB.tables.feedback_designs.values())[0];
+            expect(design.status).toBe('approved');
+            expect(runs[1]).toMatchObject({
+                policy: 'implement_and_verify',
+                designId: design.id,
+            });
+            expect(trace.filter((entry) => entry.step === 'wait')).toEqual([
+                { step: 'wait', actionType: 'design_decision' },
+            ]);
+        });
+
+        it('[SCN-FWB-037] 管理员点「采纳分析，开始实施」，下一轮就是写入型 Run', async () => {
+            // 用户原话：「我可以去确认，应该给我类似 AI 那样的选项：1. 我允许…」。
+            // 坏行为：这张卡片只有「重新分析」和「关闭」，想让它开工只能去对话里说一句话。
+            const { env, key } = await submitReport();
+            const headers = await adminHeaders(env);
+
+            const first = await runGeneration(env, key, 1, {
+                finalText: '第 1 轮：读完代码，结论如上。',
+                designGateWired: false,
+            });
+            expect(first[0]).toMatchObject({ step: 'run', policy: 'analyze' });
+
+            const action = activeAction(env);
+            const responded = await json(
+                await request(
+                    `/api/feedback/human-actions/${encodeURIComponent(action.id)}/respond`,
+                    {
+                        method: 'POST',
+                        headers,
+                        body: JSON.stringify({ decision: 'queued', policyDecision: 'implement' }),
+                    },
+                    env
+                )
+            );
+            expect(responded.action.status).toBe('resolved');
+
+            // 授权是路由输入，不是备注：它必须落在 automation_decision 上。
+            const issue = env.FEEDBACK_DB.tables.feedback_issues.get(key);
+            expect(issue.automation_decision).toBe('implementation_approved');
+            expect(issue.status).toBe('queued');
+
+            // 而且不再要求先出方案——已经签过字了，再要一份没人等的 Design 是空转。
+            const second = await runGeneration(env, key, 2, {
+                finalText: '第 2 轮：已按结论改完。',
+                designGateWired: true,
+            });
+            expect(second[0]).toMatchObject({ step: 'run', policy: 'implement_and_verify' });
+            expect(env.FEEDBACK_DB.tables.feedback_designs.size).toBe(0);
+
+            // 谁在什么时候授权的，公开时间线上要留得下。
+            const notes = Array.from(env.FEEDBACK_DB.tables.feedback_events.values())
+                .filter((event) => event.type === 'status.changed')
+                .map((event) => JSON.parse(event.body_json || '{}').publicNote || '');
+            expect(notes.some((note) => note.includes('授权按该结论实施'))).toBe(true);
+        });
+
+        it('[SCN-FWB-037] owner capability 不能自助授权实施', async () => {
+            // EXC-FWB-003 的职责分离：提出人给信息，管理员给批准。提出人常常是匿名用户，
+            // 让他自己批准自己的反馈去改代码，等于这道闸不存在。
+            const { env, key, ownerCapability } = await submitReport();
+            expect(ownerCapability).toBeTruthy();
+
+            await runGeneration(env, key, 1, {
+                finalText: '第 1 轮：读完代码，结论如上。',
+                designGateWired: false,
+            });
+            const action = activeAction(env);
+            expect(action.type).toBe('confirm_policy');
+
+            const capability = ownerCapability;
+            const rejected = await request(
+                `/api/feedback/human-actions/${encodeURIComponent(action.id)}/respond`,
+                {
+                    method: 'POST',
+                    headers: {
+                        Authorization: `Bearer ${capability}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ decision: 'queued', policyDecision: 'implement' }),
+                },
+                env
+            );
+
+            // confirm_policy 本来就只有管理员能答，所以这里是 403；关键是它没有升级成功。
+            expect(rejected.status).toBe(403);
+            expect(env.FEEDBACK_DB.tables.feedback_issues.get(key).automation_decision).toBe(
+                'design_required'
+            );
+            expect(env.FEEDBACK_DB.tables.feedback_human_actions.get(action.id).status).toBe(
+                'active'
+            );
+        });
+
+        it('[SCN-FWB-037] owner 能回答的那种等待上，授权实施同样被拒', async () => {
+            // 上一条走的是路由层（confirm_policy 本来就只有管理员能答）。这一条盯的是
+            // 存储层的守卫：`need_reproduction` 是 owner **可以**回答的类型，所以拦不住
+            // 的话，提出人就能用一条自己就能回的等待把自己的反馈升级成写入型 Run。
+            const env = createV2Env();
+            env.FEEDBACK_CALLBACK_ORIGIN = 'https://worker.test';
+            env.FEEDBACK_WORKFLOW = workflowStub();
+            const created = await json(
+                await request(
+                    '/api/feedback',
+                    {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            submittedType: 'bug',
+                            title: '有时候会出问题',
+                            description: '有时候会出问题',
+                        }),
+                    },
+                    env
+                )
+            );
+            const issueRow = env.FEEDBACK_DB.tables.feedback_issues.get(created.key);
+            expect(issueRow.automation_decision).toBe('need_reproduction');
+
+            const actionId = 'hac_owner_answerable';
+            env.FEEDBACK_DB.tables.feedback_human_actions.set(actionId, {
+                id: actionId,
+                issue_id: created.key,
+                workflow_id: null,
+                run_id: null,
+                candidate_id: null,
+                design_id: null,
+                type: 'need_reproduction',
+                requested_action: '请补充触发该问题的具体步骤',
+                evidence_json: '[]',
+                allowed_return_states_json: JSON.stringify(['queued', 'closed']),
+                status: 'active',
+                resolution_json: null,
+                created_at: '2026-08-25T09:00:00.000Z',
+                resolved_at: null,
+            });
+            issueRow.status = 'needs_human';
+            issueRow.active_human_action_id = actionId;
+
+            const rejected = await request(
+                `/api/feedback/human-actions/${encodeURIComponent(actionId)}/respond`,
+                {
+                    method: 'POST',
+                    headers: {
+                        Authorization: `Bearer ${created.ownerCapability}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        decision: 'queued',
+                        policyDecision: 'implement',
+                        note: '我自己批准自己',
+                    }),
+                },
+                env
+            );
+
+            expect(rejected.status).toBe(403);
+            expect(
+                env.FEEDBACK_DB.tables.feedback_issues.get(created.key).automation_decision
+            ).toBe('need_reproduction');
+            expect(env.FEEDBACK_DB.tables.feedback_human_actions.get(actionId).status).toBe(
+                'active'
+            );
+        });
+
+        it('[SCN-FWB-037] Agent 提议的选项只保留状态机允许的那些', async () => {
+            const { env, key } = await submitReport();
+
+            await runGeneration(env, key, 1, {
+                finalText: [
+                    '## 结论',
+                    '基线可以整体摘除。',
+                    '```feedback-next-steps',
+                    JSON.stringify([
+                        { action: 'implement', label: '删掉基线', detail: '含一条迁移测试' },
+                        { action: 'clarify', label: '再问一句', detail: '旧文档要不要兼容' },
+                        // 词表外的动作 = 越权尝试，必须被丢掉而不是被降级成别的按钮。
+                        { action: 'deploy_to_production', label: '直接上生产' },
+                    ]),
+                    '```',
+                ].join('\n'),
+                designGateWired: false,
+            });
+
+            const completed = Array.from(env.FEEDBACK_DB.tables.feedback_events.values()).find(
+                (event) => event.type === 'run.completed'
+            );
+            const nextSteps = JSON.parse(completed.body_json).nextSteps;
+            expect(nextSteps.map((option) => option.action)).toEqual(['implement', 'clarify']);
+            expect(nextSteps[0]).toMatchObject({ label: '删掉基线', detail: '含一条迁移测试' });
+
+            // 那段 JSON 不该出现在用户读的正文里。
+            const message = Array.from(env.FEEDBACK_DB.tables.feedback_events.values()).find(
+                (event) => event.type === 'agent.message'
+            );
+            expect(JSON.parse(message.body_json).text).not.toContain('feedback-next-steps');
+            expect(JSON.parse(message.body_json).text).toContain('基线可以整体摘除');
+        });
+
+        it('[SCN-FWB-036] 管理员把范围定成「小」，下一轮直接拿写权限——不用先走方案', async () => {
+            // 「直接改呀」的那条路：Design 闸只对 `improvement + 非 small` 成立，
+            // 范围一旦被人定成 small，§7.2 直接给写入型 policy。
+            const { env, key } = await submitReport();
+            const headers = await adminHeaders(env);
+
+            const first = await runGeneration(env, key, 1, {
+                finalText: '第 1 轮：读完代码，结论如上。',
+                designGateWired: false,
+            });
+            expect(first[0]).toMatchObject({ step: 'run', policy: 'analyze' });
+
+            // 工作台属性栏里改分类（管理员在页面上做的事）。
+            const issue = env.FEEDBACK_DB.tables.feedback_issues.get(key);
+            const patched = await request(
+                `/api/feedback/issues/${encodeURIComponent(key)}`,
+                {
+                    method: 'PATCH',
+                    headers,
+                    body: JSON.stringify({
+                        expectedVersion: Number(issue.version),
+                        ai: { businessType: 'improvement', scope: 'small' },
+                    }),
+                },
+                env
+            );
+            expect(patched.status).toBe(200);
+
+            // 派生字段必须跟着重算：留着 design_required 会让 scope 的修改完全失效，
+            // 页面显示「体验优化 / 小」而路由照旧只读——这正是本次要防的自相矛盾。
+            expect(env.FEEDBACK_DB.tables.feedback_issues.get(key).automation_decision).toBe(
+                'auto_fix'
+            );
+
+            const second = await runGeneration(env, key, 2, {
+                finalText: '第 2 轮：已按方案改完。',
+                designGateWired: false,
+            });
+            expect(second[0]).toMatchObject({ step: 'run', policy: 'implement_and_verify' });
+            expect(env.FEEDBACK_DB.tables.feedback_designs.size).toBe(0);
+        });
+
+        /* ---- SCN-FWB-038/039：写入型 Run 失败后的闭环 ---- */
+
+        // #czi9c6 生产实锤（run_96a17146）的违规形状：契约文件未授权 + 删功能删掉的断言。
+        const GATE_CHANGED_FILES = [
+            'src/features/gantt/baseline.js',
+            'tests/core/baseline-store.test.js',
+            'tests/e2e/gantt-features.spec.js',
+            'tests/scenarios/gantt-ui.md',
+        ];
+        const GATE_VIOLATIONS = [
+            { code: 'CONTRACT_CHANGE_NOT_AUTHORIZED', file: 'tests/scenarios/gantt-ui.md' },
+            {
+                code: 'VERIFICATION_WEAKENED',
+                file: 'tests/core/baseline-store.test.js',
+                detail: 'ASSERTION_REMOVED',
+            },
+            {
+                code: 'VERIFICATION_WEAKENED',
+                file: 'tests/e2e/gantt-features.spec.js',
+                detail: 'ASSERTION_REMOVED',
+            },
+        ];
+
+        /** 与 run-loop 的写入失败路径同构：Agent 自述先投，再投带 payload 的 run.failed。 */
+        async function executorWriteFailureTurn(env, run, { errorCode, finalText, extra }) {
+            const normalizer = createTurnNormalizer({
+                runId: run.id,
+                provider: 'codex',
+                deferTerminal: true,
+            });
+            const token = await callbackTokenFor(env, run.id);
+            const events = [];
+            const notifications = [['turn/started', {}]];
+            if (finalText) {
+                notifications.push([
+                    'item/completed',
+                    { item: { type: 'agentMessage', text: finalText } },
+                ]);
+            }
+            notifications.push(['turn/completed', {}]);
+            for (const [method, params] of notifications) {
+                events.push(...normalizer.handleNotification(method, params));
+            }
+            const agentMessage = normalizer.buildAgentMessage();
+            if (agentMessage) events.push(agentMessage);
+            events.push(normalizer.buildFailure(errorCode, '失败终态：' + errorCode, extra || {}));
+            for (const event of events) {
+                const response = await postCallback(env, run.id, event, token);
+                expect(response.status).toBe(201);
+            }
+            return 'run.failed';
+        }
+
+        async function contextTokenFor(env, runId) {
+            const payload = Buffer.from(
+                JSON.stringify({
+                    aud: 'context',
+                    runId,
+                    provider: 'codex',
+                    exp: Date.now() + 60_000,
+                }),
+                'utf8'
+            )
+                .toString('base64')
+                .replace(/\+/g, '-')
+                .replace(/\//g, '_')
+                .replace(/=+$/, '');
+            const key = await crypto.subtle.importKey(
+                'raw',
+                new TextEncoder().encode('unit-test-secret'),
+                { name: 'HMAC', hash: 'SHA-256' },
+                false,
+                ['sign']
+            );
+            const signature = await crypto.subtle.sign(
+                'HMAC',
+                key,
+                new TextEncoder().encode(payload)
+            );
+            const encoded = Buffer.from(new Uint8Array(signature))
+                .toString('base64')
+                .replace(/\+/g, '-')
+                .replace(/\//g, '_')
+                .replace(/=+$/, '');
+            return payload + '.' + encoded;
+        }
+
+        /** submit → 分析 → 管理员采纳 → 写入型 Run 被门禁拦下，站在决策卡前。 */
+        async function driveToGateBlock(env, key, headers) {
+            await runGeneration(env, key, 1, {
+                finalText: '第 1 轮：读完代码，结论如上。',
+                designGateWired: false,
+            });
+            const analysisAction = activeAction(env);
+            const adopted = await request(
+                '/api/feedback/human-actions/' + encodeURIComponent(analysisAction.id) + '/respond',
+                {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({ decision: 'queued', policyDecision: 'implement' }),
+                },
+                env
+            );
+            expect(adopted.status).toBe(200);
+
+            const trace = await runGeneration(env, key, 2, {
+                turn: (run) =>
+                    executorWriteFailureTurn(env, run, {
+                        errorCode: 'security_policy_violation',
+                        finalText: '按结论移除了基线纵切面，改动见清单。',
+                        extra: {
+                            diffManifest: { changedFiles: GATE_CHANGED_FILES },
+                            violations: GATE_VIOLATIONS,
+                            verification: {},
+                        },
+                    }),
+            });
+            expect(trace[0]).toMatchObject({ step: 'run', policy: 'implement_and_verify' });
+            return trace;
+        }
+
+        it('[SCN-FWB-039] 门禁拦截落成授权决策卡，授权后重跑并把范围带进下一轮上下文', async () => {
+            // 用户原话：「测试没过就不管了，就一直显示进行中，这个闭环没有形成。」
+            // 坏行为（修复前）：run.failed(security_policy_violation) 的投影是 issueStatus:null，
+            // Issue 永远停在 in_progress，Workflow 已终止，卡片却写着「AI 正在处理」。
+            const { env, key } = await submitReport();
+            const headers = await adminHeaders(env);
+            await driveToGateBlock(env, key, headers);
+
+            const issue = env.FEEDBACK_DB.tables.feedback_issues.get(key);
+            expect(issue.status).toBe('needs_human');
+
+            const gateAction = activeAction(env);
+            expect(gateAction).toBeTruthy();
+            expect(gateAction.type).toBe('approve_gate_scope');
+            const evidence = JSON.parse(gateAction.evidence_json || '[]');
+            expect(evidence.length).toBeGreaterThan(0);
+
+            // 管理员对着违规清单签字：授权这套变更并重跑。
+            const approvedResponse = await request(
+                '/api/feedback/human-actions/' + encodeURIComponent(gateAction.id) + '/respond',
+                {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({
+                        decision: 'queued',
+                        policyDecision: 'approve_scope',
+                    }),
+                },
+                env
+            );
+            const approved = await json(approvedResponse);
+            expect(approvedResponse.status, JSON.stringify(approved)).toBe(200);
+            expect(approved.action.status).toBe('resolved');
+
+            // 授权要落成公开、可追溯的事件，范围来自服务端存的失败事件而不是请求体。
+            const grantEvents = Array.from(env.FEEDBACK_DB.tables.feedback_events.values()).filter(
+                (event) => event.type === 'gate.scope_granted'
+            );
+            expect(grantEvents.length).toBe(1);
+            const grant = JSON.parse(grantEvents[0].body_json || '{}').grant;
+            expect(grant.contractRunApproved).toBe(true);
+            for (const file of GATE_CHANGED_FILES) {
+                expect(grant.approvedPaths).toContain(file);
+            }
+            expect(env.FEEDBACK_DB.tables.feedback_issues.get(key).status).toBe('queued');
+            // 采纳实施的授权不因门禁授权而丢失。
+            expect(env.FEEDBACK_DB.tables.feedback_issues.get(key).automation_decision).toBe(
+                'implementation_approved'
+            );
+
+            // 下一轮写入型 Run 的上下文必须携带授权——write-pipeline 消费的正是这两个字段。
+            let contextBody = null;
+            await runGeneration(env, key, 3, {
+                turn: async (run) => {
+                    const contextResponse = await request(
+                        '/api/feedback/runs/' + encodeURIComponent(run.id) + '/context',
+                        {
+                            headers: {
+                                Authorization: 'Bearer ' + (await contextTokenFor(env, run.id)),
+                            },
+                        },
+                        env
+                    );
+                    expect(contextResponse.status).toBe(200);
+                    contextBody = (await json(contextResponse)).context;
+                    return executorWriteFailureTurn(env, run, {
+                        errorCode: 'security_policy_violation',
+                        finalText: '第 3 轮自述。',
+                        extra: {
+                            diffManifest: { changedFiles: [] },
+                            violations: [],
+                            verification: {},
+                        },
+                    });
+                },
+            });
+            expect(contextBody.policy).toBe('implement_and_verify');
+            expect(contextBody.contractRunApproved).toBe(true);
+            for (const file of GATE_CHANGED_FILES) {
+                expect(contextBody.approvedPaths).toContain(file);
+            }
+        });
+
+        it('[SCN-FWB-039] owner 不能授权门禁范围，也不能在已授权实施的 Issue 上重排队', async () => {
+            const { env, key, ownerCapability } = await submitReport();
+            const headers = await adminHeaders(env);
+            await driveToGateBlock(env, key, headers);
+
+            const gateAction = activeAction(env);
+            const rejected = await request(
+                '/api/feedback/human-actions/' + encodeURIComponent(gateAction.id) + '/respond',
+                {
+                    method: 'POST',
+                    headers: {
+                        Authorization: 'Bearer ' + ownerCapability,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ decision: 'queued', policyDecision: 'approve_scope' }),
+                },
+                env
+            );
+            expect(rejected.status).toBe(403);
+            expect(env.FEEDBACK_DB.tables.feedback_human_actions.get(gateAction.id).status).toBe(
+                'active'
+            );
+
+            // 存储层守卫：即使等待类型是 owner 可回答的 need_reproduction，
+            // implementation_approved 的 Issue 上 owner 的 queued 也必须被拒——
+            // 否则提出人可以借一张自己能回的卡片重启写入型 Run。
+            env.FEEDBACK_DB.tables.feedback_human_actions.get(gateAction.id).type =
+                'need_reproduction';
+            const requeueRejected = await request(
+                '/api/feedback/human-actions/' + encodeURIComponent(gateAction.id) + '/respond',
+                {
+                    method: 'POST',
+                    headers: {
+                        Authorization: 'Bearer ' + ownerCapability,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ decision: 'queued', note: '我又试了一遍还是不行' }),
+                },
+                env
+            );
+            expect(requeueRejected.status).toBe(403);
+        });
+
+        it('[SCN-FWB-039] 「分析得不对」撤销实施授权并按派生规则重算路由', async () => {
+            const { env, key } = await submitReport();
+            const headers = await adminHeaders(env);
+            await driveToGateBlock(env, key, headers);
+
+            const gateAction = activeAction(env);
+            // note 必填：退回重新分析必须说清哪里不对，否则下一轮拿到的输入没有变化。
+            const missingNote = await request(
+                '/api/feedback/human-actions/' + encodeURIComponent(gateAction.id) + '/respond',
+                {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({ decision: 'queued', policyDecision: 'reanalyze' }),
+                },
+                env
+            );
+            expect(missingNote.status).toBe(400);
+
+            const reverted = await request(
+                '/api/feedback/human-actions/' + encodeURIComponent(gateAction.id) + '/respond',
+                {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({
+                        decision: 'queued',
+                        policyDecision: 'reanalyze',
+                        note: '不是删功能，是把入口移到设置页里。',
+                    }),
+                },
+                env
+            );
+            expect(reverted.status).toBe(200);
+
+            const issue = env.FEEDBACK_DB.tables.feedback_issues.get(key);
+            // improvement + unclear 的派生值是 design_required——授权被撤销，路由回只读。
+            expect(issue.automation_decision).toBe('design_required');
+            expect(issue.status).toBe('queued');
+        });
+
+        it('[SCN-FWB-039] 违规全是硬禁止项时授权被拒——授权修不了任何一条，重跑只会原地再被拦', async () => {
+            // 变更清单几乎永远非空，所以「有没有可授权的东西」必须看违规本身，
+            // 不能看 approvedPaths 攒没攒出文件——否则这条 409 在生产上永远不可达，
+            // 管理员每点一次授权就烧一轮注定被拦的 Run。
+            const { env, key } = await submitReport();
+            const headers = await adminHeaders(env);
+
+            await runGeneration(env, key, 1, {
+                finalText: '第 1 轮：读完代码，结论如上。',
+                designGateWired: false,
+            });
+            const analysisAction = activeAction(env);
+            await request(
+                '/api/feedback/human-actions/' + encodeURIComponent(analysisAction.id) + '/respond',
+                {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({ decision: 'queued', policyDecision: 'implement' }),
+                },
+                env
+            );
+
+            await runGeneration(env, key, 2, {
+                turn: (run) =>
+                    executorWriteFailureTurn(env, run, {
+                        errorCode: 'security_policy_violation',
+                        finalText: '尝试改动环境配置并跳过相关测试。',
+                        extra: {
+                            diffManifest: {
+                                changedFiles: ['.env', 'src/features/gantt/baseline.js'],
+                            },
+                            violations: [
+                                { code: 'HARD_DENY_PATH', file: '.env' },
+                                {
+                                    code: 'VERIFICATION_WEAKENED',
+                                    file: 'tests/core/baseline-store.test.js',
+                                    detail: 'TEST_SKIP',
+                                },
+                            ],
+                            verification: {},
+                        },
+                    }),
+            });
+
+            const gateAction = activeAction(env);
+            expect(gateAction.type).toBe('approve_gate_scope');
+            // 卡片自己也要说清「这里没有可授权的东西」，而不是报出一个文件数。
+            const evidence = JSON.parse(gateAction.evidence_json || '[]');
+            expect(evidence.some((item) => item.label === '不可授权')).toBe(true);
+
+            const rejected = await request(
+                '/api/feedback/human-actions/' + encodeURIComponent(gateAction.id) + '/respond',
+                {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({ decision: 'queued', policyDecision: 'approve_scope' }),
+                },
+                env
+            );
+            expect(rejected.status).toBe(409);
+            expect(env.FEEDBACK_DB.tables.feedback_human_actions.get(gateAction.id).status).toBe(
+                'active'
+            );
+            expect(
+                Array.from(env.FEEDBACK_DB.tables.feedback_events.values()).filter(
+                    (event) => event.type === 'gate.scope_granted'
+                )
+            ).toEqual([]);
+        });
+
+        it('[SCN-FWB-038] 验证失败自动重跑，3 次红后落 developer_fix_required 决策卡且每轮记账', async () => {
+            const { env, key } = await submitReport();
+            const headers = await adminHeaders(env);
+
+            await runGeneration(env, key, 1, {
+                finalText: '第 1 轮：读完代码，结论如上。',
+                designGateWired: false,
+            });
+            const analysisAction = activeAction(env);
+            await request(
+                '/api/feedback/human-actions/' + encodeURIComponent(analysisAction.id) + '/respond',
+                {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({ decision: 'queued', policyDecision: 'implement' }),
+                },
+                env
+            );
+
+            let attempts = 0;
+            const trace = await runGeneration(env, key, 2, {
+                turn: (run) => {
+                    attempts += 1;
+                    return executorWriteFailureTurn(env, run, {
+                        errorCode: 'verification_failed',
+                        finalText: '第 ' + attempts + ' 次实施尝试。',
+                        extra: {
+                            diffManifest: { changedFiles: ['src/features/gantt/baseline.js'] },
+                            verification: {},
+                        },
+                    });
+                },
+            });
+
+            // 红→改→重跑的有界回路：同一代 Workflow 里跑了 3 轮（首轮 + 2 轮修复），全部写入型。
+            const runSteps = trace.filter((entry) => entry.step === 'run');
+            expect(runSteps.length).toBe(3);
+            for (const step of runSteps) {
+                expect(step.policy).toBe('implement_and_verify');
+            }
+
+            // 预算用尽后是决策卡，不是僵尸 in_progress。
+            expect(env.FEEDBACK_DB.tables.feedback_issues.get(key).status).toBe('needs_human');
+            const fixAction = activeAction(env);
+            expect(fixAction.type).toBe('developer_fix_required');
+
+            // SCN-FWB-036 的教训：修复轮不走人工决定的 bypassQuota，也必须记账。
+            const usage = Array.from(env.FEEDBACK_DB.tables.feedback_usage_daily.values());
+            const total = usage.reduce((sum, row) => sum + (Number(row.run_count) || 0), 0);
+            expect(total).toBeGreaterThanOrEqual(2);
+        });
+
+        it('[SCN-FWB-038] empty_agent_response 也落决策卡，不再滞留死路', async () => {
+            const { env, key } = await submitReport();
+            const headers = await adminHeaders(env);
+
+            await runGeneration(env, key, 1, {
+                finalText: '第 1 轮：读完代码，结论如上。',
+                designGateWired: false,
+            });
+            const analysisAction = activeAction(env);
+            await request(
+                '/api/feedback/human-actions/' + encodeURIComponent(analysisAction.id) + '/respond',
+                {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({ decision: 'queued', policyDecision: 'implement' }),
+                },
+                env
+            );
+
+            await runGeneration(env, key, 2, {
+                turn: (run) =>
+                    executorWriteFailureTurn(env, run, {
+                        errorCode: 'empty_agent_response',
+                        finalText: '',
+                        extra: {},
+                    }),
+            });
+
+            expect(env.FEEDBACK_DB.tables.feedback_issues.get(key).status).toBe('needs_human');
+            expect(activeAction(env)?.type).toBe('developer_fix_required');
+        });
     });
 });
 
@@ -12383,6 +13443,93 @@ describe('feedback workbench V2 reconcile sweep', () => {
         // A healthy Issue is never touched by the sweep.
         expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe('open');
         expect(env.FEEDBACK_DB.tables.feedback_runs.size).toBe(0);
+    });
+
+    it('[SCN-FWB-038] repairs a stranded issue: terminal failed run, dead workflow, no card', async () => {
+        // #czi9c6 的生产形状：run.failed(security_policy_violation) 落库、Workflow 已终止
+        // （active_workflow_id=NULL）、没有任何 HumanAction——页面永远显示「AI 正在处理」。
+        // 修复上线前就卡死的存量只有这条巡检能救。
+        const env = createV2Env(
+            {},
+            {
+                feedback_issues: [
+                    createD1IssueRow({
+                        status: 'in_progress',
+                        automation_decision: 'implementation_approved',
+                        last_run_id: 'run_zombie',
+                        active_workflow_id: null,
+                    }),
+                ],
+                feedback_runs: [
+                    {
+                        id: 'run_zombie',
+                        issue_id: feedbackKey,
+                        workflow_id: 'wf_dead',
+                        policy: 'implement_and_verify',
+                        provider: 'claude',
+                        runner_type: 'executor',
+                        status: 'failed',
+                        error_code: 'security_policy_violation',
+                        created_at: '2026-08-25T15:15:00.000Z',
+                    },
+                ],
+                feedback_events: [
+                    {
+                        id: 'evt_zombie_failure',
+                        issue_id: feedbackKey,
+                        run_id: 'run_zombie',
+                        sequence: 5,
+                        type: 'run.failed',
+                        actor_type: 'agent',
+                        visibility: 'public',
+                        occurred_at: '2026-08-25T15:29:00.000Z',
+                        body_json: JSON.stringify({
+                            text: '交付被质量门禁预检阻断：变更触及未批准路径或削弱了验证。',
+                            resultEvidence: {
+                                changedFiles: [
+                                    'src/features/gantt/baseline.js',
+                                    'tests/scenarios/gantt-ui.md',
+                                ],
+                                violations: [
+                                    {
+                                        code: 'CONTRACT_CHANGE_NOT_AUTHORIZED',
+                                        file: 'tests/scenarios/gantt-ui.md',
+                                        detail: '',
+                                    },
+                                    {
+                                        code: 'VERIFICATION_WEAKENED',
+                                        file: 'tests/core/baseline-store.test.js',
+                                        detail: 'ASSERTION_REMOVED',
+                                    },
+                                ],
+                            },
+                        }),
+                    },
+                ],
+            }
+        );
+
+        const summary = await runScheduled(env);
+        expect(summary.repairedZombieIssues).toBe(1);
+        expect(summary.runCount).toBe(0);
+
+        const issue = env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey);
+        expect(issue.status).toBe('needs_human');
+        const action = Array.from(env.FEEDBACK_DB.tables.feedback_human_actions.values()).find(
+            (row) => row.status === 'active'
+        );
+        expect(action).toEqual(
+            expect.objectContaining({ type: 'approve_gate_scope', run_id: 'run_zombie' })
+        );
+
+        // 幂等：再跑一次不重复建卡。
+        const second = await runScheduled(env);
+        expect(second.repairedZombieIssues).toBe(0);
+        expect(
+            Array.from(env.FEEDBACK_DB.tables.feedback_human_actions.values()).filter(
+                (row) => row.status === 'active'
+            ).length
+        ).toBe(1);
     });
 
     it('[SCN-FWB-020] retries a durable HumanAction resume that the control plane missed', async () => {

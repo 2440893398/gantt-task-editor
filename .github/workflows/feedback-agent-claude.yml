@@ -658,8 +658,7 @@ jobs:
                   # read-only deliverable IS the design. Extract it before the
                   # terminal is built so the Run can wait for a decision instead
                   # of completing into a dead end.
-                  if [ "$REQUIRES_DESIGN" = "true" ] && [ "$WRITE_ALLOWED" != "true" ] \
-                     && [ -n "$TRUSTED_DESIGN" ]; then
+                  if [ "$WRITE_ALLOWED" != "true" ] && [ -n "$TRUSTED_DESIGN" ]; then
                     "$TRUSTED_NODE" "$TRUSTED_DESIGN" \
                       --message "$RUNNER_TEMP/feedback-agent-output/agent-final.txt" \
                       --out "$RUNNER_TEMP/feedback-design.json" || true
@@ -733,15 +732,31 @@ jobs:
                     // only when the extractor validated the design the Worker will
                     // accept — a rejected design would lose the whole terminal.
                     let pendingDesign = null;
-                    if (success && !writeAllowed && process.env.REQUIRES_DESIGN === "true") {
+                    let nextSteps = [];
+                    let publicMessage = agentMessage;
+                    if (!writeAllowed) {
+                      // SCN-FWB-037: the extractor runs for every read-only Run, so
+                      // its next-step options and stripped message apply whether or
+                      // not a design was required — gating the read on
+                      // REQUIRES_DESIGN would silently drop the options on exactly
+                      // the analysis-only Runs the card exists for. Only the
+                      // terminal switch below stays design-gated.
+                      let extracted = null;
                       try {
-                        const extracted = JSON.parse(
+                        extracted = JSON.parse(
                           fs.readFileSync(process.env.RUNNER_TEMP + "/feedback-design.json", "utf8")
                         );
-                        if (extracted.found && extracted.design) pendingDesign = extracted.design;
-                        else console.log(`::warning title=Feedback design::${extracted.reason || "not produced"}`);
-                      } catch {
-                        console.log("::warning title=Feedback design::extractor produced no result");
+                      } catch {}
+                      if (extracted && success && Array.isArray(extracted.nextSteps)) nextSteps = extracted.nextSteps;
+                      // The user-visible message is the conclusion; the fenced JSON
+                      // blocks were consumed by the platform and must not reach the
+                      // public timeline as raw source.
+                      if (extracted && typeof extracted.message === "string" && extracted.message.trim()) {
+                        publicMessage = extracted.message.slice(0, 12000);
+                      }
+                      if (success && process.env.REQUIRES_DESIGN === "true") {
+                        if (extracted && extracted.found && extracted.design) pendingDesign = extracted.design;
+                        else console.log(`::warning title=Feedback design::${(extracted && extracted.reason) || "not produced"}`);
                       }
                     }
                     const body = pendingDesign ? {
@@ -752,6 +767,7 @@ jobs:
                       payload: {
                         actionType: "design_decision",
                         requestedAction: "已产出方案，请管理员确认：批准后才会进入代码实现，也可以要求修订或拒绝。",
+                        nextSteps,
                         summary: "已完成只读分析并产出方案，等待确认。",
                         design: pendingDesign,
                       },
@@ -775,6 +791,7 @@ jobs:
                           : gateFailed
                             ? "The Candidate was blocked by the trusted project diff gate."
                             : "The Run did not pass isolated verification or Candidate publication.",
+                        nextSteps,
                         errorCode: success
                           ? ""
                           : emptyAgentResponse
@@ -797,7 +814,7 @@ jobs:
                         eventId: `cb-agent-${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}`,
                         type: "agent.message",
                         provider: "claude",
-                        payload: { message: agentMessage },
+                        payload: { message: publicMessage },
                       }));
                     }
                     visualEvidenceFiles.forEach((file, index) => {

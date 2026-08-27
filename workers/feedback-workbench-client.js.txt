@@ -1068,8 +1068,9 @@
                 '',
                 '<button class="button" type="button" data-action="save-classification"' +
                     ' id="saveClassification" disabled>保存分类并重新处理</button>' +
-                    '<p class="help" style="margin-top:6px">分类只在入库时自动算一次。' +
-                    '改成明确的类型与范围，下一轮就能按新判据路由。</p>',
+                    '<p class="help" style="margin-top:6px">分类只在入库时自动算一次，之后由这里决定路由。' +
+                    '<strong>范围「小」的 Bug 与体验优化下一轮直接进代码实现</strong>；' +
+                    '中/大以及需求要先有获批的方案。</p>',
             ]);
         }
 
@@ -1078,6 +1079,97 @@
                 return '<div class="property-row"><span>' + row[0] + '</span>' + row[1] + '</div>';
             })
             .join('');
+    }
+
+    /* SCN-FWB-037: 下一步选项。优先用本轮分析自己提议的（带这条 Issue 的上下文，
+       "按结论删掉基线纵切面，含一条迁移测试" 远比 "补充信息并重新分析" 有用），
+       模型没给或给的被状态机筛掉时，回落到服务端固定的那套。
+       服务端已按 allowedReturnStates 裁过一遍，这里只负责挑一份来渲染。 */
+    var NEXT_STEP_FALLBACK = {
+        implement: { label: '采纳分析，开始实施', detail: '按上面的结论直接修改代码，完成后提交候选实现给你审。' },
+        clarify: { label: '补充信息并重新分析', detail: '把你要的效果写清楚，带着新信息重跑一轮。' },
+        close: { label: '关闭 Issue', detail: '这条不做了。' },
+    };
+
+    function nextStepOptions(action) {
+        var proposed = [];
+        (state.events || []).forEach(function (event) {
+            if (!event.nextSteps || !event.nextSteps.length) return;
+            // 只认产生当前这条等待的那一轮：上一轮的建议早就过期了。
+            if (action.runId && event.runId && event.runId !== action.runId) return;
+            proposed = event.nextSteps;
+        });
+
+        var isAdmin = state.actor === 'admin';
+        var allowed = action.allowedReturnStates || [];
+        var serverDefaults = [{ action: 'implement' }, { action: 'clarify' }, { action: 'close' }];
+
+        function usableOptions(source) {
+            return source
+                .filter(function (option) {
+                    var fallback = NEXT_STEP_FALLBACK[option.action];
+                    if (!fallback) return false;
+                    // 采纳与关闭都是管理员的决定（§21.3 / EXC-FWB-003）。
+                    if (option.action !== 'clarify' && !isAdmin) return false;
+                    var decision = option.action === 'close' ? 'closed' : 'queued';
+                    return allowed.indexOf(decision) !== -1;
+                })
+                .map(function (option) {
+                    var fallback = NEXT_STEP_FALLBACK[option.action];
+                    return {
+                        action: option.action,
+                        decision: option.action === 'close' ? 'closed' : 'queued',
+                        policyDecision: option.action === 'implement' ? 'implement' : '',
+                        needsNote: option.action === 'clarify',
+                        label: option.label || fallback.label,
+                        detail: option.detail || fallback.detail,
+                    };
+                });
+        }
+
+        var options = usableOptions(proposed.length ? proposed : serverDefaults);
+        // Agent 的提议可能整组被权限筛掉（比如 owner 打开一张只提议「采纳」的卡）。
+        // 这个分支渲染的是卡片上仅有的按钮——空列表等于把这张卡变成死路，
+        // 所以筛空时回落到固定选项，让「补充信息」这条路永远在。
+        if (!options.length && proposed.length) options = usableOptions(serverDefaults);
+        return options;
+    }
+
+    function nextStepChoicesHtml(action) {
+        var options = nextStepOptions(action);
+        if (!options.length) return '';
+
+        return (
+            '<div class="next-step-choices">' +
+            options
+                .map(function (option) {
+                    return (
+                        '<button class="next-step-choice' +
+                        (option.action === 'implement' ? ' primary' : '') +
+                        (option.action === 'close' ? ' danger' : '') +
+                        '" type="button" data-human-action="' +
+                        escapeHtml(action.id) +
+                        '" data-decision="' +
+                        escapeHtml(option.decision) +
+                        '"' +
+                        (option.policyDecision
+                            ? ' data-policy-decision="' + escapeHtml(option.policyDecision) + '"'
+                            : '') +
+                        (option.needsNote ? ' data-needs-note="1"' : '') +
+                        '><span class="next-step-label">' +
+                        escapeHtml(option.label) +
+                        '</span>' +
+                        (option.detail
+                            ? '<span class="next-step-detail">' +
+                              escapeHtml(option.detail) +
+                              '</span>'
+                            : '') +
+                        '</button>'
+                    );
+                })
+                .join('') +
+            '</div>'
+        );
     }
 
     /* SCN-FWB-036: 管理员就地改分类。`ai.businessType`/`ai.scope` 是 §7.2 的路由输入，
@@ -1187,9 +1279,9 @@
                     return (
                         '<div class="evidence-item"><span>' +
                         escapeHtml(evidenceLabel(item)) +
-                        '</span><strong>' +
+                        '</span><p>' +
                         escapeHtml(evidenceSummary(item)) +
-                        '</strong></div>'
+                        '</p></div>'
                     );
                 })
                 .join('');
@@ -1198,7 +1290,7 @@
                 escapeHtml(action.requestedAction || '需要你的确认') +
                 '</strong>' +
                 (evidence
-                    ? '<details class="evidence"><summary><span>查看已检查证据</span>' +
+                    ? '<details class="evidence"><summary><span>这一轮检查了什么</span>' +
                       '<span class="badge">' +
                       (action.evidence || []).length +
                       ' 项</span></summary>' +
@@ -1241,14 +1333,55 @@
                         : '');
                 return;
             }
+            /* SCN-FWB-039: 门禁拦截后的授权决策卡。三个决定都要能看出后果：
+               授权（把这套变更签进允许范围，重跑交付）、退回（撤销实施授权、重新分析，
+               必须写明哪里不对）、关闭。canRespond 已把 owner 挡在上面（管理员专属）。 */
+            if (action.type === 'approve_gate_scope') {
+                $('nextActionCopy').innerHTML +=
+                    '<div class="next-step-choices">' +
+                    '<button class="next-step-choice primary" type="button" data-human-action="' +
+                    escapeHtml(action.id) +
+                    '" data-decision="queued" data-policy-decision="approve_scope">' +
+                    '<span class="next-step-label">授权这套变更并重跑</span>' +
+                    '<span class="next-step-detail">把被拦下的文件签进授权范围，下一轮按授权交付；契约与测试改动仍需你复核候选实现，不会自动发布。</span>' +
+                    '</button>' +
+                    '<button class="next-step-choice" type="button" data-human-action="' +
+                    escapeHtml(action.id) +
+                    '" data-decision="queued" data-policy-decision="reanalyze" data-needs-note="1">' +
+                    '<span class="next-step-label">分析得不对，退回重新分析</span>' +
+                    '<span class="next-step-detail">撤销实施授权，写明哪里不对后重新走一轮只读分析。</span>' +
+                    '</button>' +
+                    '<button class="next-step-choice danger" type="button" data-human-action="' +
+                    escapeHtml(action.id) +
+                    '" data-decision="closed">' +
+                    '<span class="next-step-label">关闭 Issue</span>' +
+                    '<span class="next-step-detail">这条不做了。</span>' +
+                    '</button>' +
+                    '</div>' +
+                    '<div class="next-step-note">' +
+                    '<label for="humanActionNote">选「退回重新分析」时写明哪里不对（授权时可留空）</label>' +
+                    '<textarea id="humanActionNote" aria-label="补充说明" rows="4"' +
+                    ' placeholder="写清你要的效果。这段文字会进入公开时间线和下一轮分析。"></textarea>' +
+                    '</div>';
+                $('nextActionButtons').innerHTML = '';
+                return;
+            }
             // SCN-FWB-036: 这类等待问的是「还缺什么」，所以它需要一个能当场写的输入框。
             // 没有它，卡片正文要求的动作（补充信息）在卡片上根本没有对应控件，用户能点
             // 的只有那个把同一轮原样重跑的按钮。
             var needsNewInput = NEEDS_NEW_INPUT_ACTIONS.indexOf(action.type) !== -1;
             if (needsNewInput) {
+                // SCN-FWB-037：分析结束的等待有两种决定——采纳去做，或说清还缺什么。
+                // 用带说明的选项卡片呈现，而不是一排看不出后果的按钮。
                 $('nextActionCopy').innerHTML +=
-                    '<label class="help" for="humanActionNote" style="display:block;margin-top:12px">补充信息后重新处理</label>' +
-                    '<textarea id="humanActionNote" aria-label="补充信息" style="width:100%;min-height:88px;margin-top:6px" placeholder="写清触发步骤与你期望的结果。这段文字会随反馈一起进入下一轮分析。"></textarea>';
+                    nextStepChoicesHtml(action) +
+                    '<div class="next-step-note">' +
+                    '<label for="humanActionNote">选「补充信息」时写在这里</label>' +
+                    '<textarea id="humanActionNote" aria-label="补充信息" rows="4"' +
+                    ' placeholder="写清你要的效果或触发步骤。这段文字会随反馈一起进入下一轮分析。"></textarea>' +
+                    '</div>';
+                $('nextActionButtons').innerHTML = '';
+                return;
             }
             $('nextActionButtons').innerHTML = (action.allowedReturnStates || [])
                 .map(function (nextState, index) {
@@ -1256,9 +1389,7 @@
                     // 在「批准方案」和「原样重跑」上是两回事，共用「批准并继续处理」会让
                     // 用户以为自己批准了什么——而在 need_reproduction 上他什么也没批准。
                     var label = humanActionLabel(nextState, action.type);
-                    var requiresNote = needsNewInput && nextState === 'queued';
                     var tone = nextState === 'closed' ? 'danger' : index === 0 ? 'blue' : '';
-                    if (requiresNote) tone = 'blue';
                     return (
                         '<button class="button ' +
                         tone +
@@ -1267,7 +1398,6 @@
                         '" data-decision="' +
                         escapeHtml(nextState) +
                         '"' +
-                        (requiresNote ? ' data-needs-note="1"' : '') +
                         (action.candidateId
                             ? ' data-candidate="' + escapeHtml(action.candidateId) + '"'
                             : '') +
@@ -1304,7 +1434,9 @@
         confirm_policy: { queued: '补充信息并重新处理' },
         blocked_external: { queued: '已修复外部问题，重试' },
         executor_lost: { queued: '重新开始处理' },
-        developer_fix_required: { queued: '已处理，重新排队' },
+        /* SCN-FWB-038: 失败决策卡的重试。失败详情在时间线里，点它就是「再试一轮」。 */
+        developer_fix_required: { queued: '再试一轮' },
+        approve_gate_scope: { queued: '授权这套变更并重跑' },
     };
 
     function humanActionLabel(nextState, actionType) {
@@ -1326,7 +1458,7 @@
             queued: '已排队',
             in_progress: 'AI 正在处理',
             testing: '正在验证',
-            test_failed: '验证失败，等待处理',
+            test_failed: '验证失败，自动重试中',
             ready_for_deploy: '等待交付',
             resolved: '已解决',
             closed: '已关闭',
@@ -1340,7 +1472,7 @@
             queued: '事件已投递，处理任务会在 Runner 启动后开始。',
             in_progress: '处理中的进展会以时间线回复的形式出现，无需刷新等待。',
             testing: '正在运行构建与回归验证，结果会写回时间线。',
-            test_failed: '验证未通过，失败日志保留在时间线内供排查。',
+            test_failed: '验证未通过，失败输出在时间线里；修复回路正在自动重试，额度用尽后会生成一张决策卡。',
             ready_for_deploy: '候选实现已批准，等待干净集成与部署。',
             resolved: '问题已解决。若仍有问题，可重新打开。',
             closed: '该 Issue 已关闭。若仍有问题，可重新打开。',
@@ -2950,6 +3082,15 @@
             payload.note = note;
         }
 
+        // SCN-FWB-037：采纳这份分析并授权实施。备注可选——不写的话服务端会补一句
+        // 默认说明，时间线上不会只剩一个状态跳变。
+        if (button.dataset.policyDecision) {
+            payload.policyDecision = button.dataset.policyDecision;
+            var approvalInput = $('humanActionNote');
+            var approvalNote = approvalInput ? approvalInput.value.trim() : '';
+            if (approvalNote) payload.note = approvalNote;
+        }
+
         // SCN-FWB-036: 没有新信息就重新处理，只会拿回逐字相同的结论。服务端会拒，
         // 这里先拦一道并把光标放到该填的地方——让用户在按钮上撞 409 是很差的解释方式。
         if (button.dataset.needsNote) {
@@ -2980,11 +3121,13 @@
                     toastTimer(
                         button.dataset.designDecision
                             ? '方案决定已提交'
-                            : '已提交决定：' +
-                                  humanActionLabel(
-                                      decision,
-                                      state.humanAction && state.humanAction.type
-                                  )
+                            : button.dataset.policyDecision === 'implement'
+                              ? '已采纳这份分析，正在按结论开始实施'
+                              : '已提交决定：' +
+                                humanActionLabel(
+                                    decision,
+                                    state.humanAction && state.humanAction.type
+                                )
                     );
                 }
                 return Promise.all([selectIssue(state.issue.key), loadIssues()]);

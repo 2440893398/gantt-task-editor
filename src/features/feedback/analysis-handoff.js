@@ -6,6 +6,16 @@
 // 入参是 D1 的 `feedback_issues` 行（snake_case），因为两个调用方拿到的都是它。
 
 /**
+ * SCN-FWB-037：管理员读完分析、在下一步卡片上点「采纳分析，开始实施」之后写入的
+ * `automationDecision`。
+ *
+ * 它是**人的决定**，不是分类器的派生结论——所以它压过 §16.4 的 Design 闸：那条规则的
+ * 目的是「有权限的人在动代码前签字」，而这一下就是那个签字。放在 automationDecision 上
+ * 而不是新开一列，是因为这个字段的语义本来就是「自动化该拿它怎么办」，且省掉一次迁移。
+ */
+export const FEEDBACK_IMPLEMENTATION_APPROVED = 'implementation_approved';
+
+/**
  * §16.4：显式门禁、需求、大范围、或非 small 的优化，都必须先有获批的 Design 才能
  * 拿到写权限。Runner 也要知道同一个答案（只读 Run 的交付物是不是 Design），所以
  * 只留一份判据——两边各猜一次的话，要么漏掉 Design（活锁），要么产出没人要的方案。
@@ -13,6 +23,10 @@
  * @param {{businessType?: string, scope?: string, automationDecision?: string}} facts
  */
 export function requiresFeedbackDesign({ businessType, scope, automationDecision }) {
+    // SCN-FWB-037：管理员已经就这份分析签过字了。Design 是签字的一种载体，不是唯一载体；
+    // 已经拿到授权还要求补一份没人在等的方案，只会再多一轮空转。
+    if (automationDecision === FEEDBACK_IMPLEMENTATION_APPROVED) return false;
+
     return Boolean(
         automationDecision === 'design_required' ||
         businessType === 'requirement' ||

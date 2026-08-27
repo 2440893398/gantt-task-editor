@@ -20,6 +20,10 @@ import {
     DESIGN_WAIT_REQUESTED_ACTION,
     DESIGN_WAIT_SUMMARY,
 } from './design-escalation.js';
+import {
+    extractFeedbackNextSteps,
+    stripFeedbackNextSteps,
+} from '../../../src/features/feedback/next-steps.js';
 
 /**
  * 写入型 Run 到达时执行器没接写入管线——fail-closed。用只读流程跑写入型 Run
@@ -115,6 +119,15 @@ export async function executeLeasedRun({
             requestedAction: DESIGN_WAIT_REQUESTED_ACTION,
             summary: DESIGN_WAIT_SUMMARY,
         }),
+        // SCN-FWB-037：只读 Run 才被要求提议下一步；写入型 Run 的下一步是审候选，
+        // 由 Candidate 审核卡片自己决定，不需要 Agent 再提议一遍。
+        planNextSteps: (message) =>
+            writeCapable
+                ? { options: [], publicMessage: message }
+                : {
+                      options: extractFeedbackNextSteps(message),
+                      publicMessage: stripFeedbackNextSteps(message),
+                  },
     });
     let staleLease = false;
 

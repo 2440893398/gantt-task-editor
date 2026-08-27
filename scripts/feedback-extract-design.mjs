@@ -21,6 +21,8 @@ import { pathToFileURL } from 'node:url';
 // 崩。标记串与 feedback-prompt.js 的 DESIGN_BLOCK_MARKER 必须一致，由
 // feedback-design-extract.test.js 钉住。
 const DESIGN_BLOCK_MARKER = 'feedback-design';
+/** 与 `src/features/feedback/next-steps.js` 的 NEXT_STEPS_BLOCK_MARKER 必须一致。 */
+const NEXT_STEPS_BLOCK_MARKER = 'feedback-next-steps';
 
 /** 与 Worker 的 `normalizeFeedbackDesignPayload` 一致的必填项。 */
 const MAX_BLOCK_BYTES = 64 * 1024;
@@ -102,7 +104,43 @@ export function extractFeedbackDesign(message) {
 export function stripDesignBlock(message) {
     const source = typeof message === 'string' ? message : '';
     const fence = new RegExp(`\`\`\`${DESIGN_BLOCK_MARKER}\\s*\\r?\\n[\\s\\S]*?\`\`\``, 'g');
-    return source.replace(fence, '').replace(/\n{3,}/g, '\n\n').trim();
+    return source
+        .replace(fence, '')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+}
+
+/**
+ * SCN-FWB-037：Agent 提议的下一步选项，与 Design 一起提取——workflow 只跑一个脚本，
+ * 少一处「这一步忘了接」的机会。
+ *
+ * 这里刻意**只做围栏抓取**：本文件按上面的约束不能有相对 import，而真正的判据
+ * （哪些动作合法、能不能落到这条 HumanAction 声明过的返回状态上）在 Worker 的
+ * `normalizeFeedbackNextSteps` 里，入站时会重新裁一遍。抓多了无害，抓少了才有害。
+ */
+export function scrapeNextSteps(message) {
+    const source = typeof message === 'string' ? message : '';
+    const fence = new RegExp(`\`\`\`${NEXT_STEPS_BLOCK_MARKER}\\s*\\r?\\n([\\s\\S]*?)\`\`\``, 'g');
+    let block = '';
+    for (const match of source.matchAll(fence)) block = match[1];
+    if (!block.trim()) return [];
+
+    try {
+        const parsed = JSON.parse(block);
+        const options = Array.isArray(parsed) ? parsed : parsed?.options;
+        return Array.isArray(options) ? options.slice(0, 4) : [];
+    } catch {
+        return [];
+    }
+}
+
+export function stripNextStepsBlock(message) {
+    const source = typeof message === 'string' ? message : '';
+    const fence = new RegExp(`\`\`\`${NEXT_STEPS_BLOCK_MARKER}\\s*\\r?\\n[\\s\\S]*?\`\`\``, 'g');
+    return source
+        .replace(fence, '')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
 }
 
 function main() {
@@ -123,7 +161,11 @@ function main() {
     const result = extractFeedbackDesign(message);
     writeFileSync(
         args[outIndex + 1],
-        JSON.stringify({ ...result, message: stripDesignBlock(message) })
+        JSON.stringify({
+            ...result,
+            nextSteps: scrapeNextSteps(message),
+            message: stripNextStepsBlock(stripDesignBlock(message)),
+        })
     );
     console.log(result.found ? 'design: found' : `design: none (${result.reason})`);
 }

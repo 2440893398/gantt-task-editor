@@ -65,6 +65,28 @@ function matchSignals(text, patterns) {
     return patterns.some((pattern) => pattern.test(text));
 }
 
+/**
+ * §7.5 的自动决策规则表。
+ *
+ * `automationDecision` 是**派生字段**：它由 `businessType`/`scope`（加上"报告是否可定位"）
+ * 算出来，本身不是独立事实。所以人工改分类时必须用同一份规则重算，否则会出现
+ * 「页面显示 体验优化/小、路由却仍按 design_required 走只读」这种自相矛盾的状态——
+ * `requiresFeedbackDesign` 的第一个条件就是 `automationDecision === 'design_required'`，
+ * 一个陈旧的派生值足以把 scope 的修改整个吃掉，而界面上没有任何地方能看出这一点。
+ *
+ * @param {{businessType: string, scope: string, locatable?: boolean}} facts
+ */
+export function resolveFeedbackAutomationDecision({ businessType, scope, locatable = true }) {
+    if (businessType === 'unclear' || businessType === 'other') return '';
+    // §7.5：没有可复现起点的缺陷报告要问清楚，不能用写入型 Run 去猜。
+    if (businessType === 'bug' && !locatable) return 'need_reproduction';
+    if (businessType === 'requirement' || (businessType === 'improvement' && scope !== 'small')) {
+        return 'design_required';
+    }
+    if (scope === 'small' || (businessType === 'bug' && scope === 'medium')) return 'auto_fix';
+    return '';
+}
+
 function hasPageContext(context) {
     if (!context || typeof context !== 'object') return false;
     for (const key of ['pagePath', 'path', 'route', 'url', 'href']) {
@@ -152,21 +174,11 @@ export function classifyFeedbackSubmission({
         scope = 'small';
     }
 
-    let automationDecision = '';
-    if (businessType === 'unclear' || businessType === 'other') {
-        automationDecision = '';
-    } else if (businessType === 'bug' && !locatable) {
-        // §7.5: a defect report with no reproducible starting point is asked
-        // about, not guessed at with a write-capable Run.
-        automationDecision = 'need_reproduction';
-    } else if (
-        businessType === 'requirement' ||
-        (businessType === 'improvement' && scope !== 'small')
-    ) {
-        automationDecision = 'design_required';
-    } else if (scope === 'small' || (businessType === 'bug' && scope === 'medium')) {
-        automationDecision = 'auto_fix';
-    }
+    const automationDecision = resolveFeedbackAutomationDecision({
+        businessType,
+        scope,
+        locatable,
+    });
 
     if (businessType === 'unclear') confidence = 'low';
     else if (!declaredType && !locatable) confidence = 'low';

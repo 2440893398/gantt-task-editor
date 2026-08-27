@@ -30,6 +30,9 @@ export function createTurnNormalizer({
     // 写入型 policy 的唯一入口，发 `run.completed` 等于把 Issue 永远钉在 analyze 上。
     // 判据由 run-loop 注入（`design-escalation.js` 那一份），归一化层只负责按结论投事件。
     planEscalation = () => ({ escalates: false }),
+    // SCN-FWB-037：Agent 给下一步卡片提议的选项。归一化层只负责把它从散文里摘出来、
+    // 挂到终态 payload 上；能不能变成按钮由控制面按状态机裁决（`normalizeFeedbackNextSteps`）。
+    planNextSteps = () => ({ options: [], publicMessage: '' }),
 } = {}) {
     if (!runId) throw new Error('EXECUTOR_NORMALIZER_RUN_ID_REQUIRED');
     const clock = typeof now === 'function' ? now : () => new Date().toISOString();
@@ -73,26 +76,32 @@ export function createTurnNormalizer({
                 }),
             ];
         }
-        const escalation = planEscalation(finalText) || { escalates: false };
+        const nextSteps = planNextSteps(finalText) || { options: [], publicMessage: '' };
+        // 建议块从用户可见的正文里摘掉：方案与选项走结构化字段，正文留结论。
+        const visibleText = nextSteps.publicMessage || finalText;
+
+        const escalation = planEscalation(visibleText) || { escalates: false };
         if (escalation.escalates) {
             waitingHumanEmitted = true;
             return [
                 envelope(EVENT_TYPES.AGENT_MESSAGE, {
-                    message: escalation.publicMessage || finalText,
+                    message: escalation.publicMessage || visibleText,
                 }),
                 envelope(EVENT_TYPES.AGENT_WAITING_HUMAN, {
                     actionType: escalation.actionType,
                     requestedAction: escalation.requestedAction,
                     summary: escalation.summary,
                     design: escalation.design,
+                    nextSteps: nextSteps.options,
                 }),
             ];
         }
 
         return [
-            envelope(EVENT_TYPES.AGENT_MESSAGE, { message: finalText }),
+            envelope(EVENT_TYPES.AGENT_MESSAGE, { message: visibleText }),
             envelope(EVENT_TYPES.RUN_COMPLETED, {
                 summary: 'Turn completed by executor.',
+                nextSteps: nextSteps.options,
                 ...extraCompletionPayload,
             }),
         ];

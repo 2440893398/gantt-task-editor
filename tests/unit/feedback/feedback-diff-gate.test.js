@@ -352,3 +352,69 @@ describe('[SCN-FWB-012] feedback diff gate', () => {
         });
     });
 });
+
+/**
+ * SCN-FWB-039：对「删掉某功能」类任务，删除该功能的测试断言是任务固有行为。
+ * `#czi9c6` 的写入 Run 正是死在这里：16 条 ASSERTION_REMOVED 全部来自被移除
+ * 功能自己的测试。授权（管理员对着违规清单签字）必须能放行这一类削弱——
+ * 但只降档为强制候选复核，绝不放行 skip/only/todo 这类「留着测试假装还在跑」。
+ */
+describe('[SCN-FWB-039] approved-scope softening for verification weakening', () => {
+    const removalDiff = [
+        '--- a/tests/core/baseline-store.test.js',
+        '+++ b/tests/core/baseline-store.test.js',
+        '-        expect(store.saveBaseline(tasks)).toBe(true);',
+        '-        expect(loaded).toEqual(snapshot);',
+    ].join('\n');
+
+    it('downgrades ASSERTION_REMOVED on an approved path to candidate review, not a violation', () => {
+        const result = evaluateDiffGate({
+            changedFiles: ['tests/core/baseline-store.test.js', 'src/features/gantt/baseline.js'],
+            diffText: removalDiff,
+            approvedPaths: ['tests/core/baseline-store.test.js', 'src/features/gantt/baseline.js'],
+            contractRunApproved: true,
+            writeAllowed: true,
+        });
+
+        expect(result.violations).toEqual([]);
+        expect(result.allowed).toBe(true);
+        expect(result.requiresCandidateReview).toContain('tests/core/baseline-store.test.js');
+        // 授权换来的是人审，不是免审。
+        expect(result.autoDeliverAllowed).toBe(false);
+    });
+
+    it('still rejects ASSERTION_REMOVED outside the approved scope', () => {
+        const result = evaluateDiffGate({
+            changedFiles: ['tests/core/baseline-store.test.js'],
+            diffText: removalDiff,
+            approvedPaths: ['src/features/gantt/baseline.js'],
+            writeAllowed: true,
+        });
+
+        expect(result.allowed).toBe(false);
+        expect(result.violations).toContainEqual(
+            expect.objectContaining({ code: 'VERIFICATION_WEAKENED', detail: 'ASSERTION_REMOVED' })
+        );
+    });
+
+    it('never lets approval clear test.skip/only/todo — those fake a passing suite', () => {
+        const skipDiff = [
+            '--- a/tests/core/baseline-store.test.js',
+            '+++ b/tests/core/baseline-store.test.js',
+            "+        it.skip('saves a baseline snapshot', () => {",
+        ].join('\n');
+
+        const result = evaluateDiffGate({
+            changedFiles: ['tests/core/baseline-store.test.js'],
+            diffText: skipDiff,
+            approvedPaths: ['tests/core/baseline-store.test.js'],
+            contractRunApproved: true,
+            writeAllowed: true,
+        });
+
+        expect(result.allowed).toBe(false);
+        expect(result.violations).toContainEqual(
+            expect.objectContaining({ code: 'VERIFICATION_WEAKENED', detail: 'TEST_SKIP' })
+        );
+    });
+});

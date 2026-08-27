@@ -68,6 +68,12 @@ const workerModuleFiles = [
         outputName: 'feedback-analysis-handoff.js',
     },
     {
+        // SCN-FWB-037：Agent 提议的下一步选项，模型出文案、控制面裁权限。
+        sourcePath: 'src/features/feedback/next-steps.js',
+        sourceImport: '../src/features/feedback/next-steps.js',
+        outputName: 'feedback-next-steps.js',
+    },
+    {
         // Executor Protocol v0：Worker 与 Adapter 共用的唯一事件定义（SCN-FWB-032）。
         // Pages 与 Worker 跑同一份 share-worker.js，所以它的模块图也必须平铺进 CN 产物。
         sourcePath: 'packages/feedback-platform/protocol/v0.js',
