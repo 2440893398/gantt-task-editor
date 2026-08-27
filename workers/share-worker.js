@@ -70,12 +70,8 @@ const FEEDBACK_AUTOMATION_EVENT_TYPES = [
 // 改为从 Executor Protocol v0 派生（SCN-FWB-032：Worker 与 Adapter 不得各持一份）。
 const FEEDBACK_CALLBACK_EVENTS = ALL_EVENT_TYPES;
 const FEEDBACK_PROVIDERS = new Set(['codex', 'claude']);
-const FEEDBACK_PROVIDER_ACTIONS = {
-    codex: 'openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56',
-    claude: 'anthropics/claude-code-action@be7b93b1907a4abad570368f3c74b6fe3807510b',
-};
-// executor 路径上真正跑活的是本地执行器里的 Adapter，不是 GitHub Action。
-// 管理端展示的执行器标识必须跟着执行路径走，否则页面在说一条它根本不走的通路。
+// 真正跑活的是本地执行器里的 Adapter（2026-08-27 起 executor 是唯一执行路径，
+// GitHub Actions 路径已整体退役）。管理端展示的执行器标识必须与之一致。
 const FEEDBACK_EXECUTOR_ADAPTER_IDS = {
     codex: 'executor:codex',
     claude: 'executor:claude-code',
@@ -157,7 +153,6 @@ const FEEDBACK_COMMENT_ATTACHMENT_TYPES = new Set([
 const FEEDBACK_EVENT_SPEC_VERSION = '1.0';
 // §17.2: at most 4 attempts (1 initial + 3 retries at 1/5/15 minutes).
 const FEEDBACK_DELIVERY_MAX_ATTEMPTS = 4;
-const FEEDBACK_DELIVERY_RETRY_DELAYS_MS = Object.freeze([60 * 1000, 5 * 60 * 1000, 15 * 60 * 1000]);
 // §17.1: only transport-level failures are retried. Auth, signature and schema
 // failures stop immediately so a rejected request never loops.
 const FEEDBACK_RETRYABLE_DELIVERY_CODES = new Set([
@@ -219,23 +214,8 @@ const FEEDBACK_EXECUTOR_APPROVAL_KINDS = new Set([
     'command_execution',
     'permissions',
 ]);
-// §13.3/§14.4 step 2: read-only policies get a profile without workspace write.
-const FEEDBACK_PERMISSION_PROFILES = {
-    analyze: 'feedback-readonly',
-    review: 'feedback-readonly',
-    implement: 'feedback-workspace',
-    implement_and_verify: 'feedback-workspace',
-    local_required: 'feedback-local',
-};
-const FEEDBACK_PROVIDER_WORKFLOW_FILES = {
-    codex: 'feedback-agent-codex.yml',
-    claude: 'feedback-agent-claude.yml',
-};
-const FEEDBACK_RELEASE_WORKFLOW_FILE = 'feedback-delivery.yml';
-const FEEDBACK_SMOKE_WORKFLOW_FILE = 'feedback-runner-smoke.yml';
-// A smoke that never reports back must not leave the provider stuck in
-// `testing` forever; §19.5 wants an observable outcome either way.
-const FEEDBACK_SMOKE_TIMEOUT_MS = 30 * 60 * 1000;
+// §13.3/§14.4 step 2 的 policy→permission-profile 映射曾随 GH 派发 payload 下发；
+// executor 路径上权限面由执行器准入（S6/S8）机械裁定，Worker 不再声明 profile。
 // §9.3 Candidate and Release states.
 const FEEDBACK_CANDIDATE_STATUSES = new Set([
     'created',
@@ -651,11 +631,6 @@ function isFeedbackWorkflowTimeout(error) {
 
 export class FeedbackWorkflow extends WorkflowEntrypoint {
     async run(event, step) {
-        const releaseId = String(event.payload?.releaseId || '');
-        if (/^rel_[0-9a-f-]{36}$/i.test(releaseId)) {
-            return this.retryReleaseDispatch(step, releaseId);
-        }
-
         const issueId = String(event.payload?.issueId || '');
         const generation = Number(event.payload?.generation);
         if (!issueId.startsWith('feedback:') || !Number.isInteger(generation) || generation < 1) {
@@ -708,32 +683,14 @@ export class FeedbackWorkflow extends WorkflowEntrypoint {
                     delivery: await this.deliverConfiguredEvent(step, triggerEvent, stepSuffix),
                     run,
                 };
-            } else if (run?.runId && run.runnerType === 'executor') {
-                // SCN-FWB-033（V3 缺口 #0）：executor Run 不向 GitHub 派发——同一条
-                // Run 被两条执行路径认领就是双重执行。它保持 status='created'，由
+            } else if (run?.runId) {
+                // SCN-FWB-033：executor 是唯一执行路径（2026-08-27 起，GitHub 派发
+                // 已随 GH 路径整体删除）。Run 保持 status='created'，由
                 // /api/executor/lease 出站领取；领不到时按既有超时收口为 timed_out。
                 latestResult = {
                     ...started,
                     delivery: await this.deliverConfiguredEvent(step, triggerEvent, stepSuffix),
                     run: { runId: run.runId, dispatched: false, runnerType: run.runnerType },
-                };
-            } else if (run?.runId) {
-                // §13.1 step 8. Dispatch failure is recorded on the Run rather than
-                // thrown, so the workbench shows an un-started Run instead of a
-                // Run that looks alive but has no Job behind it.
-                const dispatch = await step.do(`dispatch run${stepSuffix}`, async () =>
-                    dispatchFeedbackRunToGitHub(this.env, {
-                        payload: run.dispatchPayload,
-                        provider: run.provider,
-                    })
-                );
-                await step.do(`record dispatch result${stepSuffix}`, async () =>
-                    recordFeedbackDispatchResult(this.env, run.runId, dispatch)
-                );
-                latestResult = {
-                    ...started,
-                    delivery: await this.deliverConfiguredEvent(step, triggerEvent, stepSuffix),
-                    run: { runId: run.runId, dispatched: dispatch.dispatched },
                 };
             } else {
                 latestResult = {
@@ -860,21 +817,6 @@ export class FeedbackWorkflow extends WorkflowEntrypoint {
                 return { ...latestResult, workflowStatus: 'terminated' };
             }
         }
-    }
-
-    async retryReleaseDispatch(step, releaseId) {
-        const delays = ['1 minute', '5 minutes', '15 minutes'];
-        let latest = null;
-
-        for (let index = 0; index < delays.length; index += 1) {
-            await step.sleep(`wait to retry Release dispatch ${index + 1}`, delays[index]);
-            latest = await step.do(`retry Release dispatch ${index + 1}`, async () =>
-                resumeFeedbackReleaseDispatchById(this.env, releaseId)
-            );
-            if (latest?.dispatched || !latest?.resumable) break;
-        }
-
-        return { releaseId, ...latest };
     }
 
     /**
@@ -3271,15 +3213,8 @@ function normalizeRunnerProvider(raw, provider) {
         lastTestedAt: limitText(value.lastTestedAt, 40),
         lastTestResult: latestResult,
         smokeHistory: smokeHistory.slice(-FEEDBACK_SMOKE_HISTORY_LIMIT),
-        // The in-flight smoke this provider is waiting on, so a late or replayed
-        // result can be matched to the exact dispatch that asked for it.
-        pendingSmoke:
-            value.pendingSmoke && typeof value.pendingSmoke === 'object'
-                ? {
-                      smokeId: limitText(value.pendingSmoke.smokeId, 60),
-                      dispatchedAt: limitText(value.pendingSmoke.dispatchedAt, 40),
-                  }
-                : null,
+        // pendingSmoke（等待回调的 Action 冒烟）已随 GH 路径删除：executor 探测是
+        // 同步的，没有「派发出去等结果」的中间态可言。
     };
     if (provider === 'codex') {
         normalized.responsesEndpoint =
@@ -3480,9 +3415,8 @@ async function evaluateFeedbackAutoDeliverPreflight(env) {
     const has = (name) => Boolean(String(env[name] || '').trim());
     // §M2：目标仓库来自 `feedback_projects`，不再是环境变量。
     const project = await resolveFeedbackProject(env);
-    const onExecutor = project.defaultAdapter === 'executor';
 
-    // 两条路径共有：回调目标、Release 认领密钥、生产冒烟目标。它们跟执行引擎无关。
+    // 与执行引擎无关的共有前提：回调目标、Release 认领密钥、生产冒烟目标。
     const sharedChecks = [
         {
             id: 'callback_origin',
@@ -3504,50 +3438,31 @@ async function evaluateFeedbackAutoDeliverPreflight(env) {
         },
     ];
 
-    const pathChecks = onExecutor
-        ? [
-              {
-                  id: 'project_delivery_config',
-                  label: '项目交付配置',
-                  ok:
-                      Boolean(project.repo) &&
-                      Boolean(project.defaultBranch) &&
-                      Object.keys(project.deployConfig || {}).length > 0,
-                  reason: 'feedback_projects 缺 repo、default_branch 或 deploy_config_json',
-              },
-              {
-                  id: 'executor_control_plane',
-                  label: '执行器控制面凭据',
-                  ok: has('FEEDBACK_EXECUTOR_TOKEN'),
-                  reason: '缺少 FEEDBACK_EXECUTOR_TOKEN，执行器领不到活',
-              },
-              {
-                  id: 'executor_online',
-                  label: '执行器在线',
-                  ok: (await readFeedbackExecutorHealth(env)).some((executor) => executor.live),
-                  reason: '没有心跳新鲜的在线执行器，工单会停在等待领取',
-              },
-          ]
-        : [
-              {
-                  id: 'github_dispatch',
-                  label: 'GitHub 派发凭据',
-                  ok: Boolean(project.repo) && has('FEEDBACK_GITHUB_TOKEN'),
-                  reason: 'feedback_projects 无启用项目，或缺少 FEEDBACK_GITHUB_TOKEN',
-              },
-              {
-                  id: 'merge_credentials',
-                  label: 'GitHub merge 凭据',
-                  ok: has('FEEDBACK_MERGE_TOKEN'),
-                  reason: '缺少 FEEDBACK_MERGE_TOKEN，无法完成干净集成',
-              },
-              {
-                  id: 'deployment_credentials',
-                  label: 'Worker/Pages 部署凭据',
-                  ok: has('FEEDBACK_DEPLOY_TOKEN') || has('CLOUDFLARE_API_TOKEN'),
-                  reason: '缺少 FEEDBACK_DEPLOY_TOKEN 或 CLOUDFLARE_API_TOKEN',
-              },
-          ];
+    // executor 是唯一执行路径（2026-08-27，EXC-FWB-006 就此结清）：集成、push 与部署
+    // 由执行器用它自己那份凭据完成，Worker 只核验自己真能观察到的事实。
+    const pathChecks = [
+        {
+            id: 'project_delivery_config',
+            label: '项目交付配置',
+            ok:
+                Boolean(project.repo) &&
+                Boolean(project.defaultBranch) &&
+                Object.keys(project.deployConfig || {}).length > 0,
+            reason: 'feedback_projects 缺 repo、default_branch 或 deploy_config_json',
+        },
+        {
+            id: 'executor_control_plane',
+            label: '执行器控制面凭据',
+            ok: has('FEEDBACK_EXECUTOR_TOKEN'),
+            reason: '缺少 FEEDBACK_EXECUTOR_TOKEN，执行器领不到活',
+        },
+        {
+            id: 'executor_online',
+            label: '执行器在线',
+            ok: (await readFeedbackExecutorHealth(env)).some((executor) => executor.live),
+            reason: '没有心跳新鲜的在线执行器，工单会停在等待领取',
+        },
+    ];
 
     const checks = [...pathChecks, ...sharedChecks].map((check) => ({
         ...check,
@@ -3556,7 +3471,7 @@ async function evaluateFeedbackAutoDeliverPreflight(env) {
 
     return {
         ok: checks.every((check) => check.ok),
-        adapter: onExecutor ? 'executor' : 'actions',
+        adapter: 'executor',
         checkedAt: new Date().toISOString(),
         checks,
     };
@@ -3586,7 +3501,8 @@ function normalizeFeedbackSmokeResult(raw, provider) {
         provider,
         action:
             limitText(raw.action, 160) ||
-            (probe ? FEEDBACK_EXECUTOR_ADAPTER_IDS[provider] : FEEDBACK_PROVIDER_ACTIONS[provider]),
+            // 历史 action_smoke 记录带着自己的 action 串；GH 路径删除后不再补默认值。
+            (probe ? FEEDBACK_EXECUTOR_ADAPTER_IDS[provider] : ''),
         actionCommit: probe ? '' : limitText(raw.actionCommit, 80),
         executorId: probe ? limitText(raw.executorId, 120) : '',
         lastHeartbeatAt: probe ? limitText(raw.lastHeartbeatAt, 40) : '',
@@ -3699,16 +3615,14 @@ function serializeAutomationSettings(env, stored) {
 }
 
 /**
- * §19.5 管理端必须描述**当前执行路径**，而不是只会描述 Actions。
- * `default_adapter='executor'` 的项目不派 Action：再展示 Action ref、GitHub-hosted 运行器
- * 和 Action 冒烟得来的连接状态，就是让人照着一条不存在的通路去排障（SCN-FWB-016/033）。
+ * §19.5 管理端必须描述**当前执行路径**（SCN-FWB-016/033）。
+ * 2026-08-27 起 executor 是唯一执行路径：展示执行器 Adapter id、在线执行器与心跳；
+ * 连接状态由控制面推导，不照抄历史冒烟结果——那条通路的证据既不必要也不充分。
  */
 async function serializeRunnerSettings(env, stored) {
     const settings = stored.settings;
-    const project = await resolveFeedbackProject(env);
-    const onExecutor = project.defaultAdapter === 'executor';
-    const executors = onExecutor ? await readFeedbackExecutorHealth(env) : [];
-    const serializeProvider = (id, label, mention, secretRef) => {
+    const executors = await readFeedbackExecutorHealth(env);
+    const serializeProvider = (id, label, mention) => {
         const providerSettings = settings.providers[id];
         const liveExecutor = executors.find(
             (executor) => executor.live && feedbackExecutorCoversProvider(executor.providers, id)
@@ -3721,34 +3635,18 @@ async function serializeRunnerSettings(env, stored) {
             id,
             label,
             mention,
-            healthSource: onExecutor ? 'executor' : 'action_smoke',
-            action: onExecutor ? FEEDBACK_EXECUTOR_ADAPTER_IDS[id] : FEEDBACK_PROVIDER_ACTIONS[id],
-            // executor 路径不照抄 Action 冒烟留下的 connectionState：那条通路的证据在这里
-            // 既不必要也不充分，照抄会显示一个与 §7.4 判据相反的「已连接」。
-            connectionState: onExecutor
-                ? liveExecutor
-                    ? 'connected'
-                    : knownExecutor
-                      ? 'failed'
-                      : 'unverified'
-                : providerSettings.connectionState,
-            executor: onExecutor
-                ? {
-                      online: Boolean(liveExecutor),
-                      executorId: (liveExecutor || knownExecutor)?.id || '',
-                      lastHeartbeatAt: (liveExecutor || knownExecutor)?.lastHeartbeatAt || '',
-                  }
-                : null,
-            secretScope: onExecutor ? 'executor_host' : 'github',
-            secretRef: onExecutor ? '执行器主机 executor.env' : secretRef,
+            healthSource: 'executor',
+            action: FEEDBACK_EXECUTOR_ADAPTER_IDS[id],
+            connectionState: liveExecutor ? 'connected' : knownExecutor ? 'failed' : 'unverified',
+            executor: {
+                online: Boolean(liveExecutor),
+                executorId: (liveExecutor || knownExecutor)?.id || '',
+                lastHeartbeatAt: (liveExecutor || knownExecutor)?.lastHeartbeatAt || '',
+            },
+            secretScope: 'executor_host',
+            secretRef: '执行器主机 executor.env',
             // 执行器的凭据在开发机上，Worker 看不到，也就不该替它宣称「已配置」。
-            secretConfigured: onExecutor
-                ? null
-                : Boolean(
-                      id === 'codex'
-                          ? env.FEEDBACK_CODEX_SMOKE_TOKEN || env.GITHUB_TOKEN
-                          : env.FEEDBACK_CLAUDE_SMOKE_TOKEN || env.GITHUB_TOKEN
-                  ),
+            secretConfigured: null,
         };
     };
     return {
@@ -3770,24 +3668,16 @@ async function serializeRunnerSettings(env, stored) {
             },
         },
         providers: {
-            codex: serializeProvider('codex', 'Codex', '@codex-agent', 'OPENAI_API_KEY'),
-            claude: serializeProvider(
-                'claude',
-                'Claude Agent',
-                '@claude-agent',
-                'WIF / ANTHROPIC_API_KEY'
-            ),
+            codex: serializeProvider('codex', 'Codex', '@codex-agent'),
+            claude: serializeProvider('claude', 'Claude Agent', '@claude-agent'),
         },
         runtime: {
             orchestrator: 'Cloudflare Workflows',
             orchestratorBound: Boolean(env.FEEDBACK_WORKFLOW),
-            adapter: onExecutor ? 'executor' : 'actions',
-            runner: onExecutor ? '本地执行器（拉取式）' : 'GitHub-hosted',
-            // 「分发」在两条路径上问的不是同一件事：Actions 问派发地址配没配，
-            // executor 问此刻有没有执行器在拉活。
-            dispatchConfigured: onExecutor
-                ? executors.some((executor) => executor.live)
-                : Boolean(env.FEEDBACK_GITHUB_DISPATCH_URL),
+            adapter: 'executor',
+            runner: '本地执行器（拉取式）',
+            // 「分发」问的是此刻有没有执行器在拉活。
+            dispatchConfigured: executors.some((executor) => executor.live),
             executors,
         },
     };
@@ -4252,15 +4142,12 @@ async function resolveFeedbackDeliveryMode(
               .first()
         : null;
     const project = await resolveFeedbackProject(env);
-    // executor 路径不读 FEEDBACK_GITHUB_TOKEN：那是派发 Action 用的，这条 Run 不派 Action。
-    // 它要的是控制面 bearer——没有它执行器连租约都领不到。
+    // 执行器要的是控制面 bearer——没有它执行器连租约都领不到（EXC-FWB-006）。
     const credentialsReady = Boolean(
         project.repo &&
         env.FEEDBACK_CALLBACK_ORIGIN &&
         env.FEEDBACK_RELEASE_TOKEN_SECRET &&
-        (project.defaultAdapter === 'executor'
-            ? env.FEEDBACK_EXECUTOR_TOKEN
-            : env.FEEDBACK_GITHUB_TOKEN)
+        env.FEEDBACK_EXECUTOR_TOKEN
     );
     // §19.5: autonomy is switched on by an admin save backed by a passing
     // preflight. The environment flags remain an outer kill switch, so removing
@@ -4288,21 +4175,11 @@ async function resolveFeedbackDeliveryMode(
 }
 
 /**
- * §7.4 的 provider 健康必须跟着执行路径走（SCN-FWB-022/033）。
- *
- * Action 冒烟只证明 GitHub 通路可用：对 `default_adapter='executor'` 的项目，它既不
- * 必要（那条 Run 根本不派发 Action）也不充分（执行器在开发机上，冒烟绿着它也可能没
- * 起）。拿另一条通路的健康证明放行，等于这一条判据没判。
+ * §7.4 的 provider 健康只认执行器证据（SCN-FWB-022/033，2026-08-27 起 executor
+ * 为唯一执行路径）：历史 Action 冒烟结果既不必要也不充分，不得被读作健康证明。
  */
-async function isFeedbackProviderReadyForDelivery(env, { project, provider, runnerSettings }) {
-    if (project.defaultAdapter === 'executor') {
-        return hasLiveFeedbackExecutorForProvider(env, provider);
-    }
-    const providerHealth = runnerSettings.providers[provider];
-    return (
-        providerHealth?.connectionState === 'connected' &&
-        providerHealth?.lastTestResult?.ok === true
-    );
+async function isFeedbackProviderReadyForDelivery(env, { provider }) {
+    return hasLiveFeedbackExecutorForProvider(env, provider);
 }
 
 /**
@@ -4370,17 +4247,9 @@ function getFeedbackReleaseTokenSecret(env) {
 /**
  * §18.1/§21.3: Context and Callback tokens carry a distinct `aud` so one can
  * never be replayed as the other, and both are bound to a single runId.
+ * 铸造侧曾随 GH 派发 payload 下发（2026-08-27 删除）；run 级 `/context`+`/events`
+ * 端点作为 Executor Protocol v0 的 hosted-adapter 协议面保留，校验逻辑即格式定义。
  */
-async function createFeedbackRunToken(env, { runId, audience, provider }) {
-    const expiresAt = Date.now() + FEEDBACK_RUN_TOKEN_TTL_SECONDS * 1000;
-    const payload = base64UrlEncode(
-        JSON.stringify({ aud: audience, runId, provider, exp: expiresAt })
-    );
-    const signature = await signValue(payload, getFeedbackRunTokenSecret(env));
-
-    return { token: `${payload}.${signature}`, expiresAt: new Date(expiresAt).toISOString() };
-}
-
 async function verifyFeedbackRunToken(request, env, { runId, audience }) {
     const token = getBearerToken(request);
     if (!token) return null;
@@ -4436,10 +4305,8 @@ async function resolveFeedbackProject(env) {
             commands: parseStoredJson(row.commands_json, {}),
             deployConfig: parseStoredJson(row.deploy_config_json, {}),
             isSelf: Number(row.is_self) === 1,
-            // ADD COLUMN 加不了 CHECK：取值合法性在这里判定。任何非 'executor'
-            // 的值（含缺列、手滑写错）一律回落 'actions'，绝不把 Run 送进没人
-            // 认领的 executor 队列。
-            defaultAdapter: row.default_adapter === 'executor' ? 'executor' : 'actions',
+            // `default_adapter`（迁移 0008）已退役为历史数据：2026-08-27 起 executor
+            // 是唯一执行路径，这里不再读它参与路由。
             source: 'table',
         };
     }
@@ -4451,7 +4318,6 @@ async function resolveFeedbackProject(env) {
         commands: {},
         deployConfig: {},
         isSelf: false,
-        defaultAdapter: 'actions',
         source: 'env',
     };
 }
@@ -4498,11 +4364,11 @@ async function createFeedbackRun(env, { issueId, workflowId, provider, triggerEv
         runnerSettings,
     });
 
-    // SCN-FWB-033（V3 缺口 #0）：执行路径是项目数据。default_adapter='executor' 的
-    // Run 以 runner_type='executor' 落库、停在 created 等 /api/executor/lease 领取；
-    // 其余一律维持 github_hosted。切换或回滚执行引擎就是改这一行数据。
+    // SCN-FWB-033：executor 是唯一执行路径（2026-08-27 起）。Run 以
+    // runner_type='executor' 落库、停在 created 等 /api/executor/lease 领取；
+    // 没有执行器在线时按既有超时收口，失败可见、不静默换路。
     const project = await resolveFeedbackProject(env);
-    const runnerType = project.defaultAdapter === 'executor' ? 'executor' : 'github_hosted';
+    const runnerType = 'executor';
 
     if (FEEDBACK_WRITE_POLICIES.has(policy)) {
         // §1.2 自举约束的机械实现：平台自身的项目不得产生写入型 Run。
@@ -4562,12 +4428,9 @@ async function createFeedbackRun(env, { issueId, workflowId, provider, triggerEv
         .bind(runId, workflowId)
         .run();
 
-    const [contextToken, callbackToken] = await Promise.all([
-        createFeedbackRunToken(env, { runId, audience: 'context', provider: resolvedProvider }),
-        createFeedbackRunToken(env, { runId, audience: 'callback', provider: resolvedProvider }),
-    ]);
-
-    const origin = String(env.FEEDBACK_CALLBACK_ORIGIN || '').replace(/\/+$/, '');
+    // GH 派发的 dispatchPayload 与随派发下发的 run 级 token 已随 GH 路径删除
+    // （2026-08-27）：执行器经 /api/executor/lease 领取时拿到自己的 context，
+    // `requiresDesign`/`contractRun`/授权范围等服务端判据都在那份 context 里。
     return {
         runId,
         issueId,
@@ -4577,154 +4440,7 @@ async function createFeedbackRun(env, { issueId, workflowId, provider, triggerEv
         designId: design?.id || null,
         provider: resolvedProvider,
         runnerType,
-        contextToken,
-        callbackToken,
-        // §13.2: tokens travel as separate Action inputs, not inside the
-        // payload document that ends up in Job logs.
-        dispatchPayload: {
-            issueId,
-            issueVersion: Number(issue.version) || 1,
-            workflowId,
-            runId,
-            policy,
-            deliveryMode,
-            provider: resolvedProvider,
-            // §16.4/SCN-FWB-020: the Report job runs after the Agent job and has
-            // no access to the fetched context, so the one fact it needs to
-            // choose `agent.waiting_human` over `run.completed` travels with the
-            // dispatch. Routing stays server-owned (§7.3).
-            requiresDesign: requiresFeedbackDesign({
-                businessType: issue.business_type,
-                scope: issue.scope,
-                automationDecision: issue.automation_decision,
-            }),
-            // §14.4 rule 4: the project contract says a requirement change
-            // updates `tests/scenarios/**` first, and the diff gate treats those
-            // files as contract-aware — allowed only for an authorized Run. With
-            // nothing granting that authorization, every Run that followed the
-            // rule was rejected with CONTRACT_CHANGE_NOT_AUTHORIZED after all its
-            // tests had already run. A write-capable Run is exactly the Run that
-            // may need to record a scenario, so the grant is server-owned like
-            // `requiresDesign`. It never weakens the outcome: contract files stay
-            // in `requiresCandidateReview`, so the Candidate still needs a human
-            // and can never leave through `auto_deliver`, and `expected/*.json`
-            // stays hard-denied.
-            contractRun: FEEDBACK_WRITE_POLICIES.has(policy),
-            permissionProfile: FEEDBACK_PERMISSION_PROFILES[policy] || 'feedback-readonly',
-            responsesEndpoint:
-                resolvedProvider === 'codex'
-                    ? runnerSettings.providers.codex.responsesEndpoint
-                    : '',
-            contextUrl: `${origin}/api/feedback/runs/${encodeURIComponent(runId)}/context`,
-            callbackUrl: `${origin}/api/feedback/runs/${encodeURIComponent(runId)}/events`,
-            contextToken: contextToken.token,
-            callbackToken: callbackToken.token,
-            baseCommit: '',
-        },
     };
-}
-
-/**
- * Projects the dispatch outcome onto the Run.
- *
- * A Run that could not be handed to GitHub stays in the non-terminal `created`
- * state when the cause is retryable or a missing configuration: §17.1 wants
- * those retryable by an admin, and a terminal Run would also release the
- * one-write-Run-per-Issue lock (§7.3) while nothing is actually running. Only a
- * permanent rejection is terminal.
- */
-async function recordFeedbackDispatchResult(env, runId, dispatch) {
-    const permanentFailure =
-        !dispatch.dispatched &&
-        dispatch.errorCode !== 'GITHUB_DISPATCH_NOT_CONFIGURED' &&
-        !dispatch.retryable;
-    const status = dispatch.dispatched ? 'dispatched' : permanentFailure ? 'failed' : 'created';
-    await env.FEEDBACK_DB.prepare(
-        `UPDATE feedback_runs
-         SET status = ?, error_code = ?,
-             finished_at = CASE WHEN ? = 'failed' THEN ? ELSE finished_at END
-         WHERE id = ?`
-    )
-        .bind(
-            status,
-            dispatch.dispatched ? null : dispatch.errorCode,
-            status,
-            new Date().toISOString(),
-            runId
-        )
-        .run();
-
-    if (!dispatch.dispatched) {
-        const run = await env.FEEDBACK_DB.prepare('SELECT issue_id FROM feedback_runs WHERE id = ?')
-            .bind(runId)
-            .first();
-        if (run) {
-            await appendFeedbackSystemEvent(env, run.issue_id, {
-                type: 'automation.suppressed',
-                visibility: 'admin',
-                body: { reason: dispatch.errorCode, runId, retryable: Boolean(dispatch.retryable) },
-            });
-        }
-    }
-
-    return { runId, status, errorCode: dispatch.errorCode || null };
-}
-
-/**
- * §19.5: the connection test is a real minimal Action smoke, not an HTTP ping.
- * The result therefore cannot be known synchronously — the workflow reports back
- * through a smoke-scoped callback. Until it does, the provider is `testing`.
- */
-async function dispatchFeedbackRunnerSmoke(env, { provider, smokeId, settings }) {
-    const project = await resolveFeedbackProject(env);
-    const repository = project.repo;
-    const githubToken = String(env.FEEDBACK_GITHUB_TOKEN || '');
-    const callbackOrigin = String(env.FEEDBACK_CALLBACK_ORIGIN || '');
-    if (!repository || !githubToken || !callbackOrigin) {
-        return { dispatched: false, errorCode: 'ACTION_SMOKE_NOT_CONFIGURED' };
-    }
-
-    const { token } = await createFeedbackSmokeToken(env, { smokeId, provider });
-    const endpointMode =
-        provider === 'codex' &&
-        settings.providers.codex.responsesEndpoint !== FEEDBACK_DEFAULT_RESPONSES_ENDPOINT
-            ? 'relay'
-            : 'official';
-    const payload = {
-        smokeId,
-        provider,
-        action: FEEDBACK_PROVIDER_ACTIONS[provider],
-        endpointMode,
-        responsesEndpoint: provider === 'codex' ? settings.providers.codex.responsesEndpoint : '',
-        callbackUrl: `${callbackOrigin.replace(/\/+$/, '')}/api/feedback/runners/smoke/${smokeId}/result`,
-        callbackToken: token,
-    };
-
-    const ref = project.defaultBranch;
-    const url = `https://api.github.com/repos/${repository}/actions/workflows/${FEEDBACK_SMOKE_WORKFLOW_FILE}/dispatches`;
-    try {
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: {
-                Accept: 'application/vnd.github+json',
-                Authorization: `Bearer ${githubToken}`,
-                'X-GitHub-Api-Version': '2022-11-28',
-                'Content-Type': 'application/json',
-                'User-Agent': 'gantt-feedback-workbench',
-            },
-            body: JSON.stringify({ ref, inputs: { payload: JSON.stringify(payload) } }),
-            signal: AbortSignal.timeout(FEEDBACK_HOOK_TIMEOUT_MS),
-        });
-        if (!response.ok) {
-            return { dispatched: false, errorCode: `GITHUB_HTTP_${response.status}` };
-        }
-        return { dispatched: true, endpointMode };
-    } catch (error) {
-        return {
-            dispatched: false,
-            errorCode: error?.name === 'TimeoutError' ? 'GITHUB_TIMEOUT' : 'GITHUB_UNREACHABLE',
-        };
-    }
 }
 
 /**
@@ -4780,130 +4496,6 @@ async function probeFeedbackExecutorProvider(env, { provider, testedAt }) {
         errorCode,
         message: messages[errorCode],
     };
-}
-
-async function createFeedbackSmokeToken(env, { smokeId, provider }) {
-    const expiresAt = Date.now() + FEEDBACK_SMOKE_TIMEOUT_MS;
-    const payload = base64UrlEncode(
-        JSON.stringify({ aud: 'runner_smoke', smokeId, provider, exp: expiresAt })
-    );
-    const signature = await signValue(payload, getFeedbackRunTokenSecret(env));
-
-    return { token: `${payload}.${signature}`, expiresAt: new Date(expiresAt).toISOString() };
-}
-
-/**
- * §21.3: a smoke token proves one thing only — that this exact smoke may report
- * its own result. It is never an admin token and never covers another smoke.
- */
-async function verifyFeedbackSmokeToken(request, env, { smokeId }) {
-    const token = getBearerToken(request);
-    if (!token) return null;
-
-    const [payload, signature] = token.split('.');
-    if (!payload || !signature) return null;
-
-    const expected = await signValue(payload, getFeedbackRunTokenSecret(env));
-    if (!feedbackHashesMatch(expected, signature)) return null;
-
-    try {
-        const claims = JSON.parse(base64UrlDecode(payload));
-        if (claims.aud !== 'runner_smoke') return null;
-        if (claims.smokeId !== smokeId) return null;
-        if (!(Number(claims.exp) > Date.now())) return null;
-        return claims;
-    } catch {
-        return null;
-    }
-}
-
-/**
- * §13.1 step 8: hands the Run to GitHub Actions. Returns a structured reason
- * instead of throwing when dispatch is not configured, so the Run is visibly
- * un-started rather than silently assumed to be running.
- */
-async function dispatchFeedbackRunToGitHub(env, { payload, provider }) {
-    const project = await resolveFeedbackProject(env);
-    const repository = project.repo;
-    const token = String(env.FEEDBACK_GITHUB_TOKEN || '');
-    const workflowFile = FEEDBACK_PROVIDER_WORKFLOW_FILES[provider];
-    if (!repository || !token || !workflowFile) {
-        return { dispatched: false, errorCode: 'GITHUB_DISPATCH_NOT_CONFIGURED' };
-    }
-
-    const ref = project.defaultBranch;
-    let dispatchPayload = payload;
-    if (!/^[0-9a-f]{40,64}$/i.test(String(dispatchPayload.baseCommit || ''))) {
-        const commitUrl = `https://api.github.com/repos/${repository}/commits/${encodeURIComponent(ref)}`;
-        try {
-            const commitResponse = await fetch(commitUrl, {
-                headers: {
-                    Accept: 'application/vnd.github+json',
-                    Authorization: `Bearer ${token}`,
-                    'X-GitHub-Api-Version': '2022-11-28',
-                    'User-Agent': 'gantt-feedback-workbench',
-                },
-                signal: AbortSignal.timeout(FEEDBACK_HOOK_TIMEOUT_MS),
-            });
-            if (!commitResponse.ok) {
-                return {
-                    dispatched: false,
-                    errorCode: `GITHUB_HTTP_${commitResponse.status}`,
-                    retryable: commitResponse.status === 429 || commitResponse.status >= 500,
-                };
-            }
-            const commit = await commitResponse.json();
-            const baseCommit = String(commit?.sha || '');
-            if (!/^[0-9a-f]{40,64}$/i.test(baseCommit)) {
-                return {
-                    dispatched: false,
-                    errorCode: 'GITHUB_BASE_COMMIT_INVALID',
-                    retryable: false,
-                };
-            }
-            dispatchPayload = { ...dispatchPayload, baseCommit };
-            await env.FEEDBACK_DB.prepare('UPDATE feedback_runs SET base_commit = ? WHERE id = ?')
-                .bind(baseCommit, dispatchPayload.runId)
-                .run();
-        } catch (error) {
-            return {
-                dispatched: false,
-                errorCode: error?.name === 'TimeoutError' ? 'GITHUB_TIMEOUT' : 'GITHUB_UNREACHABLE',
-                retryable: true,
-            };
-        }
-    }
-    const url = `https://api.github.com/repos/${repository}/actions/workflows/${workflowFile}/dispatches`;
-    try {
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: {
-                Accept: 'application/vnd.github+json',
-                Authorization: `Bearer ${token}`,
-                'X-GitHub-Api-Version': '2022-11-28',
-                'Content-Type': 'application/json',
-                'User-Agent': 'gantt-feedback-workbench',
-            },
-            // workflow_dispatch inputs are strings; the payload travels as one
-            // JSON document so the template does not need per-field plumbing.
-            body: JSON.stringify({ ref, inputs: { payload: JSON.stringify(dispatchPayload) } }),
-            signal: AbortSignal.timeout(FEEDBACK_HOOK_TIMEOUT_MS),
-        });
-        if (!response.ok) {
-            return {
-                dispatched: false,
-                errorCode: `GITHUB_HTTP_${response.status}`,
-                retryable: response.status === 429 || response.status >= 500,
-            };
-        }
-        return { dispatched: true, ref, workflowFile };
-    } catch (error) {
-        return {
-            dispatched: false,
-            errorCode: error?.name === 'TimeoutError' ? 'GITHUB_TIMEOUT' : 'GITHUB_UNREACHABLE',
-            retryable: true,
-        };
-    }
 }
 
 /**
@@ -4986,7 +4578,7 @@ async function verifyRunCompletionManifest({ env, run, payload }) {
     }
 
     // SCN-FWB-039/§7.3：授权是服务端状态，不信完成载荷的回显。`contractRun` 与
-    // dispatchPayload 同款口径——写入型 Run 就是可改契约的 Run（改动仍强制候选复核）。
+    // 执行器 lease context 同款口径——写入型 Run 就是可改契约的 Run（改动仍强制候选复核）。
     const grant = await readFeedbackGateGrant(env, run.issue_id);
     return evaluateDiffGate({
         changedFiles,
@@ -5049,7 +4641,7 @@ async function readFeedbackRunContext(env, runId) {
         }),
         // SCN-FWB-039：门禁授权是服务端状态，随 context 下发（write-pipeline 只认
         // `context.approvedPaths`/`contractRunApproved`，此前控制面从未给过——管道
-        // 两头都在，中间没接）。契约授权与 dispatchPayload.contractRun 同款口径。
+        // 两头都在，中间没接）。契约授权与执行器 lease context 同款口径。
         approvedPaths: gateGrant.approvedPaths,
         contractRunApproved: writeCapableRun || gateGrant.contractRunApproved,
         issue: {
@@ -6569,264 +6161,20 @@ function buildFeedbackReleaseDispatchPayload(env, { release, candidate, reposito
     };
 }
 
-async function dispatchFeedbackReleaseToGitHub(env, { release, candidate }) {
-    const project = await resolveFeedbackProject(env);
-    const repository = String(candidate.repository || project.repo || '');
-    const token = String(env.FEEDBACK_GITHUB_TOKEN || '');
-    const callbackOrigin = String(env.FEEDBACK_CALLBACK_ORIGIN || '').replace(/\/$/, '');
-    if (!repository || !token || !callbackOrigin) {
-        return { dispatched: false, errorCode: 'GITHUB_RELEASE_DISPATCH_NOT_CONFIGURED' };
-    }
-
-    const ref = project.defaultBranch;
-    const url = `https://api.github.com/repos/${repository}/actions/workflows/${FEEDBACK_RELEASE_WORKFLOW_FILE}/dispatches`;
-    const payload = buildFeedbackReleaseDispatchPayload(env, { release, candidate, repository });
-
-    try {
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: {
-                Accept: 'application/vnd.github+json',
-                Authorization: `Bearer ${token}`,
-                'X-GitHub-Api-Version': '2022-11-28',
-                'Content-Type': 'application/json',
-                'User-Agent': 'gantt-feedback-workbench',
-            },
-            body: JSON.stringify({ ref, inputs: { payload: JSON.stringify(payload) } }),
-            signal: AbortSignal.timeout(FEEDBACK_HOOK_TIMEOUT_MS),
-        });
-        if (!response.ok) {
-            return {
-                dispatched: false,
-                errorCode: `GITHUB_HTTP_${response.status}`,
-                retryable: response.status === 429 || response.status >= 500,
-            };
-        }
-        return { dispatched: true, ref, workflowFile: FEEDBACK_RELEASE_WORKFLOW_FILE };
-    } catch (error) {
-        return {
-            dispatched: false,
-            errorCode: error?.name === 'TimeoutError' ? 'GITHUB_TIMEOUT' : 'GITHUB_UNREACHABLE',
-            retryable: true,
-        };
-    }
-}
-
-async function dispatchFeedbackCreatedRelease(env, { release, candidate, run }) {
-    // SCN-FWB-033（阶段二）：Release 与 Run 同一条路由规则。executor 项目不向
-    // GitHub 派发（同一个 Release 被两条交付路径认领就是双重集成/双重部署），
-    // Release 保持 deliverFeedbackCandidate 建好的 integrating 态，由
-    // POST /api/executor/release 出站认领。重试/恢复路径走到这里同样命中本分支。
-    if ((await resolveFeedbackProject(env)).defaultAdapter === 'executor') {
-        await env.FEEDBACK_DB.prepare('UPDATE feedback_releases SET error_code = NULL WHERE id = ?')
-            .bind(release.releaseId)
-            .run();
-        return { dispatched: true, mode: 'executor_pull', releaseId: release.releaseId };
-    }
-
-    const dispatch = await dispatchFeedbackReleaseToGitHub(env, {
-        release,
-        candidate,
-    });
-    if (!dispatch.dispatched) {
-        const failure = await recordFeedbackReleaseDispatchFailure(env, {
-            run,
-            candidateId: candidate.id,
-            releaseId: release.releaseId,
-            dispatch,
-        });
-        const retryWorkflow =
-            failure.resumable && failure.attemptCount === 1
-                ? await scheduleFeedbackReleaseRetryWorkflow(env, release.releaseId)
-                : null;
-        return {
-            dispatched: false,
-            reason: dispatch.errorCode,
-            retryable: Boolean(dispatch.retryable),
-            resumable: failure.resumable,
-            releaseId: release.releaseId,
-            humanActionId: failure.humanActionId,
-            retryWorkflow,
-        };
-    }
-
+async function dispatchFeedbackCreatedRelease(env, { release }) {
+    // SCN-FWB-033：executor 是唯一交付路径（2026-08-27 起，GitHub Release 派发已
+    // 随 GH 路径删除）。Release 保持 deliverFeedbackCandidate 建好的 integrating
+    // 态，由 POST /api/executor/release 出站认领；重试/恢复路径走到这里同样只是
+    // 清掉错误码等待认领。
     await env.FEEDBACK_DB.prepare('UPDATE feedback_releases SET error_code = NULL WHERE id = ?')
         .bind(release.releaseId)
         .run();
-    return {
-        dispatched: true,
-        releaseId: release.releaseId,
-        workflowFile: dispatch.workflowFile,
-    };
-}
-
-async function scheduleFeedbackReleaseRetryWorkflow(env, releaseId) {
-    if (!env.FEEDBACK_WORKFLOW) {
-        return { scheduled: false, reason: 'WORKFLOW_BINDING_NOT_CONFIGURED' };
-    }
-
-    const instanceId = `feedback-release-retry-${releaseId}`;
-    try {
-        await env.FEEDBACK_WORKFLOW.create({
-            id: instanceId,
-            params: { releaseId },
-        });
-        return { scheduled: true, instanceId };
-    } catch (error) {
-        return {
-            scheduled: false,
-            instanceId,
-            reason: limitText(error?.message || error, 160) || 'WORKFLOW_CREATE_FAILED',
-        };
-    }
-}
-
-async function resumeFeedbackReleaseDispatchById(env, releaseId) {
-    const releaseRow = await env.FEEDBACK_DB.prepare(
-        `SELECT * FROM feedback_releases
-         WHERE id = ? AND status IN ('integrating', 'merged', 'deploying', 'smoke_testing')`
-    )
-        .bind(releaseId)
-        .first();
-    if (!releaseRow) return { dispatched: false, resumable: false, reason: 'RELEASE_NOT_ACTIVE' };
-
-    const candidate = await env.FEEDBACK_DB.prepare(
-        'SELECT * FROM feedback_candidates WHERE id = ?'
-    )
-        .bind(releaseRow.candidate_id)
-        .first();
-    if (!candidate) {
-        return { dispatched: false, resumable: false, reason: 'CANDIDATE_NOT_FOUND' };
-    }
-    const run = candidate.run_id
-        ? await env.FEEDBACK_DB.prepare('SELECT * FROM feedback_runs WHERE id = ?')
-              .bind(candidate.run_id)
-              .first()
-        : null;
-
-    return dispatchFeedbackCreatedRelease(env, {
-        release: feedbackReleaseFromRow(releaseRow),
-        candidate,
-        run: run || { id: '', issue_id: releaseRow.issue_id },
-    });
-}
-
-async function recordFeedbackReleaseDispatchFailure(
-    env,
-    { run, candidateId, releaseId, dispatch }
-) {
-    const now = new Date().toISOString();
-    const reason = dispatch.errorCode || 'GITHUB_RELEASE_DISPATCH_FAILED';
-    const release = await env.FEEDBACK_DB.prepare(
-        'SELECT verification_json FROM feedback_releases WHERE id = ?'
-    )
-        .bind(releaseId)
-        .first();
-    const verification = parseStoredJson(release?.verification_json, {});
-    const attemptCount = (Number(verification._dispatch?.attemptCount) || 0) + 1;
-    const exhausted = Boolean(dispatch.retryable) && attemptCount >= FEEDBACK_DELIVERY_MAX_ATTEMPTS;
-    const retryDelayMs = FEEDBACK_DELIVERY_RETRY_DELAYS_MS[attemptCount - 1] || 0;
-    const nextAttemptAt =
-        dispatch.retryable && !exhausted && retryDelayMs
-            ? new Date(new Date(now).getTime() + retryDelayMs).toISOString()
-            : null;
-    verification._dispatch = {
-        attemptCount,
-        maxAttempts: FEEDBACK_DELIVERY_MAX_ATTEMPTS,
-        lastAttemptAt: now,
-        nextAttemptAt,
-        lastError: reason,
-        exhausted,
-    };
-
-    if (dispatch.retryable && !exhausted) {
-        await env.FEEDBACK_DB.prepare(
-            'UPDATE feedback_releases SET error_code = ?, verification_json = ? WHERE id = ?'
-        )
-            .bind(reason, JSON.stringify(verification), releaseId)
-            .run();
-        await appendFeedbackSystemEvent(env, run.issue_id, {
-            type: 'automation.suppressed',
-            visibility: 'admin',
-            body: {
-                reason,
-                runId: run.id,
-                candidateId,
-                releaseId,
-                retryable: true,
-                attemptCount,
-                maxAttempts: FEEDBACK_DELIVERY_MAX_ATTEMPTS,
-            },
-        });
-        return { humanActionId: null, resumable: true, attemptCount, nextAttemptAt };
-    }
-
-    const preparedAction = prepareFeedbackHumanAction(env, {
-        issueId: run.issue_id,
-        runId: run.id,
-        payload: {
-            actionType: 'blocked_external',
-            candidateId,
-            requestedAction: 'Release 未能派发到 GitHub，请修复外部连接后重试。',
-            evidence: [
-                feedbackEvidenceItem('派发失败原因', reason, { reason }),
-                feedbackEvidenceItem(
-                    '已重试',
-                    `${attemptCount}/${FEEDBACK_DELIVERY_MAX_ATTEMPTS} 次${
-                        exhausted ? '，重试预算已耗尽' : ''
-                    }${dispatch.retryable ? '' : '；该错误不可重试'}`,
-                    { attemptCount, maxAttempts: FEEDBACK_DELIVERY_MAX_ATTEMPTS, exhausted }
-                ),
-                feedbackEvidenceItem('受影响的交付', `Release ${releaseId}`, {
-                    releaseId,
-                    candidateId,
-                }),
-            ],
-        },
-    });
-
-    await env.FEEDBACK_DB.batch([
-        ...preparedAction.statements,
-        env.FEEDBACK_DB.prepare(
-            "UPDATE feedback_candidates SET status = 'failed' WHERE id = ?"
-        ).bind(candidateId),
-        env.FEEDBACK_DB.prepare(
-            `UPDATE feedback_releases
-             SET status = 'failed', finished_at = ?, error_code = ?, verification_json = ?
-             WHERE id = ?`
-        ).bind(now, reason, JSON.stringify(verification), releaseId),
-        env.FEEDBACK_DB.prepare(
-            `UPDATE feedback_issues
-             SET status = 'needs_human', updated_at = ?, version = version + 1
-             WHERE id = ?`
-        ).bind(now, run.issue_id),
-    ]);
-
-    await appendFeedbackSystemEvent(env, run.issue_id, {
-        type: 'automation.suppressed',
-        visibility: 'admin',
-        body: {
-            reason,
-            runId: run.id,
-            candidateId,
-            releaseId,
-            retryable: Boolean(dispatch.retryable),
-            attemptCount,
-            maxAttempts: FEEDBACK_DELIVERY_MAX_ATTEMPTS,
-            exhausted,
-        },
-    });
-    return { humanActionId: preparedAction.actionId, resumable: false };
+    return { dispatched: true, mode: 'executor_pull', releaseId: release.releaseId };
 }
 
 function isRetryableFeedbackReleaseDispatchError(errorCode) {
-    return (
-        errorCode === 'default_branch_drift' ||
-        errorCode === 'GITHUB_TIMEOUT' ||
-        errorCode === 'GITHUB_UNREACHABLE' ||
-        errorCode === 'GITHUB_HTTP_429' ||
-        /^GITHUB_HTTP_5\d\d$/.test(String(errorCode || ''))
-    );
+    // executor 交付线上唯一的可恢复失败：push 被拒（基线已漂移），重跑集成即可。
+    return errorCode === 'default_branch_drift';
 }
 
 function feedbackReleaseFromRow(row) {
@@ -6874,7 +6222,7 @@ async function resumeFeedbackAutoDeliveryCandidate(env, { run, candidate }) {
                 dispatched: true,
                 alreadyDispatched: true,
                 releaseId: releaseRow.id,
-                workflowFile: FEEDBACK_RELEASE_WORKFLOW_FILE,
+                mode: 'executor_pull',
             };
         }
         if (!isRetryableFeedbackReleaseDispatchError(releaseRow.error_code)) {
@@ -9742,12 +9090,12 @@ async function readFeedbackExecutorContext(env, runId) {
             scope: row.scope,
             automationDecision: row.automation_decision,
         }),
-        // SCN-FWB-039：与 GitHub 路径的 `readFeedbackRunContext` 同形——write-pipeline
+        // SCN-FWB-039：与 run 级协议端点的 `readFeedbackRunContext` 同形——write-pipeline
         // 消费 `context.approvedPaths`/`contractRunApproved`，缺席即为未授权（C5）。
         approvedPaths: leaseGateGrant.approvedPaths,
         contractRunApproved:
             FEEDBACK_WRITE_POLICIES.has(row.policy) || leaseGateGrant.contractRunApproved,
-        // 形状必须与 GitHub 路径的 `readFeedbackRunContext` 逐字段一致：Prompt 构建器
+        // 形状必须与 `readFeedbackRunContext` 逐字段一致：Prompt 构建器
         // 只有一份，读的是 `issue.description?.untrustedUserContent` 与
         // `issue.id/businessType/scope`。这里曾经给的是裸字符串且缺那三个字段，
         // `?? ''` 把用户正文**静默吞掉**、缺席字段渲染成字面量 "undefined"——
@@ -10055,16 +9403,15 @@ async function claimFeedbackExecutorLease(env, body) {
 /**
  * 执行器认领活跃 Release（SCN-FWB-033 阶段二）。
  *
- * 只有 `default_adapter='executor'` 的项目会出活；payload 与 GitHub dispatch 用同一
- * 构造函数（身份核验一视同仁），release token 每次认领重新铸造（长交付不受 TTL 限制）。
- * 分支锁（每仓每分支至多一个活跃 Release）由 deliverFeedbackCandidate 保证，所以
- * 这里至多返回一行。**MVP 已接受缺口**：Release 无租约——单执行器 + 守护进程对同
- * id 的退避 + `release.failed` 终态不可再认领三者兜底；多执行器之前必须补租约。
+ * payload 由唯一构造函数产出（`integration.started` 的身份核验按候选行逐字段精确
+ * 比对），release token 每次认领重新铸造（长交付不受 TTL 限制）。分支锁（每仓每
+ * 分支至多一个活跃 Release）由 deliverFeedbackCandidate 保证，所以这里至多返回
+ * 一行。**MVP 已接受缺口**：Release 无租约——单执行器 + 守护进程对同 id 的退避 +
+ * `release.failed` 终态不可再认领三者兜底；多执行器之前必须补租约。
  */
 async function claimFeedbackExecutorRelease(env) {
     if (!env.FEEDBACK_DB) throw feedbackExecutorError('FEEDBACK_DB_REQUIRED');
     const project = await resolveFeedbackProject(env);
-    if (project.defaultAdapter !== 'executor') return null;
 
     const releaseRow = await env.FEEDBACK_DB.prepare(
         `SELECT * FROM feedback_releases
@@ -12906,16 +12253,15 @@ export default {
                     }
 
                     // §7.4 authorizes autonomous delivery partly on provider
-                    // health, so health is server-owned: only a real Action smoke
-                    // may write it. An admin editing settings cannot vouch for a
-                    // provider by hand.
+                    // health, so health is server-owned: only the control-plane
+                    // executor probe may write it. An admin editing settings
+                    // cannot vouch for a provider by hand.
                     const mergeProvider = (name) => ({
                         ...current.settings.providers[name],
                         ...stripFeedbackProviderHealth(patch.providers?.[name]),
                         connectionState: current.settings.providers[name].connectionState,
                         lastTestedAt: current.settings.providers[name].lastTestedAt,
                         lastTestResult: current.settings.providers[name].lastTestResult,
-                        pendingSmoke: current.settings.providers[name].pendingSmoke,
                     });
                     // §19.5: the switch may only be turned on after a passing
                     // preflight. The preflight result itself is server-owned.
@@ -13046,137 +12392,10 @@ export default {
                 const current = await readFeedbackSettings(env, 'runners');
                 const testedAt = new Date().toISOString();
 
-                // §19.5/SCN-FWB-016：这个按钮要测的是**这个项目实际会走的通路**。
-                // executor 项目派一次 Action 冒烟，测的是一条它永远不会用到的路径：
-                // 绿了不代表执行器起着，红了也不代表处理不了工单。
-                const project = await resolveFeedbackProject(env);
-                if (project.defaultAdapter === 'executor') {
-                    const result = await probeFeedbackExecutorProvider(env, {
-                        provider,
-                        testedAt,
-                    });
-                    const saved = await writeFeedbackSettings(
-                        env,
-                        'runners',
-                        {
-                            ...current.settings,
-                            providers: {
-                                ...current.settings.providers,
-                                [provider]: {
-                                    ...current.settings.providers[provider],
-                                    lastTestedAt: testedAt,
-                                    lastTestResult: result,
-                                    smokeHistory: appendFeedbackSmokeHistory(
-                                        current.settings.providers[provider],
-                                        provider,
-                                        result
-                                    ),
-                                    // 探测是同步的，没有等待中的回调可被后到的结果改写。
-                                    pendingSmoke: null,
-                                },
-                            },
-                        },
-                        current.version
-                    );
-
-                    return jsonResponse(
-                        { result, settings: await serializeRunnerSettings(env, saved) },
-                        { status: result.ok ? 200 : 503, headers }
-                    );
-                }
-
-                if (provider === 'codex') {
-                    const endpointCheck = validateResponsesEndpoint(
-                        current.settings.providers.codex.responsesEndpoint
-                    );
-                    if (!endpointCheck.valid) {
-                        return jsonResponse(
-                            {
-                                result: {
-                                    ok: false,
-                                    provider,
-                                    testedAt,
-                                    errorCode: endpointCheck.code,
-                                    field: 'providers.codex.responsesEndpoint',
-                                    message: '请填写完整的 /v1/responses 地址',
-                                },
-                            },
-                            { status: 400, headers }
-                        );
-                    }
-                }
-
-                // §19.5 requires a real minimal Action smoke run rather than an
-                // HTTP ping. Without dispatch credentials we report the gap
-                // instead of reporting a success we did not observe.
-                const smokeId = `smk_${crypto.randomUUID()}`;
-                const dispatch = await dispatchFeedbackRunnerSmoke(env, {
-                    provider,
-                    smokeId,
-                    settings: current.settings,
-                });
-
-                if (!dispatch.dispatched) {
-                    const result = {
-                        ok: false,
-                        status: 'failed',
-                        provider,
-                        action: FEEDBACK_PROVIDER_ACTIONS[provider],
-                        endpointMode:
-                            provider === 'codex' &&
-                            current.settings.providers.codex.responsesEndpoint !==
-                                FEEDBACK_DEFAULT_RESPONSES_ENDPOINT
-                                ? 'relay'
-                                : 'official',
-                        testedAt,
-                        errorCode: dispatch.errorCode,
-                        message:
-                            dispatch.errorCode === 'ACTION_SMOKE_NOT_CONFIGURED'
-                                ? '端点格式校验通过；真实 Action 冒烟需要 feedback_projects 有启用项目，并配置 FEEDBACK_GITHUB_TOKEN 和 FEEDBACK_CALLBACK_ORIGIN 后才能运行'
-                                : '真实 Action 冒烟派发失败，连接状态保持未验证',
-                    };
-                    const saved = await writeFeedbackSettings(
-                        env,
-                        'runners',
-                        {
-                            ...current.settings,
-                            providers: {
-                                ...current.settings.providers,
-                                [provider]: {
-                                    ...current.settings.providers[provider],
-                                    connectionState: 'unverified',
-                                    lastTestedAt: testedAt,
-                                    lastTestResult: result,
-                                    smokeHistory: appendFeedbackSmokeHistory(
-                                        current.settings.providers[provider],
-                                        provider,
-                                        result
-                                    ),
-                                    pendingSmoke: null,
-                                },
-                            },
-                        },
-                        current.version
-                    );
-
-                    return jsonResponse(
-                        { result, settings: await serializeRunnerSettings(env, saved) },
-                        { status: 503, headers }
-                    );
-                }
-
-                // Dispatched, but nothing has been observed yet: the provider is
-                // `testing` until the smoke reports its own result (§19.5).
-                const result = {
-                    ok: false,
-                    status: 'running',
-                    smokeId,
-                    provider,
-                    action: FEEDBACK_PROVIDER_ACTIONS[provider],
-                    endpointMode: dispatch.endpointMode,
-                    testedAt,
-                    message: '已派发真实最小 Action 冒烟，等待运行结果回调',
-                };
+                // §19.5/SCN-FWB-016：连接测试只探控制面——executor 是唯一执行路径
+                // （2026-08-27 起）：心跳与 capabilities 是 Worker 唯一能观察到的事实，
+                // 这里不发任何出站请求。
+                const result = await probeFeedbackExecutorProvider(env, { provider, testedAt });
                 const saved = await writeFeedbackSettings(
                     env,
                     'runners',
@@ -13186,7 +12405,6 @@ export default {
                             ...current.settings.providers,
                             [provider]: {
                                 ...current.settings.providers[provider],
-                                connectionState: 'testing',
                                 lastTestedAt: testedAt,
                                 lastTestResult: result,
                                 smokeHistory: appendFeedbackSmokeHistory(
@@ -13194,7 +12412,6 @@ export default {
                                     provider,
                                     result
                                 ),
-                                pendingSmoke: { smokeId, dispatchedAt: testedAt },
                             },
                         },
                     },
@@ -13203,88 +12420,7 @@ export default {
 
                 return jsonResponse(
                     { result, settings: await serializeRunnerSettings(env, saved) },
-                    { status: 202, headers }
-                );
-            } catch (error) {
-                return feedbackErrorResponse(error, headers);
-            }
-        }
-
-        // §19.5: the minimal Action smoke reports its own outcome here, using a
-        // token scoped to that one smoke. This is the only writer of provider
-        // health, so §7.4 reads a machine-observed fact rather than a claim.
-        if (
-            request.method === 'POST' &&
-            url.pathname.startsWith('/api/feedback/runners/smoke/') &&
-            url.pathname.endsWith('/result')
-        ) {
-            const smokeId = decodeURIComponent(
-                url.pathname.slice('/api/feedback/runners/smoke/'.length, -'/result'.length)
-            );
-            const claims = await verifyFeedbackSmokeToken(request, env, { smokeId });
-            if (!claims) return errorResponse('Unauthorized', 401, headers);
-
-            try {
-                const body = await request.json();
-                const provider = String(claims.provider || '');
-                if (!FEEDBACK_PROVIDERS.has(provider)) {
-                    return errorResponse('Invalid provider', 400, headers);
-                }
-
-                const current = await readFeedbackSettings(env, 'runners');
-                const stored = current.settings.providers[provider];
-                // Only the smoke this provider is actually waiting on may write
-                // its health; a replayed older smoke is accepted and ignored.
-                if (stored.pendingSmoke?.smokeId !== smokeId) {
-                    return jsonResponse(
-                        { stale: true, settings: await serializeRunnerSettings(env, current) },
-                        { headers }
-                    );
-                }
-
-                const ok = body.ok === true;
-                const completedAt = limitText(body.completedAt, 40) || new Date().toISOString();
-                const result = {
-                    ok,
-                    status: ok ? 'succeeded' : 'failed',
-                    smokeId,
-                    provider,
-                    action: FEEDBACK_PROVIDER_ACTIONS[provider],
-                    // §19.5 requires the exact Action commit that ran, so a later
-                    // version bump is visibly unverified rather than assumed good.
-                    actionCommit: limitText(body.actionCommit, 80),
-                    model: limitText(body.model, 80),
-                    endpointMode: body.endpointMode === 'relay' ? 'relay' : 'official',
-                    testedAt: stored.pendingSmoke?.dispatchedAt || '',
-                    completedAt,
-                    // A provider error string can carry a key; keep the code only.
-                    errorCode: ok ? '' : normalizeFeedbackSmokeErrorCode(body.errorCode),
-                    runUrl: limitText(body.runUrl, 300),
-                };
-
-                const saved = await writeFeedbackSettings(
-                    env,
-                    'runners',
-                    {
-                        ...current.settings,
-                        providers: {
-                            ...current.settings.providers,
-                            [provider]: {
-                                ...stored,
-                                connectionState: ok ? 'connected' : 'failed',
-                                lastTestedAt: completedAt,
-                                lastTestResult: result,
-                                smokeHistory: appendFeedbackSmokeHistory(stored, provider, result),
-                                pendingSmoke: null,
-                            },
-                        },
-                    },
-                    current.version
-                );
-
-                return jsonResponse(
-                    { result, settings: await serializeRunnerSettings(env, saved) },
-                    { headers }
+                    { status: result.ok ? 200 : 503, headers }
                 );
             } catch (error) {
                 return feedbackErrorResponse(error, headers);

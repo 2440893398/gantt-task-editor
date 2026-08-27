@@ -295,18 +295,15 @@ describe('[SCN-FWB-012] feedback diff gate', () => {
         const gate = readProjectFile('scripts/feedback-diff-gate.mjs');
 
         it('[SCN-FWB-012] grants the authorization server-side, never in the Runner', () => {
-            expect(readProjectFile('workers/share-worker.js')).toContain(
-                'contractRun: FEEDBACK_WRITE_POLICIES.has(policy)'
+            // 授权在控制面下发（executor lease context 与 run context 同口径）：
+            // 写入型 Run 就是可改契约的 Run，执行侧不自己决定。
+            const worker = readProjectFile('workers/share-worker.js');
+            expect(worker).toContain(
+                'contractRunApproved:\n            FEEDBACK_WRITE_POLICIES.has(row.policy) || leaseGateGrant.contractRunApproved'
             );
-            for (const provider of ['codex', 'claude']) {
-                const workflow = readProjectFile(
-                    `.github/workflows/feedback-agent-${provider}.yml`
-                );
-                // Read off the dispatch, not decided locally: `=== true` means a
-                // missing field can only ever mean "not authorized".
-                expect(workflow).toContain('contractRun: payload.contractRun === true');
-                expect(workflow).toContain('--contract-run "$CONTRACT_RUN"');
-            }
+            expect(worker).toContain(
+                'contractRunApproved: writeCapableRun || gateGrant.contractRunApproved'
+            );
         });
 
         it('[SCN-FWB-012] reads the SCN-ID off the change instead of trusting a declaration', () => {
@@ -344,11 +341,6 @@ describe('[SCN-FWB-012] feedback diff gate', () => {
             // empty and rejects what the Runner just allowed.
             expect(gate).toContain('contractRunApproved,');
             expect(gate).toContain('scnId,');
-            for (const provider of ['codex', 'claude']) {
-                expect(
-                    readProjectFile(`.github/workflows/feedback-agent-${provider}.yml`)
-                ).toContain('scnId: manifest.scnId || ""');
-            }
         });
     });
 });

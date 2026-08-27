@@ -257,20 +257,10 @@ describe('[SCN-FWB-033] dispatch routes runner_type from project data', () => {
         ).toEqual(expect.objectContaining({ status: 'running', runner_label: 'executor-a' }));
     });
 
-    it('[SCN-FWB-033] default_adapter=actions keeps the GitHub path and lease finds nothing', async () => {
-        await dispatchWorkflow();
-
-        const run = createdRun();
-        expect(run).toBeTruthy();
-        expect(run.runner_type).toBe('github_hosted');
-
-        const leased = await claim(env, 'executor-a');
-        expect(leased.response.status).toBe(204);
-    });
-
-    it('[SCN-FWB-033] an unknown adapter value falls back to github_hosted, never executor', async () => {
-        // SQLite 的 ADD COLUMN 加不了 CHECK；取值合法性只能在应用层判定。
-        // 一个手滑写进表里的值绝不能把 Run 送进没人认领的 executor 队列。
+    it('[SCN-FWB-033] a legacy adapter value still routes to executor — the only path left', async () => {
+        // 2026-08-27 起 GitHub Actions 路径整体退役：`default_adapter` 是历史数据，
+        // 不再参与路由。留在表里的旧值（含手滑写错的）绝不能让 Run 落进一条
+        // 已不存在的 github_hosted 队列——那才是真正没人认领的地方。
         sqlite
             .prepare(
                 "UPDATE feedback_projects SET default_adapter = 'rogue' WHERE id = 'proj_gantt'"
@@ -279,7 +269,13 @@ describe('[SCN-FWB-033] dispatch routes runner_type from project data', () => {
 
         await dispatchWorkflow();
 
-        expect(createdRun().runner_type).toBe('github_hosted');
+        const run = createdRun();
+        expect(run.runner_type).toBe('executor');
+        expect(run.status).toBe('created');
+
+        const leased = await claim(env, 'executor-a');
+        expect(leased.response.status).toBe(201);
+        expect(leased.payload.runId).toBe(run.id);
     });
 });
 
@@ -924,17 +920,13 @@ describe('[SCN-FWB-022] auto delivery reads provider health from the active exec
         expect((await dispatchAndReadRun()).delivery_mode).toBe('candidate_review');
     });
 
-    it('[SCN-FWB-022] actions 路径仍只认 Action 冒烟，在线执行器不作数', async () => {
-        setSmokeHealth({ connected: false });
-        registerExecutor();
-        expect((await dispatchAndReadRun()).delivery_mode).toBe('candidate_review');
-
-        sqlite.prepare('DELETE FROM feedback_runs').run();
-        sqlite.prepare('DELETE FROM feedback_workflows').run();
+    it('[SCN-FWB-022] 历史 Action 冒烟的 connected 不再是健康证明——执行器不在线就降级', async () => {
+        // GH 路径退役（2026-08-27）后 adapter 值不参与判定：即使设置里躺着一条
+        // 冒烟留下的 connected，没有在线执行器就没有健康可言。
         setSmokeHealth({ connected: true });
         const run = await dispatchAndReadRun();
-        expect(run.runner_type).toBe('github_hosted');
-        expect(run.delivery_mode).toBe('auto_deliver');
+        expect(run.runner_type).toBe('executor');
+        expect(run.delivery_mode).toBe('candidate_review');
     });
 });
 
@@ -1105,19 +1097,18 @@ describe('[SCN-FWB-016] the runners settings page describes the active execution
         }
     });
 
-    it('[SCN-FWB-016] actions 项目仍展示 Action ref 与 GitHub-hosted', async () => {
+    it('[SCN-FWB-016] 遗留 adapter 值不改变展示——页面永远描述 executor 路径', async () => {
+        // GH 路径退役（2026-08-27）：`default_adapter` 是历史数据。旧值留在表里时
+        // 页面若翻回 Action ref / GitHub-hosted，就是在描述一条已不存在的通路。
         registerExecutor();
 
         const settings = await readSettings();
-        expect(settings.runtime.adapter).toBe('actions');
-        expect(settings.runtime.runner).toBe('GitHub-hosted');
-        expect(settings.providers.codex.action).toBe(
-            'openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56'
-        );
-        expect(settings.providers.codex.healthSource).toBe('action_smoke');
-        // 在线执行器与 actions 路径无关，不得混进来充当健康证明
-        expect(settings.providers.codex.connectionState).toBe('unverified');
-        expect(settings.runtime.executors).toEqual([]);
+        expect(settings.runtime.adapter).toBe('executor');
+        expect(settings.runtime.runner).not.toContain('GitHub');
+        expect(settings.providers.codex.action).toBe('executor:codex');
+        expect(settings.providers.codex.healthSource).toBe('executor');
+        expect(settings.providers.codex.connectionState).toBe('connected');
+        expect(settings.runtime.executors.map((executor) => executor.live)).toEqual([true]);
     });
 });
 
@@ -1227,20 +1218,19 @@ describe('[SCN-FWB-022] the auto-delivery preflight checks the active execution 
         expect(failed(noBearer)).toContain('executor_control_plane');
     });
 
-    it('[SCN-FWB-022] actions 项目仍要求 GitHub 派发、合并与部署凭据', async () => {
+    it('[SCN-FWB-022] 遗留 adapter 值不改变预检口径——恒为 executor（GH 路径已退役）', async () => {
+        // 表里留着 'actions' 旧值时，预检若翻回 GitHub 凭据检查，就是在为一条
+        // 已删除的通路发通行证（EXC-FWB-006 于 2026-08-27 就此结清）。
         registerExecutor();
 
-        const missing = await runPreflight();
-        expect(missing.ok).toBe(false);
-        expect(failed(missing)).toEqual(
-            expect.arrayContaining([
-                'github_dispatch',
-                'merge_credentials',
-                'deployment_credentials',
-            ])
-        );
-        // 在线执行器与 actions 路径无关，不得替它凑齐条件
-        expect(missing.checks.map((check) => check.id)).not.toContain('executor_online');
+        const preflight = await runPreflight();
+        expect(preflight.adapter).toBe('executor');
+        expect(preflight.ok).toBe(true);
+        const ids = preflight.checks.map((check) => check.id);
+        expect(ids).toContain('executor_online');
+        expect(ids).not.toContain('github_dispatch');
+        expect(ids).not.toContain('merge_credentials');
+        expect(ids).not.toContain('deployment_credentials');
     });
 });
 

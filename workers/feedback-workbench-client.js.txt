@@ -2206,7 +2206,13 @@
         }
 
         if (settings) {
-            $('automationExecutorName').textContent = defaultProviderLabel() + ' · GitHub-hosted';
+            /* 运行器名从服务端 runtime 读：executor 是唯一执行路径（2026-08-27），
+               这里硬编码 GitHub-hosted 就是 SCN-FWB-016 要防的那种假信息。 */
+            $('automationExecutorName').textContent =
+                defaultProviderLabel() +
+                ' · ' +
+                ((state.runners && state.runners.runtime && state.runners.runtime.runner) ||
+                    '本地执行器（拉取式）');
             $('automationExecutorState').textContent = state.runners
                 ? providerStateText(state.runners.providers[state.runners.defaultProvider])
                 : '前往「AI 执行器」查看连接状态';

@@ -265,13 +265,17 @@ describe('[SCN-FWB-033] POST /api/executor/release 认领', () => {
         );
     });
 
-    it('actions 项目认领不到 Release——GitHub 的活不给执行器抢', async () => {
+    it('遗留 adapter 值不影响认领——executor 是唯一交付路径（GH 路径已退役）', async () => {
+        // 2026-08-27 前这里是「actions 项目认领不到」：两条交付路径并存时抢活等于
+        // 双重集成。GH 路径删除后不存在第二个认领方，旧值挡认领只会让 Release
+        // 永远停在 integrating。
         const sqlite = applyMigrations();
         seedProject(sqlite, { defaultAdapter: 'actions' });
         seedDeliverableCandidate(sqlite);
         seedActiveRelease(sqlite);
-        const { response } = await post(createEnv(sqlite), '/api/executor/release', {});
-        expect(response.status).toBe(204);
+        const { response, payload } = await post(createEnv(sqlite), '/api/executor/release', {});
+        expect(response.status).toBe(200);
+        expect(payload.releaseId).toBe('rel_1');
     });
 
     it('认领到的 token 真的能上报 release 事件，且身份核验对执行器同样生效', async () => {
@@ -342,7 +346,7 @@ describe('[SCN-FWB-033] POST /api/executor/release 认领', () => {
     });
 });
 
-describe('[SCN-FWB-033] Release 派发按 default_adapter 路由', () => {
+describe('[SCN-FWB-033] Release 交付只有 executor 认领一条路', () => {
     it('executor 项目的 deliver 不向 GitHub 派发且报告 dispatched——env 里连 GitHub token 都没有', async () => {
         const sqlite = applyMigrations();
         seedProject(sqlite);
@@ -364,7 +368,7 @@ describe('[SCN-FWB-033] Release 派发按 default_adapter 路由', () => {
         expect(release.status).toBe('integrating');
     });
 
-    it('actions 项目的 deliver 仍走 GitHub——未配置 GitHub token 时如实报派发失败', async () => {
+    it('遗留 adapter 值下 deliver 同样保持 integrating 等执行器认领，不发任何出站请求', async () => {
         const sqlite = applyMigrations();
         seedProject(sqlite, { defaultAdapter: 'actions' });
         seedDeliverableCandidate(sqlite);
@@ -376,7 +380,12 @@ describe('[SCN-FWB-033] Release 派发按 default_adapter 路由', () => {
             {},
             { token: admin }
         );
-        expect(response.status).toBeGreaterThanOrEqual(500);
-        expect(payload.dispatched).toBe(false);
+        expect(response.status).toBe(201);
+        expect(payload.dispatched).toBe(true);
+        expect(payload.mode).toBe('executor_pull');
+        const release = sqlite
+            .prepare("SELECT status FROM feedback_releases WHERE candidate_id = 'cnd_rel_1'")
+            .get();
+        expect(release.status).toBe('integrating');
     });
 });

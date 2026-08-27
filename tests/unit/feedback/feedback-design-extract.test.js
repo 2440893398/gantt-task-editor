@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import yaml from 'js-yaml';
 import {
     extractFeedbackDesign,
     findDesignBlock,
@@ -31,22 +30,6 @@ const VALID_DESIGN = {
     verificationPlan: ['tests/unit/gantt/markers.today.test.js'],
     decision: '建议实现。',
 };
-
-/** Reads the terminal-callback script out of a provider workflow. */
-function reporterScript(provider) {
-    const doc = yaml.load(
-        fs.readFileSync(path.resolve(`.github/workflows/feedback-agent-${provider}.yml`), 'utf8')
-    );
-    for (const job of Object.values(doc.jobs || {})) {
-        for (const step of job.steps || []) {
-            if (typeof step.run !== 'string' || !step.run.includes('cb-final-')) continue;
-            const end = step.run.indexOf("\n'\nDELIVERED=0");
-            const start = step.run.lastIndexOf("-e '", end) + 4;
-            return { run: step.run, script: step.run.slice(start, end) };
-        }
-    }
-    throw new Error(`no terminal callback step in ${provider}`);
-}
 
 describe('[SCN-FWB-020] design proposal from a read-only Run', () => {
     it('[SCN-FWB-020] asks a read-only Run for a design only when one is required', () => {
@@ -148,10 +131,10 @@ describe('[SCN-FWB-020] design proposal from a read-only Run', () => {
     });
 
     it('[SCN-FWB-037] 两处围栏抓取必须认同一个标记，且抓出同样的东西', () => {
-        // 脚本被单文件抽出执行，不能 import src/——所以围栏抓取有两份实现。
+        // 脚本按约束保持自包含（不 import src/），所以围栏抓取有两份实现。
         // 判据只有 Worker 那一份（`normalizeFeedbackNextSteps` 入站重裁），但标记串
-        // 一旦漂移，Actions 路径就会安静地一个选项都抓不到，页面上只是「没有建议」，
-        // 没有任何报错能提示是哪里断的。
+        // 一旦漂移，走这份脚本的调用方就会安静地一个选项都抓不到，页面上只是
+        // 「没有建议」，没有任何报错能提示是哪里断的。
         const message = [
             '结论在这里。',
             '```feedback-next-steps',
@@ -167,45 +150,9 @@ describe('[SCN-FWB-020] design proposal from a read-only Run', () => {
         expect(stripNextStepsBlock(message)).not.toContain('feedback-next-steps');
     });
 
-    it('[SCN-FWB-020] both workflows wait for a decision instead of completing', () => {
-        for (const provider of ['codex', 'claude']) {
-            const { run, script } = reporterScript(provider);
-            const workflow = fs.readFileSync(
-                path.resolve(`.github/workflows/feedback-agent-${provider}.yml`),
-                'utf8'
-            );
-
-            // Pulled from the pinned base commit, like the callback reporter.
-            expect(workflow).toContain(
-                '/usr/bin/git show "$BASE_COMMIT:scripts/feedback-extract-design.mjs"'
-            );
-            // A write Run must never be diverted into a design wait.
-            expect(run).toContain('"$WRITE_ALLOWED" != "true"');
-            // SCN-FWB-037: the extractor now runs for every read-only Run because
-            // it also scrapes the next-step options — the extractor output must be
-            // read whenever the Run is read-only, NOT only when a design was
-            // required, or the options are silently dropped on exactly the
-            // analysis-only Runs the next-step card exists for.
-            expect(script).toContain('if (!writeAllowed) {');
-            expect(script).toContain(
-                'if (extracted && success && Array.isArray(extracted.nextSteps)) nextSteps = extracted.nextSteps;'
-            );
-            // The public timeline gets the stripped conclusion, not the raw fenced
-            // JSON the platform already consumed.
-            expect(script).toContain('payload: { message: publicMessage }');
-            // The terminal must actually be selected by the extracted design —
-            // asserting the branch merely exists would pass on dead code.
-            expect(script).toContain('const body = pendingDesign ? {');
-            expect(script).toContain('type: "agent.waiting_human"');
-            expect(script).toContain('actionType: "design_decision"');
-            expect(script).toContain('design: pendingDesign');
-            // Only a successful read-only Run needing a design may switch the
-            // terminal — the invariant moved off the shell guard onto this branch.
-            expect(script).toContain('if (success && process.env.REQUIRES_DESIGN === "true")');
-            // The normal terminal must still exist for every other Run.
-            expect(script).toContain('type: success ? "run.completed" : "run.failed"');
-        }
-    });
+    // 「Design 等待终态由 workflow 报告步骤选择」的逐行钉版随 GitHub Actions 路径
+    // 于 2026-08-27 整体退役；执行侧的同一不变量（C6：requiresDesign 下发、waiting_human
+    // 终态、提取唯一委托）由 packages/feedback-platform/tests/ 的符合性套件钉住。
 
     it('[SCN-FWB-020] routing stays server-owned: the Runner reads the flag, never the matrix', () => {
         const worker = fs.readFileSync(path.resolve('workers/share-worker.js'), 'utf8');
@@ -213,20 +160,11 @@ describe('[SCN-FWB-020] design proposal from a read-only Run', () => {
             path.resolve('src/features/feedback/analysis-handoff.js'),
             'utf8'
         );
-        // One predicate, shared: the §7.2 matrix, the Run context, the dispatch
-        // payload and the handoff wording must all agree on "needs a design".
+        // One predicate, shared: the §7.2 matrix, the Run contexts and the
+        // handoff wording must all agree on "needs a design".
         expect(handoff).toContain('export function requiresFeedbackDesign(');
         expect(worker).toContain('requiresFeedbackDesign,');
         expect(worker).not.toContain('function requiresFeedbackDesign(');
         expect(worker.match(/requiresFeedbackDesign\(\{/g)?.length).toBeGreaterThanOrEqual(3);
-
-        for (const provider of ['codex', 'claude']) {
-            const workflow = fs.readFileSync(
-                path.resolve(`.github/workflows/feedback-agent-${provider}.yml`),
-                'utf8'
-            );
-            expect(workflow).toContain('requiresDesign: payload.requiresDesign === true');
-            expect(workflow).not.toContain("businessType === 'requirement'");
-        }
     });
 });

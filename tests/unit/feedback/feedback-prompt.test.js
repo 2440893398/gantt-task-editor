@@ -119,34 +119,9 @@ describe('[SCN-FWB-029] runner prompt construction', () => {
         );
     });
 
-    it('[SCN-FWB-029] both provider workflows build the prompt through the shared script', () => {
-        for (const provider of ['codex', 'claude']) {
-            const workflow = fs.readFileSync(
-                path.resolve(`.github/workflows/feedback-agent-${provider}.yml`),
-                'utf8'
-            );
-
-            expect(workflow).toContain('scripts/feedback-build-prompt.mjs');
-            // The inlined copies are what drifted; they must not come back.
-            expect(workflow).not.toContain('# Feedback processing task');
-            expect(workflow).not.toContain('- Modify only files required by this feedback.');
-        }
-    });
-
-    it('[SCN-FWB-029] reports a read-only Run as analysis, not as zero files changed', () => {
-        for (const provider of ['codex', 'claude']) {
-            const workflow = fs.readFileSync(
-                path.resolve(`.github/workflows/feedback-agent-${provider}.yml`),
-                'utf8'
-            );
-
-            expect(workflow).toContain('已完成只读分析：本次不修改仓库文件');
-            expect(workflow).toContain('? writeAllowed');
-            expect(workflow).toContain(
-                '已完成处理：修改 ${manifest.changedFiles?.length || 0} 个文件'
-            );
-        }
-    });
+    // 「共用同一个 Prompt 构建器」与「只读终态不得表述为修改 0 个文件」原本各有一条
+    // 逐行钉 GitHub workflow 的测试；该执行路径已于 2026-08-27 整体退役，构建器唯一性
+    // 与 C1 终态措辞由 packages/feedback-platform/tests/ 的符合性套件（SCN-FWB-032）钉住。
 
     it('[SCN-FWB-020] lists attachments and says plainly that it cannot read them', () => {
         // 坏行为：Agent 既看不到截图、也不知道有截图，于是照纯文本作答；交接文案再

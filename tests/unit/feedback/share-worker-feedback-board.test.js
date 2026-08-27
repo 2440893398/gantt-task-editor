@@ -137,6 +137,8 @@ class MemoryD1 {
             feedback_designs: new Map(),
             feedback_candidates: new Map(),
             feedback_releases: new Map(),
+            feedback_projects: new Map(),
+            feedback_executors: new Map(),
         };
         this.queries = [];
 
@@ -171,7 +173,13 @@ class MemoryD1 {
         }
 
         // The remaining id-keyed tables seed uniformly; §20.1 metrics read them.
-        for (const name of ['feedback_runs', 'feedback_candidates', 'feedback_releases']) {
+        for (const name of [
+            'feedback_runs',
+            'feedback_candidates',
+            'feedback_releases',
+            'feedback_projects',
+            'feedback_executors',
+        ]) {
             for (const row of seed[name] || []) {
                 this.tables[name].set(row.id, { ...row });
             }
@@ -476,6 +484,30 @@ class MemoryD1 {
                 return { success: true, results: [{ id }], meta: { changes: 1 } };
             }
             return { success: true, results: [], meta: { changes: 0 } };
+        }
+
+        // 目标项目单行读取（resolveFeedbackProject）。空表 → 环境变量回落，
+        // 与生产 0006 之前的初始态一致。
+        if (normalized.startsWith('select * from feedback_projects where enabled = 1')) {
+            const row = Array.from(this.tables.feedback_projects.values())
+                .filter((item) => Number(item.enabled) === 1)
+                .sort((left, right) => String(left.id).localeCompare(String(right.id)))[0];
+            return { success: true, results: row ? [{ ...row }] : [] };
+        }
+
+        // 执行器健康读全表（serializeRunnerSettings / provider 健康判据在 GH 路径
+        // 退役后无条件读它）。默认空表 = 无执行器在线，与生产的初始态一致。
+        if (
+            normalized.startsWith(
+                'select id, status, last_heartbeat_at, capabilities_json from feedback_executors'
+            )
+        ) {
+            return {
+                success: true,
+                results: Array.from(this.tables.feedback_executors.values()).map((row) => ({
+                    ...row,
+                })),
+            };
         }
 
         // §20.1 aggregates read a plain column list from one whole table. Project
@@ -5645,7 +5677,7 @@ describe('feedback workbench V2 routes', () => {
         );
         const payload = await json(accepted);
 
-        expect(accepted.status).toBe(200);
+        expect(accepted.status, JSON.stringify(payload)).toBe(200);
         expect(payload.settings.defaultProvider).toBe('claude');
         expect(payload.settings.providers.codex.responsesEndpoint).toBe(
             'https://relay.example.com/v1/responses'
@@ -5653,213 +5685,10 @@ describe('feedback workbench V2 routes', () => {
         expect(payload.settings.providers.codex.connectionState).toBe('unverified');
     });
 
-    it('[SCN-FWB-016] blocks a malformed endpoint before running any connection test', async () => {
-        const env = createV2Env();
-        const headers = await adminHeaders(env);
-        env.FEEDBACK_DB.tables.feedback_settings.set('runners', {
-            name: 'runners',
-            value_json: JSON.stringify({
-                defaultProvider: 'codex',
-                providers: { codex: { responsesEndpoint: 'https://relay.example.com/v1' } },
-            }),
-            version: 1,
-            updated_at: '2026-07-28T09:00:00.000Z',
-            updated_by: 'admin',
-        });
-
-        const fetchSpy = vi.spyOn(globalThis, 'fetch');
-        try {
-            const response = await request(
-                '/api/feedback/runners/test',
-                { method: 'POST', headers, body: JSON.stringify({ provider: 'codex' }) },
-                env
-            );
-            const payload = await json(response);
-
-            expect(response.status).toBe(400);
-            expect(payload.result.errorCode).toBe('ENDPOINT_NOT_RESPONSES');
-            expect(payload.result.field).toBe('providers.codex.responsesEndpoint');
-            expect(fetchSpy).not.toHaveBeenCalled();
-        } finally {
-            fetchSpy.mockRestore();
-        }
-    });
-
-    it('[SCN-FWB-016] reports an unconfigured Action smoke instead of claiming success', async () => {
-        const env = createV2Env();
-        const headers = await adminHeaders(env);
-
-        const response = await request(
-            '/api/feedback/runners/test',
-            { method: 'POST', headers, body: JSON.stringify({ provider: 'codex' }) },
-            env
-        );
-        const payload = await json(response);
-
-        expect(response.status).toBe(503);
-        expect(payload.result.ok).toBe(false);
-        expect(payload.result.errorCode).toBe('ACTION_SMOKE_NOT_CONFIGURED');
-        expect(payload.result.action).toBe(
-            'openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56'
-        );
-        expect(payload.settings.providers.codex.connectionState).toBe('unverified');
-    });
-
-    it('[SCN-FWB-016] dispatches the real minimal Action smoke when GitHub is configured', async () => {
-        const env = createV2Env();
-        env.FEEDBACK_GITHUB_REPOSITORY = 'acme/gantt';
-        env.FEEDBACK_GITHUB_TOKEN = 'gh-token';
-        env.FEEDBACK_CALLBACK_ORIGIN = 'https://workbench.example.com';
-        const headers = await adminHeaders(env);
-
-        const fetchSpy = vi
-            .spyOn(globalThis, 'fetch')
-            .mockResolvedValue(new Response(null, { status: 204 }));
-        try {
-            const response = await request(
-                '/api/feedback/runners/test',
-                { method: 'POST', headers, body: JSON.stringify({ provider: 'codex' }) },
-                env
-            );
-            const payload = await json(response);
-
-            // §19.5: a dispatched smoke is "testing", never an invented success.
-            expect(response.status).toBe(202);
-            expect(payload.result.ok).toBe(false);
-            expect(payload.result.status).toBe('running');
-            expect(payload.result.smokeId).toMatch(/^smk_[0-9a-f-]{36}$/i);
-            expect(payload.settings.providers.codex.connectionState).toBe('testing');
-
-            const [url, init] = fetchSpy.mock.calls[0];
-            expect(url).toBe(
-                'https://api.github.com/repos/acme/gantt/actions/workflows/feedback-runner-smoke.yml/dispatches'
-            );
-            const dispatched = JSON.parse(JSON.parse(init.body).inputs.payload);
-            expect(dispatched.provider).toBe('codex');
-            expect(dispatched.action).toBe(
-                'openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56'
-            );
-            expect(dispatched.smokeId).toBe(payload.result.smokeId);
-            expect(dispatched.callbackUrl).toContain(payload.result.smokeId);
-            expect(dispatched.callbackToken).toBeTruthy();
-        } finally {
-            fetchSpy.mockRestore();
-        }
-    });
-
-    it('[SCN-FWB-016] records a passing smoke result and marks the provider connected', async () => {
-        const env = createV2Env();
-        env.FEEDBACK_GITHUB_REPOSITORY = 'acme/gantt';
-        env.FEEDBACK_GITHUB_TOKEN = 'gh-token';
-        env.FEEDBACK_CALLBACK_ORIGIN = 'https://workbench.example.com';
-        const headers = await adminHeaders(env);
-
-        const fetchSpy = vi
-            .spyOn(globalThis, 'fetch')
-            .mockResolvedValue(new Response(null, { status: 204 }));
-        let smokeId = '';
-        let smokeToken = '';
-        try {
-            const started = await json(
-                await request(
-                    '/api/feedback/runners/test',
-                    { method: 'POST', headers, body: JSON.stringify({ provider: 'codex' }) },
-                    env
-                )
-            );
-            smokeId = started.result.smokeId;
-            smokeToken = JSON.parse(
-                JSON.parse(fetchSpy.mock.calls[0][1].body).inputs.payload
-            ).callbackToken;
-        } finally {
-            fetchSpy.mockRestore();
-        }
-
-        const response = await request(
-            `/api/feedback/runners/smoke/${smokeId}/result`,
-            {
-                method: 'POST',
-                headers: { authorization: `Bearer ${smokeToken}` },
-                body: JSON.stringify({
-                    ok: true,
-                    actionCommit: 'a'.repeat(40),
-                    model: 'gpt-5-codex',
-                    endpointMode: 'official',
-                    completedAt: '2026-08-01T10:00:00.000Z',
-                }),
-            },
-            env
-        );
-        const payload = await json(response);
-
-        expect(response.status).toBe(200);
-        const provider = payload.settings.providers.codex;
-        expect(provider.connectionState).toBe('connected');
-        expect(provider.lastTestResult.ok).toBe(true);
-        expect(provider.lastTestResult.actionCommit).toBe('a'.repeat(40));
-        expect(provider.lastTestResult.model).toBe('gpt-5-codex');
-        expect(provider.lastTestResult.endpointMode).toBe('official');
-        expect(provider.lastTestResult.completedAt).toBe('2026-08-01T10:00:00.000Z');
-    });
-
-    it('[SCN-FWB-016] retains each Codex smoke result in provider history', async () => {
-        const env = createV2Env();
-        env.FEEDBACK_GITHUB_REPOSITORY = 'acme/gantt';
-        env.FEEDBACK_GITHUB_TOKEN = 'gh-token';
-        env.FEEDBACK_CALLBACK_ORIGIN = 'https://workbench.example.com';
-        const headers = await adminHeaders(env);
-        const fetchSpy = vi
-            .spyOn(globalThis, 'fetch')
-            .mockResolvedValue(new Response(null, { status: 204 }));
-
-        const smoke = [];
-        try {
-            for (const completedAt of ['2026-08-01T10:00:00.000Z', '2026-08-01T11:00:00.000Z']) {
-                const started = await json(
-                    await request(
-                        '/api/feedback/runners/test',
-                        { method: 'POST', headers, body: JSON.stringify({ provider: 'codex' }) },
-                        env
-                    )
-                );
-                const callbackToken = JSON.parse(
-                    JSON.parse(fetchSpy.mock.calls.at(-1)[1].body).inputs.payload
-                ).callbackToken;
-                const completed = await json(
-                    await request(
-                        `/api/feedback/runners/smoke/${started.result.smokeId}/result`,
-                        {
-                            method: 'POST',
-                            headers: { authorization: `Bearer ${callbackToken}` },
-                            body: JSON.stringify({
-                                ok: true,
-                                actionCommit: 'a'.repeat(40),
-                                model: 'gpt-5-codex',
-                                endpointMode: 'relay',
-                                completedAt,
-                            }),
-                        },
-                        env
-                    )
-                );
-                smoke.push(completed.result.smokeId);
-            }
-        } finally {
-            fetchSpy.mockRestore();
-        }
-
-        const settings = await json(
-            await request('/api/feedback/runners/settings', { headers }, env)
-        );
-        const provider = settings.settings.providers.codex;
-        expect(provider.smokeHistory).toHaveLength(2);
-        expect(provider.smokeHistory.map((entry) => entry.smokeId)).toEqual(smoke);
-        expect(provider.smokeHistory.map((entry) => entry.completedAt)).toEqual([
-            '2026-08-01T10:00:00.000Z',
-            '2026-08-01T11:00:00.000Z',
-        ]);
-        expect(provider.lastTestResult.smokeId).toBe(smoke[1]);
-    });
+    // Action 冒烟（派发、结果回调、历史累积、smoke token 域校验）随 GH 路径于
+    // 2026-08-27 整体退役；「连接测试」如今只做控制面执行器探测，其行为由
+    // feedback-executor-control-plane 套件以真实迁移钉住。这里保留的是对
+    // 遗留冒烟数据的读取容忍（下一条 backfill 测试）。
 
     it('[SCN-FWB-016] backfills legacy latest smoke data into history', async () => {
         const env = createV2Env(
@@ -5901,95 +5730,6 @@ describe('feedback workbench V2 routes', () => {
                 completedAt: '2026-08-01T10:00:00.000Z',
             }),
         ]);
-    });
-
-    it('[SCN-FWB-016] records a failing smoke without ever reporting connected', async () => {
-        const env = createV2Env();
-        env.FEEDBACK_GITHUB_REPOSITORY = 'acme/gantt';
-        env.FEEDBACK_GITHUB_TOKEN = 'gh-token';
-        env.FEEDBACK_CALLBACK_ORIGIN = 'https://workbench.example.com';
-        const headers = await adminHeaders(env);
-
-        const fetchSpy = vi
-            .spyOn(globalThis, 'fetch')
-            .mockResolvedValue(new Response(null, { status: 204 }));
-        let smokeId = '';
-        let smokeToken = '';
-        try {
-            const started = await json(
-                await request(
-                    '/api/feedback/runners/test',
-                    { method: 'POST', headers, body: JSON.stringify({ provider: 'claude' }) },
-                    env
-                )
-            );
-            smokeId = started.result.smokeId;
-            smokeToken = JSON.parse(
-                JSON.parse(fetchSpy.mock.calls[0][1].body).inputs.payload
-            ).callbackToken;
-        } finally {
-            fetchSpy.mockRestore();
-        }
-
-        const payload = await json(
-            await request(
-                `/api/feedback/runners/smoke/${smokeId}/result`,
-                {
-                    method: 'POST',
-                    headers: { authorization: `Bearer ${smokeToken}` },
-                    body: JSON.stringify({
-                        ok: false,
-                        // A raw provider message may carry a key; only the code survives.
-                        errorCode: 'ANTHROPIC_AUTH_FAILED sk-ant-secret-value',
-                        completedAt: '2026-08-01T10:05:00.000Z',
-                    }),
-                },
-                env
-            )
-        );
-
-        const provider = payload.settings.providers.claude;
-        expect(provider.connectionState).toBe('failed');
-        expect(provider.lastTestResult.ok).toBe(false);
-        expect(provider.lastTestResult.errorCode).toBe('ANTHROPIC_AUTH_FAILED');
-        expect(JSON.stringify(provider)).not.toContain('sk-ant-secret-value');
-    });
-
-    it('[SCN-FWB-017] rejects a smoke result signed for a different smoke', async () => {
-        const env = createV2Env();
-        env.FEEDBACK_GITHUB_REPOSITORY = 'acme/gantt';
-        env.FEEDBACK_GITHUB_TOKEN = 'gh-token';
-        env.FEEDBACK_CALLBACK_ORIGIN = 'https://workbench.example.com';
-        const headers = await adminHeaders(env);
-
-        const fetchSpy = vi
-            .spyOn(globalThis, 'fetch')
-            .mockResolvedValue(new Response(null, { status: 204 }));
-        let smokeToken = '';
-        try {
-            await request(
-                '/api/feedback/runners/test',
-                { method: 'POST', headers, body: JSON.stringify({ provider: 'codex' }) },
-                env
-            );
-            smokeToken = JSON.parse(
-                JSON.parse(fetchSpy.mock.calls[0][1].body).inputs.payload
-            ).callbackToken;
-        } finally {
-            fetchSpy.mockRestore();
-        }
-
-        const response = await request(
-            `/api/feedback/runners/smoke/smk_${'0'.repeat(8)}-0000-4000-8000-${'0'.repeat(12)}/result`,
-            {
-                method: 'POST',
-                headers: { authorization: `Bearer ${smokeToken}` },
-                body: JSON.stringify({ ok: true }),
-            },
-            env
-        );
-
-        expect(response.status).toBe(401);
     });
 
     it('[SCN-FWB-022] refuses to let an admin hand-assert provider health', async () => {
@@ -6039,11 +5779,17 @@ describe('feedback workbench V2 routes', () => {
         );
 
         expect(payload.preflight.ok).toBe(false);
+        expect(payload.preflight.adapter).toBe('executor');
         const byId = Object.fromEntries(payload.preflight.checks.map((c) => [c.id, c]));
-        // §19.5 names these three explicitly as gates on enabling auto delivery.
-        expect(byId.merge_credentials.ok).toBe(false);
-        expect(byId.deployment_credentials.ok).toBe(false);
+        // §19.5/EXC-FWB-006（2026-08-27 结清）：预检只核验 executor 路径真用得上的
+        // 前提——项目交付配置、控制面 bearer、执行器在线，加上共有的冒烟目标。
+        expect(byId.project_delivery_config.ok).toBe(false);
+        expect(byId.executor_online.ok).toBe(false);
         expect(byId.production_smoke.ok).toBe(false);
+        // GitHub 凭据检查随 GH 路径删除，不得再出现。
+        expect(byId.github_dispatch).toBeUndefined();
+        expect(byId.merge_credentials).toBeUndefined();
+        expect(byId.deployment_credentials).toBeUndefined();
         for (const check of payload.preflight.checks) {
             if (!check.ok) expect(check.reason).toBeTruthy();
         }
@@ -6073,13 +5819,35 @@ describe('feedback workbench V2 routes', () => {
     });
 
     it('[SCN-FWB-022] lets an admin enable auto delivery once the preflight passes', async () => {
-        const env = createV2Env();
-        env.FEEDBACK_GITHUB_REPOSITORY = 'acme/gantt';
-        env.FEEDBACK_GITHUB_TOKEN = 'gh-token';
+        // executor 预检口径（EXC-FWB-006，2026-08-27 结清）：项目交付配置完整、
+        // 控制面 bearer、执行器在线，加上共有的回调目标/Release 密钥/冒烟目标。
+        const env = createV2Env(
+            {},
+            {
+                feedback_projects: [
+                    {
+                        id: 'proj_gantt',
+                        repo: 'acme/gantt',
+                        default_branch: 'master',
+                        commands_json: '{"test":"npm test"}',
+                        deploy_config_json: '{"pagesProject":"gantt-task-editor"}',
+                        is_self: 0,
+                        enabled: 1,
+                    },
+                ],
+                feedback_executors: [
+                    {
+                        id: 'executor-a',
+                        capabilities_json: JSON.stringify({ providers: ['codex', 'claude'] }),
+                        status: 'online',
+                        last_heartbeat_at: new Date().toISOString(),
+                    },
+                ],
+            }
+        );
         env.FEEDBACK_CALLBACK_ORIGIN = 'https://workbench.example.com';
-        env.FEEDBACK_MERGE_TOKEN = 'merge-token';
+        env.FEEDBACK_EXECUTOR_TOKEN = 'executor-bearer';
         env.FEEDBACK_RELEASE_TOKEN_SECRET = 'release-secret';
-        env.FEEDBACK_DEPLOY_TOKEN = 'deploy-token';
         env.FEEDBACK_PRODUCTION_ORIGIN = 'https://gantt.example.com';
         env.FEEDBACK_PRODUCTION_API_URL = 'https://api.gantt.example.com';
         const headers = await adminHeaders(env);
@@ -8287,19 +8055,14 @@ describe('feedback workbench V2 Run and Callback', () => {
                 ],
             }
         );
-        // Dispatch is configured and stubbed so these tests exercise Callback
-        // semantics, not the un-dispatched path (covered by its own suite).
+        // 这些测试练的是 Callback 语义。executor 是唯一执行路径（2026-08-27）：
+        // Run 停在 created 等租约；base commit 由执行侧钉定后上报，这里直接落库
+        // 模拟那一步，让写入型终态的 manifest 身份核验有个可比对的基线。
         env.FEEDBACK_CALLBACK_ORIGIN = 'https://worker.test';
         env.FEEDBACK_GITHUB_REPOSITORY = 'acme/gantt-task-editor';
-        env.FEEDBACK_GITHUB_TOKEN = 'ghp_test';
-        const fetchSpy = mockSuccessfulGitHubRunDispatch();
-        let result;
-        try {
-            result = await runWorkflow(env, { issueId: feedbackKey });
-        } finally {
-            fetchSpy.mockRestore();
-        }
+        const result = await runWorkflow(env, { issueId: feedbackKey });
         const run = Array.from(env.FEEDBACK_DB.tables.feedback_runs.values())[0];
+        if (run && !run.base_commit) run.base_commit = 'a'.repeat(40);
         return { env, run, workflowResult: result };
     }
 
@@ -8338,16 +8101,19 @@ describe('feedback workbench V2 Run and Callback', () => {
                         value_json: JSON.stringify({
                             defaultProvider: 'codex',
                             autoDeliver: { enabled: true, preflight: { ok: true, checks: [] } },
-                            providers: {
-                                codex: {
-                                    connectionState: 'connected',
-                                    lastTestResult: { ok: true },
-                                },
-                            },
                         }),
                         version: 1,
                         updated_at: '2026-08-01T08:59:00.000Z',
                         updated_by: 'admin',
+                    },
+                ],
+                // §7.4 的 provider 健康只认在线执行器（GH 路径已退役，2026-08-27）。
+                feedback_executors: [
+                    {
+                        id: 'executor-a',
+                        capabilities_json: JSON.stringify({ providers: ['codex', 'claude'] }),
+                        status: 'online',
+                        last_heartbeat_at: new Date().toISOString(),
                     },
                 ],
             }
@@ -8357,16 +8123,12 @@ describe('feedback workbench V2 Run and Callback', () => {
             FEEDBACK_AUTO_DELIVER_PREFLIGHT_OK: 'true',
             FEEDBACK_CALLBACK_ORIGIN: 'https://worker.test',
             FEEDBACK_GITHUB_REPOSITORY: 'acme/gantt-task-editor',
-            FEEDBACK_GITHUB_TOKEN: 'ghp_test',
+            FEEDBACK_EXECUTOR_TOKEN: 'executor-bearer',
             FEEDBACK_RELEASE_TOKEN_SECRET: 'unit-test-secret',
         });
-        const fetchSpy = mockSuccessfulGitHubRunDispatch();
-        try {
-            await runWorkflow(env, { issueId: feedbackKey, eventId: triggerEventId });
-        } finally {
-            fetchSpy.mockRestore();
-        }
+        await runWorkflow(env, { issueId: feedbackKey, eventId: triggerEventId });
         const run = Array.from(env.FEEDBACK_DB.tables.feedback_runs.values())[0];
+        if (run && !run.base_commit) run.base_commit = 'a'.repeat(40);
         env.FEEDBACK_DB.tables.feedback_events.set(`evt_agent_${run.id}`, {
             id: `evt_agent_${run.id}`,
             issue_id: feedbackKey,
@@ -8734,16 +8496,19 @@ describe('feedback workbench V2 Run and Callback', () => {
                         value_json: JSON.stringify({
                             defaultProvider: 'codex',
                             autoDeliver: { enabled: true, preflight: { ok: true, checks: [] } },
-                            providers: {
-                                codex: {
-                                    connectionState: 'connected',
-                                    lastTestResult: { ok: true },
-                                },
-                            },
                         }),
                         version: 1,
                         updated_at: '2026-08-01T08:59:00.000Z',
                         updated_by: 'admin',
+                    },
+                ],
+                // §7.4 的 provider 健康只认在线执行器（GH 路径已退役，2026-08-27）。
+                feedback_executors: [
+                    {
+                        id: 'executor-a',
+                        capabilities_json: JSON.stringify({ providers: ['codex', 'claude'] }),
+                        status: 'online',
+                        last_heartbeat_at: new Date().toISOString(),
                     },
                 ],
             }
@@ -8753,7 +8518,7 @@ describe('feedback workbench V2 Run and Callback', () => {
             FEEDBACK_AUTO_DELIVER_PREFLIGHT_OK: 'true',
             FEEDBACK_CALLBACK_ORIGIN: 'https://worker.test',
             FEEDBACK_GITHUB_REPOSITORY: 'acme/gantt-task-editor',
-            FEEDBACK_GITHUB_TOKEN: 'ghp_test',
+            FEEDBACK_EXECUTOR_TOKEN: 'executor-bearer',
             FEEDBACK_RELEASE_TOKEN_SECRET: 'unit-test-secret',
         });
         const fetchSpy = mockSuccessfulGitHubRunDispatch();
@@ -8843,20 +8608,24 @@ describe('feedback workbench V2 Run and Callback', () => {
                             value_json: JSON.stringify({
                                 defaultProvider: 'codex',
                                 autoDeliver: { enabled: true, preflight: { ok: true, checks: [] } },
-                                providers: {
-                                    codex: {
-                                        connectionState: testCase.healthy
-                                            ? 'connected'
-                                            : 'unverified',
-                                        lastTestResult: { ok: testCase.healthy },
-                                    },
-                                },
                             }),
                             version: 1,
                             updated_at: '2026-08-01T08:59:00.000Z',
                             updated_by: 'admin',
                         },
                     ],
+                    // §7.4 的 provider 健康只认在线执行器（GH 路径已退役）：
+                    // healthy=false 就是没有一个在线执行器。
+                    feedback_executors: testCase.healthy
+                        ? [
+                              {
+                                  id: 'executor-a',
+                                  capabilities_json: JSON.stringify({ providers: ['codex'] }),
+                                  status: 'online',
+                                  last_heartbeat_at: new Date().toISOString(),
+                              },
+                          ]
+                        : [],
                 }
             );
             Object.assign(env, {
@@ -8864,7 +8633,7 @@ describe('feedback workbench V2 Run and Callback', () => {
                 FEEDBACK_AUTO_DELIVER_PREFLIGHT_OK: 'true',
                 FEEDBACK_CALLBACK_ORIGIN: 'https://worker.test',
                 FEEDBACK_GITHUB_REPOSITORY: 'acme/gantt-task-editor',
-                FEEDBACK_GITHUB_TOKEN: 'ghp_test',
+                FEEDBACK_EXECUTOR_TOKEN: 'executor-bearer',
                 FEEDBACK_RELEASE_TOKEN_SECRET: 'unit-test-secret',
                 FEEDBACK_AUTO_DELIVER_ACTOR_ALLOWLIST: testCase.allowlist || '',
             });
@@ -8945,8 +8714,9 @@ describe('feedback workbench V2 Run and Callback', () => {
     it('[SCN-FWB-008] uses the configured default provider when no mention selects one', async () => {
         const { env, run } = await createRunEnv();
         expect(run.provider).toBe('codex');
-        expect(run.runner_type).toBe('github_hosted');
-        expect(run.status).toBe('dispatched');
+        // executor 是唯一执行路径（2026-08-27）：Run 停在 created 等租约领取。
+        expect(run.runner_type).toBe('executor');
+        expect(run.status).toBe('created');
         expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).last_run_id).toBe(run.id);
     });
 
@@ -8977,9 +8747,9 @@ describe('feedback workbench V2 Run and Callback', () => {
         const reasons = Array.from(env.FEEDBACK_DB.tables.feedback_events.values())
             .filter((event) => event.type === 'automation.suppressed')
             .map((event) => JSON.parse(event.body_json).reason);
-        // The first Run could not be dispatched (no GitHub config here) and the
-        // second was refused by the one-write-Run rule; both are admin-visible.
-        expect(reasons).toEqual(['GITHUB_DISPATCH_NOT_CONFIGURED', 'WRITE_RUN_ALREADY_ACTIVE']);
+        // 第一条 Run 停在 created 等执行器领取（没有派发这一步了）；第二条被
+        // one-write-Run 规则拒绝，且必须留下管理员可见的记录。
+        expect(reasons).toEqual(['WRITE_RUN_ALREADY_ACTIVE']);
     });
 
     it('[SCN-FWB-017] rejects a Callback without the matching run-scoped token', async () => {
@@ -9804,12 +9574,12 @@ describe('feedback workbench V2 Run and Callback', () => {
         );
     });
 
-    it('[SCN-FWB-022] auto-delivers a low-risk verified Candidate into a dispatched Release', async () => {
+    it('[SCN-FWB-022] auto-delivers a low-risk verified Candidate into an executor-claimable Release', async () => {
         const { env, run } = await createAutoDeliverRunEnv();
         const token = await callbackTokenFor(env, run.id);
-        const fetchSpy = vi
-            .spyOn(globalThis, 'fetch')
-            .mockResolvedValue(new Response(null, { status: 204 }));
+        // executor 是唯一交付路径（2026-08-27）：交付不再发任何出站请求，
+        // Release 保持 integrating 等 /api/executor/release 认领。
+        const fetchSpy = vi.spyOn(globalThis, 'fetch');
         let completed;
         try {
             completed = await json(
@@ -9823,6 +9593,7 @@ describe('feedback workbench V2 Run and Callback', () => {
                     token
                 )
             );
+            expect(fetchSpy).not.toHaveBeenCalled();
         } finally {
             fetchSpy.mockRestore();
         }
@@ -9834,7 +9605,7 @@ describe('feedback workbench V2 Run and Callback', () => {
             expect.objectContaining({
                 dispatched: true,
                 releaseId: release.id,
-                workflowFile: 'feedback-delivery.yml',
+                mode: 'executor_pull',
             })
         );
         expect(JSON.stringify(completed)).not.toContain('releaseToken');
@@ -9951,76 +9722,6 @@ describe('feedback workbench V2 Run and Callback', () => {
         expect(env.FEEDBACK_DB.tables.feedback_releases.size).toBe(0);
     });
 
-    it('[SCN-FWB-022] keeps a retryable Release resumable and continues it on Callback replay', async () => {
-        const { env, run } = await createAutoDeliverRunEnv();
-        const createdWorkflows = [];
-        env.FEEDBACK_WORKFLOW = {
-            async create(options) {
-                createdWorkflows.push(options);
-                return { id: options.id };
-            },
-            async get() {
-                return { async sendEvent() {} };
-            },
-        };
-        const completionBody = await completedRunBody(run.id, ['src/utils/time-formatter.js']);
-        const fetchSpy = vi
-            .spyOn(globalThis, 'fetch')
-            .mockResolvedValueOnce(new Response(null, { status: 503 }))
-            .mockResolvedValueOnce(new Response(null, { status: 204 }));
-        let completed;
-        let replayed;
-        try {
-            completed = await json(
-                await postCallback(env, run.id, completionBody, await callbackTokenFor(env, run.id))
-            );
-            replayed = await json(
-                await postCallback(env, run.id, completionBody, await callbackTokenFor(env, run.id))
-            );
-        } finally {
-            fetchSpy.mockRestore();
-        }
-
-        const candidate = env.FEEDBACK_DB.tables.feedback_candidates.get(completed.candidateId);
-        const release = Array.from(env.FEEDBACK_DB.tables.feedback_releases.values())[0];
-        expect(completed.autoDelivery).toEqual(
-            expect.objectContaining({
-                dispatched: false,
-                reason: 'GITHUB_HTTP_503',
-                resumable: true,
-                releaseId: release.id,
-            })
-        );
-        expect(replayed).toEqual(
-            expect.objectContaining({
-                duplicate: true,
-                autoDelivery: expect.objectContaining({
-                    dispatched: true,
-                    releaseId: release.id,
-                }),
-            })
-        );
-        expect(candidate.status).toBe('integrating');
-        expect(release).toEqual(
-            expect.objectContaining({ status: 'integrating', error_code: null })
-        );
-        expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey)).toEqual(
-            expect.objectContaining({
-                status: 'testing',
-            })
-        );
-        expect(
-            env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).active_human_action_id
-        ).toBeFalsy();
-        expect(env.FEEDBACK_DB.tables.feedback_human_actions.size).toBe(0);
-        expect(createdWorkflows).toEqual([
-            expect.objectContaining({
-                id: expect.stringMatching(/^feedback-release-retry-rel_/),
-                params: expect.objectContaining({ releaseId: release.id }),
-            }),
-        ]);
-    });
-
     it('[SCN-FWB-003][SCN-FWB-022] keeps an integrated auto-delivery terminal on completion replay', async () => {
         const { env, run } = await createAutoDeliverRunEnv();
         const completionBody = await completedRunBody(run.id, ['src/utils/time-formatter.js']);
@@ -10059,105 +9760,6 @@ describe('feedback workbench V2 Run and Callback', () => {
         );
         expect(fetchSpy).not.toHaveBeenCalled();
         fetchSpy.mockRestore();
-    });
-
-    it('[SCN-FWB-013] wakes the same Release at the durable 1/5/15 minute retry points', async () => {
-        const { env, run } = await createAutoDeliverRunEnv();
-        const createdWorkflows = [];
-        env.FEEDBACK_WORKFLOW = {
-            async create(options) {
-                createdWorkflows.push(options);
-                return { id: options.id };
-            },
-            async get() {
-                return { async sendEvent() {} };
-            },
-        };
-        const fetchSpy = vi
-            .spyOn(globalThis, 'fetch')
-            .mockResolvedValueOnce(new Response(null, { status: 503 }))
-            .mockResolvedValueOnce(new Response(null, { status: 503 }))
-            .mockResolvedValueOnce(new Response(null, { status: 503 }))
-            .mockResolvedValueOnce(new Response(null, { status: 204 }));
-        const sleeps = [];
-        let completed;
-        let retryResult;
-        let fetchCalls = 0;
-        try {
-            completed = await json(
-                await postCallback(
-                    env,
-                    run.id,
-                    await completedRunBody(run.id, ['src/utils/time-formatter.js']),
-                    await callbackTokenFor(env, run.id)
-                )
-            );
-            const scheduled = createdWorkflows[0];
-            retryResult = await new FeedbackWorkflow({}, env).run(
-                { instanceId: scheduled.id, payload: scheduled.params },
-                {
-                    async sleep(_name, duration) {
-                        sleeps.push(duration);
-                    },
-                    async do(_name, callback) {
-                        return callback();
-                    },
-                }
-            );
-            fetchCalls = fetchSpy.mock.calls.length;
-        } finally {
-            fetchSpy.mockRestore();
-        }
-
-        expect(completed.autoDelivery).toEqual(
-            expect.objectContaining({ dispatched: false, resumable: true })
-        );
-        expect(sleeps).toEqual(['1 minute', '5 minutes', '15 minutes']);
-        expect(retryResult).toEqual(
-            expect.objectContaining({
-                releaseId: completed.autoDelivery.releaseId,
-                dispatched: true,
-            })
-        );
-        expect(fetchCalls).toBe(4);
-        expect(
-            env.FEEDBACK_DB.tables.feedback_releases.get(completed.autoDelivery.releaseId)
-                .error_code
-        ).toBeNull();
-    });
-
-    it('[SCN-FWB-022] blocks a permanent Release dispatch rejection for human repair', async () => {
-        const { env, run } = await createAutoDeliverRunEnv();
-        const fetchSpy = vi
-            .spyOn(globalThis, 'fetch')
-            .mockResolvedValue(new Response(null, { status: 401 }));
-        let completed;
-        try {
-            completed = await json(
-                await postCallback(
-                    env,
-                    run.id,
-                    await completedRunBody(run.id, ['src/utils/time-formatter.js']),
-                    await callbackTokenFor(env, run.id)
-                )
-            );
-        } finally {
-            fetchSpy.mockRestore();
-        }
-
-        const candidate = env.FEEDBACK_DB.tables.feedback_candidates.get(completed.candidateId);
-        const release = Array.from(env.FEEDBACK_DB.tables.feedback_releases.values())[0];
-        const action = Array.from(env.FEEDBACK_DB.tables.feedback_human_actions.values())[0];
-        expect(completed.autoDelivery).toEqual(
-            expect.objectContaining({ dispatched: false, reason: 'GITHUB_HTTP_401' })
-        );
-        expect(candidate.status).toBe('failed');
-        expect(release).toEqual(
-            expect.objectContaining({ status: 'failed', error_code: 'GITHUB_HTTP_401' })
-        );
-        expect(action).toEqual(
-            expect.objectContaining({ type: 'blocked_external', candidate_id: candidate.id })
-        );
     });
 
     it('[SCN-FWB-022] rejects a tampered manifest hash before creating a Candidate', async () => {
@@ -10273,7 +9875,7 @@ describe('feedback workbench V2 Run and Callback', () => {
         expect(env.FEEDBACK_DB.tables.feedback_events.size).toBe(0);
         expect(env.FEEDBACK_DB.tables.feedback_designs.size).toBe(0);
         expect(env.FEEDBACK_DB.tables.feedback_human_actions.size).toBe(0);
-        expect(env.FEEDBACK_DB.tables.feedback_runs.get(run.id).status).toBe('dispatched');
+        expect(env.FEEDBACK_DB.tables.feedback_runs.get(run.id).status).toBe('created');
         expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe('queued');
 
         const retried = await json(await postCallback(env, run.id, callback, token));
@@ -11667,7 +11269,11 @@ describe('feedback workbench V2 Run and Callback', () => {
     });
 });
 
-describe('feedback workbench V2 GitHub dispatch', () => {
+describe('feedback workbench V2 run creation and manifest verification', () => {
+    // 原「GitHub dispatch」套件：派发到 GitHub 的行为随 GH 路径于 2026-08-27 整体
+    // 退役（派发 payload、permissionProfile、GITHUB_* 错误码、未配置/5xx 分支都不
+    // 复存在）。保留并改写的是引擎无关的部分：Run 的创建语义、context 携带的
+    // 服务端判据、终态 manifest 的身份核验。
     async function runWorkflow(env, { issueId, generation = 1 }) {
         const step = {
             async do(name, configOrCallback, maybeCallback) {
@@ -11690,10 +11296,7 @@ describe('feedback workbench V2 GitHub dispatch', () => {
         } catch (error) {
             if (error.message !== 'WORKFLOW_TEST_STOP_AFTER_DISPATCH') throw error;
             const run = Array.from(env.FEEDBACK_DB.tables.feedback_runs.values()).at(-1);
-            return {
-                run: run ? { runId: run.id, dispatched: run.status === 'dispatched' } : null,
-                workflowStatus: 'running',
-            };
+            return { run: run ? { runId: run.id } : null, workflowStatus: 'running' };
         }
     }
 
@@ -11708,9 +11311,13 @@ describe('feedback workbench V2 GitHub dispatch', () => {
         );
         env.FEEDBACK_CALLBACK_ORIGIN = 'https://gantt-share.example.workers.dev';
         env.FEEDBACK_GITHUB_REPOSITORY = 'acme/gantt-task-editor';
-        env.FEEDBACK_GITHUB_TOKEN = 'ghp_dispatch_token';
         env.FEEDBACK_GITHUB_REF = 'master';
         return Object.assign(env, overrides);
+    }
+
+    /** 执行侧钉定 base 后上报；这里直接落库模拟那一步。 */
+    function pinBaseCommit(env, runId, commit = 'a'.repeat(40)) {
+        env.FEEDBACK_DB.tables.feedback_runs.get(runId).base_commit = commit;
     }
 
     async function runToken(runId, aud) {
@@ -11759,78 +11366,21 @@ describe('feedback workbench V2 GitHub dispatch', () => {
         expect(response.status).toBe(201);
     }
 
-    it('[SCN-FWB-005] dispatches the provider workflow with a minimal payload', async () => {
+    it('[SCN-FWB-033] creates an executor-leaseable Run and never calls GitHub', async () => {
         const env = createDispatchEnv();
-        const calls = [];
-        const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, options) => {
-            calls.push({ url, options });
-            if (url.endsWith('/commits/master')) {
-                return Response.json({ sha: 'a'.repeat(40) });
-            }
-            return new Response(null, { status: 204 });
-        });
+        const fetchSpy = vi.spyOn(globalThis, 'fetch');
 
         try {
             const result = await runWorkflow(env, { issueId: feedbackKey });
 
-            expect(result.run.dispatched).toBe(true);
-            expect(calls).toHaveLength(2);
-            expect(calls[0].url).toBe(
-                'https://api.github.com/repos/acme/gantt-task-editor/commits/master'
-            );
-            expect(calls[1].url).toBe(
-                'https://api.github.com/repos/acme/gantt-task-editor/actions/workflows/feedback-agent-codex.yml/dispatches'
-            );
-            expect(calls[1].options.headers.Authorization).toBe('Bearer ghp_dispatch_token');
-
-            const body = JSON.parse(calls[1].options.body);
-            expect(body.ref).toBe('master');
-            const payload = JSON.parse(body.inputs.payload);
-            expect(payload.runId).toBe(result.run.runId);
-            expect(payload.policy).toBe('implement_and_verify');
-            expect(payload.provider).toBe('codex');
-            expect(payload.baseCommit).toBe('a'.repeat(40));
-            expect(payload.responsesEndpoint).toBe('https://api.openai.com/v1/responses');
-            // §14.4 step 2: the profile follows the policy, not the model.
-            expect(payload.permissionProfile).toBe('feedback-workspace');
-            expect(payload.contextUrl).toBe(
-                `https://gantt-share.example.workers.dev/api/feedback/runs/${payload.runId}/context`
-            );
-            expect(payload.callbackUrl).toBe(
-                `https://gantt-share.example.workers.dev/api/feedback/runs/${payload.runId}/events`
-            );
-
-            // §13.2/§18.2: no Agent key, admin password or feedback body travels.
-            const raw = calls[1].options.body;
-            expect(raw).not.toContain('admin-pass');
-            expect(raw).not.toContain('unit-test-pii-key');
-            expect(raw).not.toContain('D1 issue description');
-            const storedRun = env.FEEDBACK_DB.tables.feedback_runs.get(payload.runId);
-            expect(storedRun.status).toBe('dispatched');
-            expect(storedRun.base_commit).toBe('a'.repeat(40));
-        } finally {
-            fetchSpy.mockRestore();
-        }
-    });
-
-    it('[SCN-FWB-005] sends a read-only profile for an analyze policy', async () => {
-        const env = createDispatchEnv();
-        env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).scope = 'large';
-        const calls = [];
-        const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, options) => {
-            calls.push({ url, options });
-            if (url.endsWith('/commits/master')) {
-                return Response.json({ sha: 'b'.repeat(40) });
-            }
-            return new Response(null, { status: 204 });
-        });
-
-        try {
-            await runWorkflow(env, { issueId: feedbackKey });
-            const payload = JSON.parse(JSON.parse(calls[1].options.body).inputs.payload);
-
-            expect(payload.policy).toBe('analyze');
-            expect(payload.permissionProfile).toBe('feedback-readonly');
+            expect(fetchSpy).not.toHaveBeenCalled();
+            const run = env.FEEDBACK_DB.tables.feedback_runs.get(result.run.runId);
+            expect(run.runner_type).toBe('executor');
+            expect(run.policy).toBe('implement_and_verify');
+            expect(run.provider).toBe('codex');
+            // §17.1/§7.3: Run 停在非终态等租约领取，写入锁不提前释放。
+            expect(run.status).toBe('created');
+            expect(run.error_code).toBeNull();
         } finally {
             fetchSpy.mockRestore();
         }
@@ -11840,35 +11390,24 @@ describe('feedback workbench V2 GitHub dispatch', () => {
         // §16.4: without this flag the Runner finishes with `run.completed`, the
         // Issue lands in `needs_human` with no Design, and §7.2 routes the next
         // Run straight back to `analyze` — the Issue can never reach implement.
-        async function dispatchPayloadFor(overrides) {
+        async function contextFor(overrides) {
             const env = createDispatchEnv();
             Object.assign(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey), overrides);
-            const calls = [];
-            const fetchSpy = vi
-                .spyOn(globalThis, 'fetch')
-                .mockImplementation(async (url, options) => {
-                    calls.push({ url, options });
-                    if (url.endsWith('/commits/master')) {
-                        return Response.json({ sha: 'c'.repeat(40) });
-                    }
-                    return new Response(null, { status: 204 });
-                });
-            try {
-                await runWorkflow(env, { issueId: feedbackKey });
-                return JSON.parse(JSON.parse(calls[1].options.body).inputs.payload);
-            } finally {
-                fetchSpy.mockRestore();
-            }
+            const { run } = await runWorkflow(env, { issueId: feedbackKey });
+            const response = await request(
+                `/api/feedback/runs/${encodeURIComponent(run.runId)}/context`,
+                { headers: { Authorization: `Bearer ${await runToken(run.runId, 'context')}` } },
+                env
+            );
+            expect(response.status).toBe(200);
+            return (await json(response)).context;
         }
 
-        const requirement = await dispatchPayloadFor({
-            business_type: 'requirement',
-            scope: 'medium',
-        });
+        const requirement = await contextFor({ business_type: 'requirement', scope: 'medium' });
         expect(requirement.policy).toBe('analyze');
         expect(requirement.requiresDesign).toBe(true);
 
-        const broadImprovement = await dispatchPayloadFor({
+        const broadImprovement = await contextFor({
             business_type: 'improvement',
             scope: 'medium',
         });
@@ -11876,65 +11415,15 @@ describe('feedback workbench V2 GitHub dispatch', () => {
 
         // A small bug goes straight to implementation; asking for a Design there
         // would add an approval nobody needs.
-        const smallBug = await dispatchPayloadFor({ business_type: 'bug', scope: 'small' });
+        const smallBug = await contextFor({ business_type: 'bug', scope: 'small' });
         expect(smallBug.policy).toBe('implement_and_verify');
         expect(smallBug.requiresDesign).toBe(false);
     });
 
-    it('[SCN-FWB-009] leaves the Run visibly un-started when dispatch is unconfigured', async () => {
-        const env = createDispatchEnv();
-        delete env.FEEDBACK_GITHUB_TOKEN;
-        const fetchSpy = vi.spyOn(globalThis, 'fetch');
-
-        try {
-            const result = await runWorkflow(env, { issueId: feedbackKey });
-
-            expect(result.run.dispatched).toBe(false);
-            expect(fetchSpy).not.toHaveBeenCalled();
-            const run = env.FEEDBACK_DB.tables.feedback_runs.get(result.run.runId);
-            // §17.1/§7.3: an un-dispatched Run stays non-terminal so an admin
-            // can retry it and the write-Run lock is not released early.
-            expect(run.status).toBe('created');
-            expect(run.error_code).toBe('GITHUB_DISPATCH_NOT_CONFIGURED');
-            const suppressed = Array.from(env.FEEDBACK_DB.tables.feedback_events.values()).filter(
-                (event) => event.type === 'automation.suppressed'
-            );
-            expect(suppressed).toHaveLength(1);
-            expect(JSON.parse(suppressed[0].body_json).reason).toBe(
-                'GITHUB_DISPATCH_NOT_CONFIGURED'
-            );
-        } finally {
-            fetchSpy.mockRestore();
-        }
-    });
-
-    it('[SCN-FWB-013] marks a GitHub 5xx as retryable without claiming success', async () => {
-        const env = createDispatchEnv();
-        const fetchSpy = vi
-            .spyOn(globalThis, 'fetch')
-            .mockResolvedValue(new Response('', { status: 503 }));
-
-        try {
-            const result = await runWorkflow(env, { issueId: feedbackKey });
-            const run = env.FEEDBACK_DB.tables.feedback_runs.get(result.run.runId);
-
-            expect(result.run.dispatched).toBe(false);
-            expect(run.status).toBe('created');
-            expect(run.error_code).toBe('GITHUB_HTTP_503');
-        } finally {
-            fetchSpy.mockRestore();
-        }
-    });
-
     it('[SCN-FWB-012] re-checks the diff manifest before projecting run.completed', async () => {
         const env = createDispatchEnv();
-        const fetchSpy = mockSuccessfulGitHubRunDispatch();
-        let runId;
-        try {
-            runId = (await runWorkflow(env, { issueId: feedbackKey })).run.runId;
-        } finally {
-            fetchSpy.mockRestore();
-        }
+        const runId = (await runWorkflow(env, { issueId: feedbackKey })).run.runId;
+        pinBaseCommit(env, runId);
 
         await recordAgentMessage(env, runId);
 
@@ -11988,13 +11477,8 @@ describe('feedback workbench V2 GitHub dispatch', () => {
 
     it('[SCN-FWB-012] rejects a write Run that reports no diff manifest', async () => {
         const env = createDispatchEnv();
-        const fetchSpy = mockSuccessfulGitHubRunDispatch();
-        let runId;
-        try {
-            runId = (await runWorkflow(env, { issueId: feedbackKey })).run.runId;
-        } finally {
-            fetchSpy.mockRestore();
-        }
+        const runId = (await runWorkflow(env, { issueId: feedbackKey })).run.runId;
+        pinBaseCommit(env, runId);
 
         await recordAgentMessage(env, runId);
 
@@ -12022,15 +11506,10 @@ describe('feedback workbench V2 GitHub dispatch', () => {
         expect(body.runStatus).toBe('failed');
     });
 
-    it('[SCN-FWB-005] rejects a write Run whose manifest reports another base commit', async () => {
+    it('[SCN-FWB-012] rejects a write Run whose manifest reports another base commit', async () => {
         const env = createDispatchEnv();
-        const fetchSpy = mockSuccessfulGitHubRunDispatch();
-        let runId;
-        try {
-            runId = (await runWorkflow(env, { issueId: feedbackKey })).run.runId;
-        } finally {
-            fetchSpy.mockRestore();
-        }
+        const runId = (await runWorkflow(env, { issueId: feedbackKey })).run.runId;
+        pinBaseCommit(env, runId);
 
         await recordAgentMessage(env, runId);
 
@@ -12068,15 +11547,10 @@ describe('feedback workbench V2 GitHub dispatch', () => {
         expect(body.runStatus).toBe('failed');
     });
 
-    it('[SCN-FWB-005] accepts a clean manifest and projects the Run as succeeded', async () => {
+    it('[SCN-FWB-012] accepts a clean manifest and projects the Run as succeeded', async () => {
         const env = createDispatchEnv();
-        const fetchSpy = mockSuccessfulGitHubRunDispatch();
-        let runId;
-        try {
-            runId = (await runWorkflow(env, { issueId: feedbackKey })).run.runId;
-        } finally {
-            fetchSpy.mockRestore();
-        }
+        const runId = (await runWorkflow(env, { issueId: feedbackKey })).run.runId;
+        pinBaseCommit(env, runId);
 
         await recordAgentMessage(env, runId);
 
@@ -12188,7 +11662,10 @@ describe('feedback workbench V2 Candidate and Release', () => {
                 throw new Error('WORKFLOW_TEST_STOP_AFTER_DISPATCH');
             },
         };
-        const fetchSpy = mockSuccessfulGitHubRunDispatch();
+        // executor 是唯一执行路径（2026-08-27）：Run 停在 created，base 由执行侧钉定
+        // 后上报——这里直接落库模拟；交付也不再发任何出站请求，fetchSpy 仅用于
+        // 断言「确实没有网络调用」。
+        const fetchSpy = vi.spyOn(globalThis, 'fetch');
         try {
             await new FeedbackWorkflow({}, env).run(
                 {
@@ -12204,6 +11681,7 @@ describe('feedback workbench V2 Candidate and Release', () => {
         }
 
         const run = Array.from(env.FEEDBACK_DB.tables.feedback_runs.values())[0];
+        if (run && !run.base_commit) run.base_commit = 'a'.repeat(40);
         const manifest = await attachDiffManifestHash({
             specVersion: '1.0',
             repository: 'acme/gantt-task-editor',
@@ -12313,7 +11791,7 @@ describe('feedback workbench V2 Candidate and Release', () => {
         };
     }
 
-    it('[SCN-FWB-005] registers a Candidate with a recoverable identity', async () => {
+    it('[SCN-FWB-021] registers a Candidate with a recoverable identity', async () => {
         const { env, run, manifest, candidateId } = await createCandidateEnv();
         const candidate = env.FEEDBACK_DB.tables.feedback_candidates.get(candidateId);
 
@@ -12493,7 +11971,7 @@ describe('feedback workbench V2 Candidate and Release', () => {
         );
     });
 
-    it('[SCN-FWB-022] admin delivery dispatches the exact Release workflow without a payload callback URL', async () => {
+    it('[SCN-FWB-022] admin delivery leaves an executor-claimable Release and calls nothing outbound', async () => {
         const { env, candidateId, headers, releaseFetchSpy } = await createCandidateEnv({
             changedFiles: ['src/features/feedback/diff-gate.js'],
         });
@@ -12508,33 +11986,21 @@ describe('feedback workbench V2 Candidate and Release', () => {
         const release = await json(response);
 
         expect(response.status).toBe(201);
+        // executor 是唯一交付路径（2026-08-27）：交付 = 建好 integrating 态的
+        // Release 等 /api/executor/release 认领，控制面不发任何出站请求。
         expect(release).toEqual(
             expect.objectContaining({
                 releaseId: expect.stringMatching(/^rel_/),
                 candidateId,
                 dispatched: true,
-                workflowFile: 'feedback-delivery.yml',
+                mode: 'executor_pull',
             })
         );
-        expect(releaseFetchSpy).toHaveBeenCalledTimes(1);
-        const [dispatchUrl, dispatchOptions] = releaseFetchSpy.mock.calls[0];
-        expect(String(dispatchUrl)).toContain(
-            '/repos/acme/gantt-task-editor/actions/workflows/feedback-delivery.yml/dispatches'
+        expect(releaseFetchSpy).not.toHaveBeenCalled();
+        const stored = env.FEEDBACK_DB.tables.feedback_releases.get(release.releaseId);
+        expect(stored).toEqual(
+            expect.objectContaining({ status: 'integrating', candidate_id: candidateId })
         );
-        const dispatchBody = JSON.parse(dispatchOptions.body);
-        const payload = JSON.parse(dispatchBody.inputs.payload);
-        expect(dispatchBody.ref).toBe('master');
-        expect(payload).toEqual(
-            expect.objectContaining({
-                releaseId: release.releaseId,
-                candidateId,
-                repository: 'acme/gantt-task-editor',
-                candidateRef: expect.stringMatching(/^feedback\/candidate\/run_/),
-                changeCommit: 'change222',
-            })
-        );
-        expect(payload).not.toHaveProperty('callbackUrl');
-        expect(payload).not.toHaveProperty('releaseToken');
     });
 
     it('[SCN-FWB-012] signs Release callbacks with a dedicated secret', async () => {
@@ -12631,129 +12097,17 @@ describe('feedback workbench V2 Candidate and Release', () => {
 
         expect(summary.resumedReleases).toBe(1);
         expect(summary.releaseResumeFailures).toBe(0);
-        expect(releaseFetchSpy).toHaveBeenCalledTimes(1);
+        expect(releaseFetchSpy).not.toHaveBeenCalled();
         expect(env.FEEDBACK_DB.tables.feedback_candidates.get(candidateId).status).toBe(
             'integrating'
         );
         expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe('testing');
     });
 
-    it('[SCN-FWB-022] reconcile retries the same Release after a retryable GitHub dispatch failure', async () => {
-        const { env, candidateId, headers, releaseFetchSpy } = await createCandidateEnv({
-            changedFiles: ['src/features/feedback/diff-gate.js'],
-        });
-        await approveCandidate(env, headers, candidateId);
-        releaseFetchSpy.mockReset();
-        releaseFetchSpy
-            .mockResolvedValueOnce(new Response('', { status: 503 }))
-            .mockResolvedValueOnce(new Response(null, { status: 204 }));
-
-        const first = await request(
-            `/api/feedback/candidates/${candidateId}/deliver`,
-            { method: 'POST', headers },
-            env
-        );
-        const failedDispatch = await json(first);
-        expect(first.status).toBe(503);
-        expect(failedDispatch).toEqual(
-            expect.objectContaining({
-                releaseId: expect.stringMatching(/^rel_/),
-                reason: 'GITHUB_HTTP_503',
-                retryable: true,
-                resumable: true,
-            })
-        );
-        expect(env.FEEDBACK_DB.tables.feedback_releases.size).toBe(1);
-
-        const releaseBeforeRetry = env.FEEDBACK_DB.tables.feedback_releases.get(
-            failedDispatch.releaseId
-        );
-        const firstDispatchState = JSON.parse(releaseBeforeRetry.verification_json)._dispatch;
-        expect(
-            new Date(firstDispatchState.nextAttemptAt).getTime() -
-                new Date(firstDispatchState.lastAttemptAt).getTime()
-        ).toBe(60_000);
-
-        const earlySummary = await worker.scheduled(
-            {
-                scheduledTime: new Date(firstDispatchState.nextAttemptAt).getTime() - 1,
-                cron: '0 3 * * *',
-            },
-            env,
-            { waitUntil: () => {} }
-        );
-        expect(earlySummary.resumedReleases).toBe(0);
-        expect(releaseFetchSpy).toHaveBeenCalledTimes(1);
-
-        const summary = await worker.scheduled(
-            {
-                scheduledTime: new Date(firstDispatchState.nextAttemptAt).getTime(),
-                cron: '0 3 * * *',
-            },
-            env,
-            { waitUntil: () => {} }
-        );
-
-        expect(summary.resumedReleases).toBe(1);
-        expect(summary.releaseResumeFailures).toBe(0);
-        expect(releaseFetchSpy).toHaveBeenCalledTimes(2);
-        expect(env.FEEDBACK_DB.tables.feedback_releases.size).toBe(1);
-        expect(
-            env.FEEDBACK_DB.tables.feedback_releases.get(failedDispatch.releaseId).error_code
-        ).toBeNull();
-    });
-
-    it('[SCN-FWB-013] stops retrying a Release dispatch after the fourth transient failure', async () => {
-        const { env, candidateId, headers, releaseFetchSpy } = await createCandidateEnv({
-            changedFiles: ['src/features/feedback/diff-gate.js'],
-        });
-        await approveCandidate(env, headers, candidateId);
-        releaseFetchSpy.mockReset();
-        releaseFetchSpy.mockResolvedValue(new Response('', { status: 503 }));
-
-        const first = await request(
-            `/api/feedback/candidates/${candidateId}/deliver`,
-            { method: 'POST', headers },
-            env
-        );
-        const { releaseId } = await json(first);
-        expect(first.status).toBe(503);
-
-        const retryDelays = [];
-        for (let attempt = 2; attempt <= 4; attempt += 1) {
-            const release = env.FEEDBACK_DB.tables.feedback_releases.get(releaseId);
-            const dispatchState = JSON.parse(release.verification_json)._dispatch;
-            retryDelays.push(
-                new Date(dispatchState.nextAttemptAt).getTime() -
-                    new Date(dispatchState.lastAttemptAt).getTime()
-            );
-            await worker.scheduled(
-                {
-                    scheduledTime: new Date(dispatchState.nextAttemptAt).getTime(),
-                    cron: '0 3 * * *',
-                },
-                env,
-                { waitUntil: () => {} }
-            );
-        }
-        expect(retryDelays).toEqual([60_000, 5 * 60_000, 15 * 60_000]);
-        await worker.scheduled({ scheduledTime: Date.now() + 5, cron: '0 3 * * *' }, env, {
-            waitUntil: () => {},
-        });
-
-        expect(releaseFetchSpy).toHaveBeenCalledTimes(4);
-        expect(env.FEEDBACK_DB.tables.feedback_releases.get(releaseId)).toEqual(
-            expect.objectContaining({ status: 'failed', error_code: 'GITHUB_HTTP_503' })
-        );
-        expect(env.FEEDBACK_DB.tables.feedback_candidates.get(candidateId).status).toBe('failed');
-        expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe('needs_human');
-        const action = Array.from(env.FEEDBACK_DB.tables.feedback_human_actions.values()).find(
-            (item) => item.status === 'active'
-        );
-        expect(action).toEqual(
-            expect.objectContaining({ type: 'blocked_external', candidate_id: candidateId })
-        );
-    });
+    // 「GH Release 派发失败的 reconcile 重试 / 1-5-15 分钟退避 / 第四次失败落终态」
+    // 随 GH 派发一起删除（2026-08-27）：executor 交付没有「派发」这一步可失败，
+    // 交付侧失败由执行器以 release.failed 上报（见下方 blocked_external 与
+    // default_branch_drift 两条用例）。
 
     it('[SCN-FWB-023] holds the repository delivery lock while a Release is active', async () => {
         const { env, candidateId, headers } = await createCandidateEnv();
@@ -13168,9 +12522,10 @@ describe('feedback workbench V2 Candidate and Release', () => {
                 releaseId: release.releaseId,
                 candidateId,
                 dispatched: true,
+                mode: 'executor_pull',
             })
         );
-        expect(releaseFetchSpy).toHaveBeenCalledTimes(1);
+        expect(releaseFetchSpy).not.toHaveBeenCalled();
         expect(env.FEEDBACK_DB.tables.feedback_releases.size).toBe(1);
         expect(env.FEEDBACK_DB.tables.feedback_releases.get(release.releaseId)).toEqual(
             expect.objectContaining({ status: 'integrating', error_code: null })
@@ -13226,7 +12581,7 @@ describe('feedback workbench V2 Candidate and Release', () => {
         );
 
         expect(summary.resumedReleases).toBe(1);
-        expect(releaseFetchSpy).toHaveBeenCalledTimes(1);
+        expect(releaseFetchSpy).not.toHaveBeenCalled();
         expect(env.FEEDBACK_DB.tables.feedback_releases.size).toBe(1);
         expect(
             env.FEEDBACK_DB.tables.feedback_releases.get(release.releaseId).error_code
