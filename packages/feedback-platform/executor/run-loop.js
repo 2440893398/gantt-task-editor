@@ -180,6 +180,14 @@ export async function executeLeasedRun({
     // 执行器不能在这一点上比它弱。C4 的补投也走这条链，排在在途投递之后。
     let deliveryChain = Promise.resolve();
     function enqueueDelivery(event) {
+        // 终态失败必须落日志：run_7a3d037c 的 api_error 详情哪里都没写，事后只能
+        // 猜「大概是瞬态」。守护进程日志是失败详情唯一会留在本机的地方。
+        if (event?.type === 'run.failed') {
+            const detail = String(event.payload?.summary || '').slice(0, 500);
+            log(
+                `[executor] run=${lease.runId} failing (${event.payload?.errorCode || 'unknown'}): ${detail}`
+            );
+        }
         deliveryChain = deliveryChain.then(() =>
             postEvent(event).catch((error) => {
                 deliveryFailures.push(error);
@@ -196,6 +204,11 @@ export async function executeLeasedRun({
         // 失败带 errorCode 走 C4 兜底——「工作区没备好」必须区别于真崩溃。
         if (writeCapable) {
             candidatePrep = await writePipeline.prepare({ runId: lease.runId, context });
+            if (candidatePrep?.resumedFrom) {
+                log(
+                    `[executor] run=${lease.runId} resuming previous candidate ${candidatePrep.resumedFrom} (SCN-FWB-040)`
+                );
+            }
         }
         // 审批 fail-closed：注册在任何 turn 开始之前，不存在无人接管的窗口。
         session.onApprovalRequest(async (method, params) => {
@@ -269,6 +282,10 @@ export async function executeLeasedRun({
             // Agent 从来不会被要求交付 Design——`#czi9c6` 的活锁就是从这里开始的。
             requiresDesign: context.requiresDesign === true,
             attachments: context.attachments ?? [],
+            // SCN-FWB-040：工作区已建在上一轮候选之上；不明说 Agent 会把已完成的
+            // 工作当待办重做一遍。只有真的恢复成功才下发——候选提交缺席时工作区
+            // 是全新开工，prompt 再说「站在上一轮之上」就是撒谎。
+            previousAttempt: candidatePrep?.resumedFrom ? context.previousAttempt : null,
         });
         const opened = await session.openSession({ prompt, timeoutMs: turnTimeoutMs });
         normalizer.setProviderSessionId(opened?.sessionId);

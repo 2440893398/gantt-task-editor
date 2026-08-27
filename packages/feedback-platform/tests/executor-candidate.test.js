@@ -56,7 +56,72 @@ describe('[SCN-FWB-032] prepareCandidateWorkspace', () => {
         expect(result).toEqual({
             baseCommit: 'a'.repeat(40),
             candidateRef: 'feedback/candidate/run_1',
+            resumedFrom: '',
         });
+    });
+
+    it('[C3] evidenceDir 用 -x 定向清场——目录整个被 gitignore，普通 clean 碰不到里面的残留', async () => {
+        // 生产实锤（2026-08-27 变更日志）：tests/e2e/evidence/ 在 .gitignore 里，
+        // `clean -fd` 对被 ignore 的文件无效，上一轮的截图会一直躺到下一轮，
+        // 「PNG 在目录里」就再也推不出「本轮产出了 PNG」。
+        const git = fakeGit({ 'rev-parse master': 'a'.repeat(40) + '\n' });
+        await prepareCandidateWorkspace({
+            runId: 'run_1',
+            defaultBranch: 'master',
+            git,
+            evidenceDir: 'tests/e2e/evidence',
+        });
+        expect(git.calls.slice(0, 3)).toEqual([
+            'reset --hard',
+            'clean -fd -e node_modules',
+            'clean -fdx -- tests/e2e/evidence',
+        ]);
+    });
+
+    it('[SCN-FWB-040] 有上一轮候选提交时建在它之上，baseCommit 取其父提交', async () => {
+        const resume = 'b'.repeat(40);
+        const git = fakeGit({
+            [`rev-parse ${resume}^`]: 'a'.repeat(40) + '\n',
+            'rev-parse master': 'f'.repeat(40) + '\n',
+        });
+        const result = await prepareCandidateWorkspace({
+            runId: 'run_2',
+            defaultBranch: 'master',
+            git,
+            resumeFromCommit: resume,
+        });
+        expect(git.calls).toContain(`cat-file -e ${resume}^{commit}`);
+        expect(git.calls).toContain(`checkout -B feedback/candidate/run_2 ${resume}`);
+        // 坏行为下会红的形态：base 取 master 的话，恢复轮的 base..HEAD diff 会把
+        // 上一轮的 36 个文件全部丢掉，权威门禁与 manifest 都在审一个空集。
+        expect(result.baseCommit).toBe('a'.repeat(40));
+        expect(result.resumedFrom).toBe(resume);
+    });
+
+    it('[SCN-FWB-040] 候选提交不在本工作区时静默回落全新开工——恢复是优化不是正确性前提', async () => {
+        const resume = 'b'.repeat(40);
+        const calls = [];
+        const git = async (...args) => {
+            const joined = args.join(' ');
+            calls.push(joined);
+            if (joined.startsWith('cat-file')) {
+                const error = new Error('EXECUTOR_GIT_FAILED: not a valid object');
+                error.code = 'EXECUTOR_GIT_FAILED';
+                throw error;
+            }
+            if (joined === 'rev-parse master')
+                return { code: 0, stdout: 'f'.repeat(40), stderr: '' };
+            return { code: 0, stdout: '', stderr: '' };
+        };
+        const result = await prepareCandidateWorkspace({
+            runId: 'run_3',
+            defaultBranch: 'master',
+            git,
+            resumeFromCommit: resume,
+        });
+        expect(result.baseCommit).toBe('f'.repeat(40));
+        expect(result.resumedFrom).toBe('');
+        expect(calls).toContain(`checkout -B feedback/candidate/run_3 ${'f'.repeat(40)}`);
     });
 });
 
@@ -79,6 +144,16 @@ describe('[SCN-FWB-032] 变更收集与提交', () => {
         expect(commitCall).toContain('user.name=feedback-executor');
         expect(commitCall).toContain('user.email=');
         expect(result.changeCommit).toBe('c'.repeat(40));
+    });
+
+    it('[SCN-FWB-040] commit 允许空提交——恢复轮 Agent 可能一行不改', async () => {
+        // 上一轮实现完好、失败在验证环节之外（如证据检测缺陷）时，恢复轮的暂存区
+        // 相对 HEAD 为空。坏行为下的形态：普通 commit 以 "nothing to commit" 非零
+        // 退出，EXECUTOR_GIT_FAILED 把一个本可直接交付的 Run 整个挂掉。
+        const git = fakeGit({ 'rev-parse HEAD': 'c'.repeat(40) });
+        await commitCandidate({ runId: 'run_1', git });
+        const commitCall = git.calls.find((call) => call.includes('commit'));
+        expect(commitCall).toContain('--allow-empty');
     });
 
     it('committedCandidateDiff 读的是提交后的 base..HEAD——权威门禁不信工作树', async () => {

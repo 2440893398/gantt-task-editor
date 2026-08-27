@@ -20,7 +20,14 @@ import { sanitizeVisualEvidence } from '../../../src/features/feedback/feedback-
 import { scnIdFromDiff } from '../../../src/features/feedback/diff-gate.js';
 import { extractFeedbackDesign } from '../../../scripts/feedback-extract-design.mjs';
 
-const REPO_ROOT = new URL('../../../', import.meta.url);
+/**
+ * GH Actions 执行路径已于 2026-08-27 整体退役（bf21bef，用户拍板），4 份 workflow
+ * yml 随之删除。本 Adapter 按退役决定保留为符合性套件的第二个 Adapter 形状——
+ * 它钉住的是「hosted 形态的执行器契约长什么样」，不再对应任何真实执行路径。
+ * 步骤表因此改读 fixtures/ 下的退役快照（从删除前的提交原样恢复）：继续指向
+ * `.github/workflows/` 意味着 ENOENT，把 yml 复活回去则意味着退役不彻底。
+ */
+const RETIRED_WORKFLOWS_ROOT = new URL('../fixtures/retired-workflows/', import.meta.url);
 
 /** workflow 步骤名 → 协议关心的步骤种类。名字是契约的一部分，改名要同步这里。 */
 const STEP_KINDS = new Map([
@@ -57,7 +64,7 @@ function parseWorkflowSteps(yamlText) {
 
 export function createActionsAdapter({ provider = 'codex' } = {}) {
     const workflowPath = fileURLToPath(
-        new URL(`.github/workflows/feedback-agent-${provider}.yml`, REPO_ROOT)
+        new URL(`feedback-agent-${provider}.yml`, RETIRED_WORKFLOWS_ROOT)
     );
     let cachedSteps = null;
     const steps = () => (cachedSteps ??= parseWorkflowSteps(readFileSync(workflowPath, 'utf8')));

@@ -101,14 +101,21 @@ function fakeGit(overrides = {}) {
     return git;
 }
 
-function makePipeline({ gitOutputs = {}, verification = null, runCommandResults = {} } = {}) {
+function makePipeline({
+    gitOutputs = {},
+    verification = null,
+    runCommandResults = {},
+    fsImpl = {},
+} = {}) {
     const verificationCalls = [];
     const commandCalls = [];
+    const git = fakeGit(gitOutputs);
+    const rmCalls = [];
     const pipeline = createWritePipeline({
         workspaceDir: 'C:/ws',
         childEnv: { PATH: 'p' },
         log: () => {},
-        gitFactory: () => fakeGit(gitOutputs),
+        gitFactory: () => git,
         runVerification: async (options) => {
             verificationCalls.push(options);
             return (
@@ -131,9 +138,12 @@ function makePipeline({ gitOutputs = {}, verification = null, runCommandResults 
         fsImpl: {
             existsSync: (p) => String(p).includes('node_modules'),
             readdirSync: () => [],
+            readFileSync: () => '',
+            rmSync: (p) => rmCalls.push(String(p).replace(/\\/g, '/')),
+            ...fsImpl,
         },
     });
-    return { pipeline, verificationCalls, commandCalls };
+    return { pipeline, verificationCalls, commandCalls, git, rmCalls };
 }
 
 const CONTEXT = {
@@ -254,23 +264,119 @@ describe('[SCN-FWB-032] 写入管线 finalize', () => {
 describe('[SCN-FWB-032] visualEvidence.present 只认本轮产出（C3）', () => {
     const prep = { baseCommit: BASE, candidateRef: 'feedback/candidate/run_w1' };
 
-    it('evidence 目录里躺着仓库提交过的旧 png 不算 present——否则 UI 类变更被假放行', async () => {
-        // 2026-08-22 真机第 2 轮实测：tests/e2e/evidence/ 里有仓库自带的历史截图，
-        // existsSync+readdir 判定 present=true，而本轮一张图都没产出。
-        const { pipeline } = makePipeline();
-        const outcome = await pipeline.finalize({ runId: 'run_w1', context: CONTEXT, prep });
-        // 默认 fake git 对 status --porcelain 返回空 → 本轮无新产出 → present=false
-        expect(outcome.completionPayload.verification.visualEvidence.present).toBe(false);
-    });
-
-    it('e2e 产出的未跟踪 png 才算 present', async () => {
+    it('目录被 gitignore 时磁盘上的 PNG 仍算 present——git status 对 ignore 的文件永远静默', async () => {
+        // 生产实锤（2026-08-27 变更日志，run_5104cfc1）：tests/e2e/evidence/ 整个在
+        // .gitignore 里，旧实现拿 `git status --porcelain` 判定「本轮新增」，porcelain
+        // 对被 ignore 的新文件一行不吐（--ignored 也只坍缩成目录一行）——判定结构性
+        // 恒 false，测试/构建/e2e 全绿、截图真实在磁盘上的 Run 照样被判「未产出证据」。
+        // 本用例的 fake git status 保持生产同款的静默；检测必须走文件系统。
         const { pipeline } = makePipeline({
-            gitOutputs: {
-                'status --porcelain':
-                    '?? tests/e2e/evidence/fix-proof.png\n?? tests/e2e/evidence/notes.txt\n',
-            },
+            gitOutputs: { 'status --porcelain': '' },
+            fsImpl: { readdirSync: () => ['baseline-controls-removed.png'] },
         });
         const outcome = await pipeline.finalize({ runId: 'run_w1', context: CONTEXT, prep });
         expect(outcome.completionPayload.verification.visualEvidence.present).toBe(true);
+    });
+
+    it('evidence 目录里躺着仓库提交过的旧 png 不算 present——否则 UI 类变更被假放行', async () => {
+        // 2026-08-22 真机第 2 轮实测的教训不回退：prepare 的 -x 清场清不掉**已跟踪**
+        // 文件，历史截图必须靠 ls-files 排除，否则又回到 existsSync 时代的假放行。
+        const { pipeline } = makePipeline({
+            gitOutputs: { 'ls-files -- tests/e2e/evidence': 'tests/e2e/evidence/old.png\n' },
+            fsImpl: { readdirSync: () => ['old.png'] },
+        });
+        const outcome = await pipeline.finalize({ runId: 'run_w1', context: CONTEXT, prep });
+        expect(outcome.completionPayload.verification.visualEvidence.present).toBe(false);
+    });
+
+    it('目录不存在或没有任何 PNG → present=false', async () => {
+        const missingDir = makePipeline({
+            fsImpl: {
+                readdirSync: () => {
+                    throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+                },
+            },
+        });
+        const missing = await missingDir.pipeline.finalize({
+            runId: 'run_w1',
+            context: CONTEXT,
+            prep,
+        });
+        expect(missing.completionPayload.verification.visualEvidence.present).toBe(false);
+
+        const noPng = makePipeline({ fsImpl: { readdirSync: () => ['notes.txt'] } });
+        const outcome = await noPng.pipeline.finalize({ runId: 'run_w1', context: CONTEXT, prep });
+        expect(outcome.completionPayload.verification.visualEvidence.present).toBe(false);
+    });
+});
+
+describe('[SCN-FWB-040] prepare 把候选恢复与证据清场接进 git 工作区', () => {
+    it('context.previousAttempt.changeCommit 存在时建在其上，并总是 -x 清场证据目录', async () => {
+        const resume = 'd'.repeat(40);
+        const { pipeline, git } = makePipeline({
+            gitOutputs: { [`rev-parse ${resume}^`]: `${BASE}\n` },
+        });
+        const prepResult = await pipeline.prepare({
+            runId: 'run_w1',
+            context: { ...CONTEXT, previousAttempt: { changeCommit: resume } },
+        });
+        expect(git.calls).toContain('clean -fdx -- tests/e2e/evidence');
+        expect(git.calls).toContain(`checkout -B feedback/candidate/run_w1 ${resume}`);
+        expect(prepResult.baseCommit).toBe(BASE);
+        expect(prepResult.resumedFrom).toBe(resume);
+    });
+});
+
+describe('[SCN-FWB-041] 删除标记在暂存前兑现为真实删除', () => {
+    const prep = { baseCommit: BASE, candidateRef: 'feedback/candidate/run_w1' };
+
+    it('整文件单行标记（含注释包裹）被删除，且发生在 add -A 之前', async () => {
+        // 坏行为下的形态：不删的话，「删掉某功能」类任务交付里永远带着壳文件，
+        // Agent 只能在结果里请人工 git rm（run_5104cfc1 原话）——闭环最后一米断掉。
+        const contents = {
+            'src/features/gantt/baseline.js': '// FEEDBACK-DELETE-FILE\n',
+            'src/other.js': 'export const keep = 1;\n',
+            'doc/legacy.md': '<!-- FEEDBACK-DELETE-FILE -->',
+        };
+        const { pipeline, git, rmCalls } = makePipeline({
+            gitOutputs: {
+                'status --porcelain':
+                    ' M src/features/gantt/baseline.js\n M src/other.js\n?? doc/legacy.md\n',
+            },
+            fsImpl: {
+                readFileSync: (p) => {
+                    const key = Object.keys(contents).find((file) =>
+                        String(p).replace(/\\/g, '/').endsWith(file)
+                    );
+                    return key ? contents[key] : '';
+                },
+            },
+        });
+        await pipeline.finalize({ runId: 'run_w1', context: CONTEXT, prep });
+        expect(rmCalls).toEqual(['C:/ws/src/features/gantt/baseline.js', 'C:/ws/doc/legacy.md']);
+        const statusIndex = git.calls.findIndex((call) => call.startsWith('status --porcelain'));
+        const addIndex = git.calls.findIndex((call) => call === 'add -A');
+        expect(statusIndex).toBeGreaterThanOrEqual(0);
+        expect(addIndex).toBeGreaterThan(statusIndex);
+    });
+
+    it('正文里提到标记、或标记只是多行文件中的一行——都不触发删除', async () => {
+        const contents = {
+            'src/a.js': '// FEEDBACK-DELETE-FILE\nexport const x = 1;\n',
+            'doc/notes.md': 'To delete a file write FEEDBACK-DELETE-FILE as its only line.\n',
+        };
+        const { pipeline, rmCalls } = makePipeline({
+            gitOutputs: { 'status --porcelain': ' M src/a.js\n M doc/notes.md\n' },
+            fsImpl: {
+                readFileSync: (p) => {
+                    const key = Object.keys(contents).find((file) =>
+                        String(p).replace(/\\/g, '/').endsWith(file)
+                    );
+                    return key ? contents[key] : '';
+                },
+            },
+        });
+        await pipeline.finalize({ runId: 'run_w1', context: CONTEXT, prep });
+        expect(rmCalls).toEqual([]);
     });
 });

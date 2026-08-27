@@ -16,10 +16,18 @@
  * 服务端行为，执行器不需要（也没有）单独的注册端点。
  */
 import { createHash } from 'node:crypto';
-import { existsSync as fsExistsSync } from 'node:fs';
+import {
+    existsSync as fsExistsSync,
+    readdirSync as fsReaddirSync,
+    readFileSync as fsReadFileSync,
+    rmSync as fsRmSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { evaluateDiffGate, scnIdFromDiff } from '../../../src/features/feedback/diff-gate.js';
-import { FEEDBACK_EVIDENCE_DIR } from '../../../src/features/feedback/feedback-prompt.js';
+import {
+    FEEDBACK_DELETE_MARKER,
+    FEEDBACK_EVIDENCE_DIR,
+} from '../../../src/features/feedback/feedback-prompt.js';
 import {
     candidateRefFor,
     collectCandidateChanges,
@@ -70,6 +78,25 @@ const failedStepLabel = {
     playwright: 'browser verification',
 };
 
+// SCN-FWB-041：「整个文件即单行标记」才算删除请求。允许一层注释记号包裹——
+// 斜杠注释、#、分号、SQL 双横线、C 风格块注释与 HTML 注释均可（记号写进正则，
+// 不在此逐字列举：字面写出块注释/HTML 注释的闭合记号会当场终结本注释）。
+// 正文里出现该字符串不触发——检测对象是 trim 后的完整文件内容，不是某一行。
+const DELETE_MARKER_PATTERN = new RegExp(
+    `^(?:\\/\\/|#|;|--|\\/\\*|<!--)?\\s*${FEEDBACK_DELETE_MARKER}\\s*(?:\\*\\/|-->)?$`
+);
+
+/** `git status --porcelain` 的路径段：含特殊字符时被 C 风格双引号包裹。 */
+function unquoteGitPath(raw) {
+    const trimmed = String(raw || '').trim();
+    if (!trimmed.startsWith('"') || !trimmed.endsWith('"')) return trimmed;
+    try {
+        return JSON.parse(trimmed);
+    } catch {
+        return '';
+    }
+}
+
 export function createWritePipeline({
     workspaceDir,
     childEnv,
@@ -77,26 +104,83 @@ export function createWritePipeline({
     gitFactory = createGitRunner,
     runVerification = runVerificationSteps,
     runCommandImpl = runCommand,
-    fsImpl = { existsSync: fsExistsSync },
+    fsImpl = {
+        existsSync: fsExistsSync,
+        readdirSync: fsReaddirSync,
+        readFileSync: fsReadFileSync,
+        rmSync: fsRmSync,
+    },
 } = {}) {
     if (!workspaceDir) throw new Error('EXECUTOR_WRITE_PIPELINE_WORKSPACE_REQUIRED');
     const git = gitFactory({ cwd: workspaceDir });
 
     /**
-     * 「本轮产出了视觉证据」= evidence 目录里有 git 之外的新 png（e2e 刚写下的
-     * 未跟踪文件）。不能用「目录里有 png」判定——2026-08-22 真机实测该目录躺着
-     * 仓库提交过的历史截图，existsSync 判 present=true 而本轮一张图都没产出，
-     * 要求视觉证据的 UI 类变更会被它假放行（C3：证据必须是本次验证专用）。
+     * 「本轮产出了视觉证据」= evidence 目录里有**未跟踪的** png。判定走文件系统而
+     * 不是 git status——该目录整个在 `.gitignore` 里，porcelain 对被 ignore 的文件
+     * 永远静默（加 `--ignored` 也只坍缩成 `!! tests/e2e/evidence/` 一行），旧实现
+     * 因此结构性恒 false：run_5104cfc1 的截图真实躺在磁盘上（93KB，时间戳落在
+     * e2e 区间内），全绿 Run 仍被判「未产出证据」。「证据必须本次验证专用」
+     * （2026-08-22 教训，C3）不再靠 git 的「新文件」语义，改由 prepare 阶段的
+     * `git clean -fdx -- <evidenceDir>` 清场保证：验证后目录里的 PNG 只可能是
+     * 本轮写下的。已跟踪文件 clean 清不掉，故仍需排除，防历史截图冒充证据。
      */
     async function evidenceProducedThisRun() {
+        let names = [];
         try {
-            const status = (await git('status', '--porcelain', '--', FEEDBACK_EVIDENCE_DIR)).stdout;
-            return status
-                .split(/\r?\n/)
-                .some((line) => line.trim() && line.trim().toLowerCase().endsWith('.png'));
+            names = fsImpl.readdirSync(join(workspaceDir, FEEDBACK_EVIDENCE_DIR));
+        } catch {
+            return false; // 目录不存在 = 本轮没有证据
+        }
+        const pngs = names.filter((name) => String(name).toLowerCase().endsWith('.png'));
+        if (!pngs.length) return false;
+        try {
+            const tracked = new Set(
+                (await git('ls-files', '--', FEEDBACK_EVIDENCE_DIR)).stdout
+                    .split(/\r?\n/)
+                    .map((line) => line.trim())
+                    .filter(Boolean)
+            );
+            return pngs.some((name) => !tracked.has(`${FEEDBACK_EVIDENCE_DIR}/${name}`));
         } catch {
             return false;
         }
+    }
+
+    /**
+     * SCN-FWB-041：把 Agent 留下的删除标记文件变成真实删除。扫描对象是 porcelain
+     * 报出的改动与新增（被 ignore 的文件不在其中，也不该在），删除发生在暂存之前，
+     * `git add -A` 随后把删除纳入候选 diff——门禁、changedFiles、验证对删除的
+     * 处理与普通改动完全一致。返回被删路径供日志留痕。
+     */
+    async function applyDeleteMarkers() {
+        const status = (await git('status', '--porcelain')).stdout;
+        const deleted = [];
+        for (const line of status.split(/\r?\n/)) {
+            if (!line.trim()) continue;
+            const code = line.slice(0, 2);
+            // D = 已是删除；R = 改名（Agent 无命令通道，理论上不出现）——都不扫。
+            if (code.includes('D')) continue;
+            const rawPath = line.slice(3);
+            const file = unquoteGitPath(
+                rawPath.includes(' -> ') ? rawPath.split(' -> ').pop() : rawPath
+            );
+            if (!file) continue;
+            let content = '';
+            try {
+                const absolute = join(workspaceDir, file);
+                // 标记文件必然极小；大文件直接跳过，不为它读满内存。
+                content = String(fsImpl.readFileSync(absolute, { encoding: 'utf8' })).slice(0, 512);
+            } catch {
+                continue;
+            }
+            const trimmed = content.trim();
+            if (!trimmed || trimmed.includes('\n')) continue;
+            if (!DELETE_MARKER_PATTERN.test(trimmed)) continue;
+            fsImpl.rmSync(join(workspaceDir, file));
+            deleted.push(file);
+            log(`[executor] delete marker honoured: ${file}`);
+        }
+        return deleted;
     }
 
     function skippedReport(context) {
@@ -132,6 +216,10 @@ export function createWritePipeline({
                     runId,
                     defaultBranch: context?.defaultBranch || 'master',
                     git,
+                    // C3：清掉上一轮残留的（被 gitignore 的）证据 PNG，见 evidenceProducedThisRun。
+                    evidenceDir: FEEDBACK_EVIDENCE_DIR,
+                    // SCN-FWB-040：有上一轮候选就建在它之上，提交缺席时静默回落全新开工。
+                    resumeFromCommit: String(context?.previousAttempt?.changeCommit || ''),
                 });
             } catch (error) {
                 const wrapped = new Error(
@@ -159,6 +247,9 @@ export function createWritePipeline({
             const approvedPaths = Array.isArray(context?.approvedPaths)
                 ? context.approvedPaths
                 : [];
+
+            // SCN-FWB-041：删除标记先于暂存兑现，删除以普通 diff 身份走完整门禁与验证。
+            await applyDeleteMarkers();
 
             const staged = await collectCandidateChanges({ baseCommit: identity.baseCommit, git });
             if (!staged.changedFiles.length) {

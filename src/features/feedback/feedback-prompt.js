@@ -15,6 +15,7 @@ const WRITE_POLICIES = new Set(['implement', 'implement_and_verify', 'local_requ
 
 const WRITE_RULES = [
     '- Modify only files required by this feedback.',
+    '- To delete a file, replace its ENTIRE content with the single line `// FEEDBACK-DELETE-FILE` — the pipeline performs the real deletion before verification runs. Never leave tombstone stubs or ask a human to run git rm.',
     '- Update tests/scenarios first for requirement changes and cite the SCN-ID in business tests.',
     '- Never hand-edit tests/e2e/agent-journeys/expected/*.json.',
     '- Never silence failures with test.skip, removed assertions, or weakened comparisons.',
@@ -38,6 +39,16 @@ const READ_ONLY_RULES = [
  * writes here, so anything found in it was produced deliberately for this Run.
  */
 export const FEEDBACK_EVIDENCE_DIR = 'tests/e2e/evidence';
+
+/**
+ * SCN-FWB-041: executor Agents have no command channel and no delete tool, so
+ * "remove this feature" tasks used to end with tombstone stubs plus a note
+ * asking a human to run `git rm` (run_5104cfc1 did exactly that). A file whose
+ * entire content is this single marker line (optionally wrapped in a comment
+ * token) is really deleted by the write pipeline before staging. The constant
+ * lives here so the prompt instruction and the pipeline detector cannot drift.
+ */
+export const FEEDBACK_DELETE_MARKER = 'FEEDBACK-DELETE-FILE';
 
 /**
  * §14.4: `implement_and_verify` is the only policy that runs the browser suite,
@@ -139,6 +150,11 @@ export function buildFeedbackPrompt(context) {
     const writeAllowed = isWriteCapablePolicy(context.policy);
     const designWanted = !writeAllowed && Boolean(context.requiresDesign);
     const browserVerified = context.policy === 'implement_and_verify';
+    // SCN-FWB-040：候选恢复。工作区已被执行器建在上一轮候选之上；不明说的话
+    // Agent 会把「已完成的 36 个文件」当成待办再做一遍——重做时长直接放大
+    // 瞬态故障暴露面，g6 修复轮就是这么死的。
+    const previousAttempt =
+        writeAllowed && context.previousAttempt?.changeCommit ? context.previousAttempt : null;
 
     return [
         '# Feedback processing task',
@@ -151,6 +167,17 @@ export function buildFeedbackPrompt(context) {
         '## Rules',
         '',
         ...(writeAllowed ? WRITE_RULES : READ_ONLY_RULES),
+        ...(previousAttempt
+            ? [
+                  '',
+                  '## Resuming the previous attempt',
+                  '',
+                  `- The workspace already contains the COMPLETE committed change set of the previous run (${previousAttempt.runId || 'unknown run'}). Your edits go on top of it.`,
+                  `- That run failed with \`${previousAttempt.errorCode || 'unknown'}\`: ${previousAttempt.summary || 'no summary recorded'}`,
+                  '- Fix only what the failure names. Do not redo completed work, and do not revert it wholesale.',
+                  '- If you conclude the previous direction itself is wrong, correct it on top of this state and say so explicitly in your final message.',
+              ]
+            : []),
         ...(browserVerified ? ['', '## Browser verification', '', ...VERIFY_RULES] : []),
         ...(designWanted ? ['', '## Design proposal', '', ...DESIGN_RULES] : []),
         ...(writeAllowed ? [] : ['', '## Next-step options', '', ...NEXT_STEP_RULES]),

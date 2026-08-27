@@ -77,14 +77,46 @@ export function createGitRunner({ cwd, spawnImpl = nodeSpawn }) {
  * worktree，`master` 被主工作区占用，`git checkout master` 当场失败。改为
  * `rev-parse <defaultBranch>` 解析出**提交**再 `checkout -B <候选分支> <提交>`——
  * 既不抢占分支，又保证主工作区的脏文件永远进不了候选基线。
+ *
+ * `evidenceDir`（SCN-FWB-032 C3）：证据目录整个在 `.gitignore` 里，普通 `clean -fd`
+ * 不碰被 ignore 的文件，上一轮的截图会一直躺到下一轮——「证据必须本次验证专用」
+ * 只能靠这里的 `-x` 定向清场保证，验证后「目录里有 PNG」才等于「本轮产出了 PNG」。
+ *
+ * `resumeFromCommit`（SCN-FWB-040）：上一轮失败候选的提交。存在时把候选分支建在
+ * 它之上（baseCommit 取其父提交，即那一轮的基线），Agent 只修失败点；提交不在本
+ * 工作区（被 prune、换机器）时静默回落全新开工——恢复是优化不是正确性前提。
  */
-export async function prepareCandidateWorkspace({ runId, defaultBranch = 'master', git }) {
+export async function prepareCandidateWorkspace({
+    runId,
+    defaultBranch = 'master',
+    git,
+    evidenceDir = '',
+    resumeFromCommit = '',
+}) {
     await git('reset', '--hard');
     await git('clean', '-fd', '-e', 'node_modules');
-    const baseCommit = (await git('rev-parse', defaultBranch)).stdout.trim();
+    if (evidenceDir) await git('clean', '-fdx', '--', evidenceDir);
+
+    let baseCommit = '';
+    let startPoint = '';
+    let resumedFrom = '';
+    if (resumeFromCommit) {
+        try {
+            await git('cat-file', '-e', `${resumeFromCommit}^{commit}`);
+            baseCommit = (await git('rev-parse', `${resumeFromCommit}^`)).stdout.trim();
+            startPoint = resumeFromCommit;
+            resumedFrom = resumeFromCommit;
+        } catch {
+            // 候选提交不在本工作区：按全新开工处理。
+        }
+    }
+    if (!startPoint) {
+        baseCommit = (await git('rev-parse', defaultBranch)).stdout.trim();
+        startPoint = baseCommit;
+    }
     const candidateRef = candidateRefFor(runId);
-    await git('checkout', '-B', candidateRef, baseCommit);
-    return { baseCommit, candidateRef };
+    await git('checkout', '-B', candidateRef, startPoint);
+    return { baseCommit, candidateRef, resumedFrom };
 }
 
 /** 先 add -A 再读暂存区：不 add 的话 `git diff` 看不见 Agent 新建的文件。 */
@@ -97,7 +129,13 @@ export async function collectCandidateChanges({ baseCommit, git }) {
     return { changedFiles, diffText };
 }
 
-/** 固定的执行器身份提交——不借用开发者的全局 git 配置。 */
+/**
+ * 固定的执行器身份提交——不借用开发者的全局 git 配置。
+ * `--allow-empty`（SCN-FWB-040）：恢复轮 Agent 可能一行都不改（上一轮实现完好，
+ * 失败在验证环节之外），此时暂存区相对 HEAD 为空，普通 commit 会以 "nothing to
+ * commit" 挂掉整个 Run；空提交给这一轮自己的 changeCommit，身份链不因恢复而断。
+ * 全新开工的轮次到不了这里就已被 no_changes_produced 拦下，不受影响。
+ */
 export async function commitCandidate({ runId, git }) {
     await git(
         '-c',
@@ -105,6 +143,7 @@ export async function commitCandidate({ runId, git }) {
         '-c',
         'user.email=feedback-executor@localhost',
         'commit',
+        '--allow-empty',
         '-m',
         `feedback candidate ${sanitizeCandidateRunId(runId)}`
     );

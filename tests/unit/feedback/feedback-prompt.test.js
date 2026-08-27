@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
+    FEEDBACK_DELETE_MARKER,
     FEEDBACK_EVIDENCE_DIR,
     buildFeedbackPrompt,
     isWriteCapablePolicy,
@@ -145,5 +146,49 @@ describe('[SCN-FWB-029] runner prompt construction', () => {
 
     it('[SCN-FWB-020] says nothing about attachments when the Issue has none', () => {
         expect(buildFeedbackPrompt(createContext('analyze'))).not.toContain('## Attachments');
+    });
+
+    it('[SCN-FWB-041] gives write Runs the delete-marker contract instead of tombstones', () => {
+        // 生产实锤（run_5104cfc1 自述）：执行器 Agent 没有删除工具，只能留墓碑注释
+        // 并请人工 git rm——prompt 不给出删除通道，删除类任务永远交付不完整。
+        const prompt = buildFeedbackPrompt(createContext('implement'));
+        expect(prompt).toContain(FEEDBACK_DELETE_MARKER);
+        expect(prompt).toContain('the pipeline performs the real deletion');
+        // 只读 Run 不许改文件，更不许被教唆去写删除标记。
+        expect(buildFeedbackPrompt(createContext('analyze'))).not.toContain(FEEDBACK_DELETE_MARKER);
+    });
+
+    it('[SCN-FWB-040] tells a resumed Run what it stands on and what failed', () => {
+        // 坏行为（修复前）：修复轮 prompt 与首轮一字不差，Agent 把上一轮已完成的
+        // 36 个文件当待办重做，重做时长直接放大瞬态故障暴露面（g6 修复轮死于第 7 分钟）。
+        const prompt = buildFeedbackPrompt(
+            createContext('implement_and_verify', {
+                previousAttempt: {
+                    runId: 'run_prev',
+                    changeCommit: 'b'.repeat(40),
+                    errorCode: 'verification_failed',
+                    summary:
+                        'Visual evidence is required for this change set but none was produced.',
+                },
+            })
+        );
+        expect(prompt).toContain('## Resuming the previous attempt');
+        expect(prompt).toContain('run_prev');
+        expect(prompt).toContain('`verification_failed`');
+        expect(prompt).toContain('Visual evidence is required');
+        expect(prompt).toContain('Do not redo completed work');
+
+        // 没有恢复语境时绝不出现这一节——对全新开工的轮次说「站在上一轮之上」是撒谎。
+        expect(buildFeedbackPrompt(createContext('implement_and_verify'))).not.toContain(
+            '## Resuming the previous attempt'
+        );
+        // 只读 Run 无候选可继承，即使字段被误下发也不得渲染。
+        expect(
+            buildFeedbackPrompt(
+                createContext('analyze', {
+                    previousAttempt: { runId: 'run_prev', changeCommit: 'b'.repeat(40) },
+                })
+            )
+        ).not.toContain('## Resuming the previous attempt');
     });
 });

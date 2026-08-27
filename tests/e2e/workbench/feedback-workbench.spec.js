@@ -574,7 +574,9 @@ test.describe('[SCN-FWB-016] AI 执行器页', () => {
 
         await expect(page.getByRole('button', { name: '当前默认' })).toBeVisible();
         await expect(page.getByRole('button', { name: '设为默认' })).toBeVisible();
-        await expect(page.getByRole('button', { name: '测试连接' }).first()).toBeVisible();
+        // 2026-08-27 GH 路径退役后「连接测试」只探控制面（心跳与 capabilities），
+        // 按钮随语义改名——旧名「测试连接」意味着会发出站冒烟，那条通路已删除。
+        await expect(page.getByRole('button', { name: '检测执行器' }).first()).toBeVisible();
         await expect(page.locator('#runnersView').getByText('@codex-agent')).toBeVisible();
         await expect(page.locator('#runnersView').getByText('@claude-agent')).toBeVisible();
         await expect(
@@ -617,8 +619,9 @@ test.describe('[SCN-FWB-016] AI 执行器页', () => {
         await expect(page.locator('#autoDeliverScope')).toContainText('small');
         await expect(page.locator('#autoDeliverScope')).toContainText('Tier 0～2');
 
-        // The local Worker genuinely has no merge/deploy/smoke credentials, so
-        // the preflight must fail and say so rather than flatter the operator.
+        // 2026-08-27 起 executor 是唯一执行路径：预检口径 = 项目交付配置 + 控制面
+        // bearer + 执行器在线。本地 Worker 的 D1 里没有任何心跳新鲜的执行器，
+        // 预检必须如实失败——而不是恭维操作员。
         await page.locator('#runAutoDeliverPreflight').click();
         await expect(page.locator('#autoDeliverPreflightState')).toHaveText('预检未通过', {
             timeout: 10_000,
@@ -626,7 +629,9 @@ test.describe('[SCN-FWB-016] AI 执行器页', () => {
         await expect(page.locator('#autoDeliverReleaseHealth')).toContainText('交付预检未通过');
 
         await page.locator('.runner-autodeliver-detail > summary').click();
-        await expect(page.locator('#autoDeliverChecks')).toContainText('FEEDBACK_MERGE_TOKEN');
+        await expect(page.locator('#autoDeliverChecks')).toContainText('执行器在线');
+        // GH 凭据检查随 GH 路径整体退役；预检再报 MERGE_TOKEN 就是退役不彻底。
+        await expect(page.locator('#autoDeliverChecks')).not.toContainText('FEEDBACK_MERGE_TOKEN');
 
         // A failed preflight must leave the switch off and unusable as approval.
         await expect(page.locator('#autoDeliverSwitch')).toHaveAttribute('aria-checked', 'false');
@@ -642,7 +647,7 @@ test.describe('[SCN-FWB-016] AI 执行器页', () => {
         const endpoint = page.getByLabel('Responses API 地址');
         await endpoint.fill('https://relay.example.com/v1/chat/completions');
 
-        await codexCard.getByRole('button', { name: '测试连接' }).click();
+        await codexCard.getByRole('button', { name: '检测执行器' }).click();
 
         await expect(codexCard.locator('[data-connection-status]')).toContainText('/v1/responses');
         await expect(endpoint).toBeFocused();

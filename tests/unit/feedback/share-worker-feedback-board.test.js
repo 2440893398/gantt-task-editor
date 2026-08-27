@@ -680,6 +680,24 @@ class MemoryD1 {
 
         // --- feedback_human_actions ---
         if (
+            normalized ===
+            'select resolved_at from feedback_human_actions where issue_id = ? and status = \'resolved\' and resolution_json like \'%"policydecision":"reanalyze"%\' order by resolved_at desc limit 1'
+        ) {
+            // SCN-FWB-040：候选恢复的改向守卫。放在通用 issue_id handler 之前，
+            // 否则会拿到未过滤的全量动作列表，守卫结果随排序漂移。
+            const row = Array.from(this.tables.feedback_human_actions.values())
+                .filter(
+                    (action) =>
+                        action.issue_id === values[0] &&
+                        action.status === 'resolved' &&
+                        String(action.resolution_json || '').includes(
+                            '"policyDecision":"reanalyze"'
+                        )
+                )
+                .sort((a, b) => String(b.resolved_at).localeCompare(String(a.resolved_at)))[0];
+            return ok(row ? [{ resolved_at: row.resolved_at }] : []);
+        }
+        if (
             normalized.startsWith('select') &&
             normalized.includes('from feedback_human_actions where id = ?')
         ) {
@@ -1091,6 +1109,7 @@ class MemoryD1 {
                     description: issue.description,
                     business_type: issue.business_type,
                     scope: issue.scope,
+                    automation_decision: issue.automation_decision,
                     issue_status: issue.status,
                 },
             ]);
@@ -1119,14 +1138,14 @@ class MemoryD1 {
         }
         if (
             normalized ===
-            "select count(*) as failures from feedback_runs where issue_id = ? and workflow_id = ? and status = 'failed' and error_code = 'verification_failed'"
+            "select count(*) as failures from feedback_runs where issue_id = ? and workflow_id = ? and status = 'failed' and error_code in ('verification_failed', 'provider_turn_failed')"
         ) {
             const failures = Array.from(this.tables.feedback_runs.values()).filter(
                 (row) =>
                     row.issue_id === values[0] &&
                     row.workflow_id === values[1] &&
                     row.status === 'failed' &&
-                    row.error_code === 'verification_failed'
+                    ['verification_failed', 'provider_turn_failed'].includes(row.error_code)
             ).length;
             return ok([{ failures }]);
         }
@@ -1454,6 +1473,23 @@ class MemoryD1 {
                 )
                 .sort((left, right) => right.sequence - left.sequence)[0];
             return ok(row ? [{ body_json: row.body_json }] : []);
+        }
+        if (
+            normalized ===
+            "select run_id, occurred_at, body_json from feedback_events where issue_id = ? and type = 'run.failed' order by sequence desc limit 10"
+        ) {
+            // SCN-FWB-040：previousAttempt 推导读的是全 Issue 最近的失败事件。
+            const rows = Array.from(this.tables.feedback_events.values())
+                .filter((event) => event.issue_id === values[0] && event.type === 'run.failed')
+                .sort((left, right) => right.sequence - left.sequence)
+                .slice(0, 10);
+            return ok(
+                rows.map((row) => ({
+                    run_id: row.run_id,
+                    occurred_at: row.occurred_at,
+                    body_json: row.body_json,
+                }))
+            );
         }
         if (
             normalized ===
@@ -11266,6 +11302,218 @@ describe('feedback workbench V2 Run and Callback', () => {
             expect(env.FEEDBACK_DB.tables.feedback_issues.get(key).status).toBe('needs_human');
             expect(activeAction(env)?.type).toBe('developer_fix_required');
         });
+
+        it('[SCN-FWB-038] provider 瞬态故障与验证失败共享有界修复预算，且各按各的诚实投影', async () => {
+            // 生产实锤（run_7a3d037c，2026-08-26）：api_error 0 次重试直接落人工卡，
+            // 卡片还自称「已停止自动重试」。坏行为（修复前）下本用例的形态：第 2 轮
+            // provider_turn_failed 后 continueRepair=false，attempts 停在 2，Issue
+            // 直接 needs_human——第三轮压根不存在。
+            const { env, key } = await submitReport();
+            const headers = await adminHeaders(env);
+
+            await runGeneration(env, key, 1, {
+                finalText: '第 1 轮：读完代码，结论如上。',
+                designGateWired: false,
+            });
+            const analysisAction = activeAction(env);
+            await request(
+                '/api/feedback/human-actions/' + encodeURIComponent(analysisAction.id) + '/respond',
+                {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({ decision: 'queued', policyDecision: 'implement' }),
+                },
+                env
+            );
+
+            // 轮次交替：验证红 → 引擎故障 → 验证红。两码合计 3 次花光同一份预算。
+            const plan = ['verification_failed', 'provider_turn_failed', 'verification_failed'];
+            const statusAtTurnStart = [];
+            let attempts = 0;
+            const trace = await runGeneration(env, key, 2, {
+                turn: (run) => {
+                    statusAtTurnStart.push(env.FEEDBACK_DB.tables.feedback_issues.get(key).status);
+                    const errorCode = plan[attempts];
+                    attempts += 1;
+                    return executorWriteFailureTurn(env, run, {
+                        errorCode,
+                        finalText:
+                            errorCode === 'provider_turn_failed'
+                                ? ''
+                                : '第 ' + attempts + ' 次实施尝试。',
+                        extra:
+                            errorCode === 'provider_turn_failed'
+                                ? {}
+                                : {
+                                      diffManifest: {
+                                          changedFiles: ['src/features/gantt/baseline.js'],
+                                      },
+                                      verification: {},
+                                  },
+                    });
+                },
+            });
+
+            expect(trace.filter((entry) => entry.step === 'run').length).toBe(3);
+            // 投影按错误码分类：验证红后是 test_failed（真在等下一轮修复）；
+            // 引擎故障后保持 in_progress——什么都没被验证，test_failed 是谎报。
+            expect(statusAtTurnStart[1]).toBe('test_failed');
+            expect(statusAtTurnStart[2]).toBe('in_progress');
+
+            expect(env.FEEDBACK_DB.tables.feedback_issues.get(key).status).toBe('needs_human');
+            expect(activeAction(env)?.type).toBe('developer_fix_required');
+        });
+
+        it('[SCN-FWB-038] provider 故障耗尽预算后的决策卡说的是引擎故障，不是笼统的处理失败', async () => {
+            const { env, key } = await submitReport();
+            const headers = await adminHeaders(env);
+
+            await runGeneration(env, key, 1, {
+                finalText: '第 1 轮：读完代码，结论如上。',
+                designGateWired: false,
+            });
+            const analysisAction = activeAction(env);
+            await request(
+                '/api/feedback/human-actions/' + encodeURIComponent(analysisAction.id) + '/respond',
+                {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({ decision: 'queued', policyDecision: 'implement' }),
+                },
+                env
+            );
+
+            await runGeneration(env, key, 2, {
+                turn: (run) =>
+                    executorWriteFailureTurn(env, run, {
+                        errorCode: 'provider_turn_failed',
+                        finalText: '',
+                        extra: {},
+                    }),
+            });
+
+            const fixAction = activeAction(env);
+            expect(fixAction?.type).toBe('developer_fix_required');
+            const evidence = JSON.parse(fixAction.evidence_json || '[]');
+            expect(
+                evidence.some((item) => String(item.summary || '').includes('处理引擎接口故障'))
+            ).toBe(true);
+        });
+
+        it('[SCN-FWB-040] 修复轮上下文携带上一轮候选，reanalyze 之后不再携带', async () => {
+            // 生产实锤：g6 修复轮抛弃 26 分钟全绿候选（b48dc0e6）从零重做，第 7 分钟
+            // 死于 api_error。坏行为（修复前）：context 里根本没有 previousAttempt
+            // 字段，执行器每一轮都 reset --hard 回 master。
+            const { env, key } = await submitReport();
+            const headers = await adminHeaders(env);
+
+            await runGeneration(env, key, 1, {
+                finalText: '第 1 轮：读完代码，结论如上。',
+                designGateWired: false,
+            });
+            const analysisAction = activeAction(env);
+            await request(
+                '/api/feedback/human-actions/' + encodeURIComponent(analysisAction.id) + '/respond',
+                {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({ decision: 'queued', policyDecision: 'implement' }),
+                },
+                env
+            );
+
+            const commits = ['1'.repeat(40), '2'.repeat(40), '3'.repeat(40)];
+            const seenPreviousAttempts = [];
+            let attempts = 0;
+            await runGeneration(env, key, 2, {
+                turn: async (run) => {
+                    const contextResponse = await request(
+                        '/api/feedback/runs/' + encodeURIComponent(run.id) + '/context',
+                        {
+                            headers: {
+                                Authorization: 'Bearer ' + (await contextTokenFor(env, run.id)),
+                            },
+                        },
+                        env
+                    );
+                    expect(contextResponse.status).toBe(200);
+                    seenPreviousAttempts.push(
+                        (await json(contextResponse)).context.previousAttempt
+                    );
+                    const commit = commits[attempts];
+                    attempts += 1;
+                    return executorWriteFailureTurn(env, run, {
+                        errorCode: 'verification_failed',
+                        finalText: '第 ' + attempts + ' 次实施尝试。',
+                        extra: {
+                            diffManifest: {
+                                changedFiles: ['src/features/gantt/baseline.js'],
+                                changeCommit: commit,
+                                candidateRef: 'feedback/candidate/' + run.id,
+                            },
+                            verification: {},
+                        },
+                    });
+                },
+            });
+
+            // 首轮没有可继承的候选；第 2、3 轮各继承上一轮的提交与失败码。
+            expect(seenPreviousAttempts[0]).toBeFalsy();
+            expect(seenPreviousAttempts[1]).toMatchObject({
+                changeCommit: commits[0],
+                errorCode: 'verification_failed',
+            });
+            expect(seenPreviousAttempts[2]).toMatchObject({ changeCommit: commits[1] });
+
+            // 预算用尽 → developer_fix_required。管理员按「分析得不对」的语义撤销授权
+            // 后（这里直接演进到重新采纳的时刻），候选事件早于 reanalyze 决策——
+            // 恢复它等于替管理员复活一个他刚否掉的方向，必须回落全新开工。
+            const fixAction = activeAction(env);
+            expect(fixAction?.type).toBe('developer_fix_required');
+            env.FEEDBACK_DB.tables.feedback_human_actions.set(fixAction.id, {
+                ...env.FEEDBACK_DB.tables.feedback_human_actions.get(fixAction.id),
+                status: 'resolved',
+                resolved_at: new Date(Date.now() + 1000).toISOString(),
+                resolution_json: JSON.stringify({
+                    responseId: 'har_guard',
+                    decision: 'queued',
+                    policyDecision: 'reanalyze',
+                    note: '方向不对，退回重析。',
+                    actorType: 'admin',
+                }),
+            });
+            const issueRow = env.FEEDBACK_DB.tables.feedback_issues.get(key);
+            env.FEEDBACK_DB.tables.feedback_issues.set(key, {
+                ...issueRow,
+                status: 'queued',
+                active_human_action_id: null,
+                // 模拟「重析后管理员再次采纳」——只有此时才会再出现写入型 Run。
+                automation_decision: 'implementation_approved',
+            });
+
+            let guardedContext = null;
+            await runGeneration(env, key, 3, {
+                turn: async (run) => {
+                    const contextResponse = await request(
+                        '/api/feedback/runs/' + encodeURIComponent(run.id) + '/context',
+                        {
+                            headers: {
+                                Authorization: 'Bearer ' + (await contextTokenFor(env, run.id)),
+                            },
+                        },
+                        env
+                    );
+                    guardedContext = (await json(contextResponse)).context;
+                    return executorWriteFailureTurn(env, run, {
+                        errorCode: 'empty_agent_response',
+                        finalText: '',
+                        extra: {},
+                    });
+                },
+            });
+            expect(guardedContext.policy).toBe('implement_and_verify');
+            expect(guardedContext.previousAttempt).toBeFalsy();
+        });
     });
 });
 
@@ -11384,6 +11632,40 @@ describe('feedback workbench V2 run creation and manifest verification', () => {
         } finally {
             fetchSpy.mockRestore();
         }
+    });
+
+    it('[SCN-FWB-029] 落库的 permission_profile 反映 Run 的真实读写能力', async () => {
+        // 生产实锤（2026-08-27）：feedback_runs 全表 19 行的 permission_profile 都是
+        // `':read-only'`，其中 run_96a17146 的 policy 是 implement_and_verify。那不是
+        // 算错，是那一列的 DDL 默认值——INSERT 从来没写过它。于是管理员排查「写入型
+        // Run 为什么没改成东西」时，库里给出的第一条证据是「它以只读跑的」。
+        //
+        // 这个用例在两种坏行为下见红：INSERT 漏掉这一列（值为 undefined），
+        // 以及映射写反（写入型拿到只读档案名）。
+        async function profileFor(overrides = {}) {
+            const env = createDispatchEnv();
+            Object.assign(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey), overrides);
+            const { run } = await runWorkflow(env, { issueId: feedbackKey });
+            const row = env.FEEDBACK_DB.tables.feedback_runs.get(run.runId);
+            return { policy: row.policy, profile: row.permission_profile };
+        }
+
+        // bug + small → implement_and_verify：写入型，拿工作区档案。
+        const write = await profileFor();
+        expect(write.policy).toBe('implement_and_verify');
+        expect(write.profile).toBe('feedback-workspace');
+
+        // requirement + medium → analyze：只读，拿只读档案。
+        const read = await profileFor({ business_type: 'requirement', scope: 'medium' });
+        expect(read.policy).toBe('analyze');
+        expect(read.profile).toBe('feedback-readonly');
+
+        // 两个取值必须是 migration 0006 种下的档案名，不是就地新造的字符串——
+        // 库里存一个 feedback_execution_profiles 里查不到的名字等于没存。
+        expect(['feedback-workspace', 'feedback-readonly']).toContain(write.profile);
+        // 那个字面量默认值永远不该再出现在新行上。
+        expect(write.profile).not.toBe(':read-only');
+        expect(read.profile).not.toBe(':read-only');
     });
 
     it('[SCN-FWB-020] tells the Runner when its read-only deliverable is a Design', async () => {

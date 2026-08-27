@@ -216,6 +216,34 @@ const FEEDBACK_EXECUTOR_APPROVAL_KINDS = new Set([
 ]);
 // §13.3/§14.4 step 2 的 policy→permission-profile 映射曾随 GH 派发 payload 下发；
 // executor 路径上权限面由执行器准入（S6/S8）机械裁定，Worker 不再声明 profile。
+//
+// 下面这张表因此**只是审计投影，不是授权**（SCN-FWB-029）。区别是硬的：
+// 执行器的工具面来自 `toolAllowlistFor(policy)` 与 init 实报校验闸，一个字都不问
+// 这一列；这里写的是「这个 Run 按 policy 该在哪个档案下跑」，用于事后翻库时能看见
+// 真话。**永远不要把这一列读回来当判据**——那等于让被审计对象自己提供审计结论，
+// 也等于把 bf21bef 退役掉的「Worker 声明权限面」原样复活。
+//
+// 为什么非补不可：`feedback_runs.permission_profile` 此前全表恒为 `:read-only`
+// （0003 的列默认值字面量，全仓零处写入），于是一个 implement_and_verify 的 Run
+// 在库里自称只读——管理员排查「写入型 Run 为什么没改成东西」时看到的第一条证据
+// 是假的。取值域即 migration 0006 已种下的 feedback_execution_profiles 两行。
+const FEEDBACK_PERMISSION_PROFILES = Object.freeze({
+    implement: 'feedback-workspace',
+    implement_and_verify: 'feedback-workspace',
+    local_required: 'feedback-workspace',
+    analyze: 'feedback-readonly',
+    review: 'feedback-readonly',
+});
+const FEEDBACK_READONLY_PERMISSION_PROFILE = 'feedback-readonly';
+
+/**
+ * 未知 policy 落只读档案：审计字段的兜底方向必须与 §7.2 路由的兜底方向一致
+ * （`resolveFeedbackPolicy` 认不出的 policy 回落 `analyze`），否则一个拼错的
+ * policy 会在库里留下「它有写权限」的记录，而它实际跑的是只读。
+ */
+function feedbackPermissionProfileFor(policy) {
+    return FEEDBACK_PERMISSION_PROFILES[policy] || FEEDBACK_READONLY_PERMISSION_PROFILE;
+}
 // §9.3 Candidate and Release states.
 const FEEDBACK_CANDIDATE_STATUSES = new Set([
     'created',
@@ -4400,12 +4428,14 @@ async function createFeedbackRun(env, { issueId, workflowId, provider, triggerEv
     const runId = `run_${crypto.randomUUID()}`;
     const now = new Date().toISOString();
     await env.FEEDBACK_DB.prepare(
+        // permission_profile 必须显式写：这一列的 DDL 默认值是字面量 `':read-only'`
+        // （0003），漏写就等于给这一行盖一个「以只读跑过」的假章。
         `INSERT INTO feedback_runs (
             id, issue_id, workflow_id, candidate_id, design_id, policy, delivery_mode, provider,
             runner_type, runner_label, status, attempt, base_commit, change_commit,
-            provider_session_id, started_at, finished_at, error_code
+            provider_session_id, started_at, finished_at, error_code, permission_profile
         ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, NULL, 'created', 1,
-                  NULL, NULL, NULL, ?, NULL, NULL)`
+                  NULL, NULL, NULL, ?, NULL, NULL, ?)`
     )
         .bind(
             runId,
@@ -4416,7 +4446,8 @@ async function createFeedbackRun(env, { issueId, workflowId, provider, triggerEv
             deliveryMode,
             resolvedProvider,
             runnerType,
-            now
+            now,
+            feedbackPermissionProfileFor(policy)
         )
         .run();
     await env.FEEDBACK_DB.prepare('UPDATE feedback_issues SET last_run_id = ? WHERE id = ?')
@@ -4622,6 +4653,11 @@ async function readFeedbackRunContext(env, runId) {
     const gateGrant = writeCapableRun
         ? await readFeedbackGateGrant(env, row.issue_id)
         : { approvedPaths: [], contractRunApproved: false };
+    const previousAttempt = await readFeedbackPreviousAttempt(env, {
+        issueId: row.issue_id,
+        policy: row.policy,
+        automationDecision: row.automation_decision,
+    });
 
     return {
         runId: row.run_id,
@@ -4644,6 +4680,8 @@ async function readFeedbackRunContext(env, runId) {
         // 两头都在，中间没接）。契约授权与执行器 lease context 同款口径。
         approvedPaths: gateGrant.approvedPaths,
         contractRunApproved: writeCapableRun || gateGrant.contractRunApproved,
+        // SCN-FWB-040：执行器把候选工作区建在这个提交之上，prompt 明示只修失败点。
+        previousAttempt,
         issue: {
             id: row.issue_id,
             version: Number(row.version) || 1,
@@ -4798,6 +4836,14 @@ async function dispatchFeedbackEvent(
  */
 const FEEDBACK_MAX_VERIFICATION_FAILURES = 3;
 
+/**
+ * SCN-FWB-038（2026-08-27 修订）：有界修复回路覆盖的错误码。`verification_failed`
+ * 是「Agent 对着红色输出修」；`provider_turn_failed` 是处理引擎瞬态故障（api_error
+ * 类）——生产实锤 run_7a3d037c：0 次重试就落人工卡，把一次 API 抖动转嫁成一次
+ * 人工决策，卡片文案还自称「已停止自动重试」。两码共享同一份每代预算与日配额。
+ */
+const FEEDBACK_REPAIRABLE_RUN_FAILURES = new Set(['verification_failed', 'provider_turn_failed']);
+
 /** SCN-FWB-039：授权能放行的验证削弱类型。skip/only/todo 让测试假装还在跑，永不授权。 */
 const FEEDBACK_GRANTABLE_WEAKENING = new Set(['ASSERTION_REMOVED', 'DEEP_COMPARE_WEAKENED']);
 
@@ -4820,6 +4866,53 @@ async function readFeedbackGateGrant(env, issueId) {
             : [],
         contractRunApproved: grant?.contractRunApproved === true,
     };
+}
+
+/**
+ * SCN-FWB-040：最近一次失败写入 Run 留下的候选，作为下一轮的起点。null = 从零开工。
+ * 只在实施授权仍有效时下发：`automation_decision` 必须还是 `implementation_approved`，
+ * 且候选事件之后没有 `reanalyze` 决策——改向之后恢复旧候选等于替管理员复活一个他
+ * 刚否掉的方向。候选提交在执行器工作区是否还在由执行器自检，不在就静默回落全新
+ * 开工（恢复是优化不是正确性前提）。生产依据：g6 修复轮抛弃 26 分钟全绿候选从零
+ * 重做，第 7 分钟死于 api_error——重做时长直接放大瞬态故障的暴露面。
+ */
+async function readFeedbackPreviousAttempt(env, { issueId, policy, automationDecision }) {
+    if (!FEEDBACK_WRITE_POLICIES.has(policy)) return null;
+    if (String(automationDecision || '') !== FEEDBACK_IMPLEMENTATION_APPROVED) return null;
+    const events = await env.FEEDBACK_DB.prepare(
+        `SELECT run_id, occurred_at, body_json FROM feedback_events
+         WHERE issue_id = ? AND type = 'run.failed'
+         ORDER BY sequence DESC LIMIT 10`
+    )
+        .bind(issueId)
+        .all();
+    let attempt = null;
+    for (const event of events.results || []) {
+        const body = parseStoredJson(event.body_json, {});
+        const changeCommit = limitText(body?.resultEvidence?.changeCommit, 80).trim();
+        if (!changeCommit) continue;
+        attempt = {
+            runId: String(event.run_id || ''),
+            changeCommit,
+            candidateRef: limitText(body?.resultEvidence?.candidateRef, 200),
+            errorCode: limitText(body.errorCode, 80),
+            summary: limitText(body.text, 500),
+            failedAt: String(event.occurred_at || ''),
+        };
+        break;
+    }
+    if (!attempt) return null;
+    // resolution_json 是服务端 JSON.stringify 的受控格式，键值间无空白，LIKE 可靠。
+    const reversal = await env.FEEDBACK_DB.prepare(
+        `SELECT resolved_at FROM feedback_human_actions
+         WHERE issue_id = ? AND status = 'resolved'
+           AND resolution_json LIKE '%"policyDecision":"reanalyze"%'
+         ORDER BY resolved_at DESC LIMIT 1`
+    )
+        .bind(issueId)
+        .first();
+    if (reversal?.resolved_at && String(reversal.resolved_at) > attempt.failedAt) return null;
+    return attempt;
 }
 
 /**
@@ -4876,10 +4969,11 @@ function deriveFeedbackGateGrant({ changedFiles = [], violations = [] } = {}) {
 }
 
 /**
- * SCN-FWB-038：这一轮 `verification_failed` 之后还该不该自动再跑一轮。
+ * SCN-FWB-038：这一轮可修复失败之后还该不该自动再跑一轮。
  * 回调侧在落库前调用（`includeCurrentFailure: true`，当前失败还没计入），Workflow 在
  * 落库后调用（false）——两边对同一个数字用同一个谓词，结论必然一致。配额是第二道闸：
- * 修复轮不是人工决定，不享受 bypassQuota。
+ * 修复轮不是人工决定，不享受 bypassQuota。预算按**两类可修复码合计**：一代里
+ * 2 次验证失败 + 1 次引擎故障同样花光预算，防止两类失败交替出现时回路翻倍。
  */
 async function planFeedbackRepairRound(
     env,
@@ -4888,7 +4982,7 @@ async function planFeedbackRepairRound(
     const row = await env.FEEDBACK_DB.prepare(
         `SELECT COUNT(*) AS failures FROM feedback_runs
          WHERE issue_id = ? AND workflow_id = ? AND status = 'failed'
-           AND error_code = 'verification_failed'`
+           AND error_code IN ('verification_failed', 'provider_turn_failed')`
     )
         .bind(issueId, workflowId)
         .first();
@@ -4915,7 +5009,10 @@ async function planFeedbackWorkflowRepairRound(env, { issueId, instanceId, runId
         .bind(runId)
         .first();
     const errorCode = String(run?.error_code || '');
-    if (errorCode !== 'verification_failed' || String(run?.workflow_id || '') !== instanceId) {
+    if (
+        !FEEDBACK_REPAIRABLE_RUN_FAILURES.has(errorCode) ||
+        String(run?.workflow_id || '') !== instanceId
+    ) {
         return { continueRepair: false, errorCode };
     }
     const plan = await planFeedbackRepairRound(env, { issueId, workflowId: instanceId });
@@ -4926,7 +5023,8 @@ async function planFeedbackWorkflowRepairRound(env, { issueId, instanceId, runId
                 visibility: 'admin',
                 body: {
                     reason: 'DAILY_QUOTA_EXCEEDED',
-                    context: 'verification_repair',
+                    context: 'run_repair',
+                    errorCode,
                     used: plan.quota?.used,
                     limit: plan.quota?.limit,
                 },
@@ -4939,7 +5037,7 @@ async function planFeedbackWorkflowRepairRound(env, { issueId, instanceId, runId
         type: 'automation.retry',
         visibility: 'admin',
         body: {
-            reason: 'verification_failed',
+            reason: errorCode,
             failedRunId: runId,
             attempt: plan.failures + 1,
             maxAttempts: FEEDBACK_MAX_VERIFICATION_FAILURES,
@@ -4991,6 +5089,7 @@ function describeFeedbackRunFailureAction({ errorCode, violations = [], changedF
     const reasonLabel =
         {
             verification_failed: '定向测试/构建/浏览器验证未通过，失败输出在时间线里',
+            provider_turn_failed: '处理引擎接口故障（api_error 类），自动重试预算已用尽',
             empty_agent_response: '本轮 Agent 没有产出可见结果',
             run_timeout: '本轮处理超时',
         }[errorCode] || `处理失败（${errorCode || 'unknown'}）`;
@@ -5065,10 +5164,15 @@ function projectRunEventToIssue({ type, policy, payload, repairPlanned = false }
         // Workflow 对 run.failed 一律终态退出，旧映射的 `null`（「留在原地等重试」）
         // 等的是一个不存在的重试：#czi9c6 的写入 Run 被门禁拦下后，Issue 挂着
         // 「AI 正在处理」停了 19 小时，而 active_workflow_id 早已是 NULL。
-        // 唯一的过渡态是修复回路尚未用尽预算的 `verification_failed`（`test_failed`，
-        // 编排随即自动重启下一轮）；其余一律 `needs_human`，决策卡与本事件同批创建。
-        if (payload.errorCode === 'verification_failed' && repairPlanned) {
+        // 过渡态只有修复回路尚未用尽预算的两类可修复失败：`verification_failed` →
+        // `test_failed`（编排随即自动重启下一轮）；`provider_turn_failed` → 保持
+        // `in_progress`——什么都没被验证，`test_failed` 是谎报，而「AI 正在处理」
+        // 此刻为真（下一轮已排上）。其余一律 `needs_human`，决策卡与本事件同批创建。
+        if (repairPlanned && payload.errorCode === 'verification_failed') {
             return { runStatus: 'failed', issueStatus: 'test_failed' };
+        }
+        if (repairPlanned && payload.errorCode === 'provider_turn_failed') {
+            return { runStatus: 'failed', issueStatus: 'in_progress' };
         }
         return { runStatus: 'failed', issueStatus: 'needs_human' };
     }
@@ -5243,7 +5347,7 @@ async function appendFeedbackCallbackEvent(env, runId, body) {
     // `test_failed` 还是终点 `needs_human`。在落库前算（当前失败尚未计入）。
     const repairPlanned =
         callback.type === 'run.failed' &&
-        String(callback.payload.errorCode || '') === 'verification_failed' &&
+        FEEDBACK_REPAIRABLE_RUN_FAILURES.has(String(callback.payload.errorCode || '')) &&
         (
             await planFeedbackRepairRound(env, {
                 issueId: run.issue_id,
@@ -9071,6 +9175,11 @@ async function readFeedbackExecutorContext(env, runId) {
     const leaseGateGrant = FEEDBACK_WRITE_POLICIES.has(row.policy)
         ? await readFeedbackGateGrant(env, row.issue_id)
         : { approvedPaths: [], contractRunApproved: false };
+    const leasePreviousAttempt = await readFeedbackPreviousAttempt(env, {
+        issueId: row.issue_id,
+        policy: row.policy,
+        automationDecision: row.automation_decision,
+    });
 
     return {
         runId: row.run_id,
@@ -9095,6 +9204,9 @@ async function readFeedbackExecutorContext(env, runId) {
         approvedPaths: leaseGateGrant.approvedPaths,
         contractRunApproved:
             FEEDBACK_WRITE_POLICIES.has(row.policy) || leaseGateGrant.contractRunApproved,
+        // SCN-FWB-040：与 `readFeedbackRunContext` 同形；执行器 write-pipeline 与
+        // prompt 构建器消费，缺席即为从零开工。
+        previousAttempt: leasePreviousAttempt,
         // 形状必须与 `readFeedbackRunContext` 逐字段一致：Prompt 构建器
         // 只有一份，读的是 `issue.description?.untrustedUserContent` 与
         // `issue.id/businessType/scope`。这里曾经给的是裸字符串且缺那三个字段，
