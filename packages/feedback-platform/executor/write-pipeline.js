@@ -21,6 +21,7 @@ import {
     readdirSync as fsReaddirSync,
     readFileSync as fsReadFileSync,
     rmSync as fsRmSync,
+    statSync as fsStatSync,
 } from 'node:fs';
 import { join } from 'node:path';
 import { evaluateDiffGate, scnIdFromDiff } from '../../../src/features/feedback/diff-gate.js';
@@ -85,6 +86,8 @@ const failedStepLabel = {
 const DELETE_MARKER_PATTERN = new RegExp(
     `^(?:\\/\\/|#|;|--|\\/\\*|<!--)?\\s*${FEEDBACK_DELETE_MARKER}\\s*(?:\\*\\/|-->)?$`
 );
+/** 标记文件的体量上限（字节）。超限直接跳过，statSync 守卫在 readFileSync 之前。 */
+const DELETE_MARKER_MAX_BYTES = 512;
 
 /** `git status --porcelain` 的路径段：含特殊字符时被 C 风格双引号包裹。 */
 function unquoteGitPath(raw) {
@@ -109,6 +112,7 @@ export function createWritePipeline({
         readdirSync: fsReaddirSync,
         readFileSync: fsReadFileSync,
         rmSync: fsRmSync,
+        statSync: fsStatSync,
     },
 } = {}) {
     if (!workspaceDir) throw new Error('EXECUTOR_WRITE_PIPELINE_WORKSPACE_REQUIRED');
@@ -165,11 +169,13 @@ export function createWritePipeline({
                 rawPath.includes(' -> ') ? rawPath.split(' -> ').pop() : rawPath
             );
             if (!file) continue;
+            const absolute = join(workspaceDir, file);
             let content = '';
             try {
-                const absolute = join(workspaceDir, file);
-                // 标记文件必然极小；大文件直接跳过，不为它读满内存。
-                content = String(fsImpl.readFileSync(absolute, { encoding: 'utf8' })).slice(0, 512);
+                // 体量守卫在读之前：标记文件（标记 + 注释包裹 + 空白）远小于 512 字节，
+                // 超限的改动文件（如大资产）不值得为看开头几个字符整个读进内存。
+                if (fsImpl.statSync(absolute).size > DELETE_MARKER_MAX_BYTES) continue;
+                content = String(fsImpl.readFileSync(absolute, { encoding: 'utf8' }));
             } catch {
                 continue;
             }

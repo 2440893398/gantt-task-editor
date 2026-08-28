@@ -139,6 +139,7 @@ function makePipeline({
             existsSync: (p) => String(p).includes('node_modules'),
             readdirSync: () => [],
             readFileSync: () => '',
+            statSync: () => ({ size: 24 }),
             rmSync: (p) => rmCalls.push(String(p).replace(/\\/g, '/')),
             ...fsImpl,
         },
@@ -314,7 +315,7 @@ describe('[SCN-FWB-040] prepare 把候选恢复与证据清场接进 git 工作�
     it('context.previousAttempt.changeCommit 存在时建在其上，并总是 -x 清场证据目录', async () => {
         const resume = 'd'.repeat(40);
         const { pipeline, git } = makePipeline({
-            gitOutputs: { [`rev-parse ${resume}^`]: `${BASE}\n` },
+            gitOutputs: { [`merge-base master ${resume}`]: `${BASE}\n` },
         });
         const prepResult = await pipeline.prepare({
             runId: 'run_w1',
@@ -378,5 +379,28 @@ describe('[SCN-FWB-041] 删除标记在暂存前兑现为真实删除', () => {
         });
         await pipeline.finalize({ runId: 'run_w1', context: CONTEXT, prep });
         expect(rmCalls).toEqual([]);
+    });
+
+    it('超过标记体量上限的文件先由 statSync 拦下，整文件不读入内存', async () => {
+        // 坏行为下的形态：Agent 改动一个几百 MB 的资产文件时，扫描器把它整个
+        // readFileSync 进内存只为看前几个字符——守卫必须在读之前，不是读之后截断。
+        const readCalls = [];
+        const { pipeline, rmCalls } = makePipeline({
+            gitOutputs: { 'status --porcelain': ' M assets/huge.bin\n M src/tiny.js\n' },
+            fsImpl: {
+                statSync: (p) =>
+                    String(p).replace(/\\/g, '/').endsWith('assets/huge.bin')
+                        ? { size: 100_000_000 }
+                        : { size: 24 },
+                readFileSync: (p) => {
+                    readCalls.push(String(p).replace(/\\/g, '/'));
+                    // 即便大文件开头恰好长得像标记，也轮不到内容判定出场。
+                    return '// FEEDBACK-DELETE-FILE';
+                },
+            },
+        });
+        await pipeline.finalize({ runId: 'run_w1', context: CONTEXT, prep });
+        expect(readCalls).toEqual(['C:/ws/src/tiny.js']);
+        expect(rmCalls).toEqual(['C:/ws/src/tiny.js']);
     });
 });

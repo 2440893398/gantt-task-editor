@@ -78,10 +78,10 @@ describe('[SCN-FWB-032] prepareCandidateWorkspace', () => {
         ]);
     });
 
-    it('[SCN-FWB-040] 有上一轮候选提交时建在它之上，baseCommit 取其父提交', async () => {
+    it('[SCN-FWB-040] 有上一轮候选提交时建在它之上，baseCommit 取候选链与默认分支的 merge-base', async () => {
         const resume = 'b'.repeat(40);
         const git = fakeGit({
-            [`rev-parse ${resume}^`]: 'a'.repeat(40) + '\n',
+            [`merge-base master ${resume}`]: 'a'.repeat(40) + '\n',
             'rev-parse master': 'f'.repeat(40) + '\n',
         });
         const result = await prepareCandidateWorkspace({
@@ -96,6 +96,29 @@ describe('[SCN-FWB-032] prepareCandidateWorkspace', () => {
         // 上一轮的 36 个文件全部丢掉，权威门禁与 manifest 都在审一个空集。
         expect(result.baseCommit).toBe('a'.repeat(40));
         expect(result.resumedFrom).toBe(resume);
+    });
+
+    it('[SCN-FWB-040] 链式恢复（恢复轮再失败再恢复）时 baseCommit 不缩水到上一个候选提交', async () => {
+        // 修复预算允许 3 轮：run1 失败留 C1（父=M），run2 从 C1 恢复、失败留 C2
+        // （父=C1），run3 从 C2 恢复。坏行为下会红的形态：base 取 C2 的父提交会解析
+        // 成 C1——run3 的 changedFiles/diff gate/manifest 只覆盖最后一轮增量，管理员
+        // 看到的变更清单比合并实际带入的少了 run1 的全部文件，SCN-FWB-039 从失败
+        // 事件推导的授权范围随之漏授。merge-base 无论链多深都回到 M。
+        const c2 = 'b'.repeat(40);
+        const c1 = 'c'.repeat(40);
+        const m = 'a'.repeat(40);
+        const git = fakeGit({
+            [`rev-parse ${c2}^`]: c1 + '\n',
+            [`merge-base master ${c2}`]: m + '\n',
+        });
+        const result = await prepareCandidateWorkspace({
+            runId: 'run_3',
+            defaultBranch: 'master',
+            git,
+            resumeFromCommit: c2,
+        });
+        expect(result.baseCommit).toBe(m);
+        expect(result.resumedFrom).toBe(c2);
     });
 
     it('[SCN-FWB-040] 候选提交不在本工作区时静默回落全新开工——恢复是优化不是正确性前提', async () => {

@@ -83,8 +83,11 @@ export function createGitRunner({ cwd, spawnImpl = nodeSpawn }) {
  * 只能靠这里的 `-x` 定向清场保证，验证后「目录里有 PNG」才等于「本轮产出了 PNG」。
  *
  * `resumeFromCommit`（SCN-FWB-040）：上一轮失败候选的提交。存在时把候选分支建在
- * 它之上（baseCommit 取其父提交，即那一轮的基线），Agent 只修失败点；提交不在本
- * 工作区（被 prune、换机器）时静默回落全新开工——恢复是优化不是正确性前提。
+ * 它之上，Agent 只修失败点；提交不在本工作区（被 prune、换机器）时静默回落全新
+ * 开工——恢复是优化不是正确性前提。baseCommit 取该提交与默认分支的 **merge-base**
+ * 而不是父提交：修复预算允许 3 轮，第二次恢复时父提交是上一个候选而非链的基线，
+ * 用父提交会让 base..HEAD 只剩最后一轮增量——changedFiles/门禁/manifest 全部缩水，
+ * 管理员看到的清单比合并实际带入的少，SCN-FWB-039 推导的授权范围随之漏授。
  */
 export async function prepareCandidateWorkspace({
     runId,
@@ -103,7 +106,7 @@ export async function prepareCandidateWorkspace({
     if (resumeFromCommit) {
         try {
             await git('cat-file', '-e', `${resumeFromCommit}^{commit}`);
-            baseCommit = (await git('rev-parse', `${resumeFromCommit}^`)).stdout.trim();
+            baseCommit = (await git('merge-base', defaultBranch, resumeFromCommit)).stdout.trim();
             startPoint = resumeFromCommit;
             resumedFrom = resumeFromCommit;
         } catch {
