@@ -4739,6 +4739,174 @@ describe('feedback issue board Worker routes', () => {
         expect(response.status).toBe(400);
     });
 
+    /**
+     * SCN-FWB-042：公开投递端点不得接受调用方自带的分类。
+     *
+     * 见红方式：在 `classifyNewFeedbackIssue` 还保留「supplied wins」分支时，
+     * 前两条会拿到匿名 body 里自签的 `ai.*`（第二条更严重——会拿到
+     * `implementation_approved`，即管理员在下一步卡片上的签字）；第三条会拿到
+     * 200/409 而不是 400，因为 PATCH 的枚举校验放行了这个值。
+     */
+    it('[SCN-FWB-042] ignores caller-supplied ai classification on anonymous intake', async () => {
+        const submitEnv = createV2Env();
+        const response = await request(
+            '/api/feedback',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    submittedType: 'requirement',
+                    title: 'Add approval workflow',
+                    description: 'We need an approval step before publishing a schedule.',
+                    ai: {
+                        businessType: 'bug',
+                        scope: 'small',
+                        automationDecision: 'auto_fix',
+                        confidence: 'high',
+                        classifiedAt: '1999-01-01T00:00:00.000Z',
+                    },
+                }),
+            },
+            submitEnv
+        );
+        const body = await json(response);
+        const stored = submitEnv.FEEDBACK_DB.tables.feedback_issues.get(body.key);
+
+        expect(response.status).toBe(201);
+        // 与同一条投递不带 `ai` 时的分类逐字相同（见上面 SCN-FWB-027 的用例）：
+        // 分类只能来自服务端分类器，调用方的自签一个字都不得生效。
+        expect(stored.business_type).toBe('requirement');
+        expect(stored.scope).toBe('medium');
+        expect(stored.automation_decision).toBe('design_required');
+        expect(stored.ai_classified_at).not.toBe('1999-01-01T00:00:00.000Z');
+    });
+
+    it('[SCN-FWB-042] refuses an anonymous self-signed implementation approval', async () => {
+        const submitEnv = createV2Env();
+        const response = await request(
+            '/api/feedback',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    title: 'Delete the baseline feature',
+                    description: 'Remove the baseline vertical slice per the approved plan.',
+                    // 该值按设计只能由 HumanAction 与「动作已解决」同语句产生
+                    // （SCN-FWB-037）。匿名投递自签它 = 跳过管理员审批闸。
+                    ai: { automationDecision: 'implementation_approved' },
+                }),
+            },
+            submitEnv
+        );
+        const body = await json(response);
+        const stored = submitEnv.FEEDBACK_DB.tables.feedback_issues.get(body.key);
+
+        // 同一条投递去掉 `ai` 再投一次：两次分类必须逐字相同——
+        // 「带了 ai.* 什么都不改变」比钉死某个具体取值更贴合这条规则，
+        // 且不会在分类器规则调整时变成假红。
+        const controlEnv = createV2Env();
+        const controlResponse = await request(
+            '/api/feedback',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    title: 'Delete the baseline feature',
+                    description: 'Remove the baseline vertical slice per the approved plan.',
+                }),
+            },
+            controlEnv
+        );
+        const controlBody = await json(controlResponse);
+        const control = controlEnv.FEEDBACK_DB.tables.feedback_issues.get(controlBody.key);
+
+        expect(response.status).toBe(201);
+        // `implementation_approved` 是 §7.2 路由的第一条分支，命中即写入型且不看
+        // businessType/scope。它进不了库，匿名路径就选不中写入型 policy。
+        expect(stored.automation_decision).not.toBe('implementation_approved');
+        expect({
+            businessType: stored.business_type,
+            scope: stored.scope,
+            automationDecision: stored.automation_decision,
+        }).toEqual({
+            businessType: control.business_type,
+            scope: control.scope,
+            automationDecision: control.automation_decision,
+        });
+    });
+
+    it('[SCN-FWB-042] refuses implementation_approved on the authenticated admin patch too', async () => {
+        const updateEnv = createV2Env({
+            [feedbackKey]: JSON.stringify(createIssue()),
+        });
+        const sessionResponse = await request(
+            '/api/feedback/admin/session',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: 'admin-pass' }),
+            },
+            updateEnv
+        );
+        const session = await json(sessionResponse);
+        const response = await request(
+            `/api/feedback/issues/${encodeURIComponent(feedbackKey)}`,
+            {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${session.token}`,
+                },
+                // 带上 expectedVersion：否则 400 可能来自「缺版本号」而不是枚举
+                // 校验，用例会在洞还开着时就转绿。
+                body: JSON.stringify({
+                    expectedVersion: 1,
+                    ai: { automationDecision: 'implementation_approved' },
+                }),
+            },
+            updateEnv
+        );
+
+        expect(response.status).toBe(400);
+        // 拒绝必须发生在落库之前——一条事件都不该写出去。
+        expect(updateEnv.FEEDBACK_DB.tables.feedback_events.size).toBe(0);
+    });
+
+    it('[SCN-FWB-042] still lets an admin re-classify through the authenticated patch', async () => {
+        const updateEnv = createV2Env({
+            [feedbackKey]: JSON.stringify(createIssue()),
+        });
+        const sessionResponse = await request(
+            '/api/feedback/admin/session',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: 'admin-pass' }),
+            },
+            updateEnv
+        );
+        const session = await json(sessionResponse);
+        const response = await request(
+            `/api/feedback/issues/${encodeURIComponent(feedbackKey)}`,
+            {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${session.token}`,
+                },
+                body: JSON.stringify({
+                    expectedVersion: 1,
+                    ai: { businessType: 'improvement', scope: 'small' },
+                }),
+            },
+            updateEnv
+        );
+        const body = await json(response);
+
+        expect(response.status).toBe(200);
+        expect(body.issue.ai).toMatchObject({ businessType: 'improvement', scope: 'small' });
+    });
+
     it('[SCN-FWB-003] requires an expected version for every admin patch', async () => {
         const updateEnv = createV2Env({
             [feedbackKey]: JSON.stringify(createIssue()),

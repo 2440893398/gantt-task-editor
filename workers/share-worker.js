@@ -1127,32 +1127,36 @@ function normalizeAiClassification(feedback = {}) {
 
 /**
  * §7.5 / SCN-FWB-027: classification happens once, at intake, so §7.2 has real
- * facts to route on. Explicitly supplied `ai.*` fields (admin or internal
- * callers) always win — the rule table only fills what the caller left out, and
- * anything it cannot recognise stays `unclear`, which §7.2 keeps read-only.
+ * facts to route on. Anything the rule table cannot recognise stays `unclear`,
+ * which §7.2 keeps read-only.
+ *
+ * SCN-FWB-042：**入库分类只认服务端分类器，调用方送来的 `ai.*` 一个字都不看。**
+ * 此处原本的规则是「调用方给了就以调用方为准」，注释写的是「admin or internal
+ * callers」——但 `normalizeFeedbackPayload` 与本函数**各自只有一个调用点**，都在
+ * 匿名无鉴权的 `POST /api/feedback` 上，那个可信调用方在代码里从不存在。于是这段
+ * 逻辑的唯一实际效果，就是让公网上任何人自己签发分类：2026-08-28 线上实测，一条
+ * 匿名请求带 `ai.automationDecision:"implementation_approved"`（该值按设计只能由
+ * HumanAction 与「动作已解决」写在同一条语句里产生，见 SCN-FWB-037）即可命中
+ * `resolveFeedbackPolicy` 的第一条分支，拿到 `implement_and_verify` 与
+ * `feedback-workspace` 权限档案，整条跳过管理员审批闸。
+ *
+ * 因此这里删掉的是「supplied wins」本身，而不是加一个恒为 false 的信任开关——
+ * 一个永远走不到 true 的分支只会让下一个人以为可信路径存在。管理员改分类的合法
+ * 入口是已鉴权的 `PATCH /api/feedback/issues/:key`，那里有独立的逐字段校验。
+ *
+ * 提交者声明的 `type`/`submittedType` 仍然通过 `submission.submittedType` 进入
+ * 分类器——它是**输入信号**，由分类器决定怎么采信，这与「调用方直接写结论」是
+ * 两回事。
  */
-function classifyNewFeedbackIssue(body, submission) {
-    const supplied = body?.ai && typeof body.ai === 'object' ? body.ai : {};
-    const normalized = normalizeAiClassification(body);
-    const hasSuppliedType = FEEDBACK_BUSINESS_TYPES.has(supplied.businessType);
-    const hasSuppliedScope = FEEDBACK_SCOPES.has(supplied.scope);
-    const hasSuppliedDecision = FEEDBACK_AUTOMATION_DECISIONS.has(supplied.automationDecision);
-    if (hasSuppliedType && hasSuppliedScope && hasSuppliedDecision) return normalized;
-
+function classifyNewFeedbackIssue(submission) {
     const auto = classifyFeedbackSubmission(submission);
     return {
-        ...normalized,
-        businessType: hasSuppliedType ? normalized.businessType : auto.businessType,
-        scope: hasSuppliedScope ? normalized.scope : auto.scope,
-        automationDecision: hasSuppliedDecision
-            ? normalized.automationDecision
-            : auto.automationDecision,
-        confidence: normalizeEnumValue(
-            supplied.confidence,
-            FEEDBACK_AI_CONFIDENCE,
-            auto.confidence
-        ),
-        classifiedAt: limitText(supplied.classifiedAt, 80) || new Date().toISOString(),
+        businessType: auto.businessType,
+        scope: auto.scope,
+        automationDecision: auto.automationDecision,
+        confidence: auto.confidence,
+        // 服务端盖章：调用方给的时间戳同样不采信。
+        classifiedAt: new Date().toISOString(),
         signals: auto.signals,
     };
 }
@@ -1283,7 +1287,7 @@ function normalizeFeedbackPayload(body, request) {
         type: sourceType,
         sourceType,
         submittedType,
-        ai: classifyNewFeedbackIssue(body, {
+        ai: classifyNewFeedbackIssue({
             submittedType,
             title,
             description,
@@ -2851,6 +2855,14 @@ function validateWorkflowPatch(body) {
 
         if (Object.hasOwn(body.ai, 'automationDecision')) {
             if (!FEEDBACK_AUTOMATION_DECISIONS.has(body.ai.automationDecision)) {
+                throw new Error('INVALID_AUTOMATION_DECISION');
+            }
+            // SCN-FWB-042：`implementation_approved` 是枚举的合法成员，但**不是这条
+            // 路径的合法输入**。SCN-FWB-037 特意把它和「该 HumanAction 已解决」写进
+            // 同一条 UPDATE，好让「动作已解决」与「下一轮可以写代码」要么一起成立、
+            // 要么一起不成立。从这里单独写它，就是让后者脱离前者独立成立——一个没有
+            // 对应审批记录的写入授权。放行它的唯一写入者是 respondToHumanAction。
+            if (body.ai.automationDecision === FEEDBACK_IMPLEMENTATION_APPROVED) {
                 throw new Error('INVALID_AUTOMATION_DECISION');
             }
             ai.automationDecision = body.ai.automationDecision;
