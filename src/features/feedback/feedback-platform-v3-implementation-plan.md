@@ -761,9 +761,15 @@ P5 abort 后零孤儿进程、`pathToClaudeCodeExecutable` 驱动系统 CLI 2.1.
 - **真机冒烟 ✅** 真 SDK 驱动新会话层（analyze policy / haiku / 受限 env）：init 过双闸
   （apiKeySource=none、tools 恰好三件套）、拿到 sessionId、终态干净、零误报——证据
   `poc/m6-sdk-probes/evidence/smoke-session-layer.json`。
-- **T7 ⏳ 运营步骤**：`%USERPROFILE%\.gantt-executor\executor.env` 加
-  `FEEDBACK_EXECUTOR_CLAUDE_TRANSPORT=sdk` + `FEEDBACK_EXECUTOR_MODEL=claude-haiku-4-5`
-  → `npm run executor:restart` → 按上方判据跑 ≥5 条真实 Run。
+- **T7 🟡 金丝雀进行中（2026-08-29 切换）**：executor.env 已加
+  `FEEDBACK_EXECUTOR_CLAUDE_TRANSPORT=sdk` + `FEEDBACK_EXECUTOR_MODEL=claude-haiku-4-5`，
+  执行器已重启（启动日志确认 `transport=sdk`）。**Run #1（analyze）✅ PASS**：succeeded、
+  回答正确、4 次 canUseTool 拒绝全部是真越界（haiku 产出 `\` 开头的无盘符根路径，
+  Windows 解析为盘根 = cwd 外）、决策卡链路端到端走通——详见
+  `poc/m6-sdk-probes/FINDINGS.md` 的金丝雀日志。两条跟进项当日修复：审批上报带
+  被拒工具名（SCN-FWB-043 补充）、只读轮基线同步（新场景 **SCN-FWB-044**——查实
+  analyze 此前跑在写入轮候选残局上，turn 前 reset/clean/detach 到默认分支当前
+  提交）。剩余：写入型 ≥1、恢复轮 ≥1、合计 ≥5 条后过 T8 门。
 - **T8 ⏳** 等 T7 干净后按本节既定流程执行。
 
 ---

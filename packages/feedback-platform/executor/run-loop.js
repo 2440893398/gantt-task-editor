@@ -209,18 +209,33 @@ export async function executeLeasedRun({
                     `[executor] run=${lease.runId} resuming previous candidate ${candidatePrep.resumedFrom} (SCN-FWB-040)`
                 );
             }
+        } else {
+            // SCN-FWB-044：只读轮同样要新鲜基线。金丝雀 #1（2026-08-29）实测 analyze
+            // 跑在上一次写入轮的候选分支残局上，回答引用了默认分支早已删除的文件。
+            // `?.` 只为让旧测试的最小 stub 不炸；生产接线由 wiring 测试钉死
+            // （write-pipeline 工厂必须暴露 prepareReadOnly，缺席即静默跳过基线同步）。
+            const baseline = await writePipeline?.prepareReadOnly?.({ context });
+            if (baseline?.baseCommit) {
+                log(`[executor] run=${lease.runId} read-only baseline ${baseline.baseCommit}`);
+            }
         }
         // 审批 fail-closed：注册在任何 turn 开始之前，不存在无人接管的窗口。
         session.onApprovalRequest(async (method, params) => {
             const kind = approvalKindFor(method);
             if (!kind) return {};
+            // 会话层可能随规范类别一起给出被拒工具名（claude 两条传输都给）。
+            // 决策卡上「permissions 被拒」和「Read 被拒」是两种不同的处置——
+            // 金丝雀 #1（2026-08-29）实测卡上只剩 {kind:'permissions'}，管理员
+            // 无从判断被拒的是什么。Worker 端把 details 原样存进证据 detail，
+            // 这里带上即可，不需要动 Worker。
+            const tool = typeof params?.tool === 'string' && params.tool ? params.tool : '';
             try {
                 await controlPlane.postApproval({
                     ...envelopeBase,
                     requestId: `${lease.runId}:${method}:${params?.itemId ?? params?.callId ?? 'na'}`,
                     kind,
-                    summary: `Executor declined ${method} (fail-closed until M4 approvals land).`,
-                    details: { method },
+                    summary: `Executor declined ${tool ? `${tool} (${method})` : method} (fail-closed until M4 approvals land).`,
+                    details: tool ? { method, tool } : { method },
                 });
             } catch (error) {
                 if (error?.code === 'FEEDBACK_EXECUTOR_LEASE_STALE') staleLease = true;

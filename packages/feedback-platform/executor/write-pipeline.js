@@ -36,6 +36,7 @@ import {
     committedCandidateDiff,
     createGitRunner,
     prepareCandidateWorkspace,
+    prepareReadOnlyWorkspace,
 } from './candidate.js';
 import { runCommand, runVerificationSteps } from './verification.js';
 
@@ -226,6 +227,25 @@ export function createWritePipeline({
                     evidenceDir: FEEDBACK_EVIDENCE_DIR,
                     // SCN-FWB-040：有上一轮候选就建在它之上，提交缺席时静默回落全新开工。
                     resumeFromCommit: String(context?.previousAttempt?.changeCommit || ''),
+                });
+            } catch (error) {
+                const wrapped = new Error(
+                    `EXECUTOR_WORKSPACE_PREPARE_FAILED: ${String(error?.message || error)}`
+                );
+                wrapped.errorCode = 'executor_workspace_prepare_failed';
+                throw wrapped;
+            }
+        },
+
+        /**
+         * 只读轮的基线同步（SCN-FWB-044）。与 prepare 同一套 errorCode 语义：
+         * 「工作区没备好」必须区别于真崩溃，让 C4 的终态说得出原因。
+         */
+        async prepareReadOnly({ context }) {
+            try {
+                return await prepareReadOnlyWorkspace({
+                    defaultBranch: context?.defaultBranch || 'master',
+                    git,
                 });
             } catch (error) {
                 const wrapped = new Error(

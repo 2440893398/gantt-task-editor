@@ -122,6 +122,31 @@ export async function prepareCandidateWorkspace({
     return { baseCommit, candidateRef, resumedFrom };
 }
 
+/**
+ * 只读轮的基线同步（SCN-FWB-044）。
+ *
+ * 为什么需要（2026-08-29 金丝雀 #1 实测）：analyze 轮此前完全不碰工作区，Run 跑在
+ * 上一次写入轮留下的残局上——错误的候选分支、别的 Run 的候选提交、3 个脏文件，
+ * 回答里因此引用了默认分支早已删除的文件。只读不等于可以脏：基线不新鲜，
+ * 「按仓库现状回答」就是一句谎话。
+ *
+ * 三条实现约束与写入轮同源：
+ * - `rev-parse <defaultBranch>` 读**本地** ref：executor-ws 是主仓的 linked
+ *   worktree，与主工作区共享 ref 存储，主仓一提交这里就是新的——不依赖 fetch，
+ *   也就没有「离线时基线悄悄停更」的分叉。
+ * - `checkout --detach`：分支名被主工作区占用，按名字 checkout 当场失败
+ *   （与 prepareCandidateWorkspace 的 2026-08-22 实测同因）。detached HEAD 对
+ *   只读轮无副作用，候选分支与其提交全部原样保留（Release 还要用）。
+ * - reset + clean 与写入轮同款：脏文件会让「读到的代码」与「基线提交」对不上号。
+ */
+export async function prepareReadOnlyWorkspace({ defaultBranch = 'master', git }) {
+    await git('reset', '--hard');
+    await git('clean', '-fd', '-e', 'node_modules');
+    const baseCommit = (await git('rev-parse', defaultBranch)).stdout.trim();
+    await git('checkout', '--detach', baseCommit);
+    return { baseCommit };
+}
+
 /** 先 add -A 再读暂存区：不 add 的话 `git diff` 看不见 Agent 新建的文件。 */
 export async function collectCandidateChanges({ baseCommit, git }) {
     await git('add', '-A');
