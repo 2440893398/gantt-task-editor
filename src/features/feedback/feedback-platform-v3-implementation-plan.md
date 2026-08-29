@@ -769,7 +769,12 @@ P5 abort 后零孤儿进程、`pathToClaudeCodeExecutable` 驱动系统 CLI 2.1.
   `poc/m6-sdk-probes/FINDINGS.md` 的金丝雀日志。两条跟进项当日修复：审批上报带
   被拒工具名（SCN-FWB-043 补充）、只读轮基线同步（新场景 **SCN-FWB-044**——查实
   analyze 此前跑在写入轮候选残局上，turn 前 reset/clean/detach 到默认分支当前
-  提交）。剩余：写入型 ≥1、恢复轮 ≥1、合计 ≥5 条后过 T8 门。
+  提交）。**Run #2（analyze）✅ PASS（自愈）**：两条修复现网实锤（`read-only baseline`
+  为当日 master HEAD、回答引用当日新代码、决策卡带工具名）；attempt 1 暴露平台缺陷
+  → **`EXC-FWB-007` 待拍板**（runtime_approval 卡活跃时 waiting_human 类卡撞单活跃
+  卡索引 + Worker 把 409 误报可重试 500；Run 复用 + 幂等 eventId 自愈了 attempt 2，
+  但 SDK 事前审批让该窗口显著变宽，拍板宜在 T8 前）。金丝雀累计：analyze 2/2；
+  剩余写入型 ≥1、恢复轮 ≥1、合计 ≥5 条后过 T8 门。
 - **T8 ⏳** 等 T7 干净后按本节既定流程执行。
 
 ---
