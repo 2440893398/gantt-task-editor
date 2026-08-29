@@ -1,7 +1,7 @@
 # 反馈编排平台 V3 — 从 GitHub 主编排迁移到执行器协议 + 会话式执行
 
-> 状态：**M0 已完成并通过 M0-G，进入 M1**（尚未动场景清单与生产代码）
-> 日期：2026-08-16
+> 状态：**M1–M3 已落地（2026-08-27 起 executor 是唯一执行路径），M6 已拍板待探针**；M4/M5 未动工
+> 日期：2026-08-16 首版；2026-08-29 增补 M6，并按评审回写现实（状态头、§0/§2/§3、§5 回滚重写、M4 价值复核）
 > 已拍板：`EXC-FWB-004`（见 §4）；**M0-G 判定：走推荐路径 + 收紧产品说法**（见 §M0-G）
 > 场景清单变更按 CLAUDE.md 纪律在各里程碑的 T1 落库
 > 上游评审：本仓库 2026-08-16 的架构评审结论
@@ -27,7 +27,8 @@
 - 多租户、远程执行器、云端执行器池
 - Slack / Claude Tag 集成（Team/Enterprise 专属且不支持第三方部署，入口接不上匿名用户）
 - 跨项目共享 memory
-- ClaudeAdapter（Agent SDK 的会话语义尚未验证，见 M0-V4）
+- ~~ClaudeAdapter（Agent SDK 的会话语义尚未验证，见 M0-V4）~~ **已推翻**：2026-08-20
+  ClaudeCodeAdapter 落地并成为默认引擎（M3 缺口 #6）；2026-08-29 M6 进一步拍板迁 Agent SDK 传输
 - 工作台 UI 重写（沿用现有 `/feedback`）
 - `auto_deliver` 自动交付（**全程关闭**，见 §S 安全工作流）
 - 物理分仓（本期只拆 `packages/`，分家条件见 §6）
@@ -61,10 +62,14 @@ _"Self-hosted Runner 不得与个人日常开发资料、SSH Agent 或浏览器�
 M0 技术验证 ──(生死线 gate)── M1 协议正名 ── M2 项目配置入表 ── M3 执行器 MVP
    1–2 天         │                2–3 天         1 天            4–6 天
                   │                                                  │
-                  └─ 失败 → 走 Plan B（见 M0-G）          M4 运行中审批 ── M5 checklist
+                  └─ 失败 → 走 Plan B（见 M0-G）   M6 Claude 引擎迁 Agent SDK（M6-P/M6-G gate）
+                                                     探针 1 天 + 实现 1.5–2.5 天 + 金丝雀
+                                                                     │
+                                                          M4 运行中审批 ── M5 checklist
                                                               2–3 天        1–2 天
 
-§S 安全工作流：贯穿 M3–M5，其中 S1–S3 是 M3 的准入条件
+§S 安全工作流：贯穿 M3–M6，其中 S1–S3 是 M3 的准入条件
+（2026-08-29：M6 插在 M4 前——claude 侧审批通道 canUseTool 由 M6 提供）
 ```
 
 **关键纪律**：M1 和 M2 **不依赖 M0 的结论**，即使 M0 判定路线 B 不成立，这两步的产出
@@ -546,12 +551,18 @@ actions 项目（14 条全绿，无回归），executor 形态的浏览器用例
 
 ## M4 — 运行中审批（2–3 天）
 
-> 依赖 M0-V5 通过。
+> 依赖 M0-V5 通过。claude-code 侧另有前置 M6：`claude -p` 没有审批请求通道（只有终态
+> `permission_denials` 事后提取），Agent SDK 的 `canUseTool` 回调是该侧唯一的事前拦截点。
 
 **目标**：把 HumanAction 从"跑完 20 分钟再审"变成"写文件那一刻拦住问人"。
 
 **产品价值**：`SCN-FWB-031` 那个惨案——Agent 改了不该改的文件、跑完 26 分钟验证、
 最后被门禁扔掉——在 approval 模型下**根本不会发生**。这是本计划里价值密度最高的一步。
+
+> 2026-08-29 复核：上述论断写于 8 月中。此后 SCN-FWB-038（有界修复回路）、SCN-FWB-039
+> （门禁拦截 → 授权决策卡）、SCN-FWB-040（恢复轮从候选继续）已把"被扔掉的整轮"变成
+> "可授权、可恢复的一轮"——事前拦截的增量价值缩小为"省一轮时间"，不再是"救回整个
+> Run"。"价值密度最高"不再成立；排期继续在 M6 之后，开工前按当时的失败分布再复核一次。
 
 **任务**
 
@@ -582,6 +593,178 @@ actions 项目（14 条全绿，无回归），executor 形态的浏览器用例
   只有 `phase: testing` 推 Issue 到公开的"验证中"。
 - T4 — **不做**：按测试数报百分比（需解析测试输出，脆弱且会把事件表变日志表——
   这是 `SCN-FWB-030` 当初刻意拒绝的做法，本期继续拒绝）。
+
+---
+
+## M6 — Claude 引擎迁移 Agent SDK（探针 1 天 + 实现 1.5–2.5 天 + 金丝雀）
+
+> 2026-08-29 拍板。背景：M4 需要的"运行中审批"在 `claude -p` 传输上结构性缺失，
+> `@anthropic-ai/claude-agent-sdk` 的 `canUseTool` 回调补上这一块，且 Claude Code 版本
+> 随 SDK 包锁定（现状跟系统安装的 claude.exe 走，不受控）。计费路径不变：SDK 底下
+> spawn 的仍是 Claude Code CLI，照读已登录的订阅凭据（我们的执行器今天就以订阅跑
+> `-p` 并共享五小时额度窗口；Happy 同架构佐证）。codex 路径与本里程碑完全无关。
+
+**目标**：`claude-code` provider 的**传输层**从 spawn `claude -p` 换成 SDK 的 `query()`。
+run-loop / normalize / protocol v0 / Worker 零改动——这正是 Adapter/Session/Translator
+三层可换架构的验收场景。
+
+**边界（明确不做）**：不动 codex；不动协议；不实现 M4 的决议下行（heartbeat `commands`
+仍为空，`canUseTool` 本期一律 fail-closed 拒绝）；不改变计费与额度形态。
+
+**顺序约束**：M3-T6（claude 侧会话续接，`SCN-FWB-034` 仍 todo）排到 M6 **之后**、直接
+在 SDK 传输上实现——先在 cli 传输上做一遍等于 M6 切换后重做。
+
+### M6-P 探针（1 天，可丢弃 PoC，证据落 gitignored 目录，比照 M0 惯例）
+
+五个不确定点全部实测定案。文档与二手结论一律不作数——本轮评估中，二手复核已有三处
+与我们真机结论直接矛盾（`permission_denials` 存在性、`env` 选项、配置目录处理）：
+
+- **P1 消息同形性与 `permission_denials`**：result 消息里 `permission_denials` 是否原样
+  存在（HumanAction 提取链依赖）；并跑一次**真机认证失败**（成本极低）确认三条 CLI
+  地雷在 SDK 传输上同样出现且被翻译层丢弃——`subtype` 撒谎（失败时仍报 `success`，
+  判定必须以 `is_error` 为准）、`<synthetic>` 运维消息不得混入产出、`is_error` 优先。
+  翻译器能否复用以此为准，不以"消息同形"的想当然为准（T6 的镜像单测测的是翻译层对
+  **假定形状**的处理，证明不了 SDK 真产出这个形状）。
+- **P2 env 白名单（计费保险丝）**：SDK 能否让子进程只见 `CHILD_ENV_ALLOWLIST`；
+  剥掉 `ANTHROPIC_API_KEY` 后走订阅、注入后是否静默抢占改按量计费；代理变量
+  （`HTTPS_PROXY` 等）经 SDK 透传到子进程（S3 教训：剥掉代理 = provider 报 `403
+  Request not allowed`，报错形态会把排障引向重新登录）。
+- **P3 S7 配置目录**：子进程对 `CLAUDE_CONFIG_DIR` 的继承是否与 CLI 一致；
+  "继承模式不注入变量"的纪律是否仍必要。
+- **P4 S6/S8 语义与 `canUseTool` 触发面**：init 消息 `tools` 是否实报；`disallowedTools`
+  是否真收窄；`permissionMode: acceptEdits` 是否不被降级；零预授权策略是否照旧成立
+  （SDK `allowedTools` 的 auto-approve 会不会拆 cwd 边界——S8 的老问题换个壳）；
+  **`canUseTool` 的触发面**：acceptEdits 下区内 Edit/Write 是否**不**触发回调（若每次
+  工具调用都触发，T3 的"一律拒绝"会把写入管线整个打死）、越界写是否触发且拒绝后
+  denial → HumanAction 链路成立。这一条决定 M6 写入路径的生死，也是最容易凭 SDK
+  文档想当然的一条——本节"文档不作数"的纪律对它同样适用。
+- **P5 收尾与逃生门**：AbortController 取消时 Windows 进程树是否孤儿化（`taskkill /T`
+  是否仍需）；`strictMcpConfig` / `disable-slash-commands` 的等价物（options 或
+  `extraArgs`）；`pathToClaudeCodeExecutable` 指回系统 CLI 的兼容性（版本回退路径）。
+
+### M6-G 分支门（必须在这里停下来判断）
+
+- **P2 不成立 → 硬否决**：计费保险丝失效，停在 CLI 传输，回到"绑定 M4 再评估"。
+- **P1 不成立 → 先评估替代**：`canUseTool` 拒绝回调 + PreToolUse hook 能否等价还原
+  "被拒记录 → HumanAction"链路；不能则停。
+- **P4 中 acceptEdits 被降级或 tools 不实报 → 停**：S6 闸失去依据，与"测行为不测声明"
+  原则冲突。
+- **P4 中 `canUseTool` 触发面覆盖区内 Edit → 停**：先评估替代设计（回调内按"白名单 +
+  cwd 边界"判定放行而非一律拒绝——这改变 fail-closed 语义，必须重新过评审）再定，
+  不得带着未评审的替代语义直接过门。
+- P3 / P5 的差异不是否决项，落成实现约束写进 session 层注释。
+
+### M6-P 实测结果（2026-08-29，`claude-agent-sdk@0.3.251` / 捆绑 CLI 2.1.251）
+
+**M6-G 全部通过，无停机条件触发。** 证据在
+`packages/feedback-platform/poc/m6-sdk-probes/`（FINDINGS.md + 8 份 evidence JSON，
+gitignored）。逐项：P1 三颗地雷全部复现且 `permission_denials` 带完整 tool_input；
+P2 `env` 选项真实生效、伪 key 静默抢占（401）、剥 key 走订阅、代理白名单透传成立；
+P3 `CLAUDE_CONFIG_DIR` 语义与 CLI 一致；P4 init 实报 `tools`（未认证也发，零 token
+探针手法保留）、`disallowedTools` 真收窄、`acceptEdits` 不被降级、**canUseTool 只在
+需要决策时触发**（区内 Write 免回调落盘、越界 Write 回调拒绝 + 落 denial）；
+P5 abort 后零孤儿进程、`pathToClaudeCodeExecutable` 驱动系统 CLI 2.1.226 跑通。
+
+**对任务的绑定性修正**（实现时必须吸收，依据见 FINDINGS.md）：
+
+1. **T3**：SDK 对错误终态与 abort 会 **throw**（result 消息在 throw 前已 yield）——
+   session 层已见终态后的 throw 按正常收尾处理，不得当进程级故障。
+2. **T3**：在 S6 闸旁加一条 `init.apiKeySource === 'none'` 断言（计费保险丝的运行时
+   兜底；r4 实测伪 key 静默抢占且 init 如实申报来源）。
+3. **T4**：最小化手段从 44 项拒绝清单改用 SDK 独有的 **`tools` 正面白名单**
+   （r2b 实报恰好收到三件套；r2 实测拒绝清单在 CLI 2.1.251 上已漏新工具
+   `ListAgents`——漂移病当场发作）。S6 init 校验闸原样保留，仍是唯一保证。
+4. **T7**：机械判据（b）（c）保留作复核，主判据升级为逐 Run 断言
+   `init.apiKeySource === 'none'`；`init.claude_code_version` satisfies 风险表
+   "每 Run 记版本"，无需额外通道。
+
+### M6 任务（过门后）
+
+- T1 — **场景清单先行**：`tests/scenarios/feedback-workbench.md` 追加 `SCN-FWB-043`
+  （Claude 引擎 SDK 传输），记变更日志。验证点草案：**无审批类事件的 Run** 在两种传输
+  下产出等价协议事件流；含审批的 Run **必然不等价**，且差异必须恰是"事前拒绝即上报"
+  （HumanAction 时机提前、来源从终态提取变为回调）——这是 M6 的目的之一，不得当回归
+  判失败；S6 闸在 SDK init 上仍生效（越界拒绝开跑）；子进程 env 只含白名单（含
+  `ANTHROPIC_API_KEY` 剥除断言）；传输开关可一键回退。`expected/` 契约预计零变更
+  （协议事件不变），若有变更走 `CHANGES.md`。
+- T2 — 依赖引入：平台包加 `@anthropic-ai/claude-agent-sdk`，**精确锁版本（无 `^`）**。
+  这是平台包第二个 npm 依赖（undici 之后）；升级流程 = 读 CHANGELOG + 重跑 P4 探针
+  子集，写进包 README。
+- T3 — `executor/claude-sdk-session.js`：实现与 `claude-cli-session.js` 相同的
+  ProviderSession 接口（start / onEvent / onApprovalRequest / onExit / openSession /
+  startTurn / kill）。三条铁律：S6 init 闸原样接（tools 实报断言 + 越界 kill）；
+  `canUseTool` 一律 fail-closed 拒绝并转 approvalHandler——把"事后 `permission_denials`
+  提取"升级为"事前拒绝即上报"，语义与 codex 路径对齐，这就是 M4-T3 的接缝；
+  PreToolUse hook 做第二道工具面闸（纵深，不替代 init 闸）。
+- T4 — Adapter：`buildSessionArgs` 旁增 `buildSessionOptions`（结构化 options）。注释里
+  的 S6/S7/S8 实测结论逐条按 P 探针更新；旧结论保留并标注"适用于 CLI 传输"。
+- T5 — 接线与开关：`PROVIDERS['claude-code'].createSession` 按
+  `FEEDBACK_EXECUTOR_CLAUDE_TRANSPORT=cli|sdk`（**默认 cli**）选传输。provider id、
+  协议、Worker 词表零改动；translator 复用（SDK 消息与 stream-json 同形，P1 探针顺带
+  验证）。
+- T6 — 测试：镜像 claude-cli-session 全部用例到 sdk-session（含"policy 同源驱动
+  options 与闸"的接线测试）；C1–C6 符合性套件不改——引擎无关正是 `#czi9c6` 之后立的
+  防线，SDK 会话走同一注册流程即被罩住。
+- T7 — 金丝雀：SDK 传输跑 ≥5 条真实 Run（覆盖只读 analyze、写入 implement_and_verify、
+  至少一次恢复轮），逐 Run 与 CLI 传输对比协议事件流（等价口径按 T1：无审批 Run 等价）。
+  **前置（M3 尾注的悬空项在此收口，有 owner）**：金丝雀开跑前必须定下"并发压 1 +
+  五小时窗口降档策略"的结论并回写本节——金丝雀烧的正是同一个订阅窗口，没有结论不开跑。
+  **结论（2026-08-29 定）**：
+  （a）**并发 = 1 是明文约束而不只是现状**——执行器主循环单租约串行、服务端 partial
+  unique index 强制每 executor 至多一个 active 租约，两层都在；M6 及之后不得引入
+  并行 Run。（b）**降档是人工开关，不承诺自动**——订阅窗口余量没有可编程读取的
+  接口，任何"自动降档"都是空头支票。操作面三档：金丝雀期一律
+  `FEEDBACK_EXECUTOR_MODEL=claude-haiku-4-5`（M6-P 实测 trivial turn ≈ $0.02–0.04
+  等值）；常态运行只有写入型用默认模型，analyze 建议保持 haiku；开发者交互高峰期
+  额度紧张时，降档 haiku 或直接用停止哨兵文件暂停执行器。`FEEDBACK_EXECUTOR_MAX_TURNS`
+  / `_MAX_USD` 作为每 Run 兜底照旧。
+  "额度扣在订阅窗口"用机械判据，不留主观确认：（a）P2 断言复跑（子进程 env 无
+  `ANTHROPIC_API_KEY`）；（b）金丝雀期间 Anthropic Console 无新增 API 用量；（c）Run
+  结束后订阅五小时窗口余量下降。
+- T8 — 切默认与退役门：金丝雀干净 → 默认切 `sdk`。CLI 路径保留观察期（**≥2 周且
+  ≥20 条 Run**，二者都满足才算期满；期间任何回退重置观察期）；期满删除
+  `claude-cli-session.js` 与 `provider-command.js` 的 claude 分支（codex 分支保留）。
+  **退役后的回退形态**（风险表三行的"`TRANSPORT=cli` 一键回退"随退役蒸发，必须有替补）：
+  精确锁版本降级（npm 依赖回退）+ S6 在线闸兜底 + `git revert` 退役提交恢复 CLI 路径。
+  为此退役必须是**独立提交**，不与其他改动混装。
+
+### M6 风险与回滚
+
+| 风险                             | 缓解                                             | 回滚                     |
+| -------------------------------- | ------------------------------------------------ | ------------------------ |
+| SDK 0.x breaking change          | 精确锁版本；升级 = CHANGELOG + P4 子集重跑       | 不升级                   |
+| SDK 行为与探针结论漂移           | S6 闸在线兜底：越界即拒跑，失败不失控            | `TRANSPORT=cli` 一键回退 |
+| 换传输复活活锁（`#czi9c6` 教训） | C6 注册时符合性检查引擎无关                      | 同上                     |
+| 计费被静默切到 API 按量          | S3 白名单剥 `ANTHROPIC_API_KEY` + P2 探针断言    | 同上                     |
+| 捆绑 CLI 与系统 CLI 行为分叉     | 每 Run 记 SDK/CLI 版本；`pathToClaudeCodeExecutable` 可指回系统 CLI | 同上 |
+
+### M6 落地状态（2026-08-29，T1–T6 完成）
+
+- **T1 ✅** `SCN-FWB-043` 已落 `tests/scenarios/feedback-workbench.md`（active）+ 变更日志；
+  `npm run check:scenarios` 通过（注意：检查器只认 **it/test 标题**里的 SCN 标签，
+  describe 不算）。
+- **T2 ✅** `@anthropic-ai/claude-agent-sdk@0.3.251` 精确版本入
+  `packages/feedback-platform/package.json`。⚠️ 教训：在 `poc/` 目录内直接 `npm install`
+  会被 workspace 上爬、把依赖和 `npm init` 垃圾字段写进 workspace 清单——一律用根目录
+  `npm install <pkg> --save-exact -w packages/feedback-platform`。
+- **T3 ✅** `executor/claude-sdk-session.js`：同接口五件套；S6 闸 + `apiKeySource==='none'`
+  计费断言（新错误码 `executor_billing_source_not_allowed`）；canUseTool fail-closed
+  事前上报；两通道按「工具名 + stableStringify(输入)」去重；「终态已 yield 再 throw
+  是正常收尾」。
+- **T4 ✅** Adapter 增 `buildSessionOptions`（与 buildSessionArgs 并存至 T8）：`tools`
+  正面白名单、acceptEdits 仅写入型、零 `allowedTools`（S8）、`extraArgs` 传
+  `disable-slash-commands`。
+- **T5 ✅** `FEEDBACK_EXECUTOR_CLAUDE_TRANSPORT=cli|sdk`（缺省 cli）；未知值**启动即拒**
+  （`EXECUTOR_UNKNOWN_CLAUDE_TRANSPORT`），不等领到 Run 才炸；启动日志带 transport。
+- **T6 ✅** 平台套件 26 文件 / 299 用例全绿（新增 16 个 SDK 会话用例 + 2 个 Adapter
+  options 用例 + 2 个传输接线用例）；C1–C6 符合性零改动。
+- **真机冒烟 ✅** 真 SDK 驱动新会话层（analyze policy / haiku / 受限 env）：init 过双闸
+  （apiKeySource=none、tools 恰好三件套）、拿到 sessionId、终态干净、零误报——证据
+  `poc/m6-sdk-probes/evidence/smoke-session-layer.json`。
+- **T7 ⏳ 运营步骤**：`%USERPROFILE%\.gantt-executor\executor.env` 加
+  `FEEDBACK_EXECUTOR_CLAUDE_TRANSPORT=sdk` + `FEEDBACK_EXECUTOR_MODEL=claude-haiku-4-5`
+  → `npm run executor:restart` → 按上方判据跑 ≥5 条真实 Run。
+- **T8 ⏳** 等 T7 干净后按本节既定流程执行。
 
 ---
 
@@ -618,16 +801,20 @@ actions 项目（14 条全绿，无回归），executor 形态的浏览器用例
 - 不做 Slack / Claude Tag 集成
 - 不做跨项目 memory（thread-local 之外的 memory，本期只有"人工批准写入"的 project memory，
   且**推迟到 V3 之后**）
-- 不做 ClaudeAdapter（M0-V6 只产出一页结论，不落实现）
+- ~~不做 ClaudeAdapter（M0-V6 只产出一页结论，不落实现）~~ **已推翻**（2026-08-20 落地并成为默认引擎，见 M3 缺口 #6）
 - 不做工作台 UI 重写
-- 不删 GitHub 路径
+- ~~不删 GitHub 路径~~ **已推翻**（2026-08-27 拍板整体退役，提交 bf21bef，SCN-FWB-033 改写为"executor 是唯一执行路径"；由此产生的回滚现实见 §5 重写）
 - 不做物理分仓
 
 ---
 
 ## 4. 场景清单变更计划
 
-按 CLAUDE.md 纪律，每个改变业务行为的里程碑**先改场景清单**。提议新增 4 条：
+按 CLAUDE.md 纪律，每个改变业务行为的里程碑**先改场景清单**。本表是提议时点的草案、
+滚动登记（2026-08-29 注）：2026-08-24～28 由实际事故驱动落库的 `SCN-FWB-036`～`042`
+（活锁三层修复、失败闭环、门禁授权卡、候选恢复、删除通道、公开端点提权修复）未逐条
+回写本表，**以场景清单本身为准**；下表 M4 行的 `SCN-FWB-036` 号位已被占用，M4 落库时
+取当时下一空号。
 
 | SCN                                                                                           | 里程碑 | 提议验证点（草案，落库前需确认措辞）                                                                                                                                                                                                                                                                                   |
 | --------------------------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -637,6 +824,7 @@ actions 项目（14 条全绿，无回归），executor 形态的浏览器用例
 | **口径**：可见文案只承诺上下文连续，不得出现"省 token / 不再重放上下文"类表述（见 M0-G 判定） |
 | `SCN-FWB-035`                                                                                 | M3     | 租约以 `epoch` 防重复领取，旧 epoch 回写被拒；租约过期 → `executor_lost` + HumanAction，**不自动重试**；执行器离线时工作台显示离线与排队而非"处理中"；执行器隔离形态的例外说明与 S-G 退出条件                                                                                                                          |
 | `SCN-FWB-036`                                                                                 | M4     | 写文件前拦截并创建 HumanAction；拒绝后 Agent 继续但不写该文件；审批超时默认拒绝；approval 不替代 diff gate，二者都必须生效                                                                                                                                                                                             |
+| `SCN-FWB-043`                                                                                 | M6     | Claude 引擎 SDK 传输：**无审批类事件的 Run** 在 cli/sdk 两种传输下产出等价协议事件流（含审批的 Run 差异必须恰是"事前拒绝即上报"，不得当回归）；S6 闸在 SDK init 上仍生效；子进程 env 只含白名单（含 `ANTHROPIC_API_KEY` 剥除）；`FEEDBACK_EXECUTOR_CLAUDE_TRANSPORT` 可一键回退                                       |
 
 **例外队列**：
 
@@ -660,13 +848,24 @@ actions 项目（14 条全绿，无回归），executor 形态的浏览器用例
 | 风险                                       | 缓解                                                          | 回滚路径            |
 | ------------------------------------------ | ------------------------------------------------------------- | ------------------- |
 | M0 判定路线 B 不成立                       | M1/M2 不依赖 M0，产出保留                                     | 走 M0-G 的降级分支  |
-| App Server 协议漂移（官方标 experimental） | Adapter 隔离 + 每个 Run 记 `codex --version` + 每日契约 smoke | 切回 ActionsAdapter |
+| App Server 协议漂移（官方标 experimental） | Adapter 隔离 + 每个 Run 记 `codex --version` + 每日契约 smoke | ~~切回 ActionsAdapter~~ 已失效（2026-08-27 退役）→ 切 claude-code 引擎或停派发等修 |
 | 执行器环境不隔离（已知退步）               | §S 的 S1–S8 + S-G 门槛                                        | 迁容器              |
 | 自举风险未解除                             | 平台包独立测试入口 + `is_self` 禁止                           | §6 分家             |
 | 范围蔓延                                   | §3 明确不做清单                                               | —                   |
 
-**全期回滚保证**：GitHub 路径始终保留且始终通过符合性测试。任何一步出问题，
-把 `projects` 的默认 adapter 切回 `actions` 即可恢复现状。
+**~~全期回滚保证~~（2026-08-29 重写：原保证已失效）**：原文承诺"GitHub 路径始终保留、
+切回 `actions` 即可恢复现状"——该底牌已于 2026-08-27 随 Actions 路径整体退役（bf21bef，
+4 份 workflow、Worker 派发调用、`default_adapter` 路由全部删除）而**不复存在**。
+现实的兜底分层为：
+
+1. **执行器整体故障**：Run 停在 `created` 直到 Workflow 超时进决策卡——这是**可见失败**
+   （工作台显示离线与排队，SCN-FWB-035），不是静默丢失；恢复 = 修好执行器重新领取。
+2. **M6 传输级故障**：`FEEDBACK_EXECUTOR_CLAUDE_TRANSPORT=cli` 一键回退
+   （T8 退役后改为 revert 退役提交，见 M6-T8）。
+3. **单引擎故障**：`FEEDBACK_EXECUTOR_PROVIDER` 在 claude-code / codex 间切换
+   （两条引擎独立驱动，互不依赖）。
+
+M4/M6 及之后的任何风险评估**不得再引用"切回 GitHub 路径"作为兜底**。
 
 ---
 

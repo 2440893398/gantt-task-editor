@@ -28,6 +28,10 @@
  *   FEEDBACK_EXECUTOR_MODEL       可选：覆盖模型（Claude Code 用，省额度时降档）
  *   FEEDBACK_EXECUTOR_MAX_TURNS   可选：单轮工具调用上限
  *   FEEDBACK_EXECUTOR_MAX_USD     可选：单轮花费上限（Claude Code 的 --max-budget-usd）
+ *   FEEDBACK_EXECUTOR_CLAUDE_TRANSPORT  `cli`（默认）或 `sdk`（SCN-FWB-043 / M6）：
+ *                                 Claude Code 走 spawn `claude -p` 还是 Agent SDK。
+ *                                 未知值启动即拒绝——配置错误必须响亮失败，静默回落
+ *                                 是最贵的失败（SCN-FWB-032 翻译器失聪同源教训）。
  *
  * **provider 配置目录**（S7，2026-08-21 实测更正）：
  * - codex **必须**隔离——共享 `~/.codex` 的 sqlite 状态库会被在跑的 codex 进程锁死。
@@ -49,6 +53,7 @@ import { pathToFileURL } from 'node:url';
 import { admitExecutor, buildChildEnv } from './admission.js';
 import { AppServerClient } from './app-server-client.js';
 import { createClaudeCliSession } from './claude-cli-session.js';
+import { createClaudeSdkSession } from './claude-sdk-session.js';
 import { createCodexSession } from './codex-session.js';
 import { createControlPlaneClient, resolveControlPlaneFetch } from './control-plane.js';
 import { PROVIDER_COMMAND_RESOLVERS } from './provider-command.js';
@@ -177,6 +182,26 @@ const numberOrUndefined = (value) => {
     return Number.isFinite(parsed) ? parsed : undefined;
 };
 
+/** Claude Code 的两种传输（SCN-FWB-043 / M6-T5）。CLI 传输的退役条件见计划 M6-T8。 */
+export const CLAUDE_TRANSPORTS = Object.freeze(['cli', 'sdk']);
+
+/**
+ * 传输选择必须响亮失败：`EVENT_TRANSLATORS[provider] ?? codex` 的静默回落曾让执行器
+ * 对 Claude Code 完全失聪（SCN-FWB-032）；一个拼错的 transport 值绝不能静默落回 cli，
+ * 那会让「我明明切了 sdk」和「怎么行为一点没变」同时成立。
+ */
+export function resolveClaudeTransport(env = process.env) {
+    const transport = String(env.FEEDBACK_EXECUTOR_CLAUDE_TRANSPORT || 'cli').trim();
+    if (!CLAUDE_TRANSPORTS.includes(transport)) {
+        const error = new Error(
+            `EXECUTOR_UNKNOWN_CLAUDE_TRANSPORT: "${transport}" (expected ${CLAUDE_TRANSPORTS.join('|')})`
+        );
+        error.code = 'EXECUTOR_UNKNOWN_CLAUDE_TRANSPORT';
+        throw error;
+    }
+    return transport;
+}
+
 /**
  * provider 的三件套：Adapter、会话工厂、配置目录环境变量名。
  * 加第三个引擎时改这里一处，run-loop 与控制面客户端都不需要知道。
@@ -189,21 +214,33 @@ export const PROVIDERS = {
         // 隔离配置目录对 Claude Code 不是安全边界（S7，2026-08-21 实测更正）：
         // 用户级 settings/插件/技能/MCP 已被 `--setting-sources project` +
         // `--strict-mcp-config` 挡住。默认继承开发者已登录的目录，省掉一次专门登录。
+        // S7 语义对 SDK 传输同样成立（M6-P r1/r3 实测：env 注入即隔离、不注入即继承）。
         isolatedHomeRequired: false,
         defaultHome: () => join(homedir(), '.claude'),
         loginHint: (dir) => `$env:CLAUDE_CONFIG_DIR='${dir}'; claude`,
         createSession({ adapter, command, childEnv, workspaceDir, context, log }) {
+            // options/argv 与 S6 闸由同一个 context.policy 驱动
+            // （见 claude-cli-session.js / claude-sdk-session.js 的接线说明）。
+            const sessionInputs = {
+                policy: context?.policy,
+                resumeSessionId: context?.providerSessionId ?? '',
+                model: process.env.FEEDBACK_EXECUTOR_MODEL || '',
+                maxTurns: numberOrUndefined(process.env.FEEDBACK_EXECUTOR_MAX_TURNS),
+                maxBudgetUsd: numberOrUndefined(process.env.FEEDBACK_EXECUTOR_MAX_USD),
+            };
+            if (resolveClaudeTransport(process.env) === 'sdk') {
+                return createClaudeSdkSession({
+                    policy: context?.policy ?? '',
+                    options: adapter.buildSessionOptions(sessionInputs),
+                    env: childEnv,
+                    cwd: workspaceDir,
+                    onStderr: (line) => log('[claude-sdk]', line),
+                });
+            }
             return createClaudeCliSession({
                 command,
-                // argv 与 S6 闸由同一个 context.policy 驱动（见 claude-cli-session.js）。
                 policy: context?.policy ?? '',
-                args: adapter.buildSessionArgs({
-                    policy: context?.policy,
-                    resumeSessionId: context?.providerSessionId ?? '',
-                    model: process.env.FEEDBACK_EXECUTOR_MODEL || '',
-                    maxTurns: numberOrUndefined(process.env.FEEDBACK_EXECUTOR_MAX_TURNS),
-                    maxBudgetUsd: numberOrUndefined(process.env.FEEDBACK_EXECUTOR_MAX_USD),
-                }),
+                args: adapter.buildSessionArgs(sessionInputs),
                 env: childEnv,
                 cwd: workspaceDir,
                 onStderr: (line) => log('[claude]', line),
@@ -275,6 +312,9 @@ export async function runExecutorDaemon({ env = process.env, log = console.error
         error.code = 'EXECUTOR_UNKNOWN_PROVIDER';
         throw error;
     }
+    // 传输配置错误在启动时就拒绝，而不是等到第一条 Run 领下来才在 createSession 炸
+    // ——那时租约已领、Run 已置 running，一个 typo 会白烧一次修复回路名额。
+    const claudeTransport = providerId === 'claude-code' ? resolveClaudeTransport(env) : null;
 
     const admitted = admitExecutor({
         workspaceDir: env.FEEDBACK_EXECUTOR_WORKSPACE,
@@ -308,7 +348,9 @@ export async function runExecutorDaemon({ env = process.env, log = console.error
     });
 
     log(`[executor] admitted; workspace=${admitted.workspaceDir} id=${executorId}`);
-    log(`[executor] provider=${providerId} command=${command}`);
+    log(
+        `[executor] provider=${providerId} command=${command}${claudeTransport ? ` transport=${claudeTransport}` : ''}`
+    );
     log(
         `[executor] ${provider.homeEnvName}=${effectiveHome}${inherited ? ' (inherited developer login)' : ' (isolated)'}`
     );

@@ -38,7 +38,7 @@ import {
     REPORTER_RESOLUTION_STEP,
     TERMINAL_DELIVERY_STEP,
 } from '../executor/run-plan.js';
-import { deniedToolSurfaceFor } from '../executor/tool-policy.js';
+import { deniedToolSurfaceFor, toolAllowlistFor } from '../executor/tool-policy.js';
 
 export function createClaudeCodeAdapter() {
     return {
@@ -132,6 +132,37 @@ export function createClaudeCodeAdapter() {
                     : []),
                 ...(resumeSessionId ? ['--resume', String(resumeSessionId)] : []),
             ];
+        },
+
+        /**
+         * SDK 传输的会话配置（SCN-FWB-043 / M6-T4），与 buildSessionArgs 并存：
+         * CLI 传输退役（M6-T8）之前两个 hook 都是活的。三处与 CLI 传输的刻意差异，
+         * 依据全部来自 M6-P 真机探针（poc/m6-sdk-probes/FINDINGS.md）：
+         *
+         * - **最小化手段用 `tools` 正面白名单**而不是 44 项拒绝清单：r2 实测拒绝
+         *   清单在捆绑 CLI 2.1.251 上已经漏了新工具 `ListAgents`（漂移病当场发作），
+         *   而 r2b 实测 `tools` 让 init 实报恰好收到白名单本身——新工具出现时白名单
+         *   天然免疫。S6 的 init 校验闸原样保留，仍是唯一的保证（测行为不测声明）。
+         * - **没有 `--verbose` 等价物的问题**：SDK 消息流天然含 init 事件（r1）。
+         * - **`disable-slash-commands` 走 extraArgs 逃生门**：SDK 无专属选项（r2
+         *   实跑无错）。`settingSources:['project']` + `strictMcpConfig` 与 CLI 同义。
+         *
+         * 依旧**零预授权**（S8）：绝不传 `allowedTools`——它是 auto-approve 语义，
+         * 会拆掉 cwd 边界。写入态照旧只加 `permissionMode: 'acceptEdits'`（r5 实测
+         * 不被降级、区内免审、越界走 canUseTool + permission_denials）。
+         */
+        buildSessionOptions({ policy, resumeSessionId = '', model = '', maxTurns, maxBudgetUsd }) {
+            return {
+                settingSources: ['project'],
+                strictMcpConfig: true,
+                extraArgs: { 'disable-slash-commands': null },
+                tools: [...toolAllowlistFor(policy)],
+                ...(isWriteCapablePolicy(policy) ? { permissionMode: 'acceptEdits' } : {}),
+                ...(model ? { model } : {}),
+                ...(Number.isFinite(maxTurns) ? { maxTurns } : {}),
+                ...(Number.isFinite(maxBudgetUsd) ? { maxBudgetUsd } : {}),
+                ...(resumeSessionId ? { resume: String(resumeSessionId) } : {}),
+            };
         },
     };
 }
