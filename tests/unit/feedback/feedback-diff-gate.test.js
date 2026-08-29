@@ -12,8 +12,15 @@ import {
 
 // `scripts/feedback-diff-gate.mjs` starts with a shebang, so importing it makes
 // Vitest fail to parse the whole file. The plumbing is pinned as text instead.
+//
+// 行尾归一化不是装饰：本仓 core.autocrlf=true，executor-ws 的候选分支每轮
+// `checkout -B` 会把改动过的文件重物化成 CRLF，而本文件的多行 toContain 断言
+// 写的是 `\n`——2026-08-29 写入型金丝雀 run_543befcc 因此在 executor-ws 假摔
+// （主仓 LF 全绿，字节级对比 5084 CRLF vs 5183 LF）。断言的是代码形状，不是行尾。
 function readProjectFile(relativePath) {
-    return fs.readFileSync(path.resolve(process.cwd(), relativePath), 'utf8');
+    return fs
+        .readFileSync(path.resolve(process.cwd(), relativePath), 'utf8')
+        .replace(/\r\n/g, '\n');
 }
 
 /**

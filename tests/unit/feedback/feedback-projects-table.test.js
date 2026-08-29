@@ -34,7 +34,9 @@ function applyMigrations({ upTo = '' } = {}) {
 }
 
 function readProjectFile(path) {
-    return readFileSync(resolve(projectRoot, path), 'utf8');
+    // CRLF 工作树（executor-ws 候选分支）上多行 `\n` 断言会假摔——归一化行尾，
+    // 断言代码形状不断言行尾字节（2026-08-29 run_543befcc 实录）。
+    return readFileSync(resolve(projectRoot, path), 'utf8').replace(/\r\n/g, '\n');
 }
 
 describe('[SCN-FWB-033] 项目配置入表', () => {
