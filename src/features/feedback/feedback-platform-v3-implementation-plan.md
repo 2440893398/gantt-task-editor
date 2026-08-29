@@ -787,10 +787,17 @@ P5 abort 后零孤儿进程、`pathToClaudeCodeExecutable` 驱动系统 CLI 2.1.
   2 秒内以 `api_error` 空转失败、吃光修复预算——事后最小 SDK 会话复测正常（判定瞬态），
   但暴露真缺陷：**provider 报错原文被翻译器整个丢弃**，日志只剩 `(api_error)`。
   已修（翻译器返回 `detail` → 归一化层暂存 → run-loop 落本机日志，**刻意不进
-  payload**，理由同「合成运维消息不是 Agent 产出」）。**Run #6 进行中**
-  （`run_de3edd71`，2026-08-29 21:22 起）。金丝雀累计：analyze 3/3 PASS，写入型
-  0/2 交付（恢复轮 ≥1 已满足）；合计 ≥5 与「写入型 ≥1 成功交付」仍是 T8 未过门项。
-- **T8 ⏳** 等 T7 干净后按本节既定流程执行。
+  payload**，理由同「合成运维消息不是 Agent 产出」）。
+  **Run #6 ✅ PASS——写入型首次交付候选，且修复回路真正收敛**：attempt 1（2 条硬失败）
+  → attempt 2（1 条）→ **attempt 3 succeeded**，候选 `cnd_b90e7a12` `awaiting_review`、
+  决策卡 `review_required` 已落地；基线 `454a655`（开跑前几分钟的 HEAD）。Agent 在回合
+  之间自行清掉了根目录杂物脚本、把 e2e 从 `agent-journeys/`（黄金答案目录）挪回
+  `tests/e2e/`、改用仓库自带的 `gotoApp` 助手；终态改动 3 个文件、三道门全绿，并自己
+  按仓库纪律补了 `SCN-GUI-012` 场景行与变更日志。
+  **T7 判据结算：SDK 传输累计 12 条真实 Run（analyze 3 + 写入型 9），只读 ✅、写入型
+  交付 ✅、恢复轮 ✅（#4 耗尽形态 + #6 收敛形态各一）、合计 ≥5 ✅ ⇒ T7 通过。**
+- **T8 ⏳ 可开**：切默认 `sdk` + 观察期（**≥2 周且 ≥20 Run**）+ 退役 CLI 分支须独立
+  提交以便 revert。前置遗留：`EXC-FWB-008`（e2e worker 数）待拍板。
 
 ---
 
