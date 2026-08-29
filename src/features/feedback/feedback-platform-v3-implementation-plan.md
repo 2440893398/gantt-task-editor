@@ -773,7 +773,9 @@ P5 abort 后零孤儿进程、`pathToClaudeCodeExecutable` 驱动系统 CLI 2.1.
   为当日 master HEAD、回答引用当日新代码、决策卡带工具名）；attempt 1 暴露平台缺陷
   → **`EXC-FWB-007` 已拍板（(b) 合并）并当日落地为 `SCN-FWB-045`**：被拒审批降级为
   `approval.denied` 内部时间线事件（不立卡不翻状态），决策卡自动携带被拒聚合清单，
-  撞卡从机制上消失；索引冲突报错映射加固为确定性 409。金丝雀累计：analyze 2/2；
+  撞卡从机制上消失；索引冲突报错映射加固为确定性 409。**Run #3 ✅ 一次通过**
+  （84s 到 succeeded，零报错；SCN-FWB-045 部署 `ec6347a6` 后 analyze 完成的正常
+  need_reproduction 卡成功落地——此前一直被占坑挡掉）。金丝雀累计：analyze 3/3；
   剩余写入型 ≥1、恢复轮 ≥1、合计 ≥5 条后过 T8 门。
 - **T8 ⏳** 等 T7 干净后按本节既定流程执行。
 
