@@ -184,8 +184,12 @@ export async function executeLeasedRun({
         // 猜「大概是瞬态」。守护进程日志是失败详情唯一会留在本机的地方。
         if (event?.type === 'run.failed') {
             const detail = String(event.payload?.summary || '').slice(0, 500);
+            // provider 原文只在这里出现一次：payload 里没有它（用户不该看运维故障），
+            // 日志里没有它就等于没有——金丝雀 #5 的两轮 api_error 就是这么丢的。
+            const providerDetail = normalizer.providerFailureDetail;
             log(
-                `[executor] run=${lease.runId} failing (${event.payload?.errorCode || 'unknown'}): ${detail}`
+                `[executor] run=${lease.runId} failing (${event.payload?.errorCode || 'unknown'}): ${detail}` +
+                    (providerDetail ? ` | provider: ${providerDetail}` : '')
             );
         }
         deliveryChain = deliveryChain.then(() =>

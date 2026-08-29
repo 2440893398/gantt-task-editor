@@ -775,8 +775,21 @@ P5 abort 后零孤儿进程、`pathToClaudeCodeExecutable` 驱动系统 CLI 2.1.
   `approval.denied` 内部时间线事件（不立卡不翻状态），决策卡自动携带被拒聚合清单，
   撞卡从机制上消失；索引冲突报错映射加固为确定性 409。**Run #3 ✅ 一次通过**
   （84s 到 succeeded，零报错；SCN-FWB-045 部署 `ec6347a6` 后 analyze 完成的正常
-  need_reproduction 卡成功落地——此前一直被占坑挡掉）。金丝雀累计：analyze 3/3；
-  剩余写入型 ≥1、恢复轮 ≥1、合计 ≥5 条后过 T8 门。
+  need_reproduction 卡成功落地——此前一直被占坑挡掉）。
+  **Run #4/#5（写入型）❌ 均未产出可批准候选，但两次都不是传输回归**：#4 死于
+  executor-ws 候选分支重物化 CRLF 导致的单测假红（三轮修复全烧在同一堵墙上，
+  已根治于 `0907749`，同时实测到「恢复轮耗尽 → developer_fix_required」的正确形状）；
+  #5 的 attempt 1 反过来证明了该修复（`npm test` 通过、候选提交 `2218c97b` 已生成），
+  卡在 e2e 的两条硬失败——一条是 **Agent 自己新写的用例自己没跑通（真实质量拦截）**，
+  一条是 `performance.spec.js` 的 rAF 墙钟阈值（生产项目配置的
+  `npm run test:e2e -- --workers=4` 顶掉了执行器已设的 `CI=1`，开发机 4 worker 争抢下
+  掷硬币；改 1 worker 会撞 45 分钟步骤上限，**取舍待定**）。#5 的 attempt 2/3 双双在
+  2 秒内以 `api_error` 空转失败、吃光修复预算——事后最小 SDK 会话复测正常（判定瞬态），
+  但暴露真缺陷：**provider 报错原文被翻译器整个丢弃**，日志只剩 `(api_error)`。
+  已修（翻译器返回 `detail` → 归一化层暂存 → run-loop 落本机日志，**刻意不进
+  payload**，理由同「合成运维消息不是 Agent 产出」）。**Run #6 进行中**
+  （`run_de3edd71`，2026-08-29 21:22 起）。金丝雀累计：analyze 3/3 PASS，写入型
+  0/2 交付（恢复轮 ≥1 已满足）；合计 ≥5 与「写入型 ≥1 成功交付」仍是 T8 未过门项。
 - **T8 ⏳** 等 T7 干净后按本节既定流程执行。
 
 ---

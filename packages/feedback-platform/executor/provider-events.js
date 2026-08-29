@@ -65,6 +65,23 @@ function isSyntheticProviderMessage(message) {
     return message?.is_api_error_message === true || message?.message?.model === '<synthetic>';
 }
 
+/**
+ * provider 报错的**原文**。SDK 的 `SDKResultError` 把它放在 `errors[]`；
+ * `is_error` 为真而 subtype 仍是 `success` 的那种（认证失败、API 报错）放在 `result`。
+ *
+ * 它**不进事件 payload**——理由同上面的合成消息：用户在工作台看到的失败说明不该是
+ * 「请运行 /login」。但它必须落到守护进程日志：M6 金丝雀 #5 的第 2、3 轮修复回合都以
+ * `api_error` 在 2 秒内失败，详情哪儿都没写，事后只能猜「大概是瞬态」，而这两轮把
+ * 修复预算烧光了。返回值交给归一化层暂存，由 run-loop 打进本机日志。
+ */
+function extractProviderFailureDetail(message) {
+    const errors = Array.isArray(message?.errors)
+        ? message.errors.filter((entry) => typeof entry === 'string' && entry.trim())
+        : [];
+    const raw = errors.length ? errors.join(' | ') : String(message?.result ?? '');
+    return raw.trim().slice(0, 500);
+}
+
 function extractAssistantText(message) {
     const content = message?.message?.content;
     if (!Array.isArray(content)) return '';
@@ -97,9 +114,11 @@ export function translateClaudeCliEvent(method, message) {
         const reason = String(
             message?.terminal_reason || message?.subtype || 'provider reported failure'
         );
+        const detail = extractProviderFailureDetail(message);
         return {
             kind: TURN_EVENT_KINDS.FAILED,
             summary: `Claude Code turn failed (${reason}).`,
+            ...(detail ? { detail } : {}),
         };
     }
 

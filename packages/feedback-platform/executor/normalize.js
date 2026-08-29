@@ -41,6 +41,9 @@ export function createTurnNormalizer({
     let turnCompleted = false;
     let waitingHumanEmitted = false;
     let providerSessionId = threadId;
+    // provider 报错原文只暂存在这里，**不进 payload**：工作台上的失败说明是给用户看的，
+    // 「Not logged in · Please run /login」不是。run-loop 打日志时来取。
+    let providerFailureDetail = '';
     const agentTexts = [];
 
     function envelope(type, payload) {
@@ -126,6 +129,11 @@ export function createTurnNormalizer({
             return providerSessionId;
         },
 
+        /** provider 报错原文（仅供本机日志；进 payload 就是把运维故障当回复给用户）。 */
+        get providerFailureDetail() {
+            return providerFailureDetail;
+        },
+
         /** provider 会话 id（codex 的 threadId / Claude Code 的 session_id）。 */
         setProviderSessionId(value) {
             if (value) providerSessionId = String(value);
@@ -158,6 +166,7 @@ export function createTurnNormalizer({
 
             if (signal.kind === TURN_EVENT_KINDS.FAILED) {
                 terminalEmitted = true;
+                if (signal.detail) providerFailureDetail = String(signal.detail);
                 return [
                     envelope(EVENT_TYPES.RUN_FAILED, {
                         errorCode: 'provider_turn_failed',

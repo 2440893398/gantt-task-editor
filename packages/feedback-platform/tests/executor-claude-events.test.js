@@ -138,6 +138,30 @@ describe('[SCN-FWB-032] Claude CLI 事件翻译器', () => {
             kind: 'turn_completed',
         });
     });
+
+    it('[SCN-FWB-032] 失败结果带出 provider 报错原文：SDK 放 errors[]，is_error 版放 result', () => {
+        const sdkError = translateClaudeCliEvent('result', {
+            type: 'result',
+            subtype: 'error_during_execution',
+            is_error: true,
+            terminal_reason: 'api_error',
+            errors: ['API Error: 500 upstream connect error', 'retry exhausted'],
+        });
+        expect(sdkError.detail).toBe('API Error: 500 upstream connect error | retry exhausted');
+
+        // `subtype: success` + `is_error: true` 这一支把错误正文放在 result 字段。
+        const authFailure = translateClaudeCliEvent('result', {
+            type: 'result',
+            subtype: 'success',
+            is_error: true,
+            terminal_reason: 'api_error',
+            result: 'Not logged in · Please run /login',
+        });
+        expect(authFailure.detail).toBe('Not logged in · Please run /login');
+
+        // 成功的 result 字段是最终文本，不是错误——不得被当成失败详情。
+        expect(translateClaudeCliEvent('result', successResult()).detail).toBeUndefined();
+    });
 });
 
 describe('[SCN-FWB-032] 换翻译器不换归一化策略', () => {
@@ -196,6 +220,26 @@ describe('[SCN-FWB-032] 换翻译器不换归一化策略', () => {
         expect(terminal[0].payload.errorCode).toBe('provider_turn_failed');
         expect(JSON.stringify(terminal)).not.toMatch(/Please run \/login/);
         expect(normalizer.finalAgentText).toBe('');
+    });
+
+    it('[SCN-FWB-032] provider 报错原文只暂存给日志，绝不进 run.failed 的 payload', () => {
+        // 金丝雀 #5 实录：修复回合两轮都以 api_error 在 2 秒内失败，`errors[]` 里的原文
+        // 谁都没读，日志只剩 "(api_error)" 三个字——预算烧光了却查不出为什么。
+        const normalizer = claudeNormalizer();
+        feed(normalizer, initEvent());
+        const terminal = feed(normalizer, {
+            type: 'result',
+            subtype: 'error_during_execution',
+            is_error: true,
+            terminal_reason: 'api_error',
+            errors: ['API Error: 500 {"type":"error","error":{"type":"api_error"}}'],
+        });
+        expect(terminal.map((e) => e.type)).toEqual(['run.failed']);
+        expect(terminal[0].payload.summary).toBe('Claude Code turn failed (api_error).');
+        // 用户看到的失败说明里不得出现 provider 的运维原文。
+        expect(JSON.stringify(terminal)).not.toMatch(/API Error: 500/);
+        // 但本机必须留得住证据。
+        expect(normalizer.providerFailureDetail).toMatch(/API Error: 500/);
     });
 
     it('终态之后的事件一律不再产生新事件', () => {
