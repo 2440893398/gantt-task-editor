@@ -555,13 +555,16 @@ describe('[SCN-FWB-034] [SCN-FWB-035] executor event and approval ingress', () =
         ).toBe(1);
     });
 
-    it('[SCN-FWB-035] turns an idempotent approval report into one active HumanAction', async () => {
+    it('[SCN-FWB-045] 被拒上报落为内部时间线事件——不立卡、不翻状态、幂等', async () => {
+        // EXC-FWB-007（2026-08-29 拍板）：M4 之前的拒绝是既成事实的通知不是决策；
+        // 旧行为立一张 allowed_return_states 为空、无法解决的 runtime_approval 卡，
+        // 占掉「每 Issue 单活跃卡」的坑位，把真正的决策卡挡在唯一索引外。
         const body = leaseEnvelope({
             runId: lease.runId,
             requestId: 'approval-1',
             kind: 'file_change',
-            summary: 'Allow writing src/features/example.js?',
-            details: { paths: ['src/features/example.js'] },
+            summary: 'Executor declined Write (file_change).',
+            details: { method: 'file_change', tool: 'Write' },
         });
         const first = await post(env, '/api/executor/approvals', body);
         const duplicate = await post(env, '/api/executor/approvals', body);
@@ -569,39 +572,90 @@ describe('[SCN-FWB-034] [SCN-FWB-035] executor event and approval ingress', () =
         expect(first.response.status).toBe(201);
         expect(duplicate.response.status).toBe(200);
         expect(duplicate.payload.duplicate).toBe(true);
-        const actions = sqlite
+
+        // 不立卡。
+        expect(
+            sqlite.prepare('SELECT COUNT(*) AS count FROM feedback_human_actions').get().count
+        ).toBe(0);
+        // 落一条内部时间线事件，带工具名，幂等只落一条。
+        const events = sqlite
             .prepare(
-                `SELECT issue_id, run_id, type, requested_action, evidence_json,
-                        allowed_return_states_json, status
-                 FROM feedback_human_actions`
+                `SELECT visibility, run_id, body_json FROM feedback_events
+                 WHERE type = 'approval.denied'`
             )
+            .all();
+        expect(events).toHaveLength(1);
+        expect(events[0].visibility).toBe('internal');
+        expect(events[0].run_id).toBe('run_executor_1');
+        expect(JSON.parse(events[0].body_json)).toEqual(
+            expect.objectContaining({ kind: 'file_change', tool: 'Write' })
+        );
+        // 不翻状态：Run 还在跑，翻成 waiting_human 是时序谎言（金丝雀 #2 实录）。
+        expect(
+            sqlite.prepare('SELECT status FROM feedback_runs WHERE id = ?').get('run_executor_1')
+                .status
+        ).toBe('running');
+        expect(
+            sqlite.prepare("SELECT status FROM feedback_issues WHERE id = 'issue_executor_1'").get()
+                .status
+        ).not.toBe('needs_human');
+    });
+
+    it('[SCN-FWB-045] 撞卡回归：拒绝在前，waiting_human 的决策卡照常落地并携带被拒清单', async () => {
+        // 金丝雀 #2 的病灶：runtime_approval 卡活跃时 waiting_human 建卡撞唯一索引，
+        // 首个 attempt 的投递链死在半路。新语义下拒绝不占坑，此路必须畅通。
+        for (const [requestId, tool] of [
+            ['deny-1', 'Read'],
+            ['deny-2', 'Read'],
+            ['deny-3', 'Write'],
+        ]) {
+            const denied = await post(
+                env,
+                '/api/executor/approvals',
+                leaseEnvelope({
+                    runId: lease.runId,
+                    requestId,
+                    kind: 'permissions',
+                    summary: `Executor declined ${tool} (permissions).`,
+                    details: { method: 'permissions', tool },
+                })
+            );
+            expect(denied.response.status).toBe(201);
+        }
+
+        const waiting = await post(
+            env,
+            `/api/executor/runs/${encodeURIComponent(lease.runId)}/events`,
+            leaseEnvelope({
+                event: {
+                    eventId: 'executor-waiting-1',
+                    type: 'agent.waiting_human',
+                    occurredAt: '2026-08-29T09:00:00.000Z',
+                    payload: {
+                        actionType: 'need_reproduction',
+                        requestedAction: '需要补充复现步骤才能继续。',
+                        question: '请提供操作顺序与预期结果。',
+                    },
+                },
+            })
+        );
+        expect(waiting.response.status).toBe(201);
+
+        const actions = sqlite
+            .prepare('SELECT type, status, evidence_json FROM feedback_human_actions')
             .all();
         expect(actions).toHaveLength(1);
         expect(actions[0]).toEqual(
-            expect.objectContaining({
-                issue_id: 'issue_executor_1',
-                run_id: 'run_executor_1',
-                type: 'runtime_approval',
-                status: 'active',
-            })
+            expect.objectContaining({ type: 'need_reproduction', status: 'active' })
         );
-        // §16.3：证据按 `label`/`summary` 渲染。裸 `{kind, ...details}` 会在工作台上
-        // 变成一个空框——计数对、内容空（#czi9c6）。诊断字段保留在 `detail` 里。
-        expect(JSON.parse(actions[0].evidence_json)).toEqual([
-            expect.objectContaining({
-                label: '被拒的请求',
-                summary: expect.stringContaining('修改文件'),
-                detail: { kind: 'file_change' },
-            }),
-            expect.objectContaining({
-                label: '请求详情',
-                detail: { paths: ['src/features/example.js'] },
-            }),
-        ]);
-        // M4 owns approval resolution and heartbeat command delivery. Until it
-        // exists, the generic HumanAction responder must fail closed instead
-        // of resuming the legacy Workflow path.
-        expect(JSON.parse(actions[0].allowed_return_states_json)).toEqual([]);
+        // EXC-FWB-007：决策卡携带本轮被拒聚合清单——人拍板时看得到「它还想干什么」。
+        const evidence = JSON.parse(actions[0].evidence_json);
+        const denialItem = evidence.find((item) => item.label === '本轮被拒的调用');
+        expect(denialItem).toBeDefined();
+        expect(denialItem.summary).toContain('共 3 次');
+        expect(denialItem.summary).toContain('Read ×2');
+        expect(denialItem.summary).toContain('Write');
+        expect(denialItem.detail.denials).toHaveLength(3);
     });
 });
 

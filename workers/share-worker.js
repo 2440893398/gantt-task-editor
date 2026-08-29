@@ -5406,6 +5406,12 @@ async function appendFeedbackCallbackEvent(env, runId, body) {
     // can roll the Event and projections back if any of them fails.
     let preparedDesign = null;
     let preparedAction = null;
+    // EXC-FWB-007：真正建卡的两个点把本 Run 的被拒记录聚合成证据一并带上——
+    // 拒绝不单独立卡（见 createFeedbackExecutorApproval），随决策卡携带。
+    const denialEvidence =
+        callback.type === 'agent.waiting_human' || callback.type === 'run.failed'
+            ? await collectFeedbackRunDenialEvidence(env, runId)
+            : [];
     if (callback.type === 'agent.waiting_human') {
         if (pendingDesign) {
             preparedDesign = await prepareFeedbackDesign(env, {
@@ -5418,7 +5424,13 @@ async function appendFeedbackCallbackEvent(env, runId, body) {
         preparedAction = prepareFeedbackHumanAction(env, {
             issueId: run.issue_id,
             runId,
-            payload: callback.payload,
+            payload: {
+                ...callback.payload,
+                evidence: [
+                    ...(Array.isArray(callback.payload.evidence) ? callback.payload.evidence : []),
+                    ...denialEvidence,
+                ],
+            },
             designId: preparedDesign?.designId || null,
             guardEventId: eventId,
         });
@@ -5437,16 +5449,21 @@ async function appendFeedbackCallbackEvent(env, runId, body) {
         // SCN-FWB-038/039：终止性失败与它的决策卡同批原子提交——`needs_human` 必须
         // 与「存在活跃 HumanAction」同时成立（SCN-FWB-020 的不变式），分两次写就有
         // 一个只有状态没有卡片的窗口。
+        const failurePayload = describeFeedbackRunFailureAction({
+            errorCode: String(callback.payload.errorCode || ''),
+            violations: Array.isArray(resultViolations) ? resultViolations : [],
+            changedFiles: Array.isArray(resultManifest?.changedFiles)
+                ? resultManifest.changedFiles
+                : [],
+        });
+        failurePayload.evidence = [
+            ...(Array.isArray(failurePayload.evidence) ? failurePayload.evidence : []),
+            ...denialEvidence,
+        ];
         preparedAction = prepareFeedbackHumanAction(env, {
             issueId: run.issue_id,
             runId,
-            payload: describeFeedbackRunFailureAction({
-                errorCode: String(callback.payload.errorCode || ''),
-                violations: Array.isArray(resultViolations) ? resultViolations : [],
-                changedFiles: Array.isArray(resultManifest?.changedFiles)
-                    ? resultManifest.changedFiles
-                    : [],
-            }),
+            payload: failurePayload,
             guardEventId: eventId,
         });
     }
@@ -5609,7 +5626,11 @@ async function appendFeedbackCallbackEvent(env, runId, body) {
         const message = String(error?.message || error);
         if (
             message.includes('feedback_human_actions_one_active_issue_idx') ||
-            message.includes('active feedback_human_actions')
+            message.includes('active feedback_human_actions') ||
+            // 金丝雀 #2 实录：D1 对 partial unique index 的报错文本不带索引名，
+            // 上面两个模式都落空 → 撞卡被误报成通用 PERSIST_FAILED（500 可重试），
+            // 执行器按可重试白试三次。UNIQUE + 表名同现即可确定是单活跃卡约束。
+            (message.includes('UNIQUE') && message.includes('feedback_human_actions'))
         ) {
             throw feedbackStorageError('FEEDBACK_HUMAN_ACTION_ALREADY_ACTIVE');
         }
@@ -5814,6 +5835,45 @@ function prepareFeedbackHumanAction(
             ).bind(actionId, issueId, ...(guardEventId ? [guardEventId, issueId] : [])),
         ],
     };
+}
+
+/**
+ * 聚合本 Run 的全部 `approval.denied` 事件为一条证据（EXC-FWB-007：拒绝随卡携带）。
+ * 一轮 N 次被拒 = 一份聚合清单，不是 N 张卡；人做决策时看得到「它这轮还想干什么」。
+ * 没有拒绝时返回空数组，调用方展开后等于零改动。
+ */
+async function collectFeedbackRunDenialEvidence(env, runId) {
+    const rows =
+        (
+            await env.FEEDBACK_DB.prepare(
+                `SELECT body_json FROM feedback_events
+                 WHERE run_id = ? AND type = 'approval.denied'
+                 ORDER BY sequence`
+            )
+                .bind(runId)
+                .all()
+        )?.results ?? [];
+    if (!rows.length) return [];
+    const denials = rows.map((row) => {
+        try {
+            return JSON.parse(row.body_json);
+        } catch {
+            return {};
+        }
+    });
+    const counts = new Map();
+    for (const denial of denials) {
+        const key = denial.tool || denial.kind || 'unknown';
+        counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    const perTool = [...counts].map(([key, n]) => (n > 1 ? `${key} ×${n}` : key)).join('、');
+    return [
+        feedbackEvidenceItem(
+            '本轮被拒的调用',
+            `共 ${denials.length} 次，均已 fail-closed 拒绝：${perTool}`,
+            { denials }
+        ),
+    ];
 }
 
 async function findActiveFeedbackCandidateAction(env, issueId, candidateId) {
@@ -9689,6 +9749,23 @@ async function appendFeedbackExecutorEvent(env, runId, body) {
     return result;
 }
 
+/**
+ * 执行器的被拒审批上报（EXC-FWB-007，2026-08-29 拍板：合并而非立卡）。
+ *
+ * 不再立卡。M4 之前的拒绝是既成事实——fail-closed 已经拒了，人改变不了本轮结果，
+ * 它是**通知不是决策**；而 runtime_approval 卡的 allowed_return_states 为空，一张
+ * 无法解决的卡占掉「每 Issue 单活跃卡」的坑位，会把真正的决策卡（C6 设计等待、
+ * 失败处置）挡在唯一索引外——金丝雀 #2 实录（run_0dd5247e）：首个 attempt 的
+ * waiting_human 撞卡、投递链死在半路，靠 Run 复用在 attempt 2 自愈。
+ *
+ * 现语义（通知与决策分离 + 聚合不刷屏 + 单一写点防撞）：
+ * - 这里只写一条 `approval.denied` 内部时间线事件（幂等 by requestId）；
+ * - 终态/等待批处理用 collectFeedbackRunDenialEvidence 把本 Run 的全部拒绝聚合成
+ *   证据并入真正的决策卡——人做决策时看得到「它这轮还想干什么」；
+ * - mid-run 不再翻 Run/Issue/Workflow 状态：Run 明明还在跑，翻成 waiting_human
+ *   是时序谎言（金丝雀 #2 里它让租约语义与执行器实际进度脱节）。
+ * M4 落地实时审批时，这里再升级为「卡 + 决议下行」。
+ */
 async function createFeedbackExecutorApproval(env, body) {
     const runId = limitText(body?.runId, 160).trim();
     await verifyFeedbackExecutorLease(env, body, runId);
@@ -9705,83 +9782,39 @@ async function createFeedbackExecutorApproval(env, body) {
         .first();
     if (!run) return null;
 
-    const actionId = `ha_runtime_${(await hashFeedbackValue(`${runId}:${requestId}`)).slice(0, 32)}`;
-    const existing = await env.FEEDBACK_DB.prepare(
-        'SELECT id FROM feedback_human_actions WHERE id = ?'
-    )
-        .bind(actionId)
-        .first();
-    if (existing) return { actionId, duplicate: true };
-    const active = await env.FEEDBACK_DB.prepare(
-        `SELECT id FROM feedback_human_actions
-         WHERE issue_id = ? AND status = 'active'`
-    )
-        .bind(run.issue_id)
-        .first();
-    if (active) throw feedbackExecutorError('FEEDBACK_HUMAN_ACTION_ALREADY_ACTIVE');
-
     const details = body.details && typeof body.details === 'object' ? body.details : {};
-    const nowIso = new Date().toISOString();
-    const results = await env.FEEDBACK_DB.batch([
-        env.FEEDBACK_DB.prepare(
-            `INSERT INTO feedback_human_actions (
-                id, issue_id, workflow_id, run_id, type, requested_action,
-                evidence_json, allowed_return_states_json, status, created_at
-             ) VALUES (?, ?, ?, ?, 'runtime_approval', ?, ?, ?, 'active', ?)
-             ON CONFLICT DO NOTHING
-             RETURNING id`
-        ).bind(
-            actionId,
-            run.issue_id,
-            run.workflow_id,
-            runId,
-            summary,
-            JSON.stringify([
-                feedbackEvidenceItem('被拒的请求', FEEDBACK_RUNTIME_APPROVAL_KINDS[kind] || kind, {
-                    kind,
-                }),
-                feedbackEvidenceItem(
-                    '请求详情',
-                    limitText(details.method || details.command || details.path, 300) ||
-                        '执行器未提供更多细节',
-                    details
-                ),
-            ]),
-            JSON.stringify([]),
-            nowIso
-        ),
-        env.FEEDBACK_DB.prepare(
-            `UPDATE feedback_runs
-             SET status = 'waiting_human'
-             WHERE id = ? AND EXISTS (
-                 SELECT 1 FROM feedback_human_actions WHERE id = ?
-             )`
-        ).bind(runId, actionId),
-        env.FEEDBACK_DB.prepare(
-            `UPDATE feedback_issues
-             SET status = 'needs_human', active_human_action_id = ?, updated_at = ?
-             WHERE id = ? AND EXISTS (
-                 SELECT 1 FROM feedback_human_actions WHERE id = ?
-             )`
-        ).bind(actionId, nowIso, run.issue_id, actionId),
-        env.FEEDBACK_DB.prepare(
-            `UPDATE feedback_workflows
-             SET status = 'waiting', waiting_until = NULL
-             WHERE instance_id = ? AND EXISTS (
-                 SELECT 1 FROM feedback_human_actions WHERE id = ?
-             )`
-        ).bind(run.workflow_id, actionId),
-    ]);
-    if (!results[0]?.results?.length) {
-        const duplicate = await env.FEEDBACK_DB.prepare(
-            'SELECT id FROM feedback_human_actions WHERE id = ?'
+    const eventId = `evt_denied_${(await hashFeedbackValue(`${runId}:${requestId}`)).slice(0, 32)}`;
+    const inserted = await env.FEEDBACK_DB.prepare(
+        `INSERT INTO feedback_events (
+            id, issue_id, sequence, type, actor_type, actor_id, visibility,
+            run_id, occurred_at, body_json, metadata_json, legacy_hash
         )
-            .bind(actionId)
-            .first();
-        if (!duplicate) throw feedbackExecutorError('FEEDBACK_HUMAN_ACTION_ALREADY_ACTIVE');
-        return { actionId, duplicate: true };
-    }
-    return { actionId, duplicate: false };
+        SELECT ?, id,
+               (SELECT COALESCE(MAX(sequence), 0) + 1
+                FROM feedback_events WHERE issue_id = feedback_issues.id),
+               'approval.denied', 'agent', NULL, 'internal', ?, ?, ?, ?, NULL
+        FROM feedback_issues
+        WHERE id = ?
+          AND NOT EXISTS (SELECT 1 FROM feedback_events WHERE id = ?)
+        RETURNING id`
+    )
+        .bind(
+            eventId,
+            runId,
+            new Date().toISOString(),
+            JSON.stringify({
+                text: summary,
+                kind,
+                tool: limitText(details.tool, 120) || '',
+                method: limitText(details.method, 160) || '',
+            }),
+            JSON.stringify({ requestId }),
+            run.issue_id,
+            eventId
+        )
+        .run();
+    if (!inserted?.results?.length) return { eventId, duplicate: true };
+    return { eventId, duplicate: false };
 }
 
 function feedbackErrorResponse(error, headers) {
