@@ -1,10 +1,10 @@
 // tests/e2e/v1.5-features.spec.js
 import { test, expect } from '@playwright/test';
+import { gotoApp } from './helpers/app-ready.js';
 
 test.describe('Gantt v1.5 Features', () => {
     test.beforeEach(async ({ page }) => {
-        await page.goto('/');
-        await page.waitForSelector('#gantt_here');
+        await gotoApp(page);
     });
 
     test('Baseline and export controls exist', async ({ page }) => {

@@ -1,14 +1,12 @@
 import { test, expect } from '@playwright/test';
+import { gotoApp } from './helpers/app-ready.js';
 
 test.describe('AI Agent Undo Functionality (F-201)', () => {
     test.beforeEach(async ({ page }) => {
         // Enable console log from browser
         page.on('console', (msg) => console.log(`[Browser]: ${msg.text()}`));
 
-        await page.goto('/');
-        await page.waitForLoadState('networkidle');
-        await page.waitForSelector('#gantt_here', { timeout: 60000 });
-        await page.waitForSelector('#app-loading', { state: 'hidden', timeout: 30000 });
+        await gotoApp(page);
     });
 
     test('should undo AI-applied task changes with Ctrl+Z', async ({ page }) => {

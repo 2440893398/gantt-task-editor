@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-import { waitForAppReady } from './helpers/app-ready.js';
+import { gotoApp, waitForAppReady } from './helpers/app-ready.js';
 
 async function waitForGanttData(page) {
     await waitForAppReady(page);
@@ -109,7 +109,7 @@ async function dispatchSortableDrop(page, draggedTaskId, targetTaskId, verticalR
 
 test.describe('row reorder hierarchy', () => {
     test.beforeEach(async ({ page }) => {
-        await page.goto('/');
+        await gotoApp(page);
         await waitForGanttData(page);
         await page.locator('[data-view="split"]').click();
         await seedHierarchy(page);

@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { gotoApp } from './helpers/app-ready.js';
 
 async function dragResizer(page, deltaX) {
     const resizer = page.locator('#custom-resizer');
@@ -71,7 +72,7 @@ async function configureOverflowingGrid(page) {
 
 test.describe('table grid behavior regressions', () => {
     test.beforeEach(async ({ page }) => {
-        await page.goto('/');
+        await gotoApp(page);
         await waitForGanttData(page);
         await page.locator('[data-view="split"]').click();
     });

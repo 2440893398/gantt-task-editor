@@ -11,12 +11,11 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { gotoApp } from './helpers/app-ready.js';
 
 test.describe('交互体验优化模块 (UX Improvements) - P1', () => {
     test.beforeEach(async ({ page }) => {
-        await page.goto('/');
-        await page.waitForSelector('#gantt_here', { timeout: 15000 });
-        await page.waitForTimeout(1000);
+        await gotoApp(page);
     });
 
     // ========================================
@@ -342,9 +341,7 @@ test.describe('交互体验优化模块 (UX Improvements) - P1', () => {
 // ========================================
 test.describe('综合交互测试', () => {
     test.beforeEach(async ({ page }) => {
-        await page.goto('/');
-        await page.waitForSelector('#gantt_here', { timeout: 15000 });
-        await page.waitForTimeout(1000);
+        await gotoApp(page);
     });
 
     test('任务单击应支持选择', async ({ page }) => {
@@ -497,9 +494,7 @@ test.describe('综合交互测试', () => {
 test.describe('截图证据收集', () => {
     test('桌面端甘特图完整截图', async ({ page }) => {
         await page.setViewportSize({ width: 1920, height: 1080 });
-        await page.goto('/');
-        await page.waitForSelector('#gantt_here', { timeout: 15000 });
-        await page.waitForTimeout(2000);
+        await gotoApp(page);
 
         await page.screenshot({
             path: 'doc/testdoc/screenshots/desktop-gantt-full.png',
@@ -509,9 +504,7 @@ test.describe('截图证据收集', () => {
 
     test('移动端甘特图截图', async ({ page }) => {
         await page.setViewportSize({ width: 375, height: 667 });
-        await page.goto('/');
-        await page.waitForSelector('#gantt_here', { timeout: 15000 });
-        await page.waitForTimeout(2000);
+        await gotoApp(page);
 
         await page.screenshot({
             path: 'doc/testdoc/screenshots/mobile-gantt.png',
@@ -520,9 +513,7 @@ test.describe('截图证据收集', () => {
     });
 
     test('工具栏截图', async ({ page }) => {
-        await page.goto('/');
-        await page.waitForSelector('#gantt_here', { timeout: 15000 });
-        await page.waitForTimeout(1000);
+        await gotoApp(page);
 
         const toolbar = page.locator('#task-header');
         if ((await toolbar.count()) > 0) {

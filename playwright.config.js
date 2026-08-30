@@ -57,7 +57,20 @@ export default defineConfig({
     */
     ],
 
-    /* Run your local dev server before starting the tests */
+    /*
+     * 这里必须是 **dev server**，不能换成 `vite preview` 的构建产物。
+     *
+     * 2026-08-29 实测过一次：换成 `npm run build && vite preview` 后 11 条用例
+     * 确定性失败，全部报 `Failed to fetch dynamically imported module:
+     * http://127.0.0.1:5273/src/...`。原因是 5 个 spec（ai-undo、bug-fixes、
+     * mobile-responsive、reproduce_sort_bug、row-reorder-hierarchy）会在浏览器里
+     * `await import('/src/...')` 去拿应用内部模块（aiService / store / storage /
+     * toast）来驱动或取证——那是 dev server 才提供的源码 URL，构建产物里不存在。
+     * 想跑构建产物就得先把这些用例改成只用公开面，那是改「测什么」，不是改跑法。
+     *
+     * dev server 并发首屏慢的问题改用 `vite.config.js` 的 `server.warmup` 治：
+     * 服务器启动时先把入口模块图转译好，4 个 worker 同时开首屏就不必排队等按需转译。
+     */
     webServer: {
         command: 'npm run dev',
         url: 'http://127.0.0.1:5273',

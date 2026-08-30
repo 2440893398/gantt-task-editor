@@ -1,5 +1,6 @@
 // tests/e2e/gantt-features.spec.js
 import { test, expect } from '@playwright/test';
+import { gotoApp, waitForGanttSettle } from './helpers/app-ready.js';
 
 test.describe('Gantt v1.5 Features', () => {
     test.beforeEach(async ({ page }) => {
@@ -11,8 +12,7 @@ test.describe('Gantt v1.5 Features', () => {
         });
 
         // Go to page
-        await page.goto('/');
-        await page.waitForLoadState('networkidle');
+        await gotoApp(page);
     });
 
     test('Page loads without syntax errors', async ({ page }) => {
@@ -52,13 +52,22 @@ test.describe('Gantt v1.5 Features', () => {
             gantt.render();
         });
 
+        // addTask 触发 onAfterTaskAdd → 500ms 防抖 → 异步冲突检测 → 无条件 render()。
+        // 不等它落地就量几何，重绘会把节点换掉，boundingBox() 返回 null。
+        await waitForGanttSettle(page);
+
         const shortTask = page.locator('.gantt_task_line[task_id="9999"]');
         await expect(shortTask).toHaveClass(/short-task/);
 
         // The minimum width is applied to the visible content so a zero-width
         // DHTMLX geometry box still exposes a usable short-task target.
-        const box = await shortTask.locator('.gantt_task_content').boundingBox();
-        expect(box.width).toBeGreaterThanOrEqual(20);
+        // 用 poll 而不是一次性读：万一还有一次迟到的重绘，locator 会被重新解析。
+        await expect
+            .poll(
+                async () =>
+                    (await shortTask.locator('.gantt_task_content').boundingBox())?.width ?? 0
+            )
+            .toBeGreaterThanOrEqual(20);
     });
 
     test('[SCN-GUI-006] Resource conflict detection', async ({ page }) => {

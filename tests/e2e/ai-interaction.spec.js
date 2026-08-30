@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { gotoApp } from './helpers/app-ready.js';
 
 test.describe('AI Agent Interaction', () => {
     test.beforeEach(async ({ page }) => {
@@ -56,10 +57,7 @@ test.describe('AI Agent Interaction', () => {
             });
         });
 
-        await page.goto('/');
-        await page.waitForLoadState('networkidle');
-        await page.waitForSelector('#gantt_here', { timeout: 60000 });
-        await page.waitForSelector('#app-loading', { state: 'hidden', timeout: 30000 });
+        await gotoApp(page);
     });
 
     // F-203: 点击浮动按钮直接打开 chat drawer (配置完成时)
@@ -77,9 +75,7 @@ test.describe('AI Agent Interaction', () => {
         await page.addInitScript(() => {
             localStorage.removeItem('gantt_ai_config');
         });
-        await page.goto('/');
-        await page.waitForSelector('#gantt_here', { timeout: 60000 });
-        await page.waitForSelector('#app-loading', { state: 'hidden', timeout: 30000 });
+        await gotoApp(page);
 
         // Click floating button when not configured should open config modal
         await page.click('#ai_floating_btn');

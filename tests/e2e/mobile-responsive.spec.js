@@ -12,6 +12,7 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { gotoApp } from './helpers/app-ready.js';
 
 test.describe('移动端适配模块 (Mobile Responsive) - P0', () => {
     // ========================================
@@ -22,10 +23,7 @@ test.describe('移动端适配模块 (Mobile Responsive) - P0', () => {
         test('MOBILE-001: 767px 视口应触发移动端模式', async ({ page }) => {
             // 设置移动端视口
             await page.setViewportSize({ width: 767, height: 800 });
-            await page.goto('/');
-
-            // 等待甘特图加载
-            await page.waitForSelector('#gantt_here', { timeout: 10000 });
+            await gotoApp(page);
             await page.waitForTimeout(500); // 等待响应式检测
 
             // 验证移动端模式类已添加
@@ -41,10 +39,7 @@ test.describe('移动端适配模块 (Mobile Responsive) - P0', () => {
         test('MOBILE-002: 768px 视口应保持桌面模式', async ({ page }) => {
             // 设置桌面视口
             await page.setViewportSize({ width: 768, height: 800 });
-            await page.goto('/');
-
-            await page.waitForSelector('#gantt_here', { timeout: 10000 });
-            await page.waitForTimeout(500);
+            await gotoApp(page);
 
             // 验证没有移动端模式类
             const body = page.locator('body');
@@ -55,10 +50,7 @@ test.describe('移动端适配模块 (Mobile Responsive) - P0', () => {
         test('MOBILE-003: 视口变化应动态切换模式', async ({ page }) => {
             // 初始桌面模式
             await page.setViewportSize({ width: 1024, height: 800 });
-            await page.goto('/');
-
-            await page.waitForSelector('#gantt_here', { timeout: 10000 });
-            await page.waitForTimeout(500);
+            await gotoApp(page);
 
             const body = page.locator('body');
 
@@ -88,10 +80,7 @@ test.describe('移动端适配模块 (Mobile Responsive) - P0', () => {
         // MOBILE-004: 验证移动端隐藏时间轴
         test('MOBILE-004: 移动端应隐藏时间轴', async ({ page }) => {
             await page.setViewportSize({ width: 375, height: 667 }); // iPhone SE
-            await page.goto('/');
-
-            await page.waitForSelector('#gantt_here', { timeout: 10000 });
-            await page.waitForTimeout(1000);
+            await gotoApp(page);
 
             // 检查时间轴区域是否隐藏
             // DHTMLX Gantt 的时间轴容器
@@ -118,10 +107,7 @@ test.describe('移动端适配模块 (Mobile Responsive) - P0', () => {
         // MOBILE-005: 验证移动端 Grid 全宽显示
         test('MOBILE-005: 移动端 Grid 应全宽显示', async ({ page }) => {
             await page.setViewportSize({ width: 375, height: 667 });
-            await page.goto('/');
-
-            await page.waitForSelector('#gantt_here', { timeout: 10000 });
-            await page.waitForTimeout(1000);
+            await gotoApp(page);
 
             // 检查 Grid 容器宽度
             const grid = page.locator('.gantt_grid');
@@ -138,10 +124,7 @@ test.describe('移动端适配模块 (Mobile Responsive) - P0', () => {
         // MOBILE-006: 验证移动端无横向滚动条
         test('MOBILE-006: 移动端不应有横向滚动条', async ({ page }) => {
             await page.setViewportSize({ width: 375, height: 667 });
-            await page.goto('/');
-
-            await page.waitForSelector('#gantt_here', { timeout: 10000 });
-            await page.waitForTimeout(1000);
+            await gotoApp(page);
 
             // 检查页面是否有横向滚动
             const hasHorizontalScroll = await page.evaluate(() => {
@@ -159,10 +142,7 @@ test.describe('移动端适配模块 (Mobile Responsive) - P0', () => {
         // MOBILE-007: 验证移动端任务以卡片形式展示
         test('MOBILE-007: 移动端任务应以卡片样式显示', async ({ page }) => {
             await page.setViewportSize({ width: 375, height: 667 });
-            await page.goto('/');
-
-            await page.waitForSelector('#gantt_here', { timeout: 10000 });
-            await page.waitForTimeout(1000);
+            await gotoApp(page);
 
             // 检查任务行是否有卡片样式特征
             const taskRows = page.locator('.gantt_row');
@@ -202,10 +182,7 @@ test.describe('移动端适配模块 (Mobile Responsive) - P0', () => {
         // MOBILE-008: 验证卡片显示必要信息
         test('MOBILE-008: 卡片应包含任务名称和日期', async ({ page }) => {
             await page.setViewportSize({ width: 375, height: 667 });
-            await page.goto('/');
-
-            await page.waitForSelector('#gantt_here', { timeout: 10000 });
-            await page.waitForTimeout(1000);
+            await gotoApp(page);
 
             // 检查任务行中是否包含基本信息
             const taskRows = page.locator('.gantt_row');
@@ -231,10 +208,7 @@ test.describe('移动端适配模块 (Mobile Responsive) - P0', () => {
         // MOBILE-009: 验证卡片垂直排列
         test('MOBILE-009: 任务卡片应垂直排列', async ({ page }) => {
             await page.setViewportSize({ width: 375, height: 667 });
-            await page.goto('/');
-
-            await page.waitForSelector('#gantt_here', { timeout: 10000 });
-            await page.waitForTimeout(1000);
+            await gotoApp(page);
 
             const taskRows = page.locator('.gantt_row');
 
@@ -257,10 +231,7 @@ test.describe('移动端适配模块 (Mobile Responsive) - P0', () => {
         // MOBILE-010: 验证移动端禁用拖拽排程
         test('MOBILE-010: 移动端应禁用任务拖拽', async ({ page }) => {
             await page.setViewportSize({ width: 375, height: 667 });
-            await page.goto('/');
-
-            await page.waitForSelector('#gantt_here', { timeout: 10000 });
-            await page.waitForTimeout(1000);
+            await gotoApp(page);
 
             // 获取 gantt 配置，验证拖拽已禁用
             const dragConfig = await page.evaluate(() => {
@@ -286,10 +257,7 @@ test.describe('移动端适配模块 (Mobile Responsive) - P0', () => {
         // MOBILE-013: 验证移动端禁用依赖连线拖拽
         test('MOBILE-013: 移动端应禁用依赖连线拖拽', async ({ page }) => {
             await page.setViewportSize({ width: 375, height: 667 });
-            await page.goto('/');
-
-            await page.waitForSelector('#gantt_here', { timeout: 10000 });
-            await page.waitForTimeout(1000);
+            await gotoApp(page);
 
             // 验证连线拖拽已禁用
             const dragLinksDisabled = await page.evaluate(() => {
@@ -305,10 +273,7 @@ test.describe('移动端适配模块 (Mobile Responsive) - P0', () => {
         // 桌面模式对比测试：拖拽应该启用
         test('[SCN-GUI-010] 桌面模式应启用任务移动与缩放', async ({ page }) => {
             await page.setViewportSize({ width: 1200, height: 800 });
-            await page.goto('/');
-
-            await page.waitForSelector('#gantt_here', { timeout: 10000 });
-            await page.waitForTimeout(1000);
+            await gotoApp(page);
 
             // 获取 gantt 配置，验证拖拽已启用
             const dragConfig = await page.evaluate(() => {
@@ -332,8 +297,7 @@ test.describe('移动端适配模块 (Mobile Responsive) - P0', () => {
 
         test('[SCN-GUI-010] 桌面端可从任务条两端调整 start_end 排期', async ({ page }) => {
             await page.setViewportSize({ width: 1536, height: 695 });
-            await page.goto('/');
-            await page.waitForSelector('#gantt_here', { timeout: 10000 });
+            await gotoApp(page);
             await page.waitForSelector('#app-container.loaded', { timeout: 15000 });
 
             const baseline = await page.evaluate(() => {
@@ -588,10 +552,7 @@ test.describe('移动端适配模块 (Mobile Responsive) - P0', () => {
 test.describe('移动设备模拟', () => {
     test('iPhone SE 视口测试', async ({ page }) => {
         await page.setViewportSize({ width: 375, height: 667 });
-        await page.goto('/');
-
-        await page.waitForSelector('#gantt_here', { timeout: 10000 });
-        await page.waitForTimeout(500);
+        await gotoApp(page);
 
         const body = page.locator('body');
         await expect(body).toHaveClass(/mobile-mode/);
@@ -599,10 +560,7 @@ test.describe('移动设备模拟', () => {
 
     test('iPad Mini 视口测试 (竖屏)', async ({ page }) => {
         await page.setViewportSize({ width: 768, height: 1024 });
-        await page.goto('/');
-
-        await page.waitForSelector('#gantt_here', { timeout: 10000 });
-        await page.waitForTimeout(500);
+        await gotoApp(page);
 
         // 768px 应该是桌面模式边界
         const body = page.locator('body');

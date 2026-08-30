@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { gotoApp } from './helpers/app-ready.js';
 
 test.describe('AI Analysis Skills Routing', () => {
     test.beforeEach(async ({ page }) => {
@@ -13,8 +14,7 @@ test.describe('AI Analysis Skills Routing', () => {
             );
         });
 
-        await page.goto('/');
-        await page.waitForLoadState('networkidle');
+        await gotoApp(page);
         await page.locator('#ai_floating_btn').click();
         await expect(page.locator('#ai_drawer')).toBeVisible({ timeout: 5000 });
     });

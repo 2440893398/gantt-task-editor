@@ -1,8 +1,9 @@
 import { test, expect } from '@playwright/test';
+import { gotoApp } from './helpers/app-ready.js';
 
 test.describe('view mode regressions', () => {
     test.beforeEach(async ({ page }) => {
-        await page.goto('/');
+        await gotoApp(page);
         await expect(page.locator('#gantt_here')).toBeVisible();
         await expect
             .poll(async () => {

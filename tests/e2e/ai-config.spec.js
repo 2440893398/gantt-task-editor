@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { gotoApp } from './helpers/app-ready.js';
 
 test.describe('AI Configuration Management', () => {
     test.beforeEach(async ({ page }) => {
@@ -7,10 +8,7 @@ test.describe('AI Configuration Management', () => {
             localStorage.removeItem('gantt_ai_config');
         });
 
-        await page.goto('/');
-        await page.waitForLoadState('networkidle');
-        await page.waitForSelector('#gantt_here', { timeout: 60000 });
-        await page.waitForSelector('#app-loading', { state: 'hidden', timeout: 30000 });
+        await gotoApp(page);
     });
 
     test('should open config modal from floating button', async ({ page }) => {

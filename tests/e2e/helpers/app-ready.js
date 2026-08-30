@@ -10,6 +10,9 @@ import { expect } from '@playwright/test';
  */
 const INITIAL_RENDER_SETTLE_MS = 1800;
 
+/** 数据改动触发的重绘：500ms 防抖 + 异步冲突检测的余量。 */
+const MUTATION_SETTLE_MS = 1200;
+
 /**
  * 等待应用真正完成启动。
  *
@@ -34,6 +37,25 @@ export async function waitForAppReady(page, { timeout = 60000, settle = true } =
     if (settle) {
         await page.waitForTimeout(INITIAL_RENDER_SETTLE_MS);
     }
+}
+
+/**
+ * 数据改动后必然发生的那次重绘的时间上限。
+ *
+ * `src/features/gantt/init.js` 把 `scheduleConflictDetection` 挂在
+ * `onAfterTaskAdd` / `onAfterTaskUpdate` / `onAfterTaskDelete` 上：任何一次数据改动都会
+ * 重新点燃 500ms 防抖，防抖结束后跑一次**异步**冲突检测，然后无条件 `gantt.render()`
+ * ——整棵任务条 DOM 被换掉，此前取到的节点全部 detach。
+ *
+ * 所以「改完数据立刻量几何」是在和一次必然发生的重绘赛跑：重绘落在 locator 解析与
+ * `boundingBox()` 之间就会拿到 `null`（`gantt-features.spec.js` 的 Short tasks 用例，
+ * 2026-08-29 在无头 4 worker 下稳定复现 `Cannot read properties of null`）。
+ *
+ * 单纯等时间只能盖住防抖，盖不住异步检测在慢机器上的拖尾——所以量几何这类操作除了
+ * 调用本函数，还应该用 `expect.poll` 重试，让重绘落在中间时能重新解析节点。
+ */
+export async function waitForGanttSettle(page, { timeout = MUTATION_SETTLE_MS } = {}) {
+    await page.waitForTimeout(timeout);
 }
 
 /**

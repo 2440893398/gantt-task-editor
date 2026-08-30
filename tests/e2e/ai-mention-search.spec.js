@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { gotoApp } from './helpers/app-ready.js';
 
 test.describe('AI @ Mention Search', () => {
     test.beforeEach(async ({ page }) => {
@@ -49,8 +50,7 @@ test.describe('AI @ Mention Search', () => {
             });
         });
 
-        await page.goto('/');
-        await page.waitForLoadState('networkidle');
+        await gotoApp(page);
     });
 
     test('@ key triggers mention search popup', async ({ page }) => {

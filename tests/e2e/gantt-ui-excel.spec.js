@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { gotoApp } from './helpers/app-ready.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -96,7 +97,7 @@ async function exportExcelFile(page, fileName) {
 test.describe('Gantt Chart UI Tests', () => {
     test.beforeEach(async ({ page }) => {
         page.on('console', (msg) => console.log(`BROWSER: ${msg.text()}`));
-        await page.goto('/');
+        await gotoApp(page);
         await page.waitForSelector('.gantt_task', { timeout: 10000 });
     });
 
@@ -136,7 +137,7 @@ test.describe('Gantt Chart UI Tests', () => {
 
 test.describe('Excel Export Tests', () => {
     test.beforeEach(async ({ page }) => {
-        await page.goto('/');
+        await gotoApp(page);
         await page.waitForSelector('.gantt_task', { timeout: 10000 });
     });
 
@@ -246,7 +247,7 @@ test.describe('Excel Export Tests', () => {
 
 test.describe('Excel Import Tests - Basic', () => {
     test.beforeEach(async ({ page }) => {
-        await page.goto('/');
+        await gotoApp(page);
         await page.waitForSelector('.gantt_task', { timeout: 10000 });
     });
 
@@ -511,7 +512,7 @@ test.describe('Excel Import Tests - Basic', () => {
 
 test.describe('Excel Import Tests - Boundary', () => {
     test.beforeEach(async ({ page }) => {
-        await page.goto('/');
+        await gotoApp(page);
         await page.waitForSelector('.gantt_task', { timeout: 10000 });
     });
 
@@ -613,7 +614,7 @@ test.describe('Excel Import Tests - Boundary', () => {
 
 test.describe('Excel Import Tests - Error Handling', () => {
     test.beforeEach(async ({ page }) => {
-        await page.goto('/');
+        await gotoApp(page);
         await page.waitForSelector('.gantt_task', { timeout: 10000 });
     });
 
@@ -685,7 +686,7 @@ test.describe('Excel Import Tests - Error Handling', () => {
 
 test.describe('Excel Import Tests - Localization', () => {
     test.beforeEach(async ({ page }) => {
-        await page.goto('/');
+        await gotoApp(page);
         await page.waitForSelector('.gantt_task', { timeout: 10000 });
     });
 
@@ -909,7 +910,7 @@ async function getGanttRenderData(page) {
 
 test.describe('Multi-Language Visual Consistency Tests - Same Language Round Trip', () => {
     test.beforeEach(async ({ page }) => {
-        await page.goto('/');
+        await gotoApp(page);
         await page.waitForSelector('.gantt_task', { timeout: 10000 });
     });
 
@@ -1010,7 +1011,7 @@ test.describe('Multi-Language Visual Consistency Tests - Same Language Round Tri
 
 test.describe('Multi-Language Visual Consistency Tests - Cross Language Import', () => {
     test.beforeEach(async ({ page }) => {
-        await page.goto('/');
+        await gotoApp(page);
         await page.waitForSelector('.gantt_task', { timeout: 10000 });
     });
 
@@ -1119,7 +1120,7 @@ test.describe('Multi-Language Visual Consistency Tests - Cross Language Import',
 
 test.describe('Multi-Language Visual Rendering Tests', () => {
     test.beforeEach(async ({ page }) => {
-        await page.goto('/');
+        await gotoApp(page);
         await page.waitForSelector('.gantt_task', { timeout: 10000 });
     });
 
@@ -1302,7 +1303,7 @@ test.describe('Multi-Language Visual Rendering Tests', () => {
 
 test.describe('Multi-Language Special Characters Tests', () => {
     test.beforeEach(async ({ page }) => {
-        await page.goto('/');
+        await gotoApp(page);
         await page.waitForSelector('.gantt_task', { timeout: 10000 });
     });
 

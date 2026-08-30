@@ -1,10 +1,10 @@
 import { test, expect } from '@playwright/test';
+import { gotoApp } from './helpers/app-ready.js';
 import fs from 'fs';
 
 test('capture ui screenshots with mocked state', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
-    await page.goto('/');
-    await page.waitForLoadState('networkidle');
+    await gotoApp(page);
 
     // 1. Ensure Task Panel is open
     await page.evaluate(() => {

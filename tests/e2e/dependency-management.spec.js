@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { gotoApp } from './helpers/app-ready.js';
 
 test.describe('Dependency Management Tests', () => {
     test.beforeEach(async ({ page }) => {
@@ -6,7 +7,7 @@ test.describe('Dependency Management Tests', () => {
         page.on('console', (msg) => console.log(`BROWSER LOG: ${msg.text()}`));
         page.on('pageerror', (err) => console.log(`BROWSER ERROR: ${err.toString()}`));
 
-        await page.goto('/');
+        await gotoApp(page);
         await page.waitForSelector('.gantt_task', { timeout: 10000 });
 
         // Force EN language

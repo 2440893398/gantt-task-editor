@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { gotoApp } from './helpers/app-ready.js';
 
 test.describe('AI V2.0 New Features', () => {
     test.beforeEach(async ({ page }) => {
@@ -52,10 +53,7 @@ test.describe('AI V2.0 New Features', () => {
             });
         });
 
-        await page.goto('/');
-        await page.waitForLoadState('networkidle');
-        await page.waitForSelector('#gantt_here', { timeout: 60000 });
-        await page.waitForSelector('#app-loading', { state: 'hidden', timeout: 30000 });
+        await gotoApp(page);
     });
 
     test('F-107: Should render structured JSON results', async ({ page }) => {

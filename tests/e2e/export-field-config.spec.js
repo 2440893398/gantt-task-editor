@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { gotoApp } from './helpers/app-ready.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -38,7 +39,7 @@ async function importExcelFile(page, filePath) {
 
 test.describe('Export/Import Field Configuration Tests', () => {
     test.beforeEach(async ({ page }) => {
-        await page.goto('/');
+        await gotoApp(page);
         await page.waitForSelector('.gantt_task', { timeout: 10000 });
         // Set language to English for consistent assertions
         await page.evaluate(() => window.i18n.setLanguage('en-US'));
