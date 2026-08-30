@@ -2921,6 +2921,94 @@ aside {
     }
 }
 
+.queue-truncation {
+    margin: 0;
+    padding: 10px 16px;
+    border-top: 1px solid var(--border-muted);
+    color: var(--muted);
+    background: var(--panel-subtle);
+    font-size: 12px;
+}
+
+/* §19: 每一次等待都要看得见。工作台此前没有任何加载态——一次要好几秒的审批往返
+   和「按钮根本没点上」在屏幕上是同一幅画面，用户只能靠再点一次来判断。 */
+
+.skeleton {
+    display: grid;
+    gap: 10px;
+    padding: 18px 16px;
+}
+
+.skeleton-line {
+    height: 12px;
+    /* 骨架要在白色面板上看得出来才算数：用边框级的灰做底、更深一档做高光，
+       `--panel-subtle` 打底几乎与面板同色，等于什么都没显示。 */
+    background: linear-gradient(90deg, #eaeef2 25%, #d0d7de 37%, #eaeef2 63%);
+    background-size: 400% 100%;
+    border-radius: 6px;
+    animation: workbench-shimmer 1.4s ease-in-out infinite;
+}
+
+.skeleton-line:nth-child(3n + 2) {
+    width: 82%;
+}
+
+.skeleton-line:nth-child(3n) {
+    width: 64%;
+}
+
+@keyframes workbench-shimmer {
+    from {
+        background-position: 100% 50%;
+    }
+
+    to {
+        background-position: 0 50%;
+    }
+}
+
+.spinner {
+    margin-right: 6px;
+    vertical-align: -2px;
+    animation: workbench-spin 0.7s linear infinite;
+}
+
+@keyframes workbench-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.button[aria-busy='true'] {
+    cursor: progress;
+}
+
+/* 懒加载的设置页没有骨架可放（结构是静态的），用一条进度条说明它在取数。 */
+.settings-view.is-busy {
+    position: relative;
+}
+
+.settings-view.is-busy::before {
+    position: absolute;
+    inset: 0 0 auto;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--brand), transparent);
+    background-repeat: no-repeat;
+    background-size: 45% 100%;
+    content: '';
+    animation: workbench-progress 1.1s ease-in-out infinite;
+}
+
+@keyframes workbench-progress {
+    from {
+        background-position: -50% 0;
+    }
+
+    to {
+        background-position: 150% 0;
+    }
+}
+
 @media (prefers-reduced-motion: reduce) {
     *,
     *::before,

@@ -6,6 +6,8 @@
     var API = String(config.apiBase || '').replace(/\/+$/, '');
     var ADMIN_TOKEN_KEY = 'feedback.workbench.adminToken';
     var OWNER_KEY = 'feedback.workbench.owner';
+    /* 服务端一页的上限。筛选在本地做，所以一次取满，让本地筛选尽量看到整个队列。 */
+    var PAGE_LIMIT = 100;
 
     var STATUS_LABELS = {
         open: '待处理',
@@ -75,6 +77,8 @@
         codex: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 5h16v14H4z"></path><path d="m8 10 2 2-2 2m4 0h4"></path></svg>',
         claude: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M8 12h8M12 8v8"></path></svg>',
     };
+    var ICON_SPINNER =
+        '<svg class="spinner" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"><path d="M12 3a9 9 0 0 1 9 9"></path></svg>';
     var ICON_ATTACHMENT =
         '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="m7 15 3-3 3 3 2-2 3 3"></path></svg>';
 
@@ -109,6 +113,12 @@
         syncUnsupported: false,
         pollHandle: 0,
         pollInFlight: false,
+        totals: null,
+        listComplete: true,
+        listLoading: false,
+        detailLoading: false,
+        renderedIssueItems: Object.create(null),
+        renderedTimeline: Object.create(null),
     };
 
     /* ---------------------------------------------------------------- utils */
@@ -406,6 +416,103 @@
         element.hidden = Boolean(hidden);
     }
 
+    /* --------------------------------------------------------- pending UI */
+
+    function setBusy(element, busy) {
+        if (!element) return;
+        element.classList.toggle('is-busy', Boolean(busy));
+        if (busy) element.setAttribute('aria-busy', 'true');
+        else element.removeAttribute('aria-busy');
+    }
+
+    /* 等网络的按钮必须自己说出来。此前唯一的反馈是 `disabled` 带来的 62% 不透明度，
+       而一次审批决定要等好几秒——在那几秒里「已提交」和「没点上」长得一模一样。 */
+    function setButtonBusy(button, busyLabel) {
+        if (!button) return;
+        if (busyLabel) {
+            if (button.dataset.idleLabel === undefined) {
+                button.dataset.idleLabel = button.innerHTML;
+            }
+            button.innerHTML = ICON_SPINNER + escapeHtml(busyLabel);
+            button.disabled = true;
+            button.setAttribute('aria-busy', 'true');
+            return;
+        }
+        if (button.dataset.idleLabel !== undefined) {
+            button.innerHTML = button.dataset.idleLabel;
+            delete button.dataset.idleLabel;
+        }
+        button.disabled = false;
+        button.removeAttribute('aria-busy');
+    }
+
+    function skeletonHtml(lines) {
+        var blocks = '';
+        for (var index = 0; index < lines; index += 1) {
+            blocks += '<div class="skeleton-line"></div>';
+        }
+        return '<div class="skeleton" aria-hidden="true">' + blocks + '</div>';
+    }
+
+    /* ------------------------------------------------------ keyed rendering */
+
+    /**
+     * SCN-FWB-025：刷新按 key 对账，不整块重建。`container.innerHTML = ...` 会把每一
+     * 个条目都换成新节点——8 秒一次的自动同步因此能在 mousedown 和 click 之间把指针
+     * 下的那一项换掉，那一次点击就打在了一个已经脱离文档的节点上。未变化的条目必须
+     * 保持同一个节点对象，`cache` 存的是上一轮为每个 key 渲染出的 HTML，用来判断
+     * 「未变化」。（滚动位置不在此列：`innerHTML =` 是一次同步替换，中间不发生布局，
+     * 实测 `scrollTop` 并不会被清零。）
+     */
+    function reconcileChildren(container, items, cache) {
+        if (container.dataset.renderMode !== 'keyed') {
+            container.innerHTML = '';
+            container.dataset.renderMode = 'keyed';
+            cache = Object.create(null);
+        }
+
+        var existing = Object.create(null);
+        Array.prototype.forEach.call(container.children, function (node) {
+            var key = node.getAttribute('data-render-key');
+            if (key !== null) existing[key] = node;
+        });
+
+        var stage = document.createElement('div');
+        var nextCache = Object.create(null);
+        var cursor = null;
+
+        items.forEach(function (item) {
+            var node = existing[item.key];
+            if (node && cache[item.key] === item.html) {
+                delete existing[item.key];
+            } else {
+                stage.innerHTML = item.html;
+                var fresh = stage.firstElementChild;
+                if (!fresh) return;
+                fresh.setAttribute('data-render-key', item.key);
+                if (node) container.replaceChild(fresh, node);
+                delete existing[item.key];
+                node = fresh;
+            }
+            var target = cursor ? cursor.nextSibling : container.firstChild;
+            if (node !== target) container.insertBefore(node, target);
+            cursor = node;
+            nextCache[item.key] = item.html;
+        });
+
+        Object.keys(existing).forEach(function (key) {
+            var node = existing[key];
+            if (node.parentNode === container) container.removeChild(node);
+        });
+
+        return nextCache;
+    }
+
+    function renderPlaceholder(container, html) {
+        container.dataset.renderMode = 'placeholder';
+        container.innerHTML = html;
+    }
+
     /* ------------------------------------------------------------------ api */
 
     function request(path, options) {
@@ -466,6 +573,17 @@
         return { issueId: issueId, capability: capability };
     }
 
+    /**
+     * §19/§21.1：`#issue=<id>` 在 owner 用掉 capability 之后仍留在地址栏，管理员也会
+     * 拿着这个链接过来。队列现在按优先级排序，「刚建的那条恰好在最前面」不再成立——
+     * 那本来也不是打开一条指定 Issue 的方式。这里只取 id，capability 仍只走 owner 分支。
+     */
+    function readIssueFromLocation() {
+        var hash = window.location.hash || '';
+        if (hash.indexOf('issue=') === -1) return '';
+        return new URLSearchParams(hash.replace(/^#/, '')).get('issue') || '';
+    }
+
     function restoreSession() {
         var fromLocation = readOwnerFromLocation();
         if (fromLocation) {
@@ -495,6 +613,7 @@
         if (adminToken) {
             state.adminToken = adminToken;
             state.actor = 'admin';
+            state.selectedKey = readIssueFromLocation();
         } else if (owner && owner.issueId && owner.capability) {
             state.ownerIssueId = owner.issueId;
             state.ownerCapability = owner.capability;
@@ -532,16 +651,37 @@
             tab.setAttribute('aria-current', isActive ? 'page' : 'false');
         });
 
-        if (active === 'automations' && !state.automation) loadAutomation();
-        if (active === 'runners' && !state.runners) loadRunners();
+        // 两个设置页是懒加载的，首次切过去要等一次请求。不标出来的话这段等待
+        // 看起来就是"tab 点了但页面是空的"。
+        if (active === 'automations' && !state.automation) {
+            setBusy($('settingsView'), true);
+            loadAutomation();
+        }
+        if (active === 'runners' && !state.runners) {
+            setBusy($('runnersView'), true);
+            loadRunners();
+        }
     }
 
     /* ----------------------------------------------------------- issue list */
 
-    function renderIssueList() {
-        var list = $('issueList');
+    /* §19.1 的三个筛选（等我/处理中/全部）是同一批 Issue 的子集——服务端也是先取
+       队列再按 `status` 过滤。放在客户端做，切换筛选就从一次约 1 秒的往返变成一次
+       本地重绘；判据与 Worker 的 FEEDBACK_ATTENTION_STATUSES / FEEDBACK_ACTIVE_STATUSES
+       同名同义，两边不一致会让同一个状态在队列里时隐时现。 */
+    var ATTENTION_STATUSES = ['ready_for_deploy', 'needs_human', 'test_failed'];
+    var ACTIVE_STATUSES = ['queued', 'in_progress', 'testing'];
+
+    function matchesFilter(issue, filter) {
+        if (filter === 'attention') return ATTENTION_STATUSES.indexOf(issue.status) !== -1;
+        if (filter === 'active') return ACTIVE_STATUSES.indexOf(issue.status) !== -1;
+        return true;
+    }
+
+    function visibleIssues() {
         var query = state.query.trim().toLowerCase();
-        var visible = state.issues.filter(function (issue) {
+        return state.issues.filter(function (issue) {
+            if (!matchesFilter(issue, state.filter)) return false;
             if (!query) return true;
             return (
                 String(issue.title || '')
@@ -549,76 +689,149 @@
                     .indexOf(query) !== -1 || issueNumber(issue.key).indexOf(query) !== -1
             );
         });
+    }
 
-        $('queueAttentionBadge').textContent = '需你处理 ' + state.attentionCount;
-        $('issueCount').textContent = String(state.issues.length);
-        setHidden($('issueCount'), state.issues.length === 0);
+    function issueItemHtml(issue) {
+        var tone = statusTone(issue.status);
+        return (
+            '<button class="issue-item' +
+            (issue.key === state.selectedKey ? ' active' : '') +
+            '" type="button" role="option" aria-selected="' +
+            (issue.key === state.selectedKey) +
+            '" data-issue="' +
+            escapeHtml(issue.key) +
+            '">' +
+            '<div class="issue-item-title"><span>' +
+            escapeHtml(issue.title || '(无标题)') +
+            '</span><span class="badge ' +
+            tone +
+            '">' +
+            escapeHtml(statusLabel(issue.status)) +
+            '</span></div>' +
+            '<div class="issue-item-copy">' +
+            escapeHtml(issue.descriptionPreview || '') +
+            '</div>' +
+            '<div class="issue-item-meta"><span class="inline" style="gap:5px">' +
+            ICON_ISSUE +
+            ' #' +
+            escapeHtml(issueNumber(issue.key)) +
+            ' · ' +
+            escapeHtml(BUSINESS_TYPE_LABELS[issue.businessType] || '待分类') +
+            '</span><span>' +
+            escapeHtml(relativeTime(issue.updatedAt || issue.receivedAt)) +
+            '</span></div>' +
+            '</button>'
+        );
+    }
+
+    /* 队列可能长过服务端一页。总数按 `totals` 走全表口径，列表里放得下多少是另一回事——
+       两者不一致时必须说出来，否则「等我 12」配着 9 条列表就像系统吞了 3 条。 */
+    function filterTotal(filter) {
+        if (!state.totals) return null;
+        var total = state.totals[filter];
+        return typeof total === 'number' ? total : null;
+    }
+
+    function renderQueueTruncation(visibleCount) {
+        var notice = $('queueTruncation');
+        var total = filterTotal(state.filter);
+        // 只有整份队列没取全时才可能有漏网；取全了列表就是全部。
+        var missing = state.listComplete || total === null ? 0 : total - visibleCount;
+        if (missing <= 0 || state.query.trim()) {
+            setHidden(notice, true);
+            notice.textContent = '';
+            return;
+        }
+        setHidden(notice, false);
+        notice.textContent = '队列还有 ' + missing + ' 条未载入（本页最多 ' + PAGE_LIMIT + ' 条）';
+    }
+
+    function renderIssueList() {
+        var list = $('issueList');
+        var visible = visibleIssues();
+
+        var attention = filterTotal('attention');
+        $('queueAttentionBadge').textContent =
+            '需你处理 ' + (attention === null ? state.attentionCount : attention);
+        $('issueCount').textContent = String(visible.length);
+        setHidden($('issueCount'), visible.length === 0);
+        setBusy(list, state.listLoading && !state.issues.length);
+        renderQueueTruncation(visible.length);
 
         if (!visible.length) {
-            list.innerHTML =
-                '<div style="padding:28px 16px;text-align:center;color:var(--muted)">没有匹配的 Issue</div>';
+            state.renderedIssueItems = Object.create(null);
+            renderPlaceholder(
+                list,
+                state.listLoading && !state.issues.length
+                    ? skeletonHtml(4)
+                    : '<div style="padding:28px 16px;text-align:center;color:var(--muted)">没有匹配的 Issue</div>'
+            );
             return;
         }
 
-        list.innerHTML = visible
-            .map(function (issue) {
-                var tone = statusTone(issue.status);
-                return (
-                    '<button class="issue-item' +
-                    (issue.key === state.selectedKey ? ' active' : '') +
-                    '" type="button" role="option" aria-selected="' +
-                    (issue.key === state.selectedKey) +
-                    '" data-issue="' +
-                    escapeHtml(issue.key) +
-                    '">' +
-                    '<div class="issue-item-title"><span>' +
-                    escapeHtml(issue.title || '(无标题)') +
-                    '</span><span class="badge ' +
-                    tone +
-                    '">' +
-                    escapeHtml(statusLabel(issue.status)) +
-                    '</span></div>' +
-                    '<div class="issue-item-copy">' +
-                    escapeHtml(issue.descriptionPreview || '') +
-                    '</div>' +
-                    '<div class="issue-item-meta"><span class="inline" style="gap:5px">' +
-                    ICON_ISSUE +
-                    ' #' +
-                    escapeHtml(issueNumber(issue.key)) +
-                    ' · ' +
-                    escapeHtml(BUSINESS_TYPE_LABELS[issue.businessType] || '待分类') +
-                    '</span><span>' +
-                    escapeHtml(relativeTime(issue.updatedAt || issue.receivedAt)) +
-                    '</span></div>' +
-                    '</button>'
-                );
-            })
-            .join('');
+        state.renderedIssueItems = reconcileChildren(
+            list,
+            visible.map(function (issue) {
+                return { key: issue.key, html: issueItemHtml(issue) };
+            }),
+            state.renderedIssueItems
+        );
     }
 
     function loadIssues() {
         if (state.actor !== 'admin') return Promise.resolve();
 
-        return request('/api/feedback/issues?filter=' + encodeURIComponent(state.filter))
+        // 永远取整个队列：筛选在本地做，所以三个 chip 共用这一份数据，切换不再发请求。
+        // 取满服务端允许的一页，让本地筛选尽量覆盖整个队列。
+        state.listLoading = true;
+        renderIssueList();
+        return request('/api/feedback/issues?filter=all&limit=' + PAGE_LIMIT)
             .then(function (payload) {
                 state.issues = payload.issues || [];
                 state.attentionCount = Number(payload.attentionCount) || 0;
+                state.totals = payload.totals || null;
+                state.listComplete = payload.listComplete !== false;
+                state.listLoading = false;
                 renderIssueList();
 
                 // §19.1: refreshing the list must not move the current selection.
                 var stillVisible = state.issues.some(function (issue) {
                     return issue.key === state.selectedKey;
                 });
+                // 「第一条」始终指当前筛选下看得见的第一条：服务端过滤时 `state.issues`
+                // 本来就只有可见的那些，本地过滤后不能退回整个队列去选，否则详情区会
+                // 停在一条列表里根本没有的 Issue 上。
                 if (!state.selectedKey || (!stillVisible && !state.issue)) {
-                    var first = state.issues[0];
+                    var first = visibleIssues()[0];
                     if (first) return selectIssue(first.key);
                 }
                 return null;
             })
-            .catch(handleAuthError);
+            .catch(function (error) {
+                state.listLoading = false;
+                renderIssueList();
+                return handleAuthError(error);
+            });
     }
 
     /* --------------------------------------------------------- issue detail */
+
+    /**
+     * 创建那条卡片上只挂「提交时就带着的」附件。后来在回复里补的附件已经各自挂在
+     * 对应的评论事件上，两处都渲染就会重复出现，所以这里按事件上的附件 id 排掉。
+     */
+    function creationOnlyAttachments(issue) {
+        if (!issue || !issue.attachments) return [];
+        var commentAttachmentIds = {};
+        (state.events || []).forEach(function (timelineEvent) {
+            (timelineEvent.attachments || []).forEach(function (attachment) {
+                commentAttachmentIds[attachment.id] = true;
+            });
+        });
+        return issue.attachments.filter(function (attachment) {
+            return !commentAttachmentIds[attachment.id];
+        });
+    }
 
     function renderTimelineEntry(event, issue) {
         var isEventRow =
@@ -693,18 +906,10 @@
                 : isAgent
                   ? '发布了处理结果'
                   : '回复了';
-        var commentAttachmentIds = {};
-        (state.events || []).forEach(function (timelineEvent) {
-            (timelineEvent.attachments || []).forEach(function (attachment) {
-                commentAttachmentIds[attachment.id] = true;
-            });
-        });
-        var creationAttachments =
-            issue && issue.attachments
-                ? issue.attachments.filter(function (attachment) {
-                      return !commentAttachmentIds[attachment.id];
-                  })
-                : [];
+        // 只有 `issue.created` 那一条要算这个。此前它写在每条事件的渲染里，而它自己
+        // 又要扫一遍整条时间线——47 条事件跑 47 遍全表扫描。数量级上是 O(n²)，只是
+        // 时间线还短的时候量不出来。
+        var creationAttachments = isCreation ? creationOnlyAttachments(issue) : [];
         var bodyHtml = isCreation
             ? renderMarkdown(issue && issue.description) +
               attachmentsHtml({ attachments: creationAttachments })
@@ -954,17 +1159,27 @@
     function renderTimeline() {
         var timeline = $('timeline');
         if (!state.issue) {
-            timeline.innerHTML =
-                '<div style="padding:28px 16px;text-align:center;color:var(--muted)">选择左侧队列中的 Issue 查看处理时间线</div>';
+            state.renderedTimeline = Object.create(null);
+            renderPlaceholder(
+                timeline,
+                state.detailLoading
+                    ? skeletonHtml(5)
+                    : '<div style="padding:28px 16px;text-align:center;color:var(--muted)">选择左侧队列中的 Issue 查看处理时间线</div>'
+            );
             return;
         }
 
         var issue = state.issue;
-        timeline.innerHTML = state.events
-            .map(function (event) {
-                return renderTimelineEntry(event, issue);
-            })
-            .join('');
+        state.renderedTimeline = reconcileChildren(
+            timeline,
+            state.events.map(function (event, index) {
+                return {
+                    key: String(event.id || 'seq-' + (event.sequence || index)),
+                    html: renderTimelineEntry(event, issue),
+                };
+            }),
+            state.renderedTimeline
+        );
     }
 
     function renderHeading() {
@@ -1712,11 +1927,37 @@
         if (payload.attachmentAccessExpiresAt) {
             state.attachmentAccessExpiresAt = Date.parse(payload.attachmentAccessExpiresAt) || 0;
         }
+        state.detailLoading = false;
+        setBusy($('timeline'), false);
         renderIssueDetail();
     }
 
+    /**
+     * 打开另一条 Issue 要等一次聚合请求。在它回来之前把详情区留在上一条 Issue 上，
+     * 是最容易被读成"点了没反应"的一种停顿——用户看到的标题、时间线、下一步全都
+     * 还是旧的。这里先立刻切到目标标题加骨架，等快照到了再填真内容。
+     */
+    function showDetailLoading(key) {
+        var summary = state.issues.filter(function (issue) {
+            return issue.key === key;
+        })[0];
+        state.detailLoading = true;
+        state.issue = null;
+        state.events = [];
+        state.humanAction = null;
+        state.designs = [];
+        state.candidates = [];
+        state.releases = [];
+        renderIssueDetail();
+        if (summary) {
+            $('issueTitle').textContent = summary.title || '(无标题)';
+        }
+        setBusy($('timeline'), true);
+    }
+
     function selectIssue(key) {
-        if (key !== state.selectedKey) {
+        var switching = key !== state.selectedKey;
+        if (switching) {
             state.replyRequestId = '';
             state.replyMode = '';
             state.attachmentAccessExpiresAt = 0;
@@ -1725,6 +1966,7 @@
         state.selectedKey = key;
         var generation = ++state.selectionGeneration;
         renderIssueList();
+        if (switching) showDetailLoading(key);
         var base = '/api/feedback/issues/' + encodeURIComponent(key);
         return request(base + '/snapshot')
             .then(function (payload) {
@@ -1760,6 +2002,9 @@
                         return null;
                     });
                 }
+                state.detailLoading = false;
+                setBusy($('timeline'), false);
+                renderIssueDetail();
                 handleAuthError(error);
                 return null;
             });
@@ -2262,7 +2507,10 @@
                 setSaveState('automation', false);
                 renderAutomation();
             })
-            .catch(handleAuthError);
+            .catch(handleAuthError)
+            .finally(function () {
+                setBusy($('settingsView'), false);
+            });
     }
 
     /* --------------------------------------------------------------- runners */
@@ -2590,7 +2838,10 @@
                 renderRunners();
                 if (state.issue) renderComposer();
             })
-            .catch(handleAuthError);
+            .catch(handleAuthError)
+            .finally(function () {
+                setBusy($('runnersView'), false);
+            });
     }
 
     /* ----------------------------------------------------------- save states */
@@ -2834,7 +3085,8 @@
                     item.setAttribute('aria-pressed', String(isActive));
                 }
             );
-            loadIssues();
+            // 队列已经整份在手，切筛选是重绘不是取数——不再发请求。
+            renderIssueList();
         });
     });
 
@@ -3110,7 +3362,10 @@
             payload.note = followUp;
         }
         state.submitting = true;
-        button.disabled = true;
+        setButtonBusy(button, '提交中…');
+        // §19.1/SCN-FWB-025：提交期间用户仍然可以点开别的 Issue。快照按提交那一刻的
+        // 选择代次记账，迟到的响应就不会把当前选中的详情覆盖回去。
+        var decisionGeneration = state.selectionGeneration;
         request(
             '/api/feedback/human-actions/' +
                 encodeURIComponent(button.dataset.humanAction) +
@@ -3136,12 +3391,20 @@
                                 )
                     );
                 }
+                // 决定改变的是同一个详情面板，服务端已经把改完之后的完整快照放在
+                // 响应里了——再发一次 snapshot 只是把同一份数据重取一遍，却要用户
+                // 多等一整个跨源往返。队列顺序也变了，但那不挡着看结果，放到后台刷。
+                if (result && result.snapshot) {
+                    applyIssueSnapshot(result.snapshot, decisionGeneration);
+                    loadIssues();
+                    return null;
+                }
                 return Promise.all([selectIssue(state.issue.key), loadIssues()]);
             })
             .catch(handleAuthError)
             .finally(function () {
                 state.submitting = false;
-                button.disabled = false;
+                setButtonBusy(button, '');
             });
     }
 
@@ -3149,7 +3412,7 @@
         if (state.submitting || !state.issue) return;
 
         state.submitting = true;
-        button.disabled = true;
+        setButtonBusy(button, '提交中…');
         request('/api/feedback/issues/' + encodeURIComponent(state.issue.key) + '/reopen', {
             method: 'POST',
             body: { expectedVersion: state.issue.version },
@@ -3161,7 +3424,7 @@
             .catch(handleAuthError)
             .finally(function () {
                 state.submitting = false;
-                button.disabled = false;
+                setButtonBusy(button, '');
             });
     }
 
@@ -3443,7 +3706,11 @@
 
     function refreshAll() {
         if (state.actor === 'admin') {
-            return loadIssues();
+            // 带 `#issue=` 进来就直接打开那一条，而不是队列里排第一的那条。
+            var deepLink = state.selectedKey;
+            if (!deepLink) return loadIssues();
+            showDetailLoading(deepLink);
+            return Promise.all([loadIssues(), selectIssue(deepLink)]);
         }
         if (state.actor === 'owner' && state.ownerIssueId) {
             return selectIssue(state.ownerIssueId);

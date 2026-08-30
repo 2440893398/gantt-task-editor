@@ -381,6 +381,13 @@ function corsHeaders() {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        // §19: the workbench is served from Pages and calls this Worker, so every
+        // request is cross-origin and carries `Authorization` — a non-simple header,
+        // which means a preflight per call. Without a Max-Age the browser default is
+        // 5 seconds and the cache key includes the full URL, so in practice *every*
+        // API call paid an extra round trip (measured ~200ms on the production path).
+        // 24h is the value browsers clamp to their own ceiling (Chrome 2h, Firefox 24h).
+        'Access-Control-Max-Age': '86400',
     };
 }
 
@@ -2347,27 +2354,41 @@ async function backfillLegacyFeedbackEvents(env, issueRow, legacySource) {
     }
 }
 
-async function readD1FeedbackIssue(env, key) {
+/**
+ * `prefetched` lets a caller that already read these three row sets in one
+ * `D1.batch()` skip the two round trips this function would otherwise make.
+ * Every hop to D1 is a cross-region request (the primary is a fixed region while
+ * the Worker runs at the visitor's colo), so on the workbench detail path the
+ * round trips — not the SQL, which measures under a millisecond — were the
+ * latency. The prefetch is only trusted when the issue row exists and the event
+ * set is non-empty; an empty event set still has to take the slow path because
+ * that is the signal for the legacy KV backfill below.
+ */
+async function readD1FeedbackIssue(env, key, prefetched = null) {
     if (!env.FEEDBACK_DB) return null;
 
-    const row = await env.FEEDBACK_DB.prepare('SELECT * FROM feedback_issues WHERE id = ?')
-        .bind(key)
-        .first();
+    const row = prefetched
+        ? prefetched.issueRow
+        : await env.FEEDBACK_DB.prepare('SELECT * FROM feedback_issues WHERE id = ?')
+              .bind(key)
+              .first();
     if (!row) return null;
 
-    const [eventResult, attachmentResult] = await Promise.all([
-        env.FEEDBACK_DB.prepare(
-            'SELECT * FROM feedback_events WHERE issue_id = ? ORDER BY sequence'
-        )
-            .bind(key)
-            .all(),
-        env.FEEDBACK_DB.prepare(
-            `SELECT * FROM feedback_attachments
+    const [eventResult, attachmentResult] = prefetched
+        ? [{ results: prefetched.eventRows }, { results: prefetched.attachmentRows }]
+        : await Promise.all([
+              env.FEEDBACK_DB.prepare(
+                  'SELECT * FROM feedback_events WHERE issue_id = ? ORDER BY sequence'
+              )
+                  .bind(key)
+                  .all(),
+              env.FEEDBACK_DB.prepare(
+                  `SELECT * FROM feedback_attachments
              WHERE issue_id = ? ORDER BY legacy_attachment_index, created_at`
-        )
-            .bind(key)
-            .all(),
-    ]);
+              )
+                  .bind(key)
+                  .all(),
+          ]);
     let eventRows = eventResult.results || [];
     const attachmentRows = attachmentResult.results || [];
     const legacySource = await readLegacyFeedbackSource(env, attachmentRows, row.legacy_kv_key);
@@ -2604,14 +2625,28 @@ function decodeFeedbackListCursor(value) {
     if (!value) return null;
     try {
         const parsed = JSON.parse(base64UrlDecode(value));
-        if (!parsed?.createdAt || !parsed?.id) return null;
+        if (!Number.isInteger(parsed?.rank) || !parsed?.updatedAt || !parsed?.id) return null;
         return {
-            createdAt: String(parsed.createdAt),
+            rank: parsed.rank,
+            updatedAt: String(parsed.updatedAt),
             id: String(parsed.id),
         };
     } catch {
         return null;
     }
+}
+
+/**
+ * §19.1 的队列次序写成 SQL。**分页必须按展示次序切**，否则 `LIMIT` 砍掉的是「最早
+ * 创建的」而不是「最不重要的」——队列一旦超过一页，「等我」里的旧 Issue 就会静默
+ * 消失：它没被过滤掉，只是根本没进这一页。判据只有 `FEEDBACK_QUEUE_RANKS` 一份，
+ * 键都是本文件里的字面量状态名，不含调用方输入。
+ */
+function feedbackQueueRankSql(column = 'status') {
+    const branches = Object.entries(FEEDBACK_QUEUE_RANKS)
+        .map(([status, rank]) => `WHEN '${status}' THEN ${rank}`)
+        .join(' ');
+    return `CASE ${column} ${branches} ELSE 9 END`;
 }
 
 function isDeferredLegacyFeedbackBackfill(error) {
@@ -2623,46 +2658,72 @@ function isDeferredLegacyFeedbackBackfill(error) {
     ].includes(code);
 }
 
+function buildD1FeedbackListStatement(env, { status, cursor, limit }) {
+    const rank = feedbackQueueRankSql();
+    const select = `SELECT *, ${rank} AS queue_rank FROM feedback_issues`;
+    const order = `ORDER BY ${rank} ASC, updated_at DESC, id DESC LIMIT ?`;
+    // 次序是 rank 升、updated_at 降、id 降——方向不一致，所以游标不能用行值比较，
+    // 只能把「同 rank 内继续往后」这一层写开。
+    const after = `(${rank} > ? OR (${rank} = ? AND (updated_at < ? OR (updated_at = ? AND id < ?))))`;
+    const cursorValues = cursor
+        ? [cursor.rank, cursor.rank, cursor.updatedAt, cursor.updatedAt, cursor.id]
+        : [];
+
+    if (status && cursor) {
+        return env.FEEDBACK_DB.prepare(`${select} WHERE status = ? AND ${after} ${order}`).bind(
+            status,
+            ...cursorValues,
+            limit + 1
+        );
+    }
+    if (status) {
+        return env.FEEDBACK_DB.prepare(`${select} WHERE status = ? ${order}`).bind(
+            status,
+            limit + 1
+        );
+    }
+    if (cursor) {
+        return env.FEEDBACK_DB.prepare(`${select} WHERE ${after} ${order}`).bind(
+            ...cursorValues,
+            limit + 1
+        );
+    }
+    return env.FEEDBACK_DB.prepare(`${select} ${order}`).bind(limit + 1);
+}
+
+/**
+ * 一页 Issue + 全表按状态的计数，一次 `D1.batch()` 取回。计数不能从这一页数出来：
+ * 「需你处理 N」要说的是队列里有多少，不是这一页里有多少，而一页只有 50–100 行。
+ */
 async function listD1FeedbackIssues(env, options = {}) {
     const limit = Math.min(Math.max(Number(options.limit) || 50, 1), 100);
     const cursor = decodeFeedbackListCursor(options.cursor);
-    let statement;
-    if (options.status && cursor) {
-        statement = env.FEEDBACK_DB.prepare(
-            `SELECT * FROM feedback_issues
-             WHERE status = ?
-               AND (created_at < ? OR (created_at = ? AND id < ?))
-             ORDER BY created_at DESC, id DESC LIMIT ?`
-        ).bind(options.status, cursor.createdAt, cursor.createdAt, cursor.id, limit + 1);
-    } else if (options.status) {
-        statement = env.FEEDBACK_DB.prepare(
-            `SELECT * FROM feedback_issues
-             WHERE status = ? ORDER BY created_at DESC, id DESC LIMIT ?`
-        ).bind(options.status, limit + 1);
-    } else if (cursor) {
-        statement = env.FEEDBACK_DB.prepare(
-            `SELECT * FROM feedback_issues
-             WHERE created_at < ? OR (created_at = ? AND id < ?)
-             ORDER BY created_at DESC, id DESC LIMIT ?`
-        ).bind(cursor.createdAt, cursor.createdAt, cursor.id, limit + 1);
-    } else {
-        statement = env.FEEDBACK_DB.prepare(
-            'SELECT * FROM feedback_issues ORDER BY created_at DESC, id DESC LIMIT ?'
-        ).bind(limit + 1);
-    }
-    const result = await statement.all();
-    const rows = result.results || [];
+    const statements = [
+        buildD1FeedbackListStatement(env, { status: options.status, cursor, limit }),
+        env.FEEDBACK_DB.prepare(
+            'SELECT status, COUNT(*) AS total FROM feedback_issues GROUP BY status'
+        ),
+    ];
+    if (options.migrationStatement) statements.push(options.migrationStatement);
+
+    const [listResult, countResult, migrationResult] = await env.FEEDBACK_DB.batch(statements);
+    const rows = listResult.results || [];
     const listComplete = rows.length <= limit;
     const visibleRows = rows.slice(0, limit);
     const lastRow = visibleRows[visibleRows.length - 1];
 
     return {
         issues: visibleRows.map(mapD1IssueRowToFeedbackSummary),
+        statusCounts: Object.fromEntries(
+            (countResult.results || []).map((row) => [String(row.status), Number(row.total) || 0])
+        ),
+        migrationRow: migrationResult ? (migrationResult.results || [])[0] || null : undefined,
         cursor:
             !listComplete && lastRow
                 ? base64UrlEncode(
                       JSON.stringify({
-                          createdAt: lastRow.created_at,
+                          rank: Number(lastRow.queue_rank) || 0,
+                          updatedAt: lastRow.updated_at,
                           id: lastRow.id,
                       })
                   )
@@ -2748,6 +2809,21 @@ async function backfillLegacyFeedbackList(env) {
 
 async function listFeedbackIssues(env, options = {}) {
     if (env.FEEDBACK_DB) {
+        // 迁移状态和这一页一起批出去：迁移早就完成了，为一个「已完成吗」再单发一次
+        // 跨区往返是白等。
+        const probe = await listD1FeedbackIssues(env, {
+            ...options,
+            migrationStatement: env.FEEDBACK_DB.prepare(
+                'SELECT cursor, completed FROM feedback_migration_state WHERE name = ?'
+            ).bind('feedback-kv-v1'),
+        });
+        if (Number(probe.migrationRow?.completed) === 1) {
+            return { ...probe, legacyMigrationPending: false };
+        }
+
+        // 迁移没完成才走这条慢路（生产上不可达）：必须先把这一页 KV 记录搬进 D1，
+        // 再**重新**读列表——沿用上面那次读的话，刚迁进来的 Issue 不会出现在本次
+        // 响应里，而「先迁移再返回列表」正是 SCN-FWB-001 要的那条顺序。
         const legacyMigration = await backfillLegacyFeedbackList(env);
         const result = await listD1FeedbackIssues(env, options);
         const fallbackIssues = options.status
@@ -2766,8 +2842,13 @@ async function listFeedbackIssues(env, options = {}) {
         const merged = [
             ...result.issues,
             ...fallbackIssues.filter((issue) => !knownIds.has(issue.key)),
-        ].sort((left, right) =>
-            String(right.receivedAt || '').localeCompare(String(left.receivedAt || ''))
+        ].sort(
+            (left, right) =>
+                getFeedbackQueueRank(left.workflow.status) -
+                    getFeedbackQueueRank(right.workflow.status) ||
+                String(right.workflow.updatedAt || right.receivedAt || '').localeCompare(
+                    String(left.workflow.updatedAt || left.receivedAt || '')
+                )
         );
         return {
             ...result,
@@ -7349,8 +7430,18 @@ async function listFeedbackTimeline(request, env, issueId, { includeInternal }) 
           ).bind(issueId);
 
     const result = await statement.all();
+    return buildFeedbackTimeline(request, env, issueId, result.results || []);
+}
+
+/**
+ * The row → timeline projection, split out of `listFeedbackTimeline` so the
+ * aggregate snapshot can reuse the event rows it already batched instead of
+ * reading `feedback_events` a second time. Signing an attachment URL is pure
+ * crypto, so nothing here touches D1 or R2.
+ */
+async function buildFeedbackTimeline(request, env, issueId, rows) {
     return Promise.all(
-        (result.results || []).map(async (row) => {
+        rows.map(async (row) => {
             const event = serializeTimelineEvent(row);
             const [artifact, attachments] = await Promise.all([
                 event.artifact?.attachmentId
@@ -7486,37 +7577,98 @@ async function listFeedbackDesigns(env, issueId, { includeTechnical = true } = {
     return (result.results || []).map((row) => serializeFeedbackDesign(row, { includeTechnical }));
 }
 
-async function readFeedbackWorkbenchSnapshot(request, env, key, { isAdmin, sinceVersion } = {}) {
-    const versionRow = await env.FEEDBACK_DB.prepare(
-        'SELECT version, status, updated_at FROM feedback_issues WHERE id = ?'
-    )
-        .bind(key)
-        .first();
-    if (!versionRow) return null;
-
-    const version = Number(versionRow.version) || 1;
-    if (Number.isFinite(sinceVersion) && sinceVersion === version) {
-        return { changed: false, version };
-    }
-
-    const issue = await readFeedbackIssue(env, key);
-    if (!issue) return null;
-    const issueWithAttachmentAccess = await addFeedbackAttachmentAccessUrls(request, env, issue);
-    const [events, humanActions, designs, candidatesResult, releasesResult] = await Promise.all([
-        listFeedbackTimeline(request, env, key, { includeInternal: isAdmin }),
-        listHumanActions(env, key),
-        listFeedbackDesigns(env, key, { includeTechnical: isAdmin }),
+/**
+ * §19/SCN-FWB-025: every sub-resource the detail pane needs, in a single
+ * `D1.batch()` — one round trip instead of the four-to-five sequential ones the
+ * per-resource reads used to cost. `Promise.all` over separate `prepare()` calls
+ * does *not* collapse them; each is its own request to the D1 primary.
+ */
+async function readFeedbackWorkbenchSnapshotRows(env, key) {
+    const [
+        issueResult,
+        eventResult,
+        attachmentResult,
+        humanActions,
+        designs,
+        candidates,
+        releases,
+    ] = await env.FEEDBACK_DB.batch([
+        env.FEEDBACK_DB.prepare('SELECT * FROM feedback_issues WHERE id = ?').bind(key),
+        env.FEEDBACK_DB.prepare(
+            'SELECT * FROM feedback_events WHERE issue_id = ? ORDER BY sequence'
+        ).bind(key),
+        env.FEEDBACK_DB.prepare(
+            `SELECT * FROM feedback_attachments
+             WHERE issue_id = ? ORDER BY legacy_attachment_index, created_at`
+        ).bind(key),
+        env.FEEDBACK_DB.prepare(
+            'SELECT * FROM feedback_human_actions WHERE issue_id = ? ORDER BY created_at DESC'
+        ).bind(key),
+        env.FEEDBACK_DB.prepare(
+            'SELECT * FROM feedback_designs WHERE issue_id = ? ORDER BY revision DESC'
+        ).bind(key),
         env.FEEDBACK_DB.prepare(
             'SELECT * FROM feedback_candidates WHERE issue_id = ? ORDER BY created_at DESC'
-        )
-            .bind(key)
-            .all(),
+        ).bind(key),
         env.FEEDBACK_DB.prepare(
             'SELECT * FROM feedback_releases WHERE issue_id = ? ORDER BY started_at DESC'
+        ).bind(key),
+    ]);
+
+    return {
+        issueRow: (issueResult.results || [])[0] || null,
+        eventRows: eventResult.results || [],
+        attachmentRows: attachmentResult.results || [],
+        humanActionRows: humanActions.results || [],
+        designRows: designs.results || [],
+        candidateRows: candidates.results || [],
+        releaseRows: releases.results || [],
+    };
+}
+
+async function readFeedbackWorkbenchSnapshot(request, env, key, { isAdmin, sinceVersion } = {}) {
+    // The recurring `/sync` probe asks "did anything change?" every few seconds,
+    // so it keeps its own one-column read: answering `changed: false` must not
+    // cost a full snapshot. A first open (`snapshot`, no version) skips straight
+    // to the batch instead of paying an extra round trip to learn the version.
+    const probing = Number.isFinite(sinceVersion);
+    if (probing) {
+        const versionRow = await env.FEEDBACK_DB.prepare(
+            'SELECT version, status, updated_at FROM feedback_issues WHERE id = ?'
         )
             .bind(key)
-            .all(),
-    ]);
+            .first();
+        if (!versionRow) return null;
+        if ((Number(versionRow.version) || 1) === sinceVersion) {
+            return { changed: false, version: Number(versionRow.version) || 1 };
+        }
+    }
+
+    const rows = await readFeedbackWorkbenchSnapshotRows(env, key);
+    if (!rows.issueRow) return null;
+    const version = Number(rows.issueRow.version) || 1;
+
+    // An empty event set is the legacy-KV backfill signal, so that case has to
+    // take the original path; a live Issue always has at least `issue.created`.
+    const issue = rows.eventRows.length
+        ? await readD1FeedbackIssue(env, key, rows)
+        : await readFeedbackIssue(env, key);
+    if (!issue) return null;
+    const issueWithAttachmentAccess = await addFeedbackAttachmentAccessUrls(request, env, issue);
+    // `includeInternal` was a SQL predicate; on the batched rows it is the same
+    // predicate applied in memory over the same `sequence` order.
+    const events = rows.eventRows.length
+        ? await buildFeedbackTimeline(
+              request,
+              env,
+              key,
+              isAdmin ? rows.eventRows : rows.eventRows.filter((row) => row.visibility === 'public')
+          )
+        : await listFeedbackTimeline(request, env, key, { includeInternal: isAdmin });
+    const humanActions = rows.humanActionRows.map(serializeHumanAction);
+    const designs = rows.designRows.map((row) =>
+        serializeFeedbackDesign(row, { includeTechnical: isAdmin })
+    );
     return {
         changed: true,
         version,
@@ -7529,10 +7681,10 @@ async function readFeedbackWorkbenchSnapshot(request, env, key, { isAdmin, since
         events,
         humanActions,
         designs,
-        candidates: (candidatesResult.results || []).map((row) =>
+        candidates: rows.candidateRows.map((row) =>
             serializeFeedbackCandidate(row, { includeTechnical: isAdmin })
         ),
-        releases: (releasesResult.results || []).map(serializeFeedbackRelease),
+        releases: rows.releaseRows.map(serializeFeedbackRelease),
     };
 }
 
@@ -8633,7 +8785,10 @@ async function respondToHumanAction(
               : 'pending';
 
     return {
-        issue: await readD1FeedbackIssue(env, action.issueId),
+        // The Issue itself is read once by the caller's snapshot, not a second
+        // time here: the response carries the whole post-decision detail pane so
+        // the workbench does not have to turn around and re-fetch it.
+        issueId: action.issueId,
         action: { ...action, status: 'resolved', resolvedAt: occurredAt },
         eventId,
         approvedCandidateId: approvedCandidate ? candidateId : null,
@@ -12202,14 +12357,13 @@ export default {
                 cursor: url.searchParams.get('cursor'),
             });
 
-            const issues = result.issues
+            const ranked = result.issues
                 .map(serializeAdminIssueSummary)
                 .map((issue) => ({
                     ...issue,
                     queueRank: getFeedbackQueueRank(issue.status),
                     needsAttention: FEEDBACK_ATTENTION_STATUSES.has(issue.status),
                 }))
-                .filter((issue) => matchesFeedbackQueueFilter(issue, filter))
                 // §19.1: approved-and-undelivered, then human-blocked, then
                 // retryable failures, then ordinary new Issues.
                 .sort(
@@ -12217,12 +12371,41 @@ export default {
                         left.queueRank - right.queueRank ||
                         String(right.updatedAt || '').localeCompare(String(left.updatedAt || ''))
                 );
+            const issues = ranked.filter((issue) => matchesFeedbackQueueFilter(issue, filter));
+
+            // 计数来自全表 GROUP BY，不是这一页。页大小是 50–100，从页里数出来的
+            // "需你处理 N" 在队列更长时会少报，而这个数字正是管理员判断"还有没有活"
+            // 的唯一依据。`statusCounts` 缺席只可能是 KV 兜底路径，那时退回页内计数。
+            const counts = result.statusCounts;
+            const countByFilter = (predicate) =>
+                counts
+                    ? Object.entries(counts).reduce(
+                          (total, [status, value]) => total + (predicate(status) ? value : 0),
+                          0
+                      )
+                    : ranked.filter((issue) => matchesFeedbackQueueFilter(issue, filter)).length;
+            const totals = counts
+                ? {
+                      all: countByFilter(() => true),
+                      attention: countByFilter((status) => FEEDBACK_ATTENTION_STATUSES.has(status)),
+                      active: countByFilter((status) => FEEDBACK_ACTIVE_STATUSES.has(status)),
+                  }
+                : {
+                      all: ranked.length,
+                      attention: ranked.filter((issue) => issue.needsAttention).length,
+                      active: ranked.filter((issue) => FEEDBACK_ACTIVE_STATUSES.has(issue.status))
+                          .length,
+                  };
 
             return jsonResponse(
                 {
                     issues,
                     filter,
-                    attentionCount: issues.filter((issue) => issue.needsAttention).length,
+                    // "需你处理 N" counts the queue, not the chip currently selected:
+                    // counting after the filter made the badge read 0 whenever the
+                    // admin was looking at "处理中".
+                    attentionCount: totals.attention,
+                    totals,
                     cursor: result.cursor,
                     listComplete: result.listComplete,
                     legacyMigrationPending: Boolean(result.legacyMigrationPending),
@@ -12814,15 +12997,23 @@ export default {
                 });
                 if (!result) return errorResponse('Not found', 404, headers);
 
+                // §19/SCN-FWB-025: a decision changes the Issue, the timeline and
+                // the next-step card at once. Returning the same aggregate the
+                // detail pane already knows how to render turns "approve" from
+                // POST-then-refetch into a single round trip.
+                const snapshot = await readFeedbackWorkbenchSnapshot(request, env, result.issueId, {
+                    isAdmin,
+                });
+                if (!snapshot) return errorResponse('Not found', 404, headers);
+
                 return jsonResponse(
                     {
                         action: result.action,
                         delivery: result.delivery,
                         resumeState: result.resumeState,
                         workflowTermination: result.workflowTermination,
-                        issue: isAdmin
-                            ? serializeAdminIssue(result.issue)
-                            : serializePublicIssue(result.issue, true),
+                        issue: snapshot.issue,
+                        snapshot,
                     },
                     { headers }
                 );
