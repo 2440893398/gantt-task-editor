@@ -86,6 +86,44 @@ function readOnlyResult(rev) {
     });
 }
 
+/**
+ * `?project=<id>` 指向的项目在本设备不存在时，页面回退到了另一个项目。读命令照常
+ * 放行（Agent 需要 project.list 才能自救），写命令一律拒绝——否则数据会静默落进
+ * 一个用户根本没打算写的项目里，且双方都看不出来。`project.*` 是恢复通道，不拦。
+ * 见 SCN-AGT-035。
+ */
+function projectNotResolvedResult(rev) {
+    const resolution = state.projectResolution || {};
+    return fail(
+        'PROJECT_NOT_FOUND',
+        `Project "${resolution.requested}" from the page URL does not exist in this browser profile.`,
+        {
+            hint: 'SUSPECT THE BROWSER CHANNEL FIRST. An in-app browser, an isolated automation profile, or a different preview origin all present a valid but unrelated data world, and an empty one is auto-filled with a default project so it looks like a normal fresh install. Do NOT create a project to work around this. Compare localProjects below with the project the user named: if it is missing, stop and report the channel problem. To proceed deliberately, call project.switch with confirmProjectName set to the exact project name the user gave you.',
+            requestedProjectId: resolution.requested,
+            openedProjectId: resolution.resolved,
+            localProjects: state.projects.map((project) => project.name),
+            nextAction: {
+                command: 'project.list',
+                args: {},
+                reason: 'List the projects that actually exist in this browser profile before doing anything else.',
+            },
+            rev,
+        }
+    );
+}
+
+// 恢复通道刻意不含 project.create：请求的项目在本设备不存在时，"新建一个"从来不是
+// 恢复，而是把错误的数据世界坐实（SCN-AGT-037）。
+const PROJECT_RECOVERY_COMMANDS = new Set(['project.list', 'project.switch']);
+
+function isProjectRecoveryCommand(name) {
+    return PROJECT_RECOVERY_COMMANDS.has(name);
+}
+
+function hasUnresolvedProject() {
+    return state.projectResolution?.reason === 'not_found';
+}
+
 async function getRuntimeRevision(kind, context, policyScope = {}) {
     if (kind === 'schema') {
         if (typeof context.getSchemaRev === 'function') return context.getSchemaRev();
@@ -351,6 +389,10 @@ async function dispatchUnlocked(name, args = {}, context = {}) {
 
     if (command.mutating && context.readOnly) {
         return readOnlyResult(getProjectRev(projectId));
+    }
+
+    if (command.mutating && hasUnresolvedProject() && !isProjectRecoveryCommand(command.name)) {
+        return projectNotResolvedResult(getProjectRev(projectId));
     }
 
     try {
@@ -813,6 +855,11 @@ async function batchUnlocked(steps = [], context = {}) {
 
     if (context.readOnly) {
         result = readOnlyResult(currentRev);
+        return result;
+    }
+
+    if (hasUnresolvedProject()) {
+        result = projectNotResolvedResult(currentRev);
         return result;
     }
 

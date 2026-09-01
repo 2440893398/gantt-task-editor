@@ -1,4 +1,5 @@
 import { defineConfig, loadEnv } from 'vite';
+import { agentSkillPlugin } from './scripts/build-agent-skill.mjs';
 
 const DEFAULT_FEEDBACK_API_URL = 'https://gantt-share.ch451314.workers.dev';
 
@@ -33,6 +34,7 @@ export default defineConfig(({ mode }) => {
             'import.meta.env.VITE_FEEDBACK_API_URL': JSON.stringify(feedbackApiUrl),
         },
         plugins: [
+            agentSkillPlugin(),
             {
                 name: 'cn-html-assets',
                 transformIndexHtml: {

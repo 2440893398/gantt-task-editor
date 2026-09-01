@@ -3063,6 +3063,24 @@ async function updateD1FeedbackIssue(env, key, patch) {
     }
 
     const beforeWorkflow = normalizeWorkflow(issue);
+    // SCN-FWB-021：`ready_for_deploy` 是枚举的合法成员，但「把 Issue **移进**
+    // 它」不是这条路径的合法动作。该状态的语义是「某个准确的 Candidate
+    // 已获批准」，而 §21.4 要求批准必须点名 candidateId——永远不能是一次裸
+    // PATCH。放行它不只是绕开审批：裸 PATCH 不会把 Candidate 置 `approved`，
+    // 而 §17.2 那条兜底扫描又只收 `c.status = 'approved'`，于是反馈永远写着
+    // 「待交付」却没任何东西在跑。同 SCN-FWB-042 拦 `implementation_approved`：
+    // 没有对应审批记录的授权不能从这条路径独立成立。写入它的唯一合法者
+    // 是 respondToHumanAction（`POST /api/feedback/human-actions/:id/respond`）。
+    //
+    // 拦「移进」而不是拦「取值」：旧版管理页的表单会把当前状态原样回传，
+    // 拦取值会让已在 `ready_for_deploy` 的 Issue 连公开回复都改不了。
+    if (
+        Object.hasOwn(workflowPatch, 'status') &&
+        workflowPatch.status === 'ready_for_deploy' &&
+        beforeWorkflow.status !== 'ready_for_deploy'
+    ) {
+        throw feedbackStorageError('FEEDBACK_STATUS_REQUIRES_CANDIDATE_APPROVAL');
+    }
     const updatedAt = new Date().toISOString();
     const afterWorkflow = {
         ...beforeWorkflow,
@@ -6716,6 +6734,27 @@ async function deliverFeedbackCandidate(env, candidateId, { actorType }) {
     if (candidate.status === 'abandoned') {
         throw feedbackStorageError('FEEDBACK_CANDIDATE_ABANDONED');
     }
+
+    // 批准已经建过 Release 了（respondToHumanAction 里那一下），所以这里是重入：
+    // 管理员手动重推、客户端重试、或者旧版 UI 的第二步。此时候选已是
+    // `integrating`、Issue 已是 `testing`，再跑一遍前置条件只会报
+    // FEEDBACK_CANDIDATE_NOT_APPROVED——把「已经在交付了」误报成「没批准」。
+    // 回现有 Release（token 重铸，长交付不受 TTL 限制，同 claimFeedbackExecutorRelease）。
+    const liveRelease = await env.FEEDBACK_DB.prepare(
+        `SELECT * FROM feedback_releases
+         WHERE candidate_id = ? AND status IN ('integrating', 'merged', 'deploying', 'smoke_testing')
+         ORDER BY started_at DESC LIMIT 1`
+    )
+        .bind(candidateId)
+        .first();
+    if (liveRelease) {
+        return {
+            ...feedbackReleaseFromRow(liveRelease),
+            releaseToken: await createFeedbackReleaseToken(env, liveRelease.id),
+            alreadyCreated: true,
+        };
+    }
+
     if (candidate.status !== 'approved') {
         throw feedbackStorageError('FEEDBACK_CANDIDATE_NOT_APPROVED');
     }
@@ -8759,6 +8798,33 @@ async function respondToHumanAction(
             .run();
     }
 
+    // §14.6 step 1：交付锁要对「verified `auto_deliver`」和「人工批准的
+    // `ready_for_deploy`」两种 Candidate 一视同仁，批准就建 Release。少了这一下，
+    // 批准只把 Issue 翻到 `ready_for_deploy` 就断了：`feedback_releases` 里没行，
+    // `POST /api/executor/release` 永远认领不到东西，执行器在旁边空转，反馈停在
+    // 「待交付」直到每日 reconcile（`0 3 * * *`）把它当「丢了交付锁」扫出来。
+    // 生产实录 2026-08-31：两条已批准 Candidate，feedback_releases 零行。
+    //
+    // 走 resume 而不是直接 deliver：它已经把幂等（同一 Candidate 重复批准不会建
+    // 第二个 Release）与交付锁被占（排队，等 reconcile 重试）都处理完了。
+    // 交付派发失败不能推翻批准本身——那是人做的决定且已落库，
+    // 失败原因原样回给调用方。
+    let autoDelivery = null;
+    if (approvedCandidate) {
+        try {
+            autoDelivery = await resumeFeedbackAutoDeliveryCandidate(env, {
+                run: { id: activeRunId, issue_id: action.issueId },
+                candidate: { id: candidateId },
+            });
+        } catch (error) {
+            autoDelivery = {
+                dispatched: false,
+                resumable: true,
+                reason: String(error?.code || error?.message || 'FEEDBACK_RELEASE_DISPATCH_FAILED'),
+            };
+        }
+    }
+
     const workflowTermination = isTerminalDecision
         ? await terminateFeedbackWorkflowInstance(env, activeWorkflowId)
         : null;
@@ -8792,6 +8858,7 @@ async function respondToHumanAction(
         action: { ...action, status: 'resolved', resolvedAt: occurredAt },
         eventId,
         approvedCandidateId: approvedCandidate ? candidateId : null,
+        autoDelivery,
         decidedDesignId: decidedDesign ? designId : null,
         designStatus,
         workflowTermination,
@@ -11940,7 +12007,7 @@ function renderFeedbackBoardPage(apiBase = '') {
               <div class="field"><div class="label">已检查证据</div><div class="value">\${esc(decision.evidence)}</div></div>
               <div class="field"><div class="label">返回路径</div><div class="value">\${esc(decision.returnPath)}</div></div>
             </div>
-            \${isAdminDetail ? '<div class="decision-actions"><button type="button" class="primary" data-quick-status="ready_for_deploy">批准并设为待部署</button><button type="button" data-quick-status="queued">退回排队</button><button type="button" class="danger-button" data-quick-status="closed">关闭</button></div>' : ''}
+            \${isAdminDetail ? '<div class="decision-actions"><button type="button" data-quick-status="queued">退回排队</button><button type="button" class="danger-button" data-quick-status="closed">关闭</button></div><div class="decision-copy" style="margin-top:8px">审批候选实现请去工作台（<code>/feedback</code>）：批准要点名具体的 candidateId，这个旧页面只能改状态字段，做不了审批。</div>' : ''}
           </section>
 
           <section class="panel-card">
@@ -13010,6 +13077,11 @@ export default {
                     {
                         action: result.action,
                         delivery: result.delivery,
+                        // §14.6 step 1：批准同时建 Release。派发结果跟着应答回去，
+                        // 否则「批准了但交付锁被占」与「批准了且已开始集成」在前端
+                        // 长得一模一样。
+                        autoDelivery: result.autoDelivery,
+                        approvedCandidateId: result.approvedCandidateId,
                         resumeState: result.resumeState,
                         workflowTermination: result.workflowTermination,
                         issue: snapshot.issue,

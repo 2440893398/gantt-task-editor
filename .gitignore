@@ -89,3 +89,7 @@ docs/tmp/
 # M0 技术验证 PoC（可丢弃，不进主干；见
 # src/features/feedback/feedback-platform-v3-implementation-plan.md §M0）
 packages/feedback-platform/poc/
+
+# 构建期生成的 agent skill（由 scripts/build-agent-skill.mjs 产出，手改会被覆盖）
+public/agent-skill.md
+public/agent-skill/

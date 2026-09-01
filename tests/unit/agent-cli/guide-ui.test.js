@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { initAgentCli } from '../../../src/features/agent-cli/index.js';
 import { clearCommandsForTest } from '../../../src/features/agent-cli/registry.js';
 import {
+    AGENT_CHANNEL_RULES,
     buildAgentInstruction,
     buildAgentSkillMarkdown,
     initAgentGuideUi,
@@ -155,61 +156,30 @@ describe('agent guide ui', () => {
         vi.restoreAllMocks();
     });
 
-    it('builds a concise instruction with a bounded fast path', () => {
-        const pageUrl = 'https://example.com/gantt/project-alpha?agentReadOnly=1#today';
-        const manifest = createAppStub().manifest();
-        manifest.commands.push(
-            { name: 'project.create', summary: 'Create project', mutating: true },
-            { name: 'project.switch', summary: 'Switch project', mutating: true }
-        );
-        const instruction = buildAgentInstruction({
-            manifest,
-            pageUrl,
-        });
+    // 契约变更（2026-08-31）：细则整体移入分层 skill（入口 + 按触发条件的分片），
+    // 提示词只负责指路 + 兜底。断言随之从"含全部细则"改为"含指路与最小安全核"。
+    // 搬走的内容在 agent-skill-content.test.js 里继续被断言，覆盖没有丢。
+    it('builds a pointer-sized instruction instead of inlining the whole protocol', () => {
+        const pageUrl = 'https://example.com/gantt/?project=prj_1';
+        const instruction = buildAgentInstruction({ pageUrl });
 
         expect(instruction).toContain(pageUrl);
         expect(instruction).toContain('先打开这个页面地址');
-        expect(instruction).toContain('window.app');
-        expect(instruction).toContain('window.app.manifest()');
-        expect(instruction).toContain("window.app.help('task.create')");
-        expect(instruction).toContain('form.describe');
-        expect(instruction).toContain('nextAction');
-        expect(instruction).toContain('Do not inspect source code');
-        expect(instruction).toContain('dryRun');
-        expect(instruction).toContain('ifRev');
-        expect(instruction).toContain('CONFLICT');
-        expect(instruction).toContain('不要直接操作 DOM');
-        expect(instruction).toContain('#agent-guide-command-input');
-        expect(instruction).toContain('#agent-guide-run-command');
-        expect(instruction).toContain('task.create');
-        expect(instruction).toContain('project.create');
-        expect(instruction).toContain('project.switch');
-        expect(instruction).toContain('一次 batch');
-        expect(instruction).toContain('只尝试一次');
-        expect(instruction).toContain('不要先调用 help/manifest');
-        expect(instruction.length).toBeLessThan(2000);
+        expect(instruction).toContain('/agent-skill.md?v=');
+        expect(instruction).toContain('不要预读');
+        // 省下来的预算不许被下一个需求吃回去。
+        expect(instruction.length).toBeLessThan(700);
     });
 
-    it('includes the target page URL in generated Skill.md content', () => {
-        const pageUrl = 'https://example.com/gantt/project-alpha';
+    it('hands out the layered skill entry, with absolute shard URLs', () => {
         const skillMarkdown = buildAgentSkillMarkdown({
-            manifest: createAppStub().manifest(),
-            pageUrl,
+            pageUrl: 'https://example.com/gantt/project-alpha',
         });
 
-        expect(skillMarkdown).toContain(pageUrl);
-        expect(skillMarkdown).toContain('Open this page first');
-        expect(skillMarkdown).toContain('window.app');
-        expect(skillMarkdown).toContain('#agent-guide-command-input');
-        expect(skillMarkdown).toContain('operation.start');
-        expect(skillMarkdown).toContain('idempotencyKey');
-        expect(skillMarkdown).toContain('Do not call help or manifest before known commands');
-        expect(skillMarkdown).toContain("window.app.help('task.create')");
-        expect(skillMarkdown).toContain('form.describe');
-        expect(skillMarkdown).toContain('nextAction');
-        expect(skillMarkdown).toContain('Do not inspect source code');
-        expect(skillMarkdown).toContain('Try the visible runner once');
-        expect(skillMarkdown).toContain('one batch dry-run');
+        expect(skillMarkdown).toContain('https://example.com/agent-skill/batch-import.md');
+        expect(skillMarkdown).toContain('按触发条件读');
+        // 入口不许含命令清单：那是动态的，写进文件必然过期。
+        expect(skillMarkdown).not.toContain('(mutating)');
     });
 
     it('injects a toolbar entry, first-run hint, and opens the guide panel', () => {
@@ -519,5 +489,49 @@ describe('agent guide ui', () => {
 
         expect(document.getElementById('agent-guide-btn')).toBeNull();
         expect(globalThis.app).toBeUndefined();
+    });
+});
+
+/**
+ * SCN-AGT-036 —— 这组在什么坏行为下会失败：两份产出各自维护一份通道规则并开始漂移；
+ * 或规则里丢掉"运行时自报家门"（预检与实际连接之间没有原子性，只靠静态预检会重演
+ * 静默降级）；或丢掉 PROJECT_NOT_FOUND 的处置（Agent 会用 project.create 绕过，
+ * 在错误的数据世界里合规地干完活）。
+ */
+describe('[SCN-AGT-036] agent channel rules', () => {
+    // 契约变更（2026-08-31）：规则改为只在 skill 入口逐字出现；提示词不再重复它，
+    // 而是指向 skill 并携带最小安全核——取不到 skill 时不至于变成空提示词。
+    it('[SCN-AGT-036] keeps the rules verbatim in the skill entry', () => {
+        expect(buildAgentSkillMarkdown({ pageUrl: 'https://example.test/' })).toContain(
+            AGENT_CHANNEL_RULES
+        );
+    });
+
+    it('[SCN-AGT-039] keeps a minimum safe core in the instruction for when the skill is unreachable', () => {
+        const instruction = buildAgentInstruction({ pageUrl: 'https://example.test/' });
+
+        expect(instruction).toContain('取不到这个地址就说出来');
+        expect(instruction).toMatch(/自报家门/);
+        expect(instruction).toMatch(/禁用内置浏览器 \/ IAB \/ 裸 playwright/);
+        expect(instruction).toMatch(/禁止用 project\.create 绕过/);
+    });
+
+    it('[SCN-AGT-036] states the preflight semantics, the runtime self-check and the NO-GO handling', () => {
+        expect(AGENT_CHANNEL_RULES).toMatch(/agent:preflight/);
+        expect(AGENT_CHANNEL_RULES).toMatch(/GO 只许可连接，不等于放行写入/);
+        expect(AGENT_CHANNEL_RULES).toMatch(/NO-GO 就停下/);
+        expect(AGENT_CHANNEL_RULES).toMatch(/location\.origin/);
+        expect(AGENT_CHANNEL_RULES).toMatch(/project\.list/);
+    });
+
+    it('[SCN-AGT-036] bans the isolated browsers for user-data work but not for tests', () => {
+        expect(AGENT_CHANNEL_RULES).toMatch(/禁用：内置浏览器、IAB、裸 playwright/);
+        expect(AGENT_CHANNEL_RULES).toMatch(/跑测试或自建自读的任务不受此限/);
+    });
+
+    it('[SCN-AGT-036] tells the agent how to handle PROJECT_NOT_FOUND without project.create', () => {
+        expect(AGENT_CHANNEL_RULES).toMatch(/禁止用 project\.create 绕过/);
+        expect(AGENT_CHANNEL_RULES).toMatch(/confirmProjectName/);
+        expect(AGENT_CHANNEL_RULES).toMatch(/writesUnlocked/);
     });
 });

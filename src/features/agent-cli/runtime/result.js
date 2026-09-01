@@ -8,6 +8,7 @@ export const ERROR_CODES = Object.freeze([
     'SCHEMA_CONFLICT',
     'POLICY_CONFLICT',
     'NOT_FOUND',
+    'PROJECT_NOT_FOUND',
     'CONFLICT',
     'CONSTRAINT',
     'CYCLE',

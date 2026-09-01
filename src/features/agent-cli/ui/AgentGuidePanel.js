@@ -1,4 +1,15 @@
 import { i18n } from '../../../utils/i18n.js';
+import {
+    AGENT_CHANNEL_RULES,
+    AGENT_MINIMUM_CORE,
+    SKILL_ENTRY_PATH,
+    SKILL_VERSION,
+    buildSkillEntry,
+} from '../agent-skill-content.js';
+
+// 页面内的两份产出（复制给人的指令、可下载 skill）与构建期的静态 /agent-skill.md
+// 共用 agent-skill-content.js 的同一批常量与渲染函数，避免三份拷贝各自漂移。
+export { AGENT_CHANNEL_RULES };
 
 const NUDGE_DISMISSED_KEY = 'gantt_agent_guide_nudge_dismissed';
 const STYLE_ID = 'agent-guide-ui-style';
@@ -43,126 +54,65 @@ function getTargetPageUrl(pageUrl) {
     return String(pageUrl || getCurrentPageUrl() || '').trim();
 }
 
-export function buildAgentInstruction({
-    manifest = { version: 1, commands: [] },
-    pageUrl = getCurrentPageUrl(),
-} = {}) {
+export function buildSkillUrl(pageUrl) {
+    const target = getTargetPageUrl(pageUrl);
+    if (!target) return '';
+    try {
+        const url = new URL(SKILL_ENTRY_PATH, target);
+        // 版本 query 只为诊断：skill 是静态资产、页面代码是另一条部署线，CN 还惯性
+        // 滞后。两边错配时 Agent 不做任何比对，但版本号让错配可诊断，而不是又一起
+        // 「每步合规、整体是错」的静默事故。
+        url.search = `v=${SKILL_VERSION}`;
+        return url.href;
+    } catch {
+        return '';
+    }
+}
+
+/**
+ * 用户复制粘贴的提示词。它只负责三件事：指向页面、指向规范、以及在规范取不到时兜底。
+ *
+ * 为什么这么短：细则全部移进了分层 skill（入口 + 按触发条件的分片），用户不必再复制
+ * 两千字，Agent 也不必把用不上的内容读进上下文。省下的预算刻意不再填回去。
+ */
+export function buildAgentInstruction({ pageUrl = getCurrentPageUrl() } = {}) {
     const targetPageUrl = getTargetPageUrl(pageUrl);
+    const skillUrl = buildSkillUrl(targetPageUrl);
     const pageAddressInstruction = targetPageUrl
         ? `页面地址：
 ${targetPageUrl}
 
-请先打开这个页面地址，等待页面加载完成，并确认 window.app 存在后再继续。`
+先打开这个页面地址，等 window.app 出现再继续。`
         : '请先确认浏览器已经打开目标 Gantt 页面，并确认 window.app 存在后再继续。';
-    const hasProjectCommands = ['project.create', 'project.switch'].every((name) =>
-        (manifest.commands || []).some((command) => command.name === name)
-    );
-    const projectWorkflow = hasProjectCommands
-        ? `需要新项目时：
-const created = await window.app.project.create({ name: '项目名', idempotencyKey: '稳定唯一值' });
-await window.app.project.switch({ id: created.data.project.id });
-// switch 返回时目标项目已加载，可立即调用 batch。`
-        : '当前 manifest 没有项目创建/切换命令时，不要尝试绕过；说明能力缺口。';
+
+    const skillSection = skillUrl
+        ? `完整操作规范（通道规则、批量导入、错误恢复、排期语义）：
+${skillUrl}
+
+先读它再执行。规范是分层的：入口很短，其余按触发条件分片——
+只读当前真正需要的那一份，不要预读，不要"先都看一遍"。`
+        : '页面地址未知时无法给出规范地址；先确认页面，再按下面的最小规则执行。';
 
     return `你正在操作支持 window.app 命令层的 Gantt 页面。目标是完成用户任务，不要只评估能力。
 
 ${pageAddressInstruction}
 
-快速路径：
-1. window.app 可用时直接执行目标命令；已知命令不要先调用 help/manifest。仅当命令或参数不明确时读取一次 await window.app.manifest()。
-2. 先读取完成任务所需的最小状态。解析附件在页面外完成，不要把原始文件交给命令层。
-3. 多任务新增把 task.create steps 合并为一次 batch；只在 batch 层做一次 dryRun，再用最新 ifRev 提交，不要逐条预览或逐条创建。
+${skillSection}
 
-${projectWorkflow}
-
-Progressive disclosure:
-- For a known command, execute it directly. If its parameters are unclear, call await window.app.help('task.create') and follow only the returned discovery entries needed for the current operation.
-- Before writing dynamic task values, call form.describe, then form.field/form.options only for unknown fields. Reuse schemaRev/policyRev for the write or batch.
-- When an error includes nextAction, call that read-only action before retrying. Do not inspect source code to guess dynamic configuration.
-
-安全规则：不要直接操作 DOM、IndexedDB、localStorage 或模拟拖拽。CONFLICT 等错误含 nextAction 时先执行该只读动作；没有恢复动作的 CONSTRAINT 才停止；需要回滚时用 session.undo()。
-
-兼容 fallback：若 typeof window.app === "undefined"，读取 #agent-api-discovery，打开 #agent-guide-btn，将 JSON 填入 #agent-guide-command-input，点击 #agent-guide-run-command，并从 #agent-guide-run-output 读取结果。fallback 只尝试一次；控件不可用或超时就报告阻塞，不要反复重开页面、切换浏览器或重复探测。`;
+${AGENT_MINIMUM_CORE}`;
 }
 
-export function buildAgentSkillMarkdown({
-    manifest = { version: 1, commands: [] },
-    pageUrl = getCurrentPageUrl(),
-} = {}) {
-    const targetPageUrl = getTargetPageUrl(pageUrl);
-    const targetPageSection = targetPageUrl
-        ? `Open this page first:
-
-${targetPageUrl}
-
-Wait until the page is loaded and \`window.app\` is available before running commands.`
-        : 'Use this skill after the browser is already on the target Gantt Task Editor page and `window.app` is available.';
-
-    return `---
-name: gantt-task-editor-agent
-description: Operate Gantt Task Editor pages through window.app command APIs.
----
-
-# Gantt Task Editor Agent Skill
-
-## Target Page
-
-${targetPageSection}
-
-Use this skill when the browser page exposes \`window.app\` and
-\`document.documentElement.dataset.agentApi === 'window.app'\`.
-
-## Browser Automation Fallback
-
-Some browser tools run page JavaScript checks in an isolated or read-only context. If
-\`typeof window.app\` returns \`"undefined"\` while the Gantt page is visibly loaded, do
-not assume the API is missing. Use the visible command runner instead:
-
-1. Click \`#agent-guide-btn\`.
-2. Fill \`#agent-guide-command-input\` with JSON, for example:
-
-\`\`\`json
-{
-  "command": "state.snapshot",
-  "args": { "level": "summary" }
-}
-\`\`\`
-
-3. Click \`#agent-guide-run-command\`.
-4. Read JSON from \`#agent-guide-run-output\`.
-
-Try the visible runner once. If its controls are unavailable or time out, report the
-blocker instead of reopening pages, switching browsers, or repeating discovery.
-
-Do not use \`javascript:\` URLs or mutate DOM, IndexedDB, or localStorage as a workaround.
-
-## Fast Path
-
-- Complete the user's requested task; do not stop after evaluating capabilities.
-- Do not call help or manifest before known commands. Read \`window.app.manifest()\`
-  once only when a command or parameter is unknown.
-- If a known command's parameters are unclear, call \`window.app.help('task.create')\` and
-  follow its discovery entries. For dynamic task fields, use \`form.describe\`, then
-  \`form.field\` or \`form.options\` only as needed.
-- If an error contains \`nextAction\`, call that read-only action before retrying.
-- Do not inspect source code to guess runtime fields, options, calendars, or policies.
-- Read only the minimum project state required for the task.
-- Never mutate DOM, IndexedDB, or localStorage directly.
-- For multiple task creates, use one batch dry-run and one batch commit with \`ifRev\`;
-  do not preview or create every task separately.
-- Parse attachments outside the page, then pass structured task steps to \`batch\`.
-- For long or large writes, prefer \`window.app.operation.start({ command, args, steps, idempotencyKey })\`, poll \`operation.status()\`, and read the final value with \`operation.result()\`.
-- Use \`operation.cancel()\` only as a best-effort cancellation request; if an operation already succeeded, use \`session.undo()\` instead.
-- Respect \`CONFLICT\` and \`CONSTRAINT\` errors.
-
-## Current Command Surface
-
-${(manifest.commands || [])
-    .map(
-        (command) => `- ${command.name}${command.mutating ? ' (mutating)' : ''}: ${command.summary}`
-    )
-    .join('\n')}
-`;
+export function buildAgentSkillMarkdown({ pageUrl = getCurrentPageUrl() } = {}) {
+    const target = getTargetPageUrl(pageUrl);
+    let baseUrl = '';
+    try {
+        baseUrl = target ? new URL(target).origin : '';
+    } catch {
+        baseUrl = '';
+    }
+    // 下载下来的 skill 与线上 /agent-skill.md 是同一份入口，只是索引印绝对地址，
+    // 这样装到别的 Agent 里也取得到分片。两种表示同源，不会漂移。
+    return buildSkillEntry({ baseUrl });
 }
 
 function copyText(value) {

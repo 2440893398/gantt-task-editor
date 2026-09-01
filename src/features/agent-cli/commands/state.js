@@ -34,6 +34,21 @@ function getRev(context) {
     return getProjectRev(context.projectId);
 }
 
+/**
+ * 每个读结果都自报家门（SCN-AGT-035）。没有这个，Agent 落到错项目时看到的
+ * `taskCount: 0` 与"这个项目本来就是空的"完全无法区分——这正是外部 Agent 排查
+ * 一小时的直接原因。`projectResolution` 仅在直达链接失效时出现。
+ */
+function getProjectIdentity(context) {
+    const projectId = context.projectId ?? state.currentProjectId ?? null;
+    const projectName = state.projects.find((item) => item.id === projectId)?.name ?? null;
+    const identity = { projectId, projectName };
+    if (state.projectResolution?.reason === 'not_found') {
+        identity.projectResolution = { ...state.projectResolution };
+    }
+    return identity;
+}
+
 function toCellValue(value) {
     if (value === undefined || value === null) {
         return '';
@@ -120,7 +135,7 @@ export function registerStateCommands() {
             },
             mutating: false,
             handler(args, context) {
-                return { rev: getRev(context) };
+                return { rev: getRev(context), ...getProjectIdentity(context) };
             },
         });
     }
@@ -137,6 +152,7 @@ export function registerStateCommands() {
                 const links = context.adapter.getLinks();
                 const summary = {
                     rev: getRev(context),
+                    ...getProjectIdentity(context),
                     taskCount: tasks.length,
                     linkCount: links.length,
                 };

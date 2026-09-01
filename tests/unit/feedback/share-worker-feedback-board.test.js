@@ -5522,6 +5522,142 @@ describe('feedback issue board Worker routes', () => {
         expect(body.issue.ai).toMatchObject({ businessType: 'improvement', scope: 'small' });
     });
 
+    /*
+     * SCN-FWB-021：`ready_for_deploy` 意思是「某个准确的 Candidate 已获批准」——
+     * §21.4 写死了它必须点名 candidateId，永远不能是一次裸 PATCH。
+     * 放行它不只是绕开审批：裸 PATCH 不会把 Candidate 置 `approved`，而 §17.2
+     * 那条兜底扫描又只收 `c.status = 'approved'`，于是反馈永远写着
+     * 「待交付」却没任何东西在跑。同 SCN-FWB-042 拦 `implementation_approved`：
+     * 没有审批记录的授权不能从这条路径独立成立。
+     */
+    it('[SCN-FWB-021] refuses a bare status patch into ready_for_deploy', async () => {
+        const updateEnv = createV2Env({
+            [feedbackKey]: JSON.stringify(createIssue()),
+        });
+        const sessionResponse = await request(
+            '/api/feedback/admin/session',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: 'admin-pass' }),
+            },
+            updateEnv
+        );
+        const session = await json(sessionResponse);
+        const response = await request(
+            `/api/feedback/issues/${encodeURIComponent(feedbackKey)}`,
+            {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${session.token}`,
+                },
+                // 带上 expectedVersion：否则 400 可能来自「缺版本号」而不是状态
+                // 校验，用例会在洞还开着时就转绿。
+                body: JSON.stringify({ expectedVersion: 1, status: 'ready_for_deploy' }),
+            },
+            updateEnv
+        );
+
+        expect(response.status).toBe(400);
+        // 拒绝发生在写入之前：一条 status.changed 都没落库，读回来的状态也没变。
+        expect(
+            Array.from(updateEnv.FEEDBACK_DB.tables.feedback_events.values()).filter(
+                (event) => event.type === 'status.changed'
+            )
+        ).toHaveLength(0);
+        const after = await json(
+            await request(
+                `/api/feedback/issues/${encodeURIComponent(feedbackKey)}`,
+                { headers: { Authorization: `Bearer ${session.token}` } },
+                updateEnv
+            )
+        );
+        expect(after.issue.workflow.status).not.toBe('ready_for_deploy');
+    });
+
+    it('[SCN-FWB-021] still saves an edit on an Issue already in ready_for_deploy', async () => {
+        // 旧版管理页的表单把当前状态原样回传。拦的是「移进」不是「取值」，
+        // 否则已经在待交付的反馈连公开回复都写不进去。
+        const updateEnv = createV2Env(
+            {},
+            { feedback_issues: [createD1IssueRow({ status: 'ready_for_deploy' })] }
+        );
+        const session = await json(
+            await request(
+                '/api/feedback/admin/session',
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password: 'admin-pass' }),
+                },
+                updateEnv
+            )
+        );
+        const headers = {
+            Authorization: `Bearer ${session.token}`,
+            'Content-Type': 'application/json',
+        };
+        const current = await json(
+            await request(
+                `/api/feedback/issues/${encodeURIComponent(feedbackKey)}`,
+                { headers },
+                updateEnv
+            )
+        );
+
+        const response = await request(
+            `/api/feedback/issues/${encodeURIComponent(feedbackKey)}`,
+            {
+                method: 'PATCH',
+                headers,
+                body: JSON.stringify({
+                    expectedVersion: current.issue.version,
+                    status: 'ready_for_deploy',
+                    publicNote: '已排入下一次发布。',
+                }),
+            },
+            updateEnv
+        );
+        const body = await json(response);
+
+        expect(response.status).toBe(200);
+        expect(body.issue.workflow.status).toBe('ready_for_deploy');
+        expect(body.issue.workflow.publicNote).toBe('已排入下一次发布。');
+    });
+
+    it('[SCN-FWB-021] still lets an admin patch the statuses it does own', async () => {
+        const updateEnv = createV2Env({
+            [feedbackKey]: JSON.stringify(createIssue()),
+        });
+        const sessionResponse = await request(
+            '/api/feedback/admin/session',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: 'admin-pass' }),
+            },
+            updateEnv
+        );
+        const session = await json(sessionResponse);
+        const response = await request(
+            `/api/feedback/issues/${encodeURIComponent(feedbackKey)}`,
+            {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${session.token}`,
+                },
+                body: JSON.stringify({ expectedVersion: 1, status: 'closed' }),
+            },
+            updateEnv
+        );
+        const body = await json(response);
+
+        expect(response.status).toBe(200);
+        expect(body.issue.workflow.status).toBe('closed');
+    });
+
     it('[SCN-FWB-003] requires an expected version for every admin patch', async () => {
         const updateEnv = createV2Env({
             [feedbackKey]: JSON.stringify(createIssue()),
@@ -5879,16 +6015,14 @@ describe('feedback issue board Worker routes', () => {
             statusEnv
         );
         const session = await json(sessionResponse);
-        const agentStatuses = [
-            'queued',
-            'testing',
-            'test_failed',
-            'needs_human',
-            'ready_for_deploy',
-        ];
+        // SCN-FWB-021：`ready_for_deploy` 不在可 PATCH 的那份里——它只能由审批
+        // （respondToHumanAction）写入，裸 PATCH 会被 400 拦下。它仍然是页面要
+        // 渲染的状态，所以下面的 HTML 断言里保留。
+        const patchableAgentStatuses = ['queued', 'testing', 'test_failed', 'needs_human'];
+        const agentStatuses = [...patchableAgentStatuses, 'ready_for_deploy'];
 
         let expectedVersion = 1;
-        for (const status of agentStatuses) {
+        for (const status of patchableAgentStatuses) {
             const updateResponse = await request(
                 `/api/feedback/issues/${encodeURIComponent(feedbackKey)}`,
                 {
@@ -8077,7 +8211,9 @@ describe('feedback workbench V2 routes', () => {
                 env
             )
         );
-        expect(approved.issue.workflow.status).toBe('ready_for_deploy');
+        expect(approved.approvedCandidateId).toBe('cnd_expected');
+        // §14.6 step 1：批准当场建 Release，所以 Issue 直接进 `testing`。
+        expect(approved.issue.workflow.status).toBe('testing');
     });
 
     it('[SCN-FWB-002] reports an event-driven health summary with no polling cron', async () => {
@@ -13194,24 +13330,56 @@ describe('feedback workbench V2 Candidate and Release', () => {
         expect(env.FEEDBACK_DB.tables.feedback_releases.size).toBe(0);
     });
 
-    it('[SCN-FWB-011] approval moves the Issue to ready_for_deploy, delivery to testing', async () => {
+    it('[SCN-FWB-011] approval alone creates the Release, without a second admin call', async () => {
+        const { env, candidateId, headers, releaseFetchSpy } = await createCandidateEnv();
+
+        const approved = await approveCandidate(env, headers, candidateId);
+
+        // §14.6 step 1：「人工批准的 ready_for_deploy Candidate」与 verified
+        // `auto_deliver` 走同一步——批准就取交付锁、建 Release。缺了它，
+        // 批准只把 Issue 翻到 ready_for_deploy 就断了：没有 Release 就没有
+        // /api/executor/release 可认领的行，执行器空转，反馈停在「待交付」
+        // 直到每日 reconcile 扫到。生产实录 2026-08-31：两条已批准
+        // Candidate，feedback_releases 零行。
+        expect(approved.autoDelivery).toEqual(
+            expect.objectContaining({ dispatched: true, mode: 'executor_pull' })
+        );
+        const releases = Array.from(env.FEEDBACK_DB.tables.feedback_releases.values());
+        expect(releases).toHaveLength(1);
+        expect(releases[0]).toEqual(
+            expect.objectContaining({ status: 'integrating', candidate_id: candidateId })
+        );
+        expect(env.FEEDBACK_DB.tables.feedback_candidates.get(candidateId).status).toBe(
+            'integrating'
+        );
+        // §19.2：批准不是「已解决」，是集成中。
+        expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe('testing');
+        // SCN-FWB-033：executor 拉取是唯一交付路径，控制面不发出站请求。
+        expect(releaseFetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('[SCN-FWB-011] a repeated admin deliver returns the same Release, not an error', async () => {
         const { env, candidateId, headers } = await createCandidateEnv();
 
         const approved = await approveCandidate(env, headers, candidateId);
-        expect(approved.issue.workflow.status).toBe('ready_for_deploy');
-        expect(env.FEEDBACK_DB.tables.feedback_candidates.get(candidateId).status).toBe('approved');
+        // §19.2：批准不能读作「已解决」，它进的是 `testing`。
+        expect(approved.issue.workflow.status).toBe('testing');
+        const releaseId = approved.autoDelivery.releaseId;
+        expect(releaseId).toBeTruthy();
 
-        const release = await json(
-            await request(
-                `/api/feedback/candidates/${candidateId}/deliver`,
-                { method: 'POST', headers },
-                env
-            )
+        // 手动重推（旧版 UI 的第二步、管理员重试）落在已建好的 Release 上：
+        // 回同一行并重铸 token，而不是把「已经在交付了」报成「候选未批准」。
+        const response = await request(
+            `/api/feedback/candidates/${candidateId}/deliver`,
+            { method: 'POST', headers },
+            env
         );
+        const release = await json(response);
 
-        expect(release.releaseId).toBeTruthy();
+        expect(response.status).toBe(201);
+        expect(release.releaseId).toBe(releaseId);
         expect(release.releaseToken.token).toBeTruthy();
-        // §19.2: approval must not read as "已解决"; it moves to testing.
+        expect(env.FEEDBACK_DB.tables.feedback_releases.size).toBe(1);
         expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe('testing');
         expect(env.FEEDBACK_DB.tables.feedback_candidates.get(candidateId).status).toBe(
             'integrating'
@@ -13245,7 +13413,10 @@ describe('feedback workbench V2 Candidate and Release', () => {
         );
 
         expect(replay.status).toBe(200);
-        expect(env.FEEDBACK_DB.tables.feedback_candidates.get(candidateId).status).toBe('approved');
+        // 批准已经把候选推进交付（§14.6 step 1），回放不能把它拉回去。
+        expect(env.FEEDBACK_DB.tables.feedback_candidates.get(candidateId).status).toBe(
+            'integrating'
+        );
         expect(env.FEEDBACK_DB.tables.feedback_human_actions.size).toBe(actionCount);
         expect(
             Array.from(env.FEEDBACK_DB.tables.feedback_human_actions.values()).filter(
@@ -13254,7 +13425,7 @@ describe('feedback workbench V2 Candidate and Release', () => {
         ).toHaveLength(0);
         expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey)).toEqual(
             expect.objectContaining({
-                status: 'ready_for_deploy',
+                status: 'testing',
                 active_candidate_id: candidateId,
             })
         );
@@ -13359,7 +13530,8 @@ describe('feedback workbench V2 Candidate and Release', () => {
         const { env, candidateId, headers, releaseFetchSpy } = await createCandidateEnv({
             changedFiles: ['src/features/feedback/diff-gate.js'],
         });
-        await approveCandidate(env, headers, candidateId);
+        // 锁先被别的 Issue 占着，所以批准本身建不成 Release——批准仍然成立，
+        // 交付排队等 reconcile。这正是 §17.2 那条扫描要兼的唯一缺口。
         env.FEEDBACK_DB.tables.feedback_releases.set('rel_other', {
             id: 'rel_other',
             issue_id: 'feedback:other',
@@ -13368,6 +13540,14 @@ describe('feedback workbench V2 Candidate and Release', () => {
             remote_default_branch: 'master',
             status: 'integrating',
         });
+
+        const approved = await approveCandidate(env, headers, candidateId);
+        expect(approved.autoDelivery).toEqual(
+            expect.objectContaining({ queued: true, reason: 'FEEDBACK_DELIVERY_LOCK_HELD' })
+        );
+        expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe(
+            'ready_for_deploy'
+        );
 
         const queued = await request(
             `/api/feedback/candidates/${candidateId}/deliver`,

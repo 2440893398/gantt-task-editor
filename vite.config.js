@@ -1,6 +1,10 @@
 import { defineConfig } from 'vite';
+import { agentSkillPlugin } from './scripts/build-agent-skill.mjs';
 
 export default defineConfig({
+    // 静态 agent skill 走插件而不是 npm prebuild 钩子：prebuild 不会在 build:cn 前
+    // 触发，CN 会带着旧 skill 静默上线。插件覆盖 build / build:cn / dev 三条路径。
+    plugins: [agentSkillPlugin()],
     // 开发服务器配置
     server: {
         host: '0.0.0.0',
