@@ -332,8 +332,19 @@ describe('[SCN-FWB-012] feedback diff gate', () => {
             // 授权在控制面下发（executor lease context 与 run context 同口径）：
             // 写入型 Run 就是可改契约的 Run，执行侧不自己决定。
             const worker = readProjectFile('workers/share-worker.js');
-            expect(worker).toContain(
-                'contractRunApproved:\n            FEEDBACK_WRITE_POLICIES.has(row.policy) || leaseGateGrant.contractRunApproved'
+            // 用正则而不是跨行字符串：`toContain('…:\n            FEEDBACK_…')` 连缩进
+            // 一起钉死了，于是任何一次纯格式重排都会让它以「业务回归」的形态摔——
+            // 报错读起来像授权链路被改坏，实际只是 prettier 换了个折行位置。
+            //
+            // 2026-09-01 一次完整交付就烧在这一行上（当时是 CRLF 把 `\n` 变成
+            // `\r\n`，候选自验证全绿、集成验证红）。`.gitattributes` 堵掉了行尾那条
+            // 路，缩进这条还开着，所以这里一并堵上。实测：把该赋值折成一行（语义
+            // 不变），旧写法当场失配，这条仍然通过。
+            //
+            // 断言的是「这个赋值取自 lease 授权，不是执行侧自己决定的」，
+            // 不是「它缩进几格」。`\s*` 只放开空白，两个操作数与顺序仍然钉死。
+            expect(worker).toMatch(
+                /contractRunApproved:\s*FEEDBACK_WRITE_POLICIES\.has\(row\.policy\) \|\| leaseGateGrant\.contractRunApproved/
             );
             expect(worker).toContain(
                 'contractRunApproved: writeCapableRun || gateGrant.contractRunApproved'
