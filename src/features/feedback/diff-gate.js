@@ -66,6 +66,8 @@ const VERIFICATION_WEAKENING_PATTERNS = [
     { code: 'DEEP_COMPARE_WEAKENED', pattern: /^-\s*.*\.\s*(?:toEqual|toStrictEqual)\s*\(/ },
 ];
 
+const ASSERTION_ADDED_PATTERN = /^\+\s*(?:await\s+)?expect\s*\(/;
+
 // docs/ai-development-quality-gates.md defines these as Tier 3 core flows.
 // Keep the list mechanical and conservative: an Agent cannot self-report a
 // lower tier to unlock autonomous delivery.
@@ -179,24 +181,47 @@ export function findVerificationWeakening(diffText) {
     const findings = [];
     const lines = String(diffText || '').split(/\r?\n/);
     let currentFile = '';
+    let hunkFindings = [];
+    let addedAssertions = 0;
+
+    const flushHunk = () => {
+        let replacementCredits = addedAssertions;
+        for (const finding of hunkFindings) {
+            if (finding.code === 'ASSERTION_REMOVED' && replacementCredits > 0) {
+                replacementCredits -= 1;
+                continue;
+            }
+            findings.push(finding);
+        }
+        hunkFindings = [];
+        addedAssertions = 0;
+    };
 
     for (const line of lines) {
         const header = line.match(/^\+\+\+ b\/(.+)$/);
         if (header) {
+            flushHunk();
             currentFile = normalizeDiffPath(header[1]);
+            continue;
+        }
+        if (line.startsWith('@@')) {
+            flushHunk();
             continue;
         }
         if (line.startsWith('+++') || line.startsWith('---')) continue;
         if (!line.startsWith('+') && !line.startsWith('-')) continue;
 
+        if (ASSERTION_ADDED_PATTERN.test(line)) addedAssertions += 1;
+
         for (const rule of VERIFICATION_WEAKENING_PATTERNS) {
             if (rule.pattern.test(line)) {
-                findings.push({ file: currentFile, code: rule.code, line: line.slice(0, 200) });
+                hunkFindings.push({ file: currentFile, code: rule.code, line: line.slice(0, 200) });
                 break;
             }
         }
     }
 
+    flushHunk();
     return findings;
 }
 
