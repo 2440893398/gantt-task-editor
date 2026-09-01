@@ -10,6 +10,15 @@
 #   - `npm run format:check` 在本机永远全红，真的格式问题被淹没在行尾差异里。
 #
 # eol=lf 让检出行为不再依赖每台机器的 autocrlf 设置。
+#
+# 注意：这份声明只管**新的**检出，修不了已经存在的工作树。CRLF 文件归一化后
+# 与 blob 一致，git 因此认为它干净，`reset --hard` 和 `checkout` 都不会重写它
+# ——旧工作树会一直带着 CRLF，假红照旧。每个已存在的工作树（含 executor-ws）
+# 要手工物化一次，在该工作树干净时执行：
+#
+#     git rm --cached -r . -q && git reset --hard
+#
+# tests/unit/build/line-endings.test.js 的第三条断言就是用来发现漏做的工作树的。
 * text=auto eol=lf
 
 # 二进制：不参与任何行尾转换。text=auto 的 NUL 启发式通常也能认出它们，
