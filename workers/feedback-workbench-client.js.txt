@@ -322,8 +322,30 @@
         return template.innerHTML;
     }
 
+    /* SCN-FWB-001：终端转义序列不是内容，在网页上既没有颜色也读不懂，只会把真正
+       的内容埋掉（2026-09-01 用户截图：一条 integration_verification_failed 回复
+       满屏 `[90m303| [39m`，失败原因全被埋在里面）。
+
+       执行器侧已在采集点剥离，但那管不到两条路径：已经入库的历史记录，以及 Agent
+       自己把别处终端输出粘进回复——后者根本不经过 runCommand。渲染器是这两条路径
+       唯一的共同出口。
+
+       只认带 ESC 的真序列：裸的 `[31m` 可能是 Markdown 链接的一部分，也可能就是
+       用户写的方括号，剥它等于篡改内容，比留着转义序列更糟。
+
+       这里不可避免是第二份实现——客户端脚本是 Worker 内联的 `<script>` 字符串、
+       没有模块图，import 不了执行器的 stripAnsi（与 vendored marked 同一约束）。
+       正则与 packages/feedback-platform/executor/verification.js 逐字一致，
+       改一处必须改另一处。 */
+    var ANSI_PATTERN =
+        /\u001B\[[0-9;?]*[ -/]*[@-~]|\u001B\][\s\S]*?(?:\u0007|\u001B\\)|\u001B[@-Z\\-_]/g;
+
+    function stripAnsi(value) {
+        return String(value == null ? '' : value).replace(ANSI_PATTERN, '');
+    }
+
     function renderMarkdown(value) {
-        var text = String(value == null ? '' : value);
+        var text = stripAnsi(value);
         if (!text.trim()) return '';
 
         var parser = window.marked;

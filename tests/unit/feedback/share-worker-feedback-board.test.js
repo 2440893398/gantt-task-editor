@@ -2733,6 +2733,55 @@ describe('feedback issue board Worker routes', () => {
         expect(body.textContent).not.toContain('不适用');
     });
 
+    function timelineEventRoutes(text) {
+        return ownerWorkbenchRoutes({
+            events: [
+                {
+                    id: 'evt_ansi',
+                    sequence: 1,
+                    type: 'agent.message',
+                    actorType: 'agent',
+                    visibility: 'public',
+                    occurredAt: '2026-09-01T03:00:00.000Z',
+                    text,
+                    changes: {},
+                },
+            ],
+        });
+    }
+
+    it('[SCN-FWB-001] 时间线正文剥掉终端转义序列，只留读得懂的内容', async () => {
+        // 坏行为：带 ANSI 的命令输出原样入库，时间线照单渲染成满屏 `[90m303| [39m`
+        // （2026-09-01 用户截图实录）。执行器侧已在采集点剥离，但那管不到两件事：
+        // 已经躺在库里的历史记录，以及 Agent 自己把别处终端输出粘进回复——后者
+        // 根本不经过 runCommand。渲染器是这两条路径唯一的共同出口。
+        const ESC = String.fromCharCode(27);
+        const dom = await openWorkbench(env, {
+            url: candidateUrl,
+            routes: timelineEventRoutes(
+                `${ESC}[31m1 failed${ESC}[39m | ${ESC}[32m160 passed${ESC}[39m`
+            ),
+        });
+        const timeline = dom.window.document.getElementById('timeline');
+        await waitFor(() => expect(timeline.textContent).toContain('160 passed'));
+
+        expect(timeline.textContent).not.toContain(ESC);
+        expect(timeline.textContent).toContain('1 failed | 160 passed');
+    });
+
+    it('[SCN-FWB-001] 不碰正文里合法的方括号——只认带 ESC 的真序列', async () => {
+        // 裸的 `[31m` 可能是 Markdown 链接的一部分，也可能就是用户写的方括号。
+        // 剥它等于篡改用户内容，比留着转义序列更糟。
+        const dom = await openWorkbench(env, {
+            url: candidateUrl,
+            routes: timelineEventRoutes('日志里写的是 [31m] 这种字面量，别动它'),
+        });
+        const timeline = dom.window.document.getElementById('timeline');
+        await waitFor(() => expect(timeline.textContent).toContain('字面量'));
+
+        expect(timeline.textContent).toContain('[31m]');
+    });
+
     it('[SCN-FWB-025] keeps unchanged queue rows and timeline entries as the same DOM nodes', async () => {
         // 坏行为：刷新时整块 `innerHTML =`。每个条目都被换成新节点，8 秒一次的自动
         // 同步因此能在 mousedown 和 click 之间抽掉指针下的那一项（点击落空），时间线
