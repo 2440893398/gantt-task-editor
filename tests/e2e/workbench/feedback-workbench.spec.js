@@ -1162,3 +1162,75 @@ test.describe('[SCN-FWB-011] 交付进度', () => {
         await expect(page.locator('#releaseCard')).toBeHidden();
     });
 });
+
+test.describe('[SCN-FWB-046] 工作台交互延迟', () => {
+    /**
+     * 机制规范第 7 条：命中区与滚动位置依赖真实布局，只认浏览器级验证。整块
+     * `innerHTML =` 会把每一个队列行换成新节点——刷新恰好落在指针底下时，那一次点击
+     * 就打在了一个已经脱离文档的节点上。滚动位置这里是回归护栏而不是修复对象：实测
+     * `innerHTML =` 是一次同步替换，中间不发生布局，`scrollTop` 本来就不会被清零，
+     * 所以这条断言防的是增量渲染自己在重排节点时把它弄丢。
+     */
+    test('[SCN-FWB-025] 刷新前拿到的队列行仍可点，滚动位置不变', async ({ page, request }) => {
+        const stamp = Date.now();
+        for (let index = 0; index < 4; index += 1) {
+            await createIssue(request, { title: `刷新稳定性 ${stamp}-${index}` });
+        }
+        await signInAsAdmin(page, await adminToken(request));
+        // 矮视口是让队列一定溢出的最省事办法：`.issue-list` 的高度跟着面板走。
+        await page.setViewportSize({ width: 1440, height: 400 });
+        await page.goto('/feedback');
+
+        await page.getByRole('button', { name: '全部', exact: true }).click();
+        await expect(page.locator('#issueList .issue-item').nth(3)).toBeAttached();
+
+        await page.locator('#issueList').evaluate((list) => {
+            list.scrollTop = list.scrollHeight;
+        });
+        const scrollBefore = await page.locator('#issueList').evaluate((list) => list.scrollTop);
+        expect(scrollBefore, '队列必须真的滚动起来，否则这个用例什么也没验证').toBeGreaterThan(0);
+
+        const row = await page.$('#issueList .issue-item:nth-child(2)');
+        const rowKey = await row.evaluate((node) => node.dataset.issue);
+
+        await Promise.all([
+            page.waitForResponse(
+                (response) =>
+                    response.url().includes('/api/feedback/issues?filter=all') &&
+                    response.status() === 200
+            ),
+            page.locator('#refreshButton').click(),
+        ]);
+        await expect(page.locator('#toast')).toContainText('工作台已刷新');
+
+        expect(await page.locator('#issueList').evaluate((list) => list.scrollTop)).toBe(
+            scrollBefore
+        );
+        // 同一个节点句柄：整块重建后它会脱离文档，click 会直接超时失败。
+        expect(await row.evaluate((node) => node.isConnected)).toBe(true);
+        await row.click();
+        await expect(page.locator(`#issueList .issue-item[data-issue="${rowKey}"]`)).toHaveClass(
+            /active/
+        );
+    });
+
+    test('[SCN-FWB-046] 切换状态筛选是本地重绘，不产生队列请求', async ({ page, request }) => {
+        await createIssue(request, { title: `筛选本地化 ${Date.now()}` });
+        await signInAsAdmin(page, await adminToken(request));
+        await page.goto('/feedback');
+        await expect(page.locator('#queueAttentionBadge')).toBeVisible();
+
+        const queueCalls = [];
+        page.on('request', (req) => {
+            if (req.url().includes('/api/feedback/issues?')) queueCalls.push(req.url());
+        });
+
+        await page.getByRole('button', { name: '全部', exact: true }).click();
+        await expect(page.locator('#issueList .issue-item').first()).toBeVisible();
+        await page.getByRole('button', { name: '处理中', exact: true }).click();
+        await page.getByRole('button', { name: '等我', exact: true }).click();
+        await page.waitForTimeout(500);
+
+        expect(queueCalls, '筛选切换必须是本地重绘，不产生队列请求').toEqual([]);
+    });
+});

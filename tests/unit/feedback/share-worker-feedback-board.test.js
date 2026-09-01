@@ -234,27 +234,62 @@ class MemoryD1 {
                 return { success: true, results: row ? [{ ...row }] : [] };
             }
 
+            if (
+                normalized.includes('count(*) as total') &&
+                normalized.includes('group by status')
+            ) {
+                const totals = new Map();
+                for (const row of this.tables.feedback_issues.values()) {
+                    totals.set(row.status, (totals.get(row.status) || 0) + 1);
+                }
+                return {
+                    success: true,
+                    results: Array.from(totals, ([status, total]) => ({ status, total })),
+                };
+            }
+
+            // §19.1 的队列次序：rank 升、updated_at 降、id 降。rank 直接从被测 SQL 的
+            // CASE 里读出来，这样这个替身不可能和 Worker 的 FEEDBACK_QUEUE_RANKS 走散。
+            const rankOf = (value) => {
+                const match = normalized.match(new RegExp(`when '${value}' then (\\d+)`));
+                return match ? Number(match[1]) : 9;
+            };
             const status = normalized.includes('where status = ?') ? values[0] : '';
-            const hasCursor = normalized.includes('created_at < ?');
+            const hasCursor = normalized.includes('updated_at < ?');
             const cursorOffset = status ? 1 : 0;
-            const cursorCreatedAt = hasCursor ? values[cursorOffset] : '';
-            const cursorId = hasCursor ? values[cursorOffset + 2] : '';
+            const cursorRank = hasCursor ? Number(values[cursorOffset]) : 0;
+            const cursorUpdatedAt = hasCursor ? values[cursorOffset + 2] : '';
+            const cursorId = hasCursor ? values[cursorOffset + 4] : '';
             const limit = Number(values[values.length - 1]) || 100;
             const rows = Array.from(this.tables.feedback_issues.values())
                 .filter((row) => !status || row.status === status)
-                .filter(
-                    (row) =>
-                        !hasCursor ||
-                        row.created_at < cursorCreatedAt ||
-                        (row.created_at === cursorCreatedAt && row.id < cursorId)
-                )
+                .filter((row) => {
+                    if (!hasCursor) return true;
+                    const rank = rankOf(row.status);
+                    if (rank > cursorRank) return true;
+                    if (rank < cursorRank) return false;
+                    return (
+                        String(row.updated_at) < cursorUpdatedAt ||
+                        (String(row.updated_at) === cursorUpdatedAt && row.id < cursorId)
+                    );
+                })
+                // 必须照着被测 SQL 的 ORDER BY 排，不能一律按 rank：替身若无视次序，
+                // 「分页按展示次序切」这条断言验的就是替身自己，改回旧次序也照样绿。
                 .sort(
-                    (a, b) =>
-                        String(b.created_at).localeCompare(String(a.created_at)) ||
-                        String(b.id).localeCompare(String(a.id))
+                    normalized.includes('order by case status')
+                        ? (a, b) =>
+                              rankOf(a.status) - rankOf(b.status) ||
+                              String(b.updated_at).localeCompare(String(a.updated_at)) ||
+                              String(b.id).localeCompare(String(a.id))
+                        : (a, b) =>
+                              String(b.created_at).localeCompare(String(a.created_at)) ||
+                              String(b.id).localeCompare(String(a.id))
                 )
                 .slice(0, limit);
-            return { success: true, results: rows.map((row) => ({ ...row })) };
+            return {
+                success: true,
+                results: rows.map((row) => ({ ...row, queue_rank: rankOf(row.status) })),
+            };
         }
 
         if (
@@ -2176,6 +2211,509 @@ describe('feedback issue board Worker routes', () => {
         ).toBe(true);
     });
 
+    /**
+     * SCN-FWB-046 的队列夹具：一条等人处理、一条处理中，覆盖「等我 / 处理中 / 全部」
+     * 三个 chip 各自应该看到什么。
+     */
+    function adminQueueFixture() {
+        const attentionKey = feedbackKey;
+        const activeKey = 'feedback:queue-active';
+        const summary = (key, title, status) => ({
+            key,
+            title,
+            descriptionPreview: title,
+            receivedAt: '2026-08-30T08:00:00.000Z',
+            updatedAt: '2026-08-30T08:00:00.000Z',
+            version: 1,
+            status,
+            priority: 'medium',
+            businessType: 'bug',
+        });
+        const snapshot = (key, title, status, events) => ({
+            changed: true,
+            version: 1,
+            issue: { ...summary(key, title, status), description: title, attachments: [] },
+            events: events || [],
+            humanActions: [],
+            designs: [],
+            candidates: [],
+            releases: [],
+        });
+        const event = (id, sequence, text) => ({
+            id,
+            sequence,
+            type: 'comment.created',
+            actorType: 'user',
+            visibility: 'public',
+            occurredAt: `2026-08-30T08:0${sequence}:00.000Z`,
+            text,
+            changes: {},
+            attachments: [],
+        });
+
+        return {
+            attentionKey,
+            activeKey,
+            event,
+            routes: {
+                '/api/feedback/issues?filter=all&limit=100': {
+                    issues: [
+                        summary(attentionKey, '等我处理的 Issue', 'needs_human'),
+                        summary(activeKey, '正在处理的 Issue', 'in_progress'),
+                    ],
+                    filter: 'all',
+                    attentionCount: 1,
+                },
+                [`/api/feedback/issues/${encodeURIComponent(attentionKey)}/snapshot`]: snapshot(
+                    attentionKey,
+                    '等我处理的 Issue',
+                    'needs_human',
+                    [event('evt_1', 1, '第一条'), event('evt_2', 2, '第二条')]
+                ),
+                [`/api/feedback/issues/${encodeURIComponent(activeKey)}/snapshot`]: snapshot(
+                    activeKey,
+                    '正在处理的 Issue',
+                    'in_progress',
+                    [event('evt_9', 1, '另一条 Issue 的时间线')]
+                ),
+            },
+        };
+    }
+
+    function queueTitles(dom) {
+        return Array.from(dom.window.document.querySelectorAll('#issueList .issue-item')).map(
+            (node) => node.querySelector('.issue-item-title span').textContent
+        );
+    }
+
+    it('[SCN-FWB-046] switches the status filter locally without another queue request', async () => {
+        // 坏行为：每点一次 chip 就重新取一次队列。三个筛选是同一批 Issue 的子集，
+        // 服务端也是先取队列再按状态过滤，所以那次往返（生产实测 800–1230ms）换回来的
+        // 是客户端本来就有的数据。
+        const fixture = adminQueueFixture();
+        const dom = await openWorkbench(env, {
+            routes: fixture.routes,
+            setupWindow(window) {
+                window.sessionStorage.setItem('feedback.workbench.adminToken', 'admin-token');
+            },
+        });
+
+        await waitFor(() => expect(queueTitles(dom)).toEqual(['等我处理的 Issue']));
+        const requestsBeforeFilter = dom.requests.length;
+
+        const chip = (filter) =>
+            dom.window.document.querySelector(`.filter-chip[data-filter="${filter}"]`);
+        chip('active').click();
+        await waitFor(() => expect(queueTitles(dom)).toEqual(['正在处理的 Issue']));
+
+        chip('all').click();
+        await waitFor(() =>
+            expect(queueTitles(dom)).toEqual(['等我处理的 Issue', '正在处理的 Issue'])
+        );
+
+        chip('attention').click();
+        await waitFor(() => expect(queueTitles(dom)).toEqual(['等我处理的 Issue']));
+
+        expect(dom.requests.length).toBe(requestsBeforeFilter);
+        expect(dom.requests.map((entry) => entry.path)).not.toContain(
+            '/api/feedback/issues?filter=active'
+        );
+        // 「需你处理 N」是整个队列的口径，不随 chip 变。
+        expect(dom.window.document.getElementById('queueAttentionBadge').textContent).toBe(
+            '需你处理 1'
+        );
+    });
+
+    it('[SCN-FWB-047] says how many queue rows did not fit instead of quietly showing fewer', async () => {
+        // 坏行为：徽标用全表口径、列表只有一页，两个数字对不上却什么都不说。本地筛选
+        // 之后这个落差全落在用户眼前——「需你处理 5」配着 2 条列表，差的 3 条看起来
+        // 就像被系统吞了。
+        const fixture = adminQueueFixture();
+        const routes = { ...fixture.routes };
+        routes['/api/feedback/issues?filter=all&limit=100'] = {
+            ...routes['/api/feedback/issues?filter=all&limit=100'],
+            attentionCount: 5,
+            totals: { all: 40, attention: 5, active: 9 },
+            listComplete: false,
+            cursor: 'next-page',
+        };
+
+        const dom = await openWorkbench(env, {
+            routes,
+            setupWindow(window) {
+                window.sessionStorage.setItem('feedback.workbench.adminToken', 'admin-token');
+            },
+        });
+        const document_ = dom.window.document;
+        const notice = document_.getElementById('queueTruncation');
+
+        // 默认停在「等我」：全表 5 条，这一页只带回 1 条。
+        await waitFor(() => expect(notice.hidden).toBe(false));
+        expect(document_.getElementById('queueAttentionBadge').textContent).toBe('需你处理 5');
+        expect(notice.textContent).toContain('4');
+
+        document_.querySelector('.filter-chip[data-filter="active"]').click();
+        expect(notice.hidden).toBe(false);
+        expect(notice.textContent).toContain('8');
+
+        // 搜索是在已载入的那部分里找，说「还有 N 条未载入」会把它读成搜索结果不全。
+        document_.getElementById('issueSearch').value = '正在';
+        document_
+            .getElementById('issueSearch')
+            .dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+        expect(notice.hidden).toBe(true);
+    });
+
+    it('[SCN-FWB-047] opens the issue named in the URL instead of whatever sits at the top of the queue', async () => {
+        // 队列按优先级排序之后，「刚建的那条恰好在最前面」不再成立——而那本来也不是
+        // 打开一条指定 Issue 的方式。管理员拿着 `#issue=<id>` 进来必须落在那一条上。
+        const fixture = adminQueueFixture();
+        const dom = await openWorkbench(env, {
+            url: `https://worker.test/feedback#issue=${encodeURIComponent(fixture.activeKey)}`,
+            routes: fixture.routes,
+            setupWindow(window) {
+                window.sessionStorage.setItem('feedback.workbench.adminToken', 'admin-token');
+            },
+        });
+        const document_ = dom.window.document;
+
+        await waitFor(() =>
+            expect(document_.getElementById('timeline').textContent).toContain(
+                '另一条 Issue 的时间线'
+            )
+        );
+        expect(document_.getElementById('issueTitle').textContent).toContain('正在处理的 Issue');
+        // 队列默认停在「等我」，目标 Issue 是 in_progress——它不在当前筛选里，但
+        // 明确点名的那一条仍然要打开。
+        expect(
+            dom.requests.some((entry) => entry.path.includes(encodeURIComponent(fixture.activeKey)))
+        ).toBe(true);
+    });
+
+    it('[SCN-FWB-047] stays silent when the queue fits in one page', async () => {
+        const fixture = adminQueueFixture();
+        const routes = { ...fixture.routes };
+        routes['/api/feedback/issues?filter=all&limit=100'] = {
+            ...routes['/api/feedback/issues?filter=all&limit=100'],
+            totals: { all: 2, attention: 1, active: 1 },
+            listComplete: true,
+        };
+
+        const dom = await openWorkbench(env, {
+            routes,
+            setupWindow(window) {
+                window.sessionStorage.setItem('feedback.workbench.adminToken', 'admin-token');
+            },
+        });
+        const document_ = dom.window.document;
+
+        await waitFor(() =>
+            expect(document_.querySelectorAll('#issueList .issue-item')).toHaveLength(1)
+        );
+        expect(document_.getElementById('queueTruncation').hidden).toBe(true);
+    });
+
+    it('[SCN-FWB-046] shows the target issue and a skeleton instead of leaving the previous timeline up', async () => {
+        // 坏行为：等聚合请求回来之前详情区原样不动。生产实测这段停顿 2.1 秒，期间
+        // 标题、时间线、下一步全是上一条 Issue 的——和「点了没反应」无法区分。
+        const fixture = adminQueueFixture();
+        const routes = { ...fixture.routes };
+        let releaseSnapshot;
+        const pendingSnapshot = new Promise((resolve) => {
+            releaseSnapshot = resolve;
+        });
+        const activeSnapshotPath = `/api/feedback/issues/${encodeURIComponent(
+            fixture.activeKey
+        )}/snapshot`;
+        const activeSnapshot = routes[activeSnapshotPath];
+        routes[activeSnapshotPath] = () => pendingSnapshot;
+        routes['/api/feedback/issues?filter=all&limit=100'] = {
+            ...routes['/api/feedback/issues?filter=all&limit=100'],
+        };
+
+        const dom = await openWorkbench(env, {
+            routes,
+            setupWindow(window) {
+                window.sessionStorage.setItem('feedback.workbench.adminToken', 'admin-token');
+            },
+        });
+        const document_ = dom.window.document;
+
+        await waitFor(() =>
+            expect(document_.getElementById('timeline').textContent).toContain('第一条')
+        );
+        document_.querySelector('.filter-chip[data-filter="all"]').click();
+        await waitFor(() => expect(queueTitles(dom)).toHaveLength(2));
+
+        Array.from(document_.querySelectorAll('[data-issue]'))
+            .find((button) => button.dataset.issue === fixture.activeKey)
+            .click();
+
+        await waitFor(() =>
+            expect(document_.getElementById('issueTitle').textContent).toBe('正在处理的 Issue')
+        );
+        expect(document_.getElementById('timeline').getAttribute('aria-busy')).toBe('true');
+        expect(document_.getElementById('timeline').querySelector('.skeleton')).toBeTruthy();
+        expect(document_.getElementById('timeline').textContent).not.toContain('第一条');
+
+        releaseSnapshot(Response.json(activeSnapshot));
+        await waitFor(() =>
+            expect(document_.getElementById('timeline').textContent).toContain(
+                '另一条 Issue 的时间线'
+            )
+        );
+        expect(document_.getElementById('timeline').hasAttribute('aria-busy')).toBe(false);
+        expect(document_.getElementById('timeline').querySelector('.skeleton')).toBeNull();
+    });
+
+    it('[SCN-FWB-046] marks the decision button as submitting and renders the response snapshot without refetching', async () => {
+        // 坏行为：整个等待期间唯一的反馈是 `disabled` 带来的 62% 不透明度，然后再
+        // 补发一次 snapshot。前者让「已提交」和「没点上」长得一样，后者让这次决定
+        // 多等一整个跨源往返——服务端此刻手上就有决定之后的完整快照。
+        const fixture = adminQueueFixture();
+        const routes = { ...fixture.routes };
+        const snapshotPath = `/api/feedback/issues/${encodeURIComponent(
+            fixture.attentionKey
+        )}/snapshot`;
+        const humanAction = {
+            id: 'hac_ui',
+            issueId: fixture.attentionKey,
+            type: 'confirm_policy',
+            status: 'active',
+            requestedAction: '这轮分析的结论要不要照着做？',
+            allowedReturnStates: ['queued', 'closed'],
+            evidence: [],
+            createdAt: '2026-08-30T08:05:00.000Z',
+        };
+        routes[snapshotPath] = { ...routes[snapshotPath], humanActions: [humanAction] };
+
+        let releaseRespond;
+        const pendingRespond = new Promise((resolve) => {
+            releaseRespond = resolve;
+        });
+        routes['/api/feedback/human-actions/hac_ui/respond'] = () => pendingRespond;
+
+        const dom = await openWorkbench(env, {
+            routes,
+            setupWindow(window) {
+                window.sessionStorage.setItem('feedback.workbench.adminToken', 'admin-token');
+            },
+        });
+        const document_ = dom.window.document;
+
+        await waitFor(() => expect(document_.querySelector('[data-human-action]')).toBeTruthy());
+        const button = document_.querySelector('[data-human-action]');
+        const idleLabel = button.textContent;
+        button.click();
+
+        await waitFor(() => expect(button.getAttribute('aria-busy')).toBe('true'));
+        expect(button.textContent).toContain('提交中');
+        expect(button.textContent).not.toBe(idleLabel);
+        expect(button.disabled).toBe(true);
+
+        const requestsBefore = dom.requests.length;
+        releaseRespond(
+            Response.json({
+                action: { ...humanAction, status: 'resolved' },
+                resumeState: 'resumed',
+                issue: { ...routes[snapshotPath].issue, status: 'queued' },
+                snapshot: {
+                    ...routes[snapshotPath],
+                    version: 2,
+                    humanActions: [{ ...humanAction, status: 'resolved' }],
+                    events: [
+                        ...routes[snapshotPath].events,
+                        fixture.event('evt_decision', 3, '已采纳这份分析'),
+                    ],
+                },
+            })
+        );
+
+        await waitFor(() =>
+            expect(document_.getElementById('timeline').textContent).toContain('已采纳这份分析')
+        );
+        // 决定之后只允许刷新队列（顺序和「需你处理 N」都变了）；详情不再重取。
+        const pathsAfter = dom.requests.slice(requestsBefore).map((entry) => entry.path);
+        expect(pathsAfter).not.toContain(snapshotPath);
+        expect(pathsAfter).toEqual(['/api/feedback/issues?filter=all&limit=100']);
+    });
+
+    it('[SCN-FWB-046] restores the decision button after a failed submit and marks lazy settings tabs busy', async () => {
+        // 提交失败后按钮必须变回原样并重新可点，否则用户手上留下的是一个永远
+        // 停在「提交中…」的死按钮；懒加载的设置页同理，不标 busy 就只是一片空白。
+        const fixture = adminQueueFixture();
+        const routes = { ...fixture.routes };
+        const snapshotPath = `/api/feedback/issues/${encodeURIComponent(
+            fixture.attentionKey
+        )}/snapshot`;
+        const humanAction = {
+            id: 'hac_fail',
+            issueId: fixture.attentionKey,
+            type: 'confirm_policy',
+            status: 'active',
+            requestedAction: '这轮分析的结论要不要照着做？',
+            allowedReturnStates: ['queued', 'closed'],
+            evidence: [],
+            createdAt: '2026-08-30T08:05:00.000Z',
+        };
+        routes[snapshotPath] = { ...routes[snapshotPath], humanActions: [humanAction] };
+        routes['/api/feedback/human-actions/hac_fail/respond'] = () =>
+            Response.json({ error: '暂时不可用' }, { status: 503 });
+        let releaseAutomation;
+        routes['/api/feedback/automation/settings'] = () =>
+            new Promise((resolve) => {
+                releaseAutomation = resolve;
+            });
+
+        const dom = await openWorkbench(env, {
+            routes,
+            setupWindow(window) {
+                window.sessionStorage.setItem('feedback.workbench.adminToken', 'admin-token');
+            },
+        });
+        const document_ = dom.window.document;
+
+        await waitFor(() => expect(document_.querySelector('[data-human-action]')).toBeTruthy());
+        const button = document_.querySelector('[data-human-action]');
+        const idleLabel = button.innerHTML;
+        button.click();
+
+        await waitFor(() => expect(button.hasAttribute('aria-busy')).toBe(false));
+        expect(button.innerHTML).toBe(idleLabel);
+        expect(button.disabled).toBe(false);
+
+        document_.querySelector('[data-view="automations"]').click();
+        expect(document_.getElementById('settingsView').getAttribute('aria-busy')).toBe('true');
+        await waitFor(() => expect(releaseAutomation).toBeTruthy());
+        releaseAutomation(Response.json({ settings: { version: 1, subscribedEvents: [] } }));
+        await waitFor(() =>
+            expect(document_.getElementById('settingsView').hasAttribute('aria-busy')).toBe(false)
+        );
+    });
+
+    it('[SCN-FWB-025] ignores a late decision snapshot after switching to another issue', async () => {
+        // 决定的响应现在自带快照，于是它和 `/sync` 一样成了一条「迟到的详情」路径：
+        // 提交期间用户完全可以点开别的 Issue，这份快照就必须被丢掉。
+        const fixture = adminQueueFixture();
+        const routes = { ...fixture.routes };
+        const snapshotPath = `/api/feedback/issues/${encodeURIComponent(
+            fixture.attentionKey
+        )}/snapshot`;
+        const humanAction = {
+            id: 'hac_stale',
+            issueId: fixture.attentionKey,
+            type: 'confirm_policy',
+            status: 'active',
+            requestedAction: '这轮分析的结论要不要照着做？',
+            allowedReturnStates: ['queued', 'closed'],
+            evidence: [],
+            createdAt: '2026-08-30T08:05:00.000Z',
+        };
+        routes[snapshotPath] = { ...routes[snapshotPath], humanActions: [humanAction] };
+        let releaseRespond;
+        routes['/api/feedback/human-actions/hac_stale/respond'] = () =>
+            new Promise((resolve) => {
+                releaseRespond = resolve;
+            });
+
+        const dom = await openWorkbench(env, {
+            routes,
+            setupWindow(window) {
+                window.sessionStorage.setItem('feedback.workbench.adminToken', 'admin-token');
+            },
+        });
+        const document_ = dom.window.document;
+
+        await waitFor(() => expect(document_.querySelector('[data-human-action]')).toBeTruthy());
+        document_.querySelector('[data-human-action]').click();
+        await waitFor(() => expect(releaseRespond).toBeTruthy());
+
+        document_.querySelector('.filter-chip[data-filter="all"]').click();
+        Array.from(document_.querySelectorAll('[data-issue]'))
+            .find((button) => button.dataset.issue === fixture.activeKey)
+            .click();
+        await waitFor(() =>
+            expect(document_.getElementById('timeline').textContent).toContain(
+                '另一条 Issue 的时间线'
+            )
+        );
+
+        const requestsBeforeRelease = dom.requests.length;
+        releaseRespond(
+            Response.json({
+                action: { ...humanAction, status: 'resolved' },
+                resumeState: 'resumed',
+                issue: routes[snapshotPath].issue,
+                snapshot: {
+                    ...routes[snapshotPath],
+                    version: 2,
+                    events: [
+                        ...routes[snapshotPath].events,
+                        fixture.event('evt_stale', 3, '这条属于上一条 Issue'),
+                    ],
+                },
+            })
+        );
+        // 响应处理完的可观察标志是它随后发出的队列刷新；不等到那一步就断言，
+        // 这个用例会在快照被应用之前就通过，等于什么也没验证。
+        await waitFor(() => expect(dom.requests.length).toBeGreaterThan(requestsBeforeRelease));
+
+        expect(document_.getElementById('issueTitle').textContent).toContain('正在处理的 Issue');
+        expect(document_.getElementById('timeline').textContent).not.toContain(
+            '这条属于上一条 Issue'
+        );
+        expect(document_.getElementById('timeline').textContent).toContain('另一条 Issue 的时间线');
+    });
+
+    it('[SCN-FWB-025] keeps unchanged queue rows and timeline entries as the same DOM nodes', async () => {
+        // 坏行为：刷新时整块 `innerHTML =`。每个条目都被换成新节点，8 秒一次的自动
+        // 同步因此能在 mousedown 和 click 之间抽掉指针下的那一项（点击落空），时间线
+        // 的滚动位置也一起归零。节点同一性是这两件事在 jsdom 里唯一可核对的判据；
+        // 滚动与命中区本身按机制规范第 7 条由 Playwright 覆盖。
+        const fixture = adminQueueFixture();
+        const routes = { ...fixture.routes };
+        const snapshotPath = `/api/feedback/issues/${encodeURIComponent(
+            fixture.attentionKey
+        )}/snapshot`;
+        routes[`/api/feedback/issues/${encodeURIComponent(fixture.attentionKey)}/sync?version=1`] =
+            () =>
+                Response.json({
+                    ...routes[snapshotPath],
+                    version: 2,
+                    issue: { ...routes[snapshotPath].issue, version: 2 },
+                    events: [
+                        ...routes[snapshotPath].events,
+                        fixture.event('evt_3', 3, '刷新后新增的一条'),
+                    ],
+                });
+
+        const dom = await openWorkbench(env, {
+            routes,
+            setupWindow(window) {
+                window.sessionStorage.setItem('feedback.workbench.adminToken', 'admin-token');
+            },
+        });
+        const document_ = dom.window.document;
+
+        await waitFor(() =>
+            expect(document_.getElementById('timeline').textContent).toContain('第二条')
+        );
+        const firstRowBefore = document_.querySelector('#issueList .issue-item');
+        const entriesBefore = Array.from(document_.getElementById('timeline').children);
+        expect(entriesBefore).toHaveLength(2);
+
+        await dom.window.__feedbackWorkbenchRefreshForTest();
+        await waitFor(() =>
+            expect(document_.getElementById('timeline').textContent).toContain('刷新后新增的一条')
+        );
+
+        const entriesAfter = Array.from(document_.getElementById('timeline').children);
+        expect(entriesAfter).toHaveLength(3);
+        expect(entriesAfter[0]).toBe(entriesBefore[0]);
+        expect(entriesAfter[1]).toBe(entriesBefore[1]);
+        expect(document_.querySelector('#issueList .issue-item')).toBe(firstRowBefore);
+    });
+
     it('[SCN-FWB-025] keeps the reply draft while an automatic snapshot refresh runs', async () => {
         const routes = ownerWorkbenchRoutes();
         const snapshotPath = `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/snapshot`;
@@ -2233,7 +2771,9 @@ describe('feedback issue board Worker routes', () => {
             receivedAt: '2026-08-07T08:00:00.000Z',
             updatedAt: '2026-08-07T08:00:00.000Z',
             version: 1,
-            status: 'open',
+            // 队列默认停在「等我」，而筛选现在在客户端做：`open` 会被这个筛选挡掉，
+            // 两条 Issue 就都不在列表里，这个用例也就没有第二条可点了。
+            status: 'needs_human',
             priority: 'medium',
             businessType: 'bug',
         });
@@ -2256,7 +2796,7 @@ describe('feedback issue board Worker routes', () => {
             resolveStaleSync = resolve;
         });
         const routes = {
-            '/api/feedback/issues?filter=attention': {
+            '/api/feedback/issues?filter=all&limit=100': {
                 issues: [listIssue(issueA, 'Issue A'), listIssue(issueB, 'Issue B')],
                 attentionCount: 0,
             },
@@ -2305,9 +2845,11 @@ describe('feedback issue board Worker routes', () => {
         const routes = ownerWorkbenchRoutes();
         const snapshotPath = `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/snapshot`;
         const issue = routes[snapshotPath].issue;
-        routes['/api/feedback/issues?filter=attention'] = {
-            issues: [{ ...issue, descriptionPreview: issue.description }],
-            attentionCount: 0,
+        routes['/api/feedback/issues?filter=all&limit=100'] = {
+            // 队列默认停在「等我」且筛选在客户端完成，所以列表项要落在需人工处理的
+            // 状态里，否则这条 Issue 不会被选中，也就没有回复模式可保留。
+            issues: [{ ...issue, status: 'needs_human', descriptionPreview: issue.description }],
+            attentionCount: 1,
         };
         routes[`/api/feedback/issues/${encodeURIComponent(feedbackKey)}/sync?version=1`] = {
             ...routes[snapshotPath],
@@ -2433,6 +2975,76 @@ describe('feedback issue board Worker routes', () => {
         await dom.window.__feedbackWorkbenchRefreshForTest();
 
         expect(syncCalls).toBe(1);
+    });
+
+    it('[SCN-FWB-026] shows a comment attachment on its comment only, not again on the creation card', async () => {
+        // `issue.attachments` 是这条 Issue 的全部附件，包含后来在回复里补的那些；而那些
+        // 已经各自挂在对应评论事件上了。创建卡片必须把它们排掉，否则同一个附件在时间线
+        // 上出现两次——一次在最上面的创建卡，一次在真正上传它的那条回复里。
+        const routes = ownerWorkbenchRoutes();
+        const snapshotPath = `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/snapshot`;
+        const snapshot = routes[snapshotPath];
+        const submitted = {
+            id: 'att_submitted',
+            name: '提交时的截图.png',
+            type: 'image/png',
+            size: 1024,
+        };
+        const replied = {
+            id: 'att_replied',
+            name: '回复里补的日志.txt',
+            type: 'text/plain',
+            size: 2048,
+        };
+        routes[snapshotPath] = {
+            ...snapshot,
+            issue: { ...snapshot.issue, attachments: [submitted, replied] },
+            events: [
+                {
+                    id: 'evt_created',
+                    sequence: 1,
+                    type: 'issue.created',
+                    actorType: 'user',
+                    visibility: 'public',
+                    occurredAt: '2026-07-28T08:00:00.000Z',
+                    text: '',
+                    changes: {},
+                    attachments: [],
+                },
+                {
+                    id: 'evt_reply',
+                    sequence: 2,
+                    type: 'comment.created',
+                    actorType: 'user',
+                    visibility: 'public',
+                    occurredAt: '2026-07-28T09:00:00.000Z',
+                    text: '补一份日志',
+                    changes: {},
+                    attachments: [replied],
+                },
+            ],
+        };
+
+        const dom = await openWorkbench(env, {
+            url: `https://worker.test/feedback#issue=${encodeURIComponent(
+                feedbackKey
+            )}&capability=owner-token`,
+            routes,
+        });
+        const document_ = dom.window.document;
+
+        await waitFor(() =>
+            expect(document_.getElementById('timeline').textContent).toContain('补一份日志')
+        );
+        const entries = Array.from(document_.getElementById('timeline').children);
+        expect(entries).toHaveLength(2);
+
+        const names = (node) =>
+            Array.from(node.querySelectorAll('.attachment strong')).map((el) => el.textContent);
+        expect(names(entries[0])).toEqual(['提交时的截图.png']);
+        expect(names(entries[1])).toEqual(['回复里补的日志.txt']);
+        // 全时间线里每个附件恰好出现一次。
+        expect(names(document_.getElementById('timeline'))).toHaveLength(2);
     });
 
     it('[SCN-FWB-026] refreshes expired attachment access without an issue version change', async () => {
@@ -4103,7 +4715,10 @@ describe('feedback issue board Worker routes', () => {
         expect(retryResponse.status).toBe(200);
         expect(retryBody.issues.map((issue) => issue.key)).toEqual([feedbackKey]);
         expect(migrationState.completed).toBe(1);
-        expect(d1Env.FEEDBACK_DB.batch).toHaveBeenCalledTimes(2);
+        // 4 = 失败的那次列表探测 1 次，加上重试里的 3 次：列表探测、回填写入、
+        // 回填后重读列表。回填只发生一次——重试没有把这一页重复搬进 D1。
+        expect(d1Env.FEEDBACK_DB.batch).toHaveBeenCalledTimes(4);
+        expect(d1Env.FEEDBACK_DB.tables.feedback_issues.size).toBe(1);
     });
 
     it('preserves legacy type values as submitted business type', async () => {
@@ -5455,6 +6070,121 @@ describe('feedback workbench V2 routes', () => {
         ).toBe(false);
     });
 
+    it('[SCN-FWB-025] reads every snapshot sub-resource in one D1 batch and touches the event table once', async () => {
+        // 坏行为：每个子资源各发一次 D1 请求。SQL 本身 0.2–0.4ms，慢的全是 Worker→D1
+        // 的跨区往返，所以「四五次串行读」在生产上就是详情面板 800ms 的全部来源；
+        // 而 readD1FeedbackIssue 和 listFeedbackTimeline 还各把 feedback_events 读了
+        // 一遍。这个用例在任一条恢复成独立往返时变红。
+        const env = createV2Env(
+            {},
+            {
+                feedback_issues: [createD1IssueRow({ status: 'needs_human' })],
+                feedback_events: [
+                    {
+                        id: 'evt_batch',
+                        issue_id: feedbackKey,
+                        sequence: 1,
+                        type: 'issue.created',
+                        actor_type: 'user',
+                        actor_id: null,
+                        visibility: 'public',
+                        run_id: null,
+                        occurred_at: '2026-07-28T08:00:00.000Z',
+                        body_json: '{}',
+                        metadata_json: '{}',
+                        legacy_hash: null,
+                    },
+                    {
+                        id: 'evt_batch_internal',
+                        issue_id: feedbackKey,
+                        sequence: 2,
+                        type: 'automation.suppressed',
+                        actor_type: 'system',
+                        actor_id: null,
+                        visibility: 'admin',
+                        run_id: null,
+                        occurred_at: '2026-07-28T08:01:00.000Z',
+                        body_json: '{}',
+                        metadata_json: '{}',
+                        legacy_hash: null,
+                    },
+                ],
+                feedback_human_actions: [humanActionRow()],
+            }
+        );
+        const headers = await adminHeaders(env);
+        const database = env.FEEDBACK_DB;
+        const originalBatch = database.batch.bind(database);
+        let batchCalls = 0;
+        database.batch = (statements) => {
+            batchCalls += 1;
+            return originalBatch(statements);
+        };
+
+        const payload = await json(
+            await request(
+                `/api/feedback/issues/${encodeURIComponent(feedbackKey)}/snapshot`,
+                { headers },
+                env
+            )
+        );
+
+        expect(payload).toMatchObject({
+            changed: true,
+            issue: { key: feedbackKey },
+            events: [{ id: 'evt_batch' }, { id: 'evt_batch_internal' }],
+            humanActions: [{ id: 'hac_1' }],
+            designs: [],
+            candidates: [],
+            releases: [],
+        });
+        expect(batchCalls).toBe(1);
+        expect(
+            database.queries.filter(({ query }) => query.includes('from feedback_events')).length
+        ).toBe(1);
+    });
+
+    it('[SCN-FWB-046] serves the whole post-decision detail pane in the decision response', async () => {
+        // 坏行为：POST 之后客户端还得再发一次 snapshot 才能看到结果。那是一整个跨源
+        // 往返（生产实测约 1.4s），而服务端此刻手上就有这份数据。
+        const env = createV2Env(
+            {},
+            {
+                feedback_issues: [
+                    createD1IssueRow({ status: 'needs_human', active_human_action_id: 'hac_1' }),
+                ],
+                feedback_human_actions: [humanActionRow()],
+            }
+        );
+        const headers = await adminHeaders(env);
+
+        const accepted = await json(
+            await request(
+                '/api/feedback/human-actions/hac_1/respond',
+                {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({ decision: 'queued', note: '在导入弹窗点确定时复现。' }),
+                },
+                env
+            )
+        );
+
+        expect(accepted.issue.workflow.status).toBe('queued');
+        expect(accepted.snapshot).toMatchObject({
+            changed: true,
+            issue: { key: feedbackKey, workflow: { status: 'queued' } },
+        });
+        // 决定本身写下的 status.changed 必须已经在这份快照的时间线里，否则客户端
+        // 用它渲染出来的时间线会比服务端的事实旧一条。
+        expect(accepted.snapshot.events.some((event) => event.type === 'status.changed')).toBe(
+            true
+        );
+        expect(accepted.snapshot.humanActions.every((action) => action.status !== 'active')).toBe(
+            true
+        );
+    });
+
     it('[SCN-FWB-026] stores comment attachments and exposes them on the timeline event', async () => {
         const ownerCapability = 'owner-comment-attachment';
         const env = createV2Env(
@@ -6266,6 +6996,115 @@ describe('feedback workbench V2 routes', () => {
             await request('/api/feedback/issues?filter=active', { headers }, env)
         );
         expect(active.issues.map((issue) => issue.status)).toEqual(['in_progress']);
+        // 坏行为：把「需你处理 N」按当前 chip 统计。在「处理中」页签下它会读成 0，
+        // 而那三条 Issue 一条也没少，只是没被这个筛选选中。
+        expect(active.attentionCount).toBe(3);
+        expect(attention.attentionCount).toBe(3);
+    });
+
+    it('[SCN-FWB-047] keeps waiting Issues on the first page once the queue outgrows it', async () => {
+        // 坏行为：`ORDER BY created_at DESC LIMIT 50` 之后才在 JS 里按队列筛选。队列
+        // 一超过一页，早先那些还等着人处理的 Issue 就不是「被过滤掉」而是**根本没进
+        // 这一页**——「等我」会显示成空的，而它们一条都没被处理。分页必须按展示次序
+        // 切，砍掉的才是最不重要的那一端。
+        const rows = [];
+        for (let index = 0; index < 59; index += 1) {
+            const stamp = `2026-08-${String(10 + Math.floor(index / 3)).padStart(2, '0')}T0${index % 3}:00:00.000Z`;
+            rows.push(
+                createD1IssueRow({
+                    id: `feedback:closed:${String(index).padStart(3, '0')}`,
+                    status: 'closed',
+                    created_at: stamp,
+                    updated_at: stamp,
+                })
+            );
+        }
+        // 最老的一条，等着人处理。按创建时间排它稳稳落在第 60 位。
+        rows.push(
+            createD1IssueRow({
+                id: 'feedback:oldest:waiting',
+                status: 'needs_human',
+                created_at: '2026-07-01T00:00:00.000Z',
+                updated_at: '2026-07-01T00:00:00.000Z',
+            })
+        );
+        const env = createV2Env({}, { feedback_issues: rows });
+        const headers = await adminHeaders(env);
+
+        const attention = await json(
+            await request('/api/feedback/issues?filter=attention', { headers }, env)
+        );
+        expect(attention.issues.map((issue) => issue.key)).toEqual(['feedback:oldest:waiting']);
+        expect(attention.attentionCount).toBe(1);
+
+        // 计数来自全表，不是这一页：默认一页 50 行，但队列里有 60 条。
+        const all = await json(await request('/api/feedback/issues?filter=all', { headers }, env));
+        expect(all.issues).toHaveLength(50);
+        expect(all.listComplete).toBe(false);
+        expect(all.totals).toEqual({ all: 60, attention: 1, active: 0 });
+        expect(all.issues[0].key).toBe('feedback:oldest:waiting');
+    });
+
+    it('[SCN-FWB-047] pages through the queue in display order without dropping or repeating a row', async () => {
+        const statuses = ['needs_human', 'open', 'in_progress', 'closed'];
+        const rows = statuses.flatMap((status, statusIndex) =>
+            Array.from({ length: 3 }, (unused, index) => {
+                const stamp = `2026-08-${String(10 + statusIndex).padStart(2, '0')}T0${index}:00:00.000Z`;
+                return createD1IssueRow({
+                    id: `feedback:${status}:${index}`,
+                    status,
+                    created_at: stamp,
+                    updated_at: stamp,
+                });
+            })
+        );
+        const env = createV2Env({}, { feedback_issues: rows });
+        const headers = await adminHeaders(env);
+
+        const collected = [];
+        let cursor = '';
+        for (let page = 0; page < 10; page += 1) {
+            const query = `/api/feedback/issues?filter=all&limit=5${
+                cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''
+            }`;
+            const body = await json(await request(query, { headers }, env));
+            collected.push(...body.issues.map((issue) => issue.key));
+            if (body.listComplete) break;
+            cursor = body.cursor;
+            expect(cursor, '未完成的分页必须给出游标').toBeTruthy();
+        }
+
+        expect(collected).toHaveLength(rows.length);
+        expect(new Set(collected).size).toBe(rows.length);
+        // 翻页跨页也保持 §19.1 的次序：等人处理的在最前，已关闭的在最后。
+        expect(collected.slice(0, 3).every((key) => key.startsWith('feedback:needs_human'))).toBe(
+            true
+        );
+        expect(collected.slice(-3).every((key) => key.startsWith('feedback:closed'))).toBe(true);
+    });
+
+    it('[SCN-FWB-046] lets the browser cache the CORS preflight instead of paying it per call', async () => {
+        // 坏行为：预检响应不带 Max-Age。页面在 Pages、API 在 Worker，且每个请求都带
+        // `Authorization`（非简单请求），所以每次调用都要预检；浏览器默认只缓存 5 秒，
+        // 而缓存键含完整 URL——生产实测每次 API 调用因此多付约 200ms。
+        const env = createV2Env();
+
+        const response = await request(
+            '/api/feedback/issues',
+            {
+                method: 'OPTIONS',
+                headers: {
+                    Origin: 'https://gantt-task-editor.pages.dev',
+                    'Access-Control-Request-Method': 'GET',
+                    'Access-Control-Request-Headers': 'authorization',
+                },
+            },
+            env
+        );
+
+        expect(response.status).toBe(204);
+        expect(Number(response.headers.get('Access-Control-Max-Age'))).toBeGreaterThanOrEqual(600);
+        expect(response.headers.get('Access-Control-Allow-Headers')).toContain('Authorization');
     });
 
     it('[SCN-FWB-001] appends an immutable public comment and keeps sequence stable', async () => {

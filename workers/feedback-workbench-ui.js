@@ -426,6 +426,9 @@ function queuePanel() {
                 </div>
             </div>
             <div class="issue-list" id="issueList" role="listbox" aria-label="反馈列表"></div>
+            <!-- 队列长过一页时说出还有多少没载入。不说的话「等我 12」配着 9 条列表，
+                 差的那 3 条看起来就像被系统吞了。 -->
+            <p class="queue-truncation" id="queueTruncation" role="status" hidden></p>
         </aside>`;
 }
 
