@@ -167,9 +167,11 @@ describe('read-only agent commands', () => {
     it('returns rev and snapshots without bumping project rev', async () => {
         const before = getProjectRev(projectId);
 
+        // 读结果自报项目身份（SCN-AGT-035）：没有这两个字段，Agent 落到错项目时
+        // 看到的 taskCount 与"项目本来就是空的"无法区分。
         await expect(app.state.rev()).resolves.toEqual({
             ok: true,
-            data: { rev: before },
+            data: { rev: before, projectId, projectName: null },
             rev: before,
         });
 
@@ -177,6 +179,8 @@ describe('read-only agent commands', () => {
             ok: true,
             data: {
                 rev: before,
+                projectId,
+                projectName: null,
                 taskCount: 3,
                 linkCount: 2,
             },

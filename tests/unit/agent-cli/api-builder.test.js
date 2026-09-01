@@ -204,14 +204,14 @@ describe('agent api builder', () => {
         state.currentProjectId = 'project-a';
         await expect(globalThis.app.state.rev()).resolves.toEqual({
             ok: true,
-            data: { rev: 1 },
+            data: { rev: 1, projectId: 'project-a', projectName: null },
             rev: 1,
         });
 
         state.currentProjectId = 'project-b';
         await expect(globalThis.app.state.rev()).resolves.toEqual({
             ok: true,
-            data: { rev: 2 },
+            data: { rev: 2, projectId: 'project-b', projectName: null },
             rev: 2,
         });
     });

@@ -104,6 +104,9 @@ export const state = {
     currentProjectId: null,
     projects: [],
     isProjectSwitching: false,
+    // 直达链接指向的项目在本设备不存在时的未解析记录：
+    // { requested, resolved, reason: 'not_found' }。null 表示解析正常。
+    projectResolution: null,
     // System field settings
     systemFieldSettings: structuredClone(DEFAULT_SYSTEM_FIELD_SETTINGS),
 };
@@ -306,13 +309,36 @@ export async function initProjects() {
         // URL ?project= 参数（直达链接）优先于 localStorage 记忆值；无效则逐级回退
         const urlProjectId = readProjectIdFromUrl();
         const savedProjectId = getStoredProjectId();
+        const urlMatchedId = projects.find((project) => project.id === urlProjectId)?.id;
         const validProjectId =
-            projects.find((project) => project.id === urlProjectId)?.id ??
-            projects.find((project) => project.id === savedProjectId)?.id;
+            urlMatchedId ?? projects.find((project) => project.id === savedProjectId)?.id;
 
         state.currentProjectId = validProjectId ?? projects[0].id;
         persistProjectId(state.currentProjectId);
-        syncProjectUrlParam(state.currentProjectId);
+
+        // 直达链接指向的项目在本设备不存在（典型成因：链接来自另一台机器、另一个
+        // 浏览器 profile，或另一个 origin 的 preview 部署——数据都是本地 IndexedDB，
+        // 跨这三者不互通）。此时回退仍然发生，但必须留痕：
+        //   1) 不调 syncProjectUrlParam —— 保留用户输入的 id 供人机双方核对，
+        //      否则地址栏会被改写成回退后的 id，事故现场当场消失；
+        //   2) 记 projectResolution —— 供横幅提示与命令层写入拦截使用。
+        // 见 SCN-AGT-034。
+        if (urlProjectId && !urlMatchedId) {
+            state.projectResolution = {
+                requested: urlProjectId,
+                resolved: state.currentProjectId,
+                reason: 'not_found',
+            };
+            console.error(
+                '[Store] Project from URL not found on this device:',
+                urlProjectId,
+                '-> opened',
+                state.currentProjectId
+            );
+        } else {
+            state.projectResolution = null;
+            syncProjectUrlParam(state.currentProjectId);
+        }
     } catch (e) {
         console.error('[Store] Failed to initialize projects:', e);
         state.projects = [];
@@ -335,7 +361,7 @@ export async function refreshProjects() {
 
 let failedProjectReloadId = null;
 
-async function performProjectSwitch(projectId) {
+async function performProjectSwitch(projectId, { clearResolution = true } = {}) {
     if (!projectId) {
         return { projectId: state.currentProjectId, loaded: false };
     }
@@ -347,6 +373,12 @@ async function performProjectSwitch(projectId) {
 
     const isRetry = projectId === state.currentProjectId && failedProjectReloadId === projectId;
     if (projectId === state.currentProjectId && !isRetry) {
+        // 切到"已经打开的那个项目"是空操作，但确认动作仍要生效：用户口述的项目名
+        // 恰好就是当前回退到的项目时，也应解除未解析状态（SCN-AGT-037）。
+        if (clearResolution && state.projectResolution) {
+            state.projectResolution = null;
+            syncProjectUrlParam(projectId);
+        }
         return { projectId, loaded: true, changed: false };
     }
 
@@ -381,7 +413,14 @@ async function performProjectSwitch(projectId) {
         );
         await Promise.all(pendingReloads);
         failedProjectReloadId = null;
-        syncProjectUrlParam(projectId);
+        // 未解析状态的解除权不能白送给"切一下项目"这个动作：隔离浏览器里空库会被
+        // 自动补出一个「默认项目」，Agent 切过去就能解锁写入，然后在错误的数据世界
+        // 里合规地干完活（SCN-AGT-037）。UI 里用户手动切 => clearResolution 默认 true；
+        // Agent 走 project.switch 时必须转述用户口述的项目名并通过校验才为 true。
+        if (clearResolution || !state.projectResolution) {
+            state.projectResolution = null;
+            syncProjectUrlParam(projectId);
+        }
         return { projectId, loaded: true, changed: !isRetry };
     } catch (e) {
         failedProjectReloadId = projectId;
@@ -397,8 +436,8 @@ async function performProjectSwitch(projectId) {
  * @param {string} projectId
  * @returns {Promise<{projectId: string|null, loaded: boolean, changed?: boolean}>}
  */
-export function switchProject(projectId) {
-    return runProjectMutationExclusive(() => performProjectSwitch(projectId));
+export function switchProject(projectId, options) {
+    return runProjectMutationExclusive(() => performProjectSwitch(projectId, options));
 }
 
 /**

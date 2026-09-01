@@ -1,3 +1,5 @@
+import { SKILL_ENTRY_PATH, SKILL_VERSION } from '../agent-skill-content.js';
+
 function getCurrentPageUrl() {
     try {
         return window.location?.href || '';
@@ -41,10 +43,23 @@ function compactCommands(manifest = {}) {
     }));
 }
 
+function buildSkillUrl() {
+    try {
+        const url = new URL(SKILL_ENTRY_PATH, getCurrentPageUrl());
+        url.search = `v=${SKILL_VERSION}`;
+        return url.href;
+    } catch {
+        return '';
+    }
+}
+
 function buildDiscovery({ manifest = { version: 2, commands: [] }, readOnly = false } = {}) {
     return {
         version: manifest.version || 2,
         pageUrl: getCurrentPageUrl(),
+        // 分层操作规范的入口。带版本 query 只为诊断：skill 与页面代码是两条部署线，
+        // 错配时没有别的信号。
+        skillUrl: buildSkillUrl(),
         readOnly: Boolean(readOnly),
         primary: {
             type: 'page-global',

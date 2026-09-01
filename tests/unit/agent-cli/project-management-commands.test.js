@@ -15,6 +15,7 @@ describe('agent project management commands', () => {
         await db.links.clear();
         state.projects = [];
         state.currentProjectId = null;
+        state.projectResolution = null;
         localStorage.getItem.mockReset();
         localStorage.setItem.mockReset();
         localStorage.removeItem.mockReset();
@@ -23,6 +24,7 @@ describe('agent project management commands', () => {
     });
 
     afterEach(() => {
+        state.projectResolution = null;
         clearCommandsForTest();
         window.history.replaceState(null, '', window.location.pathname);
     });
@@ -40,6 +42,61 @@ describe('agent project management commands', () => {
         });
         return backing;
     }
+
+    // SCN-AGT-037：写入解锁必须经过一次可校验的握手。Agent 转述用户口述的项目名，
+    // 系统拿本地真实项目名比对——连错浏览器通道时名字一定对不上，写入保持锁死。
+    // 这几条在什么坏行为下会失败：回到"切一下项目就自动解除未解析状态"，于是
+    // 隔离浏览器里 create+switch 两步即可解锁，Agent 在错误的世界里安静干完活。
+    async function seedUnresolvedProject(app, name) {
+        const created = await app.project.create({ name });
+        state.projectResolution = {
+            requested: 'prj_from_another_machine',
+            resolved: state.currentProjectId,
+            reason: 'not_found',
+        };
+        return created.data.project;
+    }
+
+    it('[SCN-AGT-037] keeps writes locked when project.switch omits confirmProjectName', async () => {
+        useMapBackedLocalStorage();
+        const app = buildApi();
+        const project = await seedUnresolvedProject(app, '真实项目');
+
+        const switched = await app.project.switch({ id: project.id });
+
+        expect(switched.ok).toBe(true);
+        expect(switched.data.writesUnlocked).toBe(false);
+        expect(state.projectResolution).not.toBeNull();
+    });
+
+    it('[SCN-AGT-037] keeps writes locked when confirmProjectName does not match', async () => {
+        useMapBackedLocalStorage();
+        const app = buildApi();
+        const project = await seedUnresolvedProject(app, '真实项目');
+
+        const switched = await app.project.switch({
+            id: project.id,
+            confirmProjectName: '用户口述的另一个项目',
+        });
+
+        expect(switched.data.writesUnlocked).toBe(false);
+        expect(state.projectResolution).not.toBeNull();
+    });
+
+    it('[SCN-AGT-037] unlocks writes when confirmProjectName matches the target project', async () => {
+        useMapBackedLocalStorage();
+        const app = buildApi();
+        const project = await seedUnresolvedProject(app, '真实项目');
+
+        const switched = await app.project.switch({
+            id: project.id,
+            confirmProjectName: '真实项目',
+        });
+
+        expect(switched.data.activeProjectName).toBe('真实项目');
+        expect(switched.data.writesUnlocked).toBe(true);
+        expect(state.projectResolution).toBeNull();
+    });
 
     it('creates and lists projects through the public API', async () => {
         const app = buildApi();

@@ -25,6 +25,20 @@ touching business behavior or those directories. Non-negotiable rules:
 4. **Traceability.** Business test titles embed `[SCN-xxx]`; `npm run check:scenarios` must
    pass before commit.
 
+## Operating the Gantt page in a browser (mandatory before writing)
+
+Gantt data lives in the browser profile's IndexedDB — it does not follow the account.
+An in-app browser, an isolated automation profile, or a preview origin each shows a
+valid but unrelated data world, so work done there is invisible to the user.
+
+1. Run `npm run agent:preflight -- --origin <page url>` first. GO only permits a
+   connection; NO-GO means stop and hand its fix steps to the user; UNKNOWN means you
+   may connect but step 2 must pass before any write.
+2. After connecting, self-identify and compare against what the user told you; on a
+   mismatch stop instead of falling back to the in-app browser or IAB.
+3. Full rules live in one place: `AGENT_CHANNEL_RULES` in
+   `src/features/agent-cli/ui/AgentGuidePanel.js` (also shipped in the agent skill).
+
 ## AI Quality Gates
 
 Before code changes, classify the task using `docs/ai-development-quality-gates.md`.

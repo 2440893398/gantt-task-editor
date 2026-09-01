@@ -34,6 +34,36 @@ describe('store project management', () => {
         window.history.replaceState(null, '', window.location.pathname);
     });
 
+    // SCN-AGT-034 —— 这两条在什么坏行为下会失败：回到"静默回退 + replaceState 把
+    // 地址栏改写成回退后的项目 id"，事故现场（用户到底请求了哪个项目）当场消失，
+    // 人和 Agent 都只能看到一个"空项目"。
+    it('[SCN-AGT-034] keeps the requested project id in the URL when that project is absent here', async () => {
+        const existing = await createProject({ name: 'Local project' });
+        window.history.replaceState(null, '', '/?project=prj_from_another_machine');
+
+        await initProjects();
+
+        expect(state.currentProjectId).toBe(existing.id);
+        expect(state.projectResolution).toEqual({
+            requested: 'prj_from_another_machine',
+            resolved: existing.id,
+            reason: 'not_found',
+        });
+        expect(new URLSearchParams(window.location.search).get('project')).toBe(
+            'prj_from_another_machine'
+        );
+    });
+
+    it('[SCN-AGT-034] resolves cleanly and syncs the URL when the deep link is valid', async () => {
+        const existing = await createProject({ name: 'Local project' });
+        window.history.replaceState(null, '', `/?project=${existing.id}`);
+
+        await initProjects();
+
+        expect(state.projectResolution).toBeNull();
+        expect(new URLSearchParams(window.location.search).get('project')).toBe(existing.id);
+    });
+
     it('initProjects creates a default project when none exists', async () => {
         await initProjects();
 

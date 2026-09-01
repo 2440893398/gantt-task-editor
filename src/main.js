@@ -38,6 +38,7 @@ import {
 import { checkStorageAvailability } from './core/storage.js';
 import { prefetchHolidays } from './features/calendar/holidayFetcher.js';
 import { renderProjectPicker } from './features/projects/ProjectPicker.js';
+import { renderProjectResolutionBanner } from './features/projects/projectResolutionBanner.js';
 // 任务详情面板
 import { openTaskDetailsPanel, openNewTaskDetailsPanel } from './features/task-details/index.js';
 // 视图切换
@@ -123,6 +124,9 @@ document.addEventListener(
         // 初始化项目状态 + 渲染项目切换器
         // 注意：必须先确定当前项目（含 ?project= 直达参数），再恢复字段配置——配置按项目隔离
         await initProjects();
+
+        // ?project= 指向本设备不存在的项目时，把静默回退显性化（SCN-AGT-034）
+        renderProjectResolutionBanner();
 
         // 从缓存恢复状态（自定义字段、字段顺序，按当前项目）
         await restoreStateFromCache();
