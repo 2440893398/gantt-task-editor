@@ -53,9 +53,7 @@ function isSameTaskId(firstId, secondId) {
 }
 
 function normalizeParent(parentId) {
-    return parentId === null || parentId === undefined || String(parentId) === '0'
-        ? 0
-        : parentId;
+    return parentId === null || parentId === undefined || String(parentId) === '0' ? 0 : parentId;
 }
 
 function getTaskSafe(gantt, taskId) {

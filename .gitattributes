@@ -1,0 +1,24 @@
+# 行尾契约：仓库里一律存 LF，检出也一律 LF。
+#
+# 为什么必须显式写死：本机 core.autocrlf=true 来自系统级 gitconfig，而仓库里存
+# 的本来就是纯 LF——缺了这份声明，每一个新检出的工作树都会被物化成 CRLF，于是
+# 同一类假红反复复发：
+#   - 测试里跨行 `toContain('...\n...')` 的断言必然失配。已经被逐个打过三次
+#     补丁（0907749 给 readProjectFile 加归一化、73de4c2 放宽 Workflow 类提取
+#     的锚点），2026-09-01 仍然让一次完整的交付集成验证摔在
+#     feedback-diff-gate.test.js 上——候选自验证全绿，集成验证红。
+#   - `npm run format:check` 在本机永远全红，真的格式问题被淹没在行尾差异里。
+#
+# eol=lf 让检出行为不再依赖每台机器的 autocrlf 设置。
+* text=auto eol=lf
+
+# 二进制：不参与任何行尾转换。text=auto 的 NUL 启发式通常也能认出它们，
+# 但启发式不是契约，显式声明才不依赖它。
+*.png binary
+*.ico binary
+*.gz binary
+
+# UTF-16LE 且带真 CRLF 的历史产物（另一台机器路径下生成的 Playwright 报告）。
+# 满屏 NUL 字节会让 text=auto 判为二进制，这里写死以免哪天启发式换了口径，
+# 把一个 UTF-16 文件"归一化"成乱码。
+test-results.json -text
