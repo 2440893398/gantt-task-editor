@@ -2782,6 +2782,56 @@ describe('feedback issue board Worker routes', () => {
         expect(timeline.textContent).toContain('[31m]');
     });
 
+    function testFailedRoutes(releases) {
+        const routes = ownerWorkbenchRoutes({ status: 'test_failed' });
+        const detailPath = `/api/feedback/issues/${encodeURIComponent(feedbackKey)}`;
+        routes[`${detailPath}/snapshot`] = { ...routes[`${detailPath}/snapshot`], releases };
+        routes[`${detailPath}/releases`] = { releases };
+        return routes;
+    }
+
+    it('[SCN-FWB-038] 交付失败时说已停止并给出重开入口，不谎报自动重试', async () => {
+        // 生产实录 #tvrcd5：Release 以 integration_verification_failed 失败，服务端
+        // 按规则终止了 Workflow、候选置 failed（D1 实查 active_workflow_id 为 NULL）。
+        // 但卡片写着「自动重试中…额度用尽后会生成一张决策卡」——修复回路只覆盖
+        // verification_failed / provider_turn_failed 两个 Run 错误码，不管交付阶段，
+        // 那张卡永远不会来。用户照这句话等了 10 小时。
+        const dom = await openWorkbench(env, {
+            url: candidateUrl,
+            routes: testFailedRoutes([
+                {
+                    id: 'rel_1',
+                    status: 'failed',
+                    errorCode: 'integration_verification_failed',
+                },
+            ]),
+        });
+        const copy = dom.window.document.getElementById('nextActionCopy');
+        await waitFor(() => expect(copy.textContent).toContain('已停止'));
+
+        // 钉的是那两句谎报本身，不是「自动重试」四个字——正确文案里恰恰要出现
+        // 「不会自动重试」，按子串一刀切会把对的实现也判成错的。
+        expect(copy.textContent).not.toContain('自动重试中');
+        expect(copy.textContent).not.toContain('正在自动重试');
+        expect(copy.textContent).not.toContain('决策卡');
+        expect(copy.textContent).toContain('不会自动重试');
+        // 光说「停了」不够——必须告诉人怎么重新开始，否则他还是不知道下一步。
+        expect(copy.textContent).toContain('继续处理');
+    });
+
+    it('[SCN-FWB-038] Run 验证失败仍然说自动重试——两种处境不能压成同一句话', async () => {
+        // 反向守卫：别为了修上一条就把所有 test_failed 都改成「已停止」。
+        // 修复回路还在跑时，「已停止」同样是谎报，只是方向相反。
+        const dom = await openWorkbench(env, {
+            url: candidateUrl,
+            routes: testFailedRoutes([]),
+        });
+        const copy = dom.window.document.getElementById('nextActionCopy');
+        await waitFor(() => expect(copy.textContent).toContain('自动重试'));
+
+        expect(copy.textContent).not.toContain('已停止');
+    });
+
     it('[SCN-FWB-025] keeps unchanged queue rows and timeline entries as the same DOM nodes', async () => {
         // 坏行为：刷新时整块 `innerHTML =`。每个条目都被换成新节点，8 秒一次的自动
         // 同步因此能在 mousedown 和 click 之间抽掉指针下的那一项（点击落空），时间线

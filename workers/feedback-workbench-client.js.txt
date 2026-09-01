@@ -1701,13 +1701,28 @@
         return labels[nextState] || statusLabel(nextState);
     }
 
+    /* SCN-FWB-038：`test_failed` 盖着两种处境，对它们说同一句话必然有一种是谎报。
+
+       - Run 验证失败且修复回路仍有预算 → 过渡态，编排确实会自动重开下一轮；
+       - 交付阶段的集成验证失败（Release 置 failed）→ 修复回路只覆盖
+         `verification_failed`/`provider_turn_failed` 两个 Run 错误码，不管交付；
+         服务端已经终止 Workflow、把候选置 failed，是终态，不会有任何东西再动。
+
+       生产实录 #tvrcd5：后者被显示成前者，用户照着「自动重试中…额度用尽后会生成
+       一张决策卡」等了 10 小时——那张卡永远不会来。判据取自 Release 状态，
+       客户端本来就有，不需要服务端加字段。 */
+    function failedRelease() {
+        var release = (state.releases || [])[0];
+        return release && release.status === 'failed' ? release : null;
+    }
+
     function nextStepHeadline(status) {
         var headlines = {
             open: '等待分流',
             queued: '已排队',
             in_progress: 'AI 正在处理',
             testing: '正在验证',
-            test_failed: '验证失败，自动重试中',
+            test_failed: failedRelease() ? '交付失败，已停止' : '验证失败，自动重试中',
             ready_for_deploy: '等待交付',
             resolved: '已解决',
             closed: '已关闭',
@@ -1721,7 +1736,9 @@
             queued: '事件已投递，处理任务会在 Runner 启动后开始。',
             in_progress: '处理中的进展会以时间线回复的形式出现，无需刷新等待。',
             testing: '正在运行构建与回归验证，结果会写回时间线。',
-            test_failed: '验证未通过，失败输出在时间线里；修复回路正在自动重试，额度用尽后会生成一张决策卡。',
+            test_failed: failedRelease()
+                ? '集成验证未通过，交付已停止——修复回路只覆盖处理阶段，这一步不会自动重试。失败输出在时间线里；修好之后在下方回复，模式选「交给处理者继续处理」，就会重新开始一轮。'
+                : '验证未通过，失败输出在时间线里；修复回路正在自动重试，额度用尽后会生成一张决策卡。',
             ready_for_deploy: '候选实现已批准，等待干净集成与部署。',
             resolved: '问题已解决。若仍有问题，可重新打开。',
             closed: '该 Issue 已关闭。若仍有问题，可重新打开。',
