@@ -54,6 +54,27 @@ const OUTPUT_TAIL_LIMIT = 4000;
 const tail = (text) =>
     text.length > OUTPUT_TAIL_LIMIT ? text.slice(text.length - OUTPUT_TAIL_LIMIT) : text;
 
+/**
+ * CSI（`ESC [ … 字母`，vitest 的上色走这条）、OSC（`ESC ] … BEL`，改终端标题用）
+ * 与其余单字符 Fe 转义。只认带 ESC 的真序列——裸的 `[90m` 不剥，那可能是正文里
+ * 合法的方括号。
+ */
+const ANSI_PATTERN =
+    /\u001B\[[0-9;?]*[ -/]*[@-~]|\u001B\][\s\S]*?(?:\u0007|\u001B\\)|\u001B[@-Z\\-_]/g;
+
+/**
+ * 命令输出会原样进 Issue 时间线给人读，转义序列在那里既没有颜色也读不懂：
+ * 2026-09-01 那条 `integration_verification_failed` 的回复里，满屏 `[90m303|`
+ * 把真正的失败原因埋掉了，而且转义序列还白占了 4000 字符尾部预算的一大截。
+ *
+ * 与 NO_COLOR 的分工：NO_COLOR（见 buildChildEnv）让工具根本不产生颜色，是首选；
+ * 这里是兜底——不是每个工具都认 NO_COLOR，而且 Agent 也可能把别处的终端输出
+ * 粘进命令里。
+ */
+export function stripAnsi(text) {
+    return String(text ?? '').replace(ANSI_PATTERN, '');
+}
+
 /** 跑一条验证命令。不抛异常——失败是结果，不是事故。 */
 export function runCommand({
     command,
@@ -73,7 +94,7 @@ export function runCommand({
                 ok: false,
                 exitCode: null,
                 timedOut: false,
-                output: String(error?.message || error),
+                output: stripAnsi(String(error?.message || error)),
             });
             return;
         }
@@ -81,7 +102,10 @@ export function runCommand({
         let timedOut = false;
         let settled = false;
         const push = (data) => {
-            output = tail(output + String(data));
+            // 对累计串整体重剥，不是只剥新到的这一块：stdout 会把一条转义序列
+            // 切在两个 data 事件之间（ESC 落在前一块、`[90m` 落在后一块），
+            // 只剥单块会留下后半截。剥离是幂等的，重复剥没有代价。
+            output = tail(stripAnsi(output + String(data)));
         };
         child.stdout?.on('data', push);
         child.stderr?.on('data', push);
@@ -107,7 +131,7 @@ export function runCommand({
                 ok: false,
                 exitCode: null,
                 timedOut,
-                output: tail(output + String(error?.message || error)),
+                output: tail(stripAnsi(output + String(error?.message || error))),
             });
         });
         child.on('close', (code) => {

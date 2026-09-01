@@ -6,7 +6,7 @@
  * 因此这里的命令编排就是生产行为本身，不是对 Agent 的建议。
  */
 import { describe, expect, it } from 'vitest';
-import { runCommand, runVerificationSteps } from '../executor/verification.js';
+import { runCommand, runVerificationSteps, stripAnsi } from '../executor/verification.js';
 
 function fakeSpawn({ exitCode = 0, stdout = '', errorEvent = null, neverExit = false } = {}) {
     const handlers = {};
@@ -252,5 +252,69 @@ describe('[SCN-FWB-032] 超时必须杀整棵进程树，且死因不被截断',
         });
         expect(result.passed).toBe(false);
         expect(result.failureOutput.slice(-120)).toMatch(/timed out after \d+ms/);
+    });
+});
+
+/**
+ * [SCN-FWB-032] 命令输出直接进 Issue 时间线给人读，所以它必须是人能读的。
+ *
+ * 2026-09-01 那条 `integration_verification_failed` 回复的实录：满屏
+ * `[90m303| [39m` 把真正的失败原因埋掉了，而且转义序列还白占了 4000 字符
+ * 尾部预算的一大截——同样的字符数，能带回的真信息少了三成。
+ *
+ * 源码里用 String.fromCharCode(27) 而不是字面量 ESC：测试文件里藏不可见控制
+ * 字符，下一个人读 diff 时看不出这里到底在测什么。
+ */
+describe('[SCN-FWB-032] 命令输出的 ANSI 剥离', () => {
+    const ESC = String.fromCharCode(27);
+
+    function spawnEmitting(chunks) {
+        const handlers = {};
+        const listeners = [];
+        const child = {
+            stdout: { on: (event, fn) => event === 'data' && listeners.push(fn) },
+            stderr: { on: () => {} },
+            on(event, fn) {
+                handlers[event] = fn;
+            },
+            kill() {},
+        };
+        queueMicrotask(() => {
+            for (const chunk of chunks) for (const fn of listeners) fn(chunk);
+            handlers.close?.(1);
+        });
+        return child;
+    }
+
+    it('剥掉上色序列，只留人读得懂的文字', async () => {
+        const result = await runCommand({
+            command: 'npm test',
+            cwd: 'C:/ws',
+            env: {},
+            spawnImpl: () =>
+                spawnEmitting([`${ESC}[31m1 failed${ESC}[39m${ESC}[90m | 160 passed${ESC}[39m`]),
+        });
+
+        expect(result.output).toBe('1 failed | 160 passed');
+        expect(result.output).not.toContain(ESC);
+    });
+
+    it('序列被 stdout 切成两块时照样剥得掉', async () => {
+        // 真实形态：ESC 落在上一个 data 事件、`[31m` 落在下一个。只剥单块会把
+        // 后半截留在时间线里，正是工作台上看到的那种半截乱码。
+        const result = await runCommand({
+            command: 'npm test',
+            cwd: 'C:/ws',
+            env: {},
+            spawnImpl: () => spawnEmitting([`before ${ESC}`, `[31mafter${ESC}[39m`]),
+        });
+
+        expect(result.output).toBe('before after');
+    });
+
+    it('不碰正文里合法的方括号——只认带 ESC 的真序列', () => {
+        // 裸的 `[31m` 可能是 Markdown 链接或代码，剥它等于篡改用户内容。
+        expect(stripAnsi('see [31m] in the spec')).toBe('see [31m] in the spec');
+        expect(stripAnsi(`${ESC}[31mred`)).toBe('red');
     });
 });

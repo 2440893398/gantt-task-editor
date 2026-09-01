@@ -148,6 +148,15 @@ describe('[SCN-FWB-035] S3 读取拒绝清单与环境白名单', () => {
             expect(child[leaked], leaked).toBeUndefined();
         }
     });
+
+    it('强制 NO_COLOR——子进程输出会原样进时间线给人读', () => {
+        // 2026-09-01 实测：vitest 在管道里（非 TTY）仍强制上色，`FORCE_COLOR=0`
+        // 压不住、只有 `NO_COLOR=1` 有效。不关掉的话时间线里就是满屏 `[90m303|`。
+        expect(buildChildEnv({ PATH: 'C:\\bin' }).NO_COLOR).toBe('1');
+
+        // 但它是默认值不是铁律：extra 排在展开顺序后面，调用方仍能覆盖。
+        expect(buildChildEnv({}, { extra: { NO_COLOR: '0' } }).NO_COLOR).toBe('0');
+    });
 });
 
 describe('[SCN-FWB-035] S3 代理变量必须放行', () => {

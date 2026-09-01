@@ -221,7 +221,11 @@ export function buildChildEnv(parentEnv = process.env, { extra = {} } = {}) {
     for (const [name, value] of Object.entries(parentEnv)) {
         if (value !== undefined && allow.has(name.toUpperCase())) child[name] = value;
     }
-    return { ...child, ...extra };
+    // 子进程的输出会原样进 Issue 时间线给人读，转义序列在那里既没有颜色也读不懂。
+    // vitest 即使在管道里也强制上色（2026-09-01 实测：非 TTY 下仍产出 SGR 序列，
+    // `FORCE_COLOR=0` 压不住，只有 `NO_COLOR=1` 有效），不关掉的话时间线里就是满屏
+    // `[90m303|`，真正的失败原因被埋在里面。放在展开之前——调用方的 extra 仍可覆盖。
+    return { NO_COLOR: '1', ...child, ...extra };
 }
 
 /**
