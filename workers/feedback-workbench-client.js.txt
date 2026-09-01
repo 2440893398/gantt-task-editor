@@ -1003,11 +1003,34 @@
         );
     }
 
+    /* SCN-FWB-048: 验证结论的唯一渲染实现，时间线的「处理结果」与候选实现卡共用。
+       候选卡此前自己 `String(verification[name])`——对象求字符串得到
+       `targetedTests [object Object]`，而审核候选正是管理员决定批不批准的那一屏。
+       调用方必须自己先判断「有没有验证结果」：这里对空对象会渲染成三行「不适用」，
+       那是在说这三步不需要跑，与「还没跑」是两回事。 */
+    function verificationChecksHtml(value) {
+        var verification = value || {};
+        var visual = verification.visualEvidence || {};
+        return (
+            '<div class="result-checks">' +
+            verificationRowHtml('目标测试', verification.targetedTests) +
+            verificationRowHtml('构建', verification.build) +
+            verificationRowHtml('浏览器验证', verification.playwright) +
+            '</div>' +
+            (visual.required
+                ? '<p class="visual-status ' +
+                  (visual.present ? 'passed' : 'failed') +
+                  '">' +
+                  (visual.present ? '已附带视觉验证证据。' : '缺少必需的视觉验证证据。') +
+                  '</p>'
+                : '')
+        );
+    }
+
     function resultEvidenceHtml(value) {
         if (!value || typeof value !== 'object') return '';
         var files = Array.isArray(value.changedFiles) ? value.changedFiles : [];
         var verification = value.verification || {};
-        var visual = verification.visualEvidence || {};
         var hasRequiredVerification = Boolean(
             (verification.targetedTests || {}).required ||
             (verification.build || {}).required ||
@@ -1064,18 +1087,7 @@
             '</div>' +
             fileHtml +
             violationHtml +
-            '<div class="result-checks">' +
-            verificationRowHtml('目标测试', verification.targetedTests) +
-            verificationRowHtml('构建', verification.build) +
-            verificationRowHtml('浏览器验证', verification.playwright) +
-            '</div>' +
-            (visual.required
-                ? '<p class="visual-status ' +
-                  (visual.present ? 'passed' : 'failed') +
-                  '">' +
-                  (visual.present ? '已附带视觉验证证据。' : '缺少必需的视觉验证证据。') +
-                  '</p>'
-                : '') +
+            verificationChecksHtml(verification) +
             '</section>'
         );
     }
@@ -2201,11 +2213,10 @@
 
         var files = candidate.changedFiles || [];
         var verification = candidate.verification || {};
-        var verificationRows = Object.keys(verification)
-            .map(function (name) {
-                return statusLine(name, String(verification[name]));
-            })
-            .join('');
+        // SCN-FWB-048：空对象要走「尚无验证结果」，不能交给共用实现渲染成三行「不适用」。
+        var verificationRows = Object.keys(verification).length
+            ? verificationChecksHtml(verification)
+            : '';
 
         $('candidateBody').innerHTML =
             (candidate.reviewFocus

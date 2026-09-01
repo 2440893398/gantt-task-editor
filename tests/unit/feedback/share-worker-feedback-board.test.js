@@ -2665,6 +2665,74 @@ describe('feedback issue board Worker routes', () => {
         expect(document_.getElementById('timeline').textContent).toContain('另一条 Issue 的时间线');
     });
 
+    function candidateRoutes(candidates) {
+        const routes = ownerWorkbenchRoutes();
+        const detailPath = `/api/feedback/issues/${encodeURIComponent(feedbackKey)}`;
+        routes[`${detailPath}/snapshot`] = { ...routes[`${detailPath}/snapshot`], candidates };
+        routes[`${detailPath}/candidates`] = { candidates };
+        return routes;
+    }
+
+    const candidateUrl = `https://worker.test/feedback#issue=${encodeURIComponent(
+        feedbackKey
+    )}&capability=owner-token`;
+
+    it('[SCN-FWB-048] 候选实现卡逐步说出验证结论，而不是 [object Object]', async () => {
+        // 坏行为：`statusLine(name, String(verification[name]))`。verification[name] 是
+        // `{command, required, passed}` 对象，四行全成 `targetedTests [object Object]`。
+        // 审核候选实现正是管理员决定批不批准的那一屏，结论却一个字都读不到——只能
+        // 翻时间线去找同一份信息（2026-09-01 用户截图实录）。
+        const dom = await openWorkbench(env, {
+            url: candidateUrl,
+            routes: candidateRoutes([
+                {
+                    id: 'cnd_9f3',
+                    status: 'ready',
+                    changedFiles: ['src/locales/en-US.js'],
+                    verification: {
+                        targetedTests: { command: 'npm test', required: true, passed: true },
+                        build: { command: 'npm run build', required: true, passed: false },
+                        playwright: {
+                            command: 'npm run test:e2e',
+                            required: false,
+                            passed: false,
+                        },
+                        visualEvidence: { required: true, present: false },
+                    },
+                },
+            ]),
+        });
+        const body = dom.window.document.getElementById('candidateBody');
+        await waitFor(() => expect(body.textContent).toContain('npm test'));
+
+        expect(body.innerHTML).not.toContain('[object Object]');
+        // 口径与时间线「处理结果」一致：名称 + 命令 + 结论。
+        expect(body.textContent).toContain('目标测试');
+        expect(body.textContent).toContain('已通过');
+        expect(body.textContent).toContain('构建');
+        expect(body.textContent).toContain('未通过');
+        // 不要求的步骤是「不适用」，不能混进失败里读成又挂了一条。
+        expect(body.textContent).toContain('不适用');
+        // 视觉证据必需却缺席要说出来：它是自动交付的前置条件之一。
+        expect(body.textContent).toContain('缺少必需的视觉验证证据');
+    });
+
+    it('[SCN-FWB-048] 还没有验证结果时说「尚无」，不是三行「不适用」', async () => {
+        // 「不适用」在说这三步不需要跑，「还没跑」是另一回事。共用渲染实现不能把
+        // 这两种状态压成同一句话——否则一个刚建好、还没验证的候选看起来像是
+        // 三步全部被豁免了。
+        const dom = await openWorkbench(env, {
+            url: candidateUrl,
+            routes: candidateRoutes([
+                { id: 'cnd_new', status: 'pending', changedFiles: [], verification: {} },
+            ]),
+        });
+        const body = dom.window.document.getElementById('candidateBody');
+        await waitFor(() => expect(body.textContent).toContain('尚无验证结果'));
+
+        expect(body.textContent).not.toContain('不适用');
+    });
+
     it('[SCN-FWB-025] keeps unchanged queue rows and timeline entries as the same DOM nodes', async () => {
         // 坏行为：刷新时整块 `innerHTML =`。每个条目都被换成新节点，8 秒一次的自动
         // 同步因此能在 mousedown 和 click 之间抽掉指针下的那一项（点击落空），时间线
