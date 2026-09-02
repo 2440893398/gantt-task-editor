@@ -17,6 +17,7 @@ function createFakeAppServer({ script = [], serverRequests = [] } = {}) {
         killed: false,
         requests: [],
         notificationHandlers: [],
+        exitHandlers: [],
         serverRequestHandler: null,
         onNotification(handler) {
             server.notificationHandlers.push(handler);
@@ -24,6 +25,12 @@ function createFakeAppServer({ script = [], serverRequests = [] } = {}) {
         },
         onServerRequest(handler) {
             server.serverRequestHandler = handler;
+        },
+        // §3.5：真客户端会在进程退出时通知；桩必须同形，否则 codex-session 的
+        // fail-loud 会当场拒绝——那正是这道闸存在的意义（接口缺失不许静默）。
+        onExit(handler) {
+            server.exitHandlers.push(handler);
+            return () => {};
         },
         start() {
             server.started = true;
@@ -370,6 +377,30 @@ describe('[SCN-FWB-035] 旧 epoch 立即停手', () => {
         // 坏行为画像：若 staleLease 短路被删掉，retryDelaysMs=[0,0,0] 会打出 9 次。
         expect(calls).toBe(1);
         expect(result.status).toBe('lease_lost');
+    });
+
+    it('租约易主时同时杀掉 provider 会话——不能让它继续跑到 30 分钟', async () => {
+        // 坏行为画像（代码评审 §3.6）：只置位 staleLease、停止上报，而 provider
+        // 子进程照跑最长 30 分钟。token 与验证预算白烧是小事，真正危险的是
+        // **新持有者正在并行跑同一条 Run**——两个进程在同一个工作区里 reset/checkout。
+        const controlPlane = createFakeControlPlane();
+        controlPlane.postEvent = async () => {
+            const error = new Error('FEEDBACK_EXECUTOR_LEASE_STALE');
+            error.code = 'FEEDBACK_EXECUTOR_LEASE_STALE';
+            throw error;
+        };
+        const server = createFakeAppServer({ script: READ_ONLY_SCRIPT });
+        await executeLeasedRun({
+            lease: baseLease(),
+            controlPlane,
+            adapter: createCodexAdapter(),
+            createSession: () =>
+                createCodexSession({ client: server, workspaceDir: baseLease().workspaceDir }),
+            retryDelaysMs: [0],
+            setIntervalFn: () => null,
+            clearIntervalFn: () => {},
+        });
+        expect(server.killed).toBe(true);
     });
 });
 

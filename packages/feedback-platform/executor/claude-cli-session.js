@@ -15,6 +15,7 @@
 import { spawn as nodeSpawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { assertToolSurfaceAllowed, toolAllowlistFor } from './tool-policy.js';
+import { defaultKillTree } from './verification.js';
 
 const INIT_TIMEOUT_MS = 120 * 1000;
 
@@ -38,6 +39,7 @@ export function createClaudeCliSession({
     cwd,
     spawn = nodeSpawn,
     onStderr = null,
+    killTree = defaultKillTree,
     // S6 闸按 policy 取白名单。argv（buildSessionArgs）与这道闸必须由同一个
     // context.policy 驱动——分开传两个来源就会出现「argv 是写入态、闸是只读态」
     // 的接线洞，届时每条写入型 Run 都会在 init 上被闸当场杀掉。缺省即只读。
@@ -187,7 +189,23 @@ export function createClaudeCliSession({
         /** prompt 已在 openSession 时经 stdin 送出；这里没有第二步。 */
         async startTurn() {},
 
+        /**
+         * 树级 kill（代码评审 §3.7）。`proc.kill('SIGKILL')` 只杀直接子进程，而
+         * `claude` 之下还挂着它自己起的工具子进程；Windows 上更是没有进程组可杀。
+         * verification.js 为此已经论证过一次（孤儿进程在超时之后又跑了 17 分钟，
+         * 输出管道被孙进程握着、close 迟迟不触发）——同一条教训不在两个地方各犯一遍。
+         * 先杀树再补一刀直接子进程：树级失败（进程已消亡、taskkill 不在）也不至于
+         * 什么都没做。
+         */
         kill(signal = 'SIGKILL') {
+            const pid = proc?.pid;
+            if (pid) {
+                try {
+                    killTree(pid);
+                } catch {
+                    // taskkill 不可用或树已消亡。
+                }
+            }
             try {
                 proc?.kill(signal);
             } catch {

@@ -22,7 +22,7 @@ import { spawn as nodeSpawn } from 'node:child_process';
  * 输出管道被孙进程握着，close 直到它们自然结束才触发——超时既没止损，还把
  * 「executor 超时」与「测试真失败」混成同一种终态。Windows 用 taskkill /T /F。
  */
-function defaultKillTree(pid, { spawnImpl = nodeSpawn } = {}) {
+export function defaultKillTree(pid, { spawnImpl = nodeSpawn } = {}) {
     if (process.platform === 'win32') {
         try {
             spawnImpl('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true });

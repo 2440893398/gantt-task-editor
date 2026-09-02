@@ -42,6 +42,7 @@ function createFakeAppServer(finalText) {
         killed: false,
         requests: [],
         notificationHandlers: [],
+        exitHandlers: [],
         serverRequestHandler: null,
         onNotification(handler) {
             server.notificationHandlers.push(handler);
@@ -49,6 +50,12 @@ function createFakeAppServer(finalText) {
         },
         onServerRequest(handler) {
             server.serverRequestHandler = handler;
+        },
+        // §3.5：真客户端会在进程退出时通知；桩必须同形，否则 codex-session 的
+        // fail-loud 会当场拒绝——那正是这道闸存在的意义（接口缺失不许静默）。
+        onExit(handler) {
+            server.exitHandlers.push(handler);
+            return () => {};
         },
         start() {
             server.started = true;

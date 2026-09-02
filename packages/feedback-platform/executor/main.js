@@ -162,22 +162,65 @@ export function createStopController({
  * runId 变化即复位。控制面合法的重派（终态上报丢失后的恢复重跑就是同 runId 新
  * epoch）仍会被执行，只是不再以进程速度空转。
  */
-export function createHotLoopGuard({ pollIntervalMs = POLL_INTERVAL_MS } = {}) {
-    let lastRunId = '';
+export function createHotLoopGuard({
+    pollIntervalMs = POLL_INTERVAL_MS,
+    // 退避期间的续租间隔。租约 120 秒，30 秒一次与 run-loop 的心跳同频。
+    keepAliveIntervalMs = 30 * 1000,
+} = {}) {
+    let lastId = '';
     let repeats = 0;
     return {
-        async pace(runId, { sleep: sleepImpl = sleep, log = console.error } = {}) {
-            if (runId !== lastRunId) {
-                lastRunId = runId;
+        /**
+         * 退避期间必须续租（代码评审 §3.3）。
+         *
+         * 坏行为：退避序列是 15/30/60/120/240/300 秒，而租约只有 120 秒、心跳要等
+         * `executeLeasedRun` 里才启动——repeats≥3 起，睡醒时租约**必然**已经过期。
+         * 于是一次控制面合法的重派会完整烧掉一轮 provider turn，换回来的是全 409：
+         * 防热循环的措施自己制造了「保证过期执行」。
+         *
+         * `keepAlive` 由调用方提供（它才有 leaseId/epoch）。续租报租约已易主时立刻
+         * 结束退避并返回 `leaseLost: true`——租约都不在手上了，这一轮没有执行的意义。
+         */
+        async pace(
+            id,
+            { sleep: sleepImpl = sleep, log = console.error, keepAlive = null, label = 'run' } = {}
+        ) {
+            if (id !== lastId) {
+                lastId = id;
                 repeats = 0;
-                return;
+                return { paced: false, leaseLost: false };
             }
             repeats += 1;
             const delayMs = Math.min(pollIntervalMs * 2 ** (repeats - 1), HOT_LOOP_MAX_BACKOFF_MS);
             log(
-                `[executor] warning: run ${runId} leased again right after this process just executed it — control plane may be re-issuing a terminal run; backing off ${Math.round(delayMs / 1000)}s before attempt ${repeats + 1} (hot-loop guard)`
+                `[executor] warning: ${label} ${id} leased again right after this process just executed it — control plane may be re-issuing a terminal ${label}; backing off ${Math.round(delayMs / 1000)}s before attempt ${repeats + 1} (hot-loop guard)`
             );
-            await sleepImpl(delayMs);
+
+            let remainingMs = delayMs;
+            while (remainingMs > 0) {
+                const sliceMs = keepAlive
+                    ? Math.min(keepAliveIntervalMs, remainingMs)
+                    : remainingMs;
+                await sleepImpl(sliceMs);
+                remainingMs -= sliceMs;
+                if (!keepAlive || remainingMs <= 0) continue;
+                try {
+                    await keepAlive();
+                } catch (error) {
+                    if (error?.code === 'FEEDBACK_EXECUTOR_LEASE_STALE') {
+                        log(
+                            `[executor] ${label} ${id}: lease lost while backing off; skipping this attempt`
+                        );
+                        return { paced: true, leaseLost: true };
+                    }
+                    // 续租的网络抖动不该放弃这一轮：租约还可能是我们的，接着睡。
+                    log(
+                        '[executor] keep-alive during backoff failed:',
+                        String(error?.message || error)
+                    );
+                }
+            }
+            return { paced: true, leaseLost: false };
         },
     };
 }
@@ -214,6 +257,11 @@ export function resolveClaudeTransport(env = process.env) {
 export const PROVIDERS = {
     'claude-code': {
         adapter: createClaudeCodeAdapter,
+        // 申报给控制面的 policy 能力（代码评审 §3.4）。此前这份清单是**硬编码**的，
+        // 与实际 provider 无关——codex 会话恒为只读沙箱，却照样申报 implement*，
+        // 于是每一条派给 codex 的写入 Run 都确定性地以 no_changes_produced 收场，
+        // 白烧一次修复回路名额。能力只能由 provider 自己说。
+        policies: ['analyze', 'review', 'implement', 'implement_and_verify', 'local_required'],
         homeEnvName: 'CLAUDE_CONFIG_DIR',
         credentialFile: '.credentials.json',
         // 隔离配置目录对 Claude Code 不是安全边界（S7，2026-08-21 实测更正）：
@@ -254,6 +302,9 @@ export const PROVIDERS = {
     },
     codex: {
         adapter: createCodexAdapter,
+        // 只读两项：`codex-session.js` 里的 `sandbox: 'read-only'` 是恒定的，
+        // 支持写入之前申报写入能力就是在骗控制面（§3.4）。
+        policies: ['analyze', 'review'],
         homeEnvName: 'CODEX_HOME',
         credentialFile: 'auth.json',
         // codex 侧隔离是硬约束：共享 `~/.codex` 的 sqlite 状态库会被在跑的
@@ -261,9 +312,11 @@ export const PROVIDERS = {
         isolatedHomeRequired: true,
         defaultHome: () => join(homedir(), '.codex'),
         loginHint: (dir) => `$env:CODEX_HOME='${dir}'; codex login`,
-        createSession({ command, childEnv, workspaceDir, log }) {
+        createSession({ command, childEnv, workspaceDir, context, log }) {
             return createCodexSession({
                 workspaceDir,
+                // §3.4 的第二道：真被派了写入型 Run 就响亮拒绝，而不是跑一轮空转。
+                policy: context?.policy ?? '',
                 client: new AppServerClient({
                     command,
                     env: childEnv,
@@ -390,7 +443,10 @@ export async function runExecutorDaemon({ env = process.env, log = console.error
         log,
         fetchImpl: await resolveControlPlaneFetch({ env, log: () => {} }),
     });
-    const hotLoopGuard = createHotLoopGuard({ pollIntervalMs: POLL_INTERVAL_MS });
+    // §3.3：Run 与 Release 各一份退避状态。共用一份时，两个重复派发对象交替出现
+    // 就会互相复位对方的计数——退避完全失效，而这正是它要防的场景。
+    const runGuard = createHotLoopGuard({ pollIntervalMs: POLL_INTERVAL_MS });
+    const releaseGuard = createHotLoopGuard({ pollIntervalMs: POLL_INTERVAL_MS });
     const stopController = createStopController({
         stopFile: env.FEEDBACK_EXECUTOR_STOP_FILE,
         log,
@@ -433,7 +489,13 @@ export async function runExecutorDaemon({ env = process.env, log = console.error
                     log(
                         `[executor] release claimed ${releaseClaim.releaseId} (${releaseClaim.status}) epoch=${releaseClaim.leaseEpoch}`
                     );
-                    await hotLoopGuard.pace(releaseClaim.releaseId, { log });
+                    // Release 租约 TTL 是 30 分钟，远大于 5 分钟的退避上限，
+                    // 因此这里不需要续租。
+                    const releasePace = await releaseGuard.pace(releaseClaim.releaseId, {
+                        log,
+                        label: 'release',
+                    });
+                    if (releasePace.leaseLost) continue;
                     try {
                         const delivered = await releasePipeline.deliver({
                             claim: releaseClaim,
@@ -465,7 +527,20 @@ export async function runExecutorDaemon({ env = process.env, log = console.error
             }
 
             log(`[executor] leased run=${lease.runId} epoch=${lease.epoch}`);
-            await hotLoopGuard.pace(lease.runId, { log });
+            // §3.3：退避期间续租。不续的话 repeats≥3 起睡醒必过期，
+            // 白烧一轮 provider turn 换回全 409。
+            const runPace = await runGuard.pace(lease.runId, {
+                log,
+                keepAlive: () =>
+                    controlPlane.heartbeat({
+                        executorId,
+                        leaseId: lease.leaseId,
+                        runId: lease.runId,
+                        epoch: lease.epoch,
+                        leaseSeconds: LEASE_SECONDS,
+                    }),
+            });
+            if (runPace.leaseLost) continue;
             // executeLeasedRun 自己兜住 turn 内的一切，但它也有在 try 之外抛的路径
             // （写入型 policy 的终态投递重试耗尽、createSession 里 buildSessionArgs 抛）。
             // 一轮的失败只能终结这一轮：守护进程是常驻的，不能因为一条 Run 没跑成就退出。

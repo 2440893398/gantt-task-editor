@@ -11,9 +11,10 @@
  * 本文件保留 codex 侧的只读会话配置：工作区只读 + 永不弹本地审批
  * （审批一律经协议上报，见 run-loop 的 fail-closed 说明）。
  */
+import { isWriteCapablePolicy } from '../../../src/features/feedback/feedback-prompt.js';
 import { AppServerClient } from './app-server-client.js';
 
-export function createCodexSession({ client, workspaceDir, createClient } = {}) {
+export function createCodexSession({ client, workspaceDir, createClient, policy = '' } = {}) {
     const server = client ?? createClient?.() ?? new AppServerClient();
     let threadId = '';
 
@@ -29,15 +30,36 @@ export function createCodexSession({ client, workspaceDir, createClient } = {}) 
             server.onServerRequest(handler);
         },
         onExit(handler) {
-            // AppServerClient 把 spawn 失败与进程退出都表现为在途 request 失败；
-            // 显式的退出通知是可选能力，缺席时由 request 超时兜底。
-            server.onExit?.(handler);
+            // 代码评审 §3.5：这里原本写的是 `server.onExit?.(handler)`——而
+            // AppServerClient 当时根本没有 onExit，可选链把「接口没实现」变成了一次
+            // 静默的空操作。run-loop 靠这个回调在 provider 中途死掉时立刻走 C4 兜底；
+            // 注册失败 = 那条路永不触发 = 干等 30 分钟 turn 超时。缺接口必须响亮失败。
+            if (typeof server.onExit !== 'function') {
+                const error = new Error(
+                    'EXECUTOR_SESSION_ONEXIT_MISSING: app-server client does not report process exit'
+                );
+                error.code = 'EXECUTOR_SESSION_ONEXIT_MISSING';
+                throw error;
+            }
+            server.onExit(handler);
         },
         /**
          * 开会话与开一轮分成两步，是为了让 sessionId 在**任何 turn 事件之前**就确定——
          * 否则先到的事件会缺 providerSessionId，而那正是会话续接唯一的凭据。
          */
         async openSession() {
+            // 代码评审 §3.4：codex 的会话恒为只读沙箱（下面那行 `sandbox: 'read-only'`
+            // 与 policy 无关），所以写入型 Run 派到这里必然以 no_changes_produced 收场，
+            // 白烧一次修复回路名额。能力申报侧已按 provider 收窄（main.js），这里是
+            // 第二道：万一控制面仍派下来，说清楚原因，而不是假装干了一轮活。
+            if (isWriteCapablePolicy(policy)) {
+                const error = new Error(
+                    `EXECUTOR_PROVIDER_CANNOT_WRITE: codex sessions are read-only sandboxes; policy "${policy}" needs write access`
+                );
+                error.code = 'EXECUTOR_PROVIDER_CANNOT_WRITE';
+                error.errorCode = 'executor_provider_cannot_write';
+                throw error;
+            }
             await server.initialize();
             const thread = await server.request('thread/start', {
                 cwd: workspaceDir,

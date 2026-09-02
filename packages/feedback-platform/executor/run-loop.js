@@ -130,6 +130,30 @@ export async function executeLeasedRun({
                   },
     });
     let staleLease = false;
+    /**
+     * 租约易主时必须同时停掉 provider 会话（代码评审 §3.6）。
+     *
+     * 之前只是把 `staleLease` 置位、停止上报，子进程照跑最长 30 分钟：token 与验证
+     * 预算白烧，更糟的是**新持有者正在并行跑同一条 Run**，两个进程同时在一个工作区里
+     * reset/checkout。租约不在手上就没有继续执行的理由——立刻收手。
+     *
+     * 用函数间接引用 session：置位点（postEvent / 审批上报 / 心跳）都在会话创建之前
+     * 就已定义。
+     */
+    let activeSession = null;
+    function markLeaseStale(reason) {
+        if (staleLease) return;
+        staleLease = true;
+        log(`lease stale (${reason}); stopping all writes and killing the provider session`);
+        try {
+            activeSession?.kill?.();
+        } catch (error) {
+            log(
+                'failed to kill provider session after lease loss:',
+                String(error?.message || error)
+            );
+        }
+    }
 
     async function postEvent(event) {
         for (let attempt = 0; attempt < retryDelaysMs.length; attempt += 1) {
@@ -140,8 +164,7 @@ export async function executeLeasedRun({
                 return;
             } catch (error) {
                 if (error?.code === 'FEEDBACK_EXECUTOR_LEASE_STALE') {
-                    staleLease = true;
-                    log('lease stale; stopping all writes for run', lease.runId);
+                    markLeaseStale(`event post for run ${lease.runId}`);
                     return;
                 }
                 if (attempt === retryDelaysMs.length - 1) throw error;
@@ -201,6 +224,7 @@ export async function executeLeasedRun({
     }
 
     const session = createSession();
+    activeSession = session;
     let heartbeatTimer = null;
     let candidatePrep = null;
     try {
@@ -242,7 +266,9 @@ export async function executeLeasedRun({
                     details: tool ? { method, tool } : { method },
                 });
             } catch (error) {
-                if (error?.code === 'FEEDBACK_EXECUTOR_LEASE_STALE') staleLease = true;
+                if (error?.code === 'FEEDBACK_EXECUTOR_LEASE_STALE') {
+                    markLeaseStale('approval report');
+                }
                 // 审批上报失败不改变决定：无论控制面听没听到，答案都是拒绝。
                 log('approval report failed:', String(error?.message || error));
             }
@@ -252,8 +278,7 @@ export async function executeLeasedRun({
         heartbeatTimer = setIntervalFn(() => {
             controlPlane.heartbeat({ ...envelopeBase, leaseSeconds }).catch((error) => {
                 if (error?.code === 'FEEDBACK_EXECUTOR_LEASE_STALE') {
-                    staleLease = true;
-                    log('heartbeat rejected: lease stale');
+                    markLeaseStale('heartbeat');
                 } else {
                     log('heartbeat failed:', String(error?.message || error));
                 }

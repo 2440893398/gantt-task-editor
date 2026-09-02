@@ -10,6 +10,7 @@
  */
 import { spawn as nodeSpawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
+import { defaultKillTree } from './verification.js';
 
 export class AppServerClient {
     constructor({
@@ -18,17 +19,48 @@ export class AppServerClient {
         env,
         spawn = nodeSpawn,
         onStderr = null,
+        killTree = defaultKillTree,
     } = {}) {
         this.command = command;
         this.args = args;
         this.env = env;
         this.spawn = spawn;
         this.onStderr = onStderr;
+        this.killTree = killTree;
         this.nextId = 1;
         this.pending = new Map();
         this.notificationHandlers = [];
         this.serverRequestHandler = null;
+        this.exitHandlers = [];
+        this.exited = false;
         this.proc = null;
+    }
+
+    /**
+     * 进程退出通知（代码评审 2026-09-02 §3.5）。
+     *
+     * 之前这个方法根本不存在，而 codex-session 用 `server.onExit?.(handler)` 去注册——
+     * 可选链把「接口没实现」变成了一次静默的空操作（与 SCN-FWB-032 的翻译器失聪同型）。
+     * 后果：codex 中途崩溃时，run-loop 那条「provider 死了就立刻走 C4 兜底」的路
+     * 永远不会触发，Run 干等到 30 分钟 turn 超时。
+     */
+    onExit(handler) {
+        this.exitHandlers.push(handler);
+        return () => {
+            const index = this.exitHandlers.indexOf(handler);
+            if (index >= 0) this.exitHandlers.splice(index, 1);
+        };
+    }
+
+    /** 进程死了：在途 request 全部立刻失败，退出监听者各收到一次通知（只发一次）。 */
+    _handleExit(error) {
+        if (this.exited) return;
+        this.exited = true;
+        for (const [id, pending] of [...this.pending]) {
+            this.pending.delete(id);
+            pending.reject(error);
+        }
+        for (const handler of [...this.exitHandlers]) handler(error);
     }
 
     start() {
@@ -42,11 +74,23 @@ export class AppServerClient {
         // run-loop 的 C4 兜底才有机会把 Run 送到终态。
         this.proc.on('error', (error) => {
             this.spawnError = error;
-            for (const [id, pending] of [...this.pending]) {
-                this.pending.delete(id);
-                pending.reject(error);
-            }
+            this._handleExit(error);
         });
+        // §3.5：进程退出必须是一个事件，而不是「等 request 超时」。
+        this.proc.on('close', (code, signal) => {
+            const error = new Error(
+                `EXECUTOR_PROVIDER_EXITED: codex app-server exited (code=${code} signal=${signal ?? 'none'})`
+            );
+            error.code = 'EXECUTOR_PROVIDER_EXITED';
+            this._handleExit(this.spawnError ?? error);
+        });
+        // §3.5：进程已死时往 stdin 写会以 EPIPE 冒成 unhandled stream error，
+        // 打死的是**守护进程**而不是这一轮 Run。接住它，让失败留在这一轮里。
+        if (typeof this.proc.stdin?.on === 'function') {
+            this.proc.stdin.on('error', (error) => {
+                this.stdinError = error;
+            });
+        }
         createInterface({ input: this.proc.stdout }).on('line', (line) => {
             const trimmed = line.trim();
             if (!trimmed) return;
@@ -96,7 +140,14 @@ export class AppServerClient {
     }
 
     _send(payload) {
-        this.proc.stdin.write(JSON.stringify({ jsonrpc: '2.0', ...payload }) + '\n');
+        try {
+            this.proc.stdin.write(JSON.stringify({ jsonrpc: '2.0', ...payload }) + '\n');
+        } catch (error) {
+            // §3.5：进程已死时写 stdin 会 EPIPE。抛出去就是一次 unhandled error
+            // （notify 是同步调用、没人 await），死的是**守护进程**而不是这一轮 Run。
+            // 记下来即可：在途 request 由 close 事件负责失败。
+            this.stdinError = error;
+        }
     }
 
     request(method, params, { timeoutMs = 300000 } = {}) {
@@ -151,8 +202,19 @@ export class AppServerClient {
         return result;
     }
 
+    /**
+     * 树级 kill（§3.7）：`child.kill` 只杀直接子进程。Windows 上 app-server 之下
+     * 还挂着模型进程与工具子进程，杀壳留树的后果 verification.js 已经论证过一次
+     * （孤儿进程又跑了 17 分钟）。同一条教训不在两个地方各犯一遍。
+     */
     kill(signal = 'SIGKILL') {
-        this.proc?.kill(signal);
+        const pid = this.proc?.pid;
+        if (pid) this.killTree(pid);
+        try {
+            this.proc?.kill(signal);
+        } catch {
+            // 进程可能已退出。
+        }
     }
 
     async waitExit() {

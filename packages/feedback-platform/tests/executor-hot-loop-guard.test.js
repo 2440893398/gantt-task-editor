@@ -66,3 +66,86 @@ describe('[SCN-FWB-035] 防热循环退避', () => {
         expect(logs.join(' ')).toContain('run_x');
     });
 });
+
+/**
+ * [SCN-FWB-035] 退避期间必须续租（代码评审 2026-09-02 §3.3）。
+ *
+ * 坏行为画像：退避序列 15/30/60/120/240/300 秒，而租约 120 秒、心跳要等
+ * `executeLeasedRun` 里才启动——repeats≥3 起睡醒时租约**必然**已过期。于是一次
+ * 控制面合法的重派被完整执行一轮（烧掉一整轮 provider turn），换回来的是全 409：
+ * 防热循环的措施自己制造了「保证过期执行」。
+ */
+describe('[SCN-FWB-035] 退避期间续租', () => {
+    function instrumentedWithKeepAlive(guard, keepAlive) {
+        const sleeps = [];
+        return {
+            sleeps,
+            pace: (runId) =>
+                guard.pace(runId, {
+                    sleep: async (ms) => {
+                        sleeps.push(ms);
+                    },
+                    log: () => {},
+                    keepAlive,
+                }),
+        };
+    }
+
+    it('长退避被切成若干片，每片之间续一次租——睡醒时租约还在手上', async () => {
+        const beats = [];
+        const guard = createHotLoopGuard({ pollIntervalMs: 240_000, keepAliveIntervalMs: 30_000 });
+        const { pace, sleeps } = instrumentedWithKeepAlive(guard, async () => {
+            beats.push(Date.now());
+        });
+
+        await pace('run_x');
+        await pace('run_x');
+
+        // 240 秒被切成 8 片 × 30 秒；最后一片之后不再续租（马上就要去执行了）。
+        expect(sleeps).toEqual(Array.from({ length: 8 }, () => 30_000));
+        expect(beats).toHaveLength(7);
+    });
+
+    it('续租报租约已易主时立刻收手，本轮不执行', async () => {
+        const guard = createHotLoopGuard({ pollIntervalMs: 120_000, keepAliveIntervalMs: 30_000 });
+        const stale = Object.assign(new Error('FEEDBACK_EXECUTOR_LEASE_STALE'), {
+            code: 'FEEDBACK_EXECUTOR_LEASE_STALE',
+        });
+        const { pace, sleeps } = instrumentedWithKeepAlive(guard, async () => {
+            throw stale;
+        });
+
+        await pace('run_x');
+        const result = await pace('run_x');
+
+        expect(result).toEqual({ paced: true, leaseLost: true });
+        // 第一片睡完就发现租约没了，剩下的 90 秒不再空等。
+        expect(sleeps).toEqual([30_000]);
+    });
+
+    it('续租的网络抖动不放弃这一轮——租约可能还是我们的', async () => {
+        const guard = createHotLoopGuard({ pollIntervalMs: 60_000, keepAliveIntervalMs: 30_000 });
+        const { pace } = instrumentedWithKeepAlive(guard, async () => {
+            throw new Error('fetch failed');
+        });
+        await pace('run_x');
+        expect(await pace('run_x')).toEqual({ paced: true, leaseLost: false });
+    });
+
+    it('Run 与 Release 各用一份 guard——交替出现时退避不被对方复位', async () => {
+        // 坏行为：两者共用一个 guard 时，`run_x → rel_y → run_x → rel_y` 这种交替
+        // 会让 lastId 每次都变化，退避永远不触发——正是它要防的场景。
+        const runGuard = createHotLoopGuard({ pollIntervalMs: 1000 });
+        const releaseGuard = createHotLoopGuard({ pollIntervalMs: 1000 });
+        const run = instrumented(runGuard);
+        const release = instrumented(releaseGuard);
+
+        await run.pace('run_x');
+        await release.pace('rel_y');
+        await run.pace('run_x');
+        await release.pace('rel_y');
+
+        expect(run.sleeps).toEqual([1000]);
+        expect(release.sleeps).toEqual([1000]);
+    });
+});
