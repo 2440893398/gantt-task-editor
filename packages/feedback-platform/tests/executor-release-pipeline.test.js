@@ -292,3 +292,96 @@ describe('[SCN-FWB-033] pages 交付（deploymentRequired=true）', () => {
         ]);
     });
 });
+
+describe('[SCN-FWB-035] S2 凭据在交付路径上真的被接上（评审 §1.2）', () => {
+    // 坏行为画像：准入校验 HTTPS remote + 专用 PAT，release 却用工作区自己的 origin
+    // 与开发者的全局 credential helper 去 push——校验的和推的可以是两个仓库。
+    function pipelineWith({
+        credentials,
+        originUrl = 'https://github.com/2440893398/gantt-task-editor.git',
+    }) {
+        const factoryArgs = [];
+        const git = fakeGit();
+        const inner = git;
+        const wrapped = async (...args) => {
+            if (args.join(' ') === 'remote get-url origin') {
+                return { code: 0, stdout: `${originUrl}\n`, stderr: '' };
+            }
+            return inner(...args);
+        };
+        wrapped.calls = git.calls;
+        const events = [];
+        const pipeline = createReleasePipeline({
+            workspaceDir: 'C:/ws',
+            childEnv: { PATH: 'p' },
+            credentials,
+            log: () => {},
+            gitFactory: (options) => {
+                factoryArgs.push(options);
+                return wrapped;
+            },
+            runVerification: async () => ({
+                passed: true,
+                report: {
+                    targetedTests: { command: 'npm test', required: true, passed: true },
+                    build: { command: 'npm run build', required: true, passed: true },
+                    playwright: { command: 'npm run test:e2e', required: false, passed: true },
+                },
+            }),
+            runCommandImpl: async () => ({ ok: true, exitCode: 0, timedOut: false, output: '' }),
+            fsImpl: { existsSync: () => true },
+            fetchImpl: async () => ({ status: 200 }),
+        });
+        const controlPlane = {
+            async postReleaseEvent({ event }) {
+                events.push({ type: event.type, payload: event.payload });
+                return { duplicate: false };
+            },
+        };
+        return { pipeline, controlPlane, events, factoryArgs, git: wrapped };
+    }
+
+    it('isolated：git runner 拿到隔离凭据参数与白名单环境，origin 同源时照常交付', async () => {
+        const { pipeline, controlPlane, factoryArgs } = pipelineWith({
+            credentials: {
+                mode: 'isolated',
+                remoteUrl: 'https://github.com/2440893398/gantt-task-editor',
+                pat: 'github_pat_x',
+            },
+        });
+        const result = await pipeline.deliver({ claim: claimFor(), controlPlane });
+        expect(result.outcome).toBe('completed');
+        expect(factoryArgs[0].env).toEqual({ PATH: 'p' });
+        expect(factoryArgs[0].credentialArgs).toContain('credential.helper=');
+        expect(factoryArgs[0].credentialArgs.join(' ')).toContain(
+            'http.extraheader=Authorization:'
+        );
+        // PAT 原文不进 argv
+        expect(factoryArgs[0].credentialArgs.join(' ')).not.toContain('github_pat_x');
+    });
+
+    it('isolated：origin 指向别的仓库时以 blocked_external 停下，绝不 push', async () => {
+        const { pipeline, controlPlane, events, git } = pipelineWith({
+            credentials: {
+                mode: 'isolated',
+                remoteUrl: 'https://github.com/2440893398/gantt-task-editor',
+                pat: 'github_pat_x',
+            },
+            originUrl: 'https://github.com/someone-else/gantt-task-editor.git',
+        });
+        const result = await pipeline.deliver({ claim: claimFor(), controlPlane });
+        expect(result).toMatchObject({ outcome: 'failed', errorCode: 'blocked_external' });
+        expect(events.map((e) => e.type)).toEqual(['release.failed']);
+        expect(git.calls.some((call) => call.startsWith('push'))).toBe(false);
+    });
+
+    it('inherited：不注入任何凭据参数——这条路上 S2 不成立，且不做同源核对', async () => {
+        const { pipeline, controlPlane, factoryArgs, git } = pipelineWith({
+            credentials: { mode: 'inherited', remoteUrl: '', pat: '' },
+        });
+        const result = await pipeline.deliver({ claim: claimFor(), controlPlane });
+        expect(result.outcome).toBe('completed');
+        expect(factoryArgs[0].credentialArgs).toEqual([]);
+        expect(git.calls.some((call) => call === 'remote get-url origin')).toBe(false);
+    });
+});

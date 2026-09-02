@@ -108,6 +108,43 @@ export function assertDedicatedCredentials({ remoteUrl, pat }) {
 }
 
 /**
+ * S2 的两种模式（评审 §1.2）。
+ *
+ * 历史状态：`gitArgsWithIsolatedCredentials` 写好、测过、**从来没有生产调用点**，
+ * 而准入照样强制校验 HTTPS remote 与 PAT——「安检在前门、货从后门进」。现在把模式
+ * 摆上台面，两条路都可执行、都可观测：
+ * - `isolated`：git 走注入的 PAT，全局 credential helper 与 ssh 一并禁用，并且
+ *   `origin` 的 URL 必须与被校验的那个 remote 同源（否则校验的和推的不是一个东西）。
+ * - `inherited`：沿用开发机自己的 git 凭据（当前生产形态）。S2 在这个模式下**不成立**，
+ *   执行器必须在启动时与每次交付时把这件事说出来，而不是让准入的存在暗示它成立。
+ *
+ * 默认 `inherited`：真实部署里 PAT 位上填的是占位串（配置文件自己写着），默认切
+ * isolated 会让每次交付都以 auth 失败告终。未知值一律拒绝启动——静默回落是最贵的
+ * 失败（SCN-FWB-032），一个拼错的模式名不能让人以为隔离已生效。
+ */
+export const GIT_CREDENTIAL_MODES = Object.freeze(['inherited', 'isolated']);
+
+export function resolveGitCredentialMode(env = process.env) {
+    const mode = String(env.FEEDBACK_EXECUTOR_GIT_CREDENTIALS || 'inherited').trim();
+    if (!GIT_CREDENTIAL_MODES.includes(mode)) {
+        throw admissionError('EXECUTOR_UNKNOWN_GIT_CREDENTIAL_MODE', { mode });
+    }
+    return mode;
+}
+
+/** 两个 remote 是否指向同一个仓库：忽略大小写、`.git` 后缀与结尾斜杠。 */
+export function sameGitRemote(a, b) {
+    const normalize = (value) =>
+        String(value || '')
+            .trim()
+            .replace(/\.git$/i, '')
+            .replace(/\/+$/, '')
+            .toLowerCase();
+    const left = normalize(a);
+    return Boolean(left) && left === normalize(b);
+}
+
+/**
  * S2 的机械执行件：每次调用 git 都显式清空 credential helper 与
  * `GIT_ASKPASS`/ssh 命令，凭据只经由一次性的 `http.extraheader` 注入。
  * 这样即使开发者机器上配了全局 helper（keychain、manager-core），子进程也读不到。
@@ -241,9 +278,13 @@ export function admitExecutor({
     realpath,
     exists,
     requireWriteCredentials = false,
+    gitCredentialMode = 'inherited',
 } = {}) {
     if (!String(controlPlaneToken || '').trim()) {
         throw admissionError('EXECUTOR_CONTROL_PLANE_TOKEN_REQUIRED');
+    }
+    if (!GIT_CREDENTIAL_MODES.includes(gitCredentialMode)) {
+        throw admissionError('EXECUTOR_UNKNOWN_GIT_CREDENTIAL_MODE', { mode: gitCredentialMode });
     }
     const workspace = assertIndependentWorkspace(workspaceDir, {
         ...(primaryRoots ? { primaryRoots } : {}),
@@ -252,8 +293,21 @@ export function admitExecutor({
     });
     // 读取型 MVP 不推分支，PAT 可以缺席；但只要声明了 remote 或要求写能力，
     // S2 全套立即生效——不存在「先用开发者凭据顶一下」的中间态。
-    if (requireWriteCredentials || String(remoteUrl || '').trim() || String(gitPat || '').trim()) {
+    // isolated 模式下两者必备：这时校验的 remote/PAT 正是 git 真正会用的那一份。
+    if (
+        gitCredentialMode === 'isolated' ||
+        requireWriteCredentials ||
+        String(remoteUrl || '').trim() ||
+        String(gitPat || '').trim()
+    ) {
         assertDedicatedCredentials({ remoteUrl, pat: gitPat });
     }
-    return { workspaceDir: workspace };
+    return {
+        workspaceDir: workspace,
+        gitCredentials: {
+            mode: gitCredentialMode,
+            remoteUrl: String(remoteUrl || '').trim(),
+            pat: gitCredentialMode === 'isolated' ? String(gitPat || '').trim() : '',
+        },
+    };
 }

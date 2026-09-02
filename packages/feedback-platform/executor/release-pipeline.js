@@ -17,6 +17,7 @@
  */
 import { existsSync as fsExistsSync } from 'node:fs';
 import { join } from 'node:path';
+import { gitArgsWithIsolatedCredentials, sameGitRemote } from './admission.js';
 import { createGitRunner, sanitizeCandidateRunId } from './candidate.js';
 import { runCommand, runVerificationSteps } from './verification.js';
 
@@ -43,6 +44,10 @@ function smokeAssertionFor(path, status) {
 export function createReleasePipeline({
     workspaceDir,
     childEnv,
+    // S2（评审 §1.2）：`{ mode: 'inherited'|'isolated', remoteUrl, pat }`，由 admission
+    // 产出。isolated 时凭据经 `http.extraheader` 注入且全局 helper 被禁用；inherited
+    // 时沿用开发机凭据——那种情况下 S2 不成立，交付日志里必须直说。
+    credentials = { mode: 'inherited', remoteUrl: '', pat: '' },
     log = () => {},
     gitFactory = createGitRunner,
     runVerification = runVerificationSteps,
@@ -51,7 +56,15 @@ export function createReleasePipeline({
     fetchImpl = fetch,
 } = {}) {
     if (!workspaceDir) throw new Error('EXECUTOR_RELEASE_PIPELINE_WORKSPACE_REQUIRED');
-    const git = gitFactory({ cwd: workspaceDir });
+    const isolatedCredentials = credentials?.mode === 'isolated';
+    const git = gitFactory({
+        cwd: workspaceDir,
+        // S3：git 与验证子进程同一套白名单环境，不继承控制面 token 与 PAT。
+        env: childEnv,
+        credentialArgs: isolatedCredentials
+            ? gitArgsWithIsolatedCredentials([], { pat: credentials?.pat || '' })
+            : [],
+    });
 
     async function resolveDeploymentId({ target, deployConfig, deployOutput }) {
         const direct = extractDeploymentId(deployOutput);
@@ -108,6 +121,32 @@ export function createReleasePipeline({
                 });
                 return { outcome: 'failed', errorCode };
             };
+
+            // S2（评审 §1.2）：isolated 模式下，被准入校验过的那个 remote 必须就是
+            // git 真正会去认证的那个。origin 指向别处时，「校验了 HTTPS + 专用 PAT」
+            // 与「推到哪里」是两件不相干的事——这正是接线断裂的定义。
+            if (isolatedCredentials) {
+                let originUrl = '';
+                try {
+                    originUrl = (await git('remote', 'get-url', 'origin')).stdout.trim();
+                } catch (error) {
+                    return fail(
+                        'blocked_external',
+                        `Cannot read the workspace origin URL: ${String(error?.message || error).slice(0, 200)}`
+                    );
+                }
+                if (!sameGitRemote(originUrl, credentials?.remoteUrl)) {
+                    return fail(
+                        'blocked_external',
+                        `Workspace origin (${originUrl}) is not the admitted FEEDBACK_EXECUTOR_REMOTE — the validated remote and the push target must be the same repository.`
+                    );
+                }
+            } else {
+                // 不成立的防线必须自己说出来，否则「准入校验过 PAT」会被读成「推送用的是 PAT」。
+                log(
+                    `[executor] release ${releaseId}: S2 credential isolation is OFF (inherited mode) — push/fetch use this machine's git credentials`
+                );
+            }
 
             // 清场 + 实时基线。
             await git('reset', '--hard');

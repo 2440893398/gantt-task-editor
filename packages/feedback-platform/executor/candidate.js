@@ -9,6 +9,14 @@
  * DIFF_MANIFEST_CANDIDATE_REF_MISMATCH——一个本地测不出的接线断裂。
  */
 import { spawn as nodeSpawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import {
+    existsSync as fsExistsSync,
+    readdirSync as fsReaddirSync,
+    readFileSync as fsReadFileSync,
+    statSync as fsStatSync,
+} from 'node:fs';
+import { join, resolve as resolvePath } from 'node:path';
 
 /** 与 Worker 同源的净化：`String(run.id).replace(/[^a-zA-Z0-9_-]/g, '-')`。 */
 export function sanitizeCandidateRunId(runId) {
@@ -26,19 +34,63 @@ const splitLines = (text) =>
         .filter(Boolean);
 
 /**
+ * 每次调用 git 都强制带上的配置覆盖。`-c` 的优先级高于仓库内的 `.git/config`，
+ * 所以这三条即使 Agent 已经改写了工作区的 git 配置也照样生效（2026-09-02 实测：
+ * 先 `git config core.hooksPath bad` 再 `git -c core.hooksPath= commit`，钩子不执行）。
+ *
+ * - `core.quotepath=false`：默认开启时非 ASCII 路径被输出成带引号的 octal 转义串
+ *   （2026-08-22 真机实测：中文文档路径在 manifest.changedFiles 里存成
+ *   `"doc/guide/\351..."`），一切路径比对随之失真。
+ * - `core.hooksPath=`（空）：**Agent 的写入边界是 cwd，而钩子的执行者是执行器**。
+ *   本仓装了 husky，`core.hooksPath` 指向工作树内的 `.husky/_`（且被 gitignore），
+ *   Agent 往那里放一个 pre-commit 就能在执行器的 `git commit` 里拿到命令执行——
+ *   而 S6 特意不给写入型 Run 任何命令通道。同理 `.git/hooks/*` 与被改写的
+ *   `.git` gitdir 指针：git 从不跟踪 `.git`，diff gate、`git add -A`、changedFiles
+ *   全都看不见，`reset --hard`/`clean -fd` 也清不掉，后门会跨 Run 存活到带真实
+ *   push 凭据的 release 阶段。
+ * - `core.fsmonitor=`（空）：同一条通道的另一扇门——fsmonitor 值可以是一条被 git
+ *   自动执行的命令。
+ */
+export const GIT_HARDENING_ARGS = Object.freeze([
+    '-c',
+    'core.quotepath=false',
+    '-c',
+    'core.hooksPath=',
+    '-c',
+    'core.fsmonitor=',
+]);
+
+/**
+ * 凭据注入参数（`http.extraheader`）会原样出现在 argv 里。git 失败时的错误消息
+ * 会进 Issue 时间线，因此错误文本只用**调用方给的 args**（不含硬化与凭据参数），
+ * 并对 stderr 再兜一道底：git 在某些失败路径上会把请求头/带 userinfo 的 URL 回显。
+ */
+export function redactGitSecrets(text) {
+    return String(text || '')
+        .replace(/(Authorization:\s*\w+\s+)[A-Za-z0-9+/=._-]+/gi, '$1<redacted>')
+        .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1<redacted>@');
+}
+
+/**
  * git 命令执行器。git.exe 不是 .cmd，无 shell spawn 即可——参数数组直接传，
  * 不经任何字符串拼接。非零退出码抛带 `EXECUTOR_GIT_FAILED` 的错误：
  * git 失败意味着工作区状态不可信，继续跑只会产出身份造假的 manifest。
+ *
+ * `env`（S3）：不传就继承执行器全量环境——里面有 FEEDBACK_EXECUTOR_TOKEN 与
+ * PAT，而 verification.js 早就定下「子进程只拿白名单环境」的纪律。git 是子进程，
+ * 不是例外：`.git/config` 里的一条别名/过滤器就能让它变成执行任意命令的宿主。
+ * 白名单里保留了 HOME/USERPROFILE/APPDATA，因此全局 git 配置与凭据管理器照常
+ * 工作（2026-09-02 实测：narrowed env 下 `credential.helper` 仍解析为 manager）。
+ *
+ * `credentialArgs`（S2）：由 `gitArgsWithIsolatedCredentials` 产出，见 admission.js。
  */
-export function createGitRunner({ cwd, spawnImpl = nodeSpawn }) {
+export function createGitRunner({ cwd, env, credentialArgs = [], spawnImpl = nodeSpawn }) {
     return function git(...args) {
         return new Promise((resolve, reject) => {
-            // core.quotepath=false：默认开启时非 ASCII 路径被输出成带引号的 octal
-            // 转义串（2026-08-22 真机实测：中文文档路径在 manifest.changedFiles 里
-            // 存成 `"doc/guide/\351..."`），一切路径比对随之失真。
-            const child = spawnImpl('git', ['-c', 'core.quotepath=false', ...args], {
+            const child = spawnImpl('git', [...GIT_HARDENING_ARGS, ...credentialArgs, ...args], {
                 cwd,
                 windowsHide: true,
+                ...(env ? { env } : {}),
             });
             let stdout = '';
             let stderr = '';
@@ -56,7 +108,7 @@ export function createGitRunner({ cwd, spawnImpl = nodeSpawn }) {
             child.on('close', (code) => {
                 if (code !== 0) {
                     const wrapped = new Error(
-                        `EXECUTOR_GIT_FAILED: git ${args.join(' ')} exited ${code}: ${stderr.slice(0, 500)}`
+                        `EXECUTOR_GIT_FAILED: git ${args.join(' ')} exited ${code}: ${redactGitSecrets(stderr.slice(0, 500))}`
                     );
                     wrapped.code = 'EXECUTOR_GIT_FAILED';
                     reject(wrapped);
@@ -66,6 +118,90 @@ export function createGitRunner({ cwd, spawnImpl = nodeSpawn }) {
             });
         });
     };
+}
+
+const DEFAULT_METADATA_FS = {
+    existsSync: fsExistsSync,
+    readFileSync: fsReadFileSync,
+    readdirSync: fsReaddirSync,
+    statSync: fsStatSync,
+};
+
+function digestOf(value) {
+    return createHash('sha256').update(value).digest('hex').slice(0, 32);
+}
+
+function fileFingerprint(path, fsImpl) {
+    try {
+        if (!fsImpl.existsSync(path)) return 'absent';
+        if (fsImpl.statSync(path).isDirectory()) return 'directory';
+        return digestOf(fsImpl.readFileSync(path));
+    } catch (error) {
+        // 读不到不能当作「没变」：把失败本身记进指纹，前后不一致照样会被抓到。
+        return `unreadable:${String(error?.code || error?.message || error)}`;
+    }
+}
+
+function hooksFingerprint(dir, fsImpl) {
+    let names = [];
+    try {
+        names = fsImpl.readdirSync(dir);
+    } catch {
+        return { 'hooks/': 'absent' };
+    }
+    const entries = {};
+    for (const name of [...names].map(String).sort()) {
+        // `.sample` 也一并入指纹：改名去掉后缀就是一个可执行钩子。
+        entries[`hooks/${name}`] = fileFingerprint(join(dir, name), fsImpl);
+    }
+    return entries;
+}
+
+/**
+ * `.git` 元数据指纹（评审 §1.1）。
+ *
+ * 为什么光靠 `-c` 硬化不够：硬化只保证**执行器自己**的 git 调用不执行 Agent 种下的
+ * 钩子/过滤器；`.git/config` 里的一条 `filter.*.clean`、一个别名、或被改写的 gitdir
+ * 指针仍会在**别人**（开发者手工敲的 git、后续的 release 阶段、IDE）身上兑现，
+ * 而它们全都不出现在 diff 里——git 从不跟踪 `.git`。所以除了不执行，还要能**看见**。
+ *
+ * 采集对象：工作树里的 `.git` 入口本身（linked worktree 里它是指向 gitdir 的文件）、
+ * gitdir 与 common dir 两侧的 `config`/`config.worktree`、以及两侧的 hooks 目录全量。
+ * 路径用 `git rev-parse` 问 git 自己，不猜——linked worktree 的 common dir 在主仓里。
+ */
+export async function snapshotGitMetadata({ workspaceDir, git, fsImpl = DEFAULT_METADATA_FS }) {
+    const resolveDir = async (flag) => {
+        const raw = (await git('rev-parse', flag)).stdout.trim();
+        return raw ? resolvePath(workspaceDir, raw) : '';
+    };
+    const gitDir = await resolveDir('--git-dir');
+    const commonDir = await resolveDir('--git-common-dir');
+
+    const entries = { '.git': fileFingerprint(join(workspaceDir, '.git'), fsImpl) };
+    const seen = new Set();
+    for (const [label, dir] of [
+        ['gitdir', gitDir],
+        ['commondir', commonDir],
+    ]) {
+        if (!dir || seen.has(dir)) continue;
+        seen.add(dir);
+        entries[`${label}/config`] = fileFingerprint(join(dir, 'config'), fsImpl);
+        entries[`${label}/config.worktree`] = fileFingerprint(join(dir, 'config.worktree'), fsImpl);
+        for (const [name, fingerprint] of Object.entries(
+            hooksFingerprint(join(dir, 'hooks'), fsImpl)
+        )) {
+            entries[`${label}/${name}`] = fingerprint;
+        }
+    }
+    return { digest: digestOf(JSON.stringify(entries)), entries };
+}
+
+/** 前后两次快照的差异，返回被改动的条目名（空数组 = 未被改动）。 */
+export function diffGitMetadata(before, after) {
+    const beforeEntries = before?.entries ?? {};
+    const afterEntries = after?.entries ?? {};
+    const names = new Set([...Object.keys(beforeEntries), ...Object.keys(afterEntries)]);
+    return [...names].filter((name) => beforeEntries[name] !== afterEntries[name]).sort();
 }
 
 /**

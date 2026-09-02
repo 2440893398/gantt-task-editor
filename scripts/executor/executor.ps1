@@ -81,6 +81,12 @@ FEEDBACK_EXECUTOR_WORKSPACE=C:\Users\24408\IdeaProjects\executor-ws
 FEEDBACK_EXECUTOR_REMOTE=https://github.com/2440893398/gantt-task-editor.git
 FEEDBACK_EXECUTOR_GIT_PAT=
 
+# S2 凭据模式：inherited（默认，release 用本机 git 凭据——此时 S2 隔离并不成立，
+# 执行器每次启动与每次交付都会把这件事打进日志）或 isolated（用上面的 PAT，
+# 禁用全局 credential helper，并要求工作区 origin 与上面的 remote 同源）。
+# 填了真实 fine-grained PAT 之后再切 isolated；未知值一律拒绝启动。
+FEEDBACK_EXECUTOR_GIT_CREDENTIALS=inherited
+
 # 执行器标识，出现在控制面的租约记录里
 FEEDBACK_EXECUTOR_ID=executor-desktop
 

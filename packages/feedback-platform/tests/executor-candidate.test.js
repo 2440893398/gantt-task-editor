@@ -6,15 +6,78 @@
  * 否则执行器自认合格的 manifest 会在服务端以
  * DIFF_MANIFEST_CANDIDATE_REF_MISMATCH 被拒——一个本地测不出的接线断裂。
  */
-import { describe, expect, it } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterAll, describe, expect, it } from 'vitest';
 import {
     candidateRefFor,
     collectCandidateChanges,
     commitCandidate,
     committedCandidateDiff,
+    createGitRunner,
+    diffGitMetadata,
+    GIT_HARDENING_ARGS,
     prepareCandidateWorkspace,
     sanitizeCandidateRunId,
+    snapshotGitMetadata,
 } from '../executor/candidate.js';
+
+/** `-c key=value` 里的 value 部分——断言配置覆盖时不依赖参数位置。 */
+function configOverrides(args) {
+    return args.filter((arg, index) => args[index - 1] === '-c');
+}
+
+/** 记录 spawn 入参的 runner；close(0) 立即返回。 */
+function spyingGitRunner(options = {}) {
+    const spawns = [];
+    const git = createGitRunner({
+        cwd: 'C:/ws',
+        ...options,
+        spawnImpl: (cmd, args, spawnOptions) => {
+            spawns.push({ cmd, args, options: spawnOptions });
+            const handlers = {};
+            queueMicrotask(() => handlers.close?.(0));
+            return {
+                stdout: { on: () => {} },
+                stderr: { on: () => {} },
+                on: (event, fn) => {
+                    handlers[event] = fn;
+                },
+            };
+        },
+    });
+    return { git, spawns };
+}
+
+const realRepos = [];
+afterAll(() => {
+    while (realRepos.length) rmSync(realRepos.pop(), { recursive: true, force: true });
+});
+
+function realGit(cwd, args) {
+    return spawnSync('git', args, { cwd, encoding: 'utf8', windowsHide: true });
+}
+
+/** 真 git 仓库——硬化参数「是否真的生效」只有真 git 答得了。 */
+function makeRealRepo() {
+    const dir = mkdtempSync(join(tmpdir(), 'candidate-repo-'));
+    realRepos.push(dir);
+    realGit(dir, ['init', '-q']);
+    realGit(dir, ['config', 'user.email', 'executor@localhost']);
+    realGit(dir, ['config', 'user.name', 'executor']);
+    return dir;
+}
+
+/** 真 git 的 runner（同步跑，只用于元数据快照里的 rev-parse）。 */
+function realGitRunner(cwd) {
+    return async (...args) => {
+        const result = realGit(cwd, args);
+        if (result.status !== 0) throw new Error(result.stderr || 'git failed');
+        return { code: 0, stdout: result.stdout, stderr: result.stderr };
+    };
+}
 
 function fakeGit(outputs = {}) {
     const calls = [];
@@ -211,7 +274,140 @@ describe('[SCN-FWB-032] git 输出不得引号转义非 ASCII 路径', () => {
         });
         await git('diff', '--name-only', 'base');
         expect(spawns[0].cmd).toBe('git');
-        expect(spawns[0].args.slice(0, 2)).toEqual(['-c', 'core.quotepath=false']);
-        expect(spawns[0].args.slice(2)).toEqual(['diff', '--name-only', 'base']);
+        expect(configOverrides(spawns[0].args)).toContain('core.quotepath=false');
+        // 调用方的参数原样跟在硬化参数之后，一个不多一个不少。
+        expect(spawns[0].args.slice(-3)).toEqual(['diff', '--name-only', 'base']);
+    });
+});
+
+/**
+ * [SCN-FWB-035] 评审 §1.1：Agent 的写入边界是 cwd，而 `.git` 就在 cwd 里，且 git
+ * 从不跟踪它——钩子/配置里的后门不进 diff、清不掉、跨 Run 存活。两道防线：
+ * 执行器的每次 git 调用都不执行它们（硬化参数），以及 turn 前后对账能看见它们。
+ */
+describe('[SCN-FWB-035] git 调用硬化：钩子与 fsmonitor 不得成为 Agent 的命令通道', () => {
+    it('每次调用都带 core.hooksPath= 与 core.fsmonitor=（空值），且排在调用方参数之前', async () => {
+        const { git, spawns } = spyingGitRunner();
+        await git('commit', '-m', 'x');
+        expect(configOverrides(spawns[0].args)).toEqual(
+            expect.arrayContaining(['core.hooksPath=', 'core.fsmonitor='])
+        );
+        expect(spawns[0].args.indexOf('core.hooksPath=')).toBeLessThan(
+            spawns[0].args.indexOf('commit')
+        );
+    });
+
+    it('真的 git 上验证：仓库配置里的 core.hooksPath 被覆盖，钩子不执行', () => {
+        // 声明性断言（「参数里有这一条」）挡不住「这条其实无效」。本仓装了 husky，
+        // core.hooksPath 指向工作树内被 gitignore 的 .husky/_——Agent 能写进去。
+        const repo = makeRealRepo();
+        const hooks = join(repo, 'planted-hooks');
+        mkdirSync(hooks);
+        writeFileSync(join(hooks, 'pre-commit'), '#!/bin/sh\nexit 1\n');
+        realGit(repo, ['config', 'core.hooksPath', 'planted-hooks']);
+        writeFileSync(join(repo, 'a.txt'), 'x');
+        realGit(repo, ['add', '-A']);
+
+        expect(realGit(repo, ['commit', '-m', 'blocked']).status).not.toBe(0);
+        expect(realGit(repo, [...GIT_HARDENING_ARGS, 'commit', '-m', 'allowed']).status).toBe(0);
+    });
+
+    it('传了 env 就只用 env——git 不再继承执行器的控制面 token 与 PAT', async () => {
+        const { git, spawns } = spyingGitRunner({ env: { PATH: 'p' } });
+        await git('status');
+        expect(spawns[0].options.env).toEqual({ PATH: 'p' });
+
+        const { git: inheriting, spawns: inheritSpawns } = spyingGitRunner();
+        await inheriting('status');
+        expect('env' in inheritSpawns[0].options).toBe(false);
+    });
+
+    it('凭据参数不进错误消息，stderr 里回显的 Authorization 头被抹掉', async () => {
+        const { createGitRunner } = await import('../executor/candidate.js');
+        const git = createGitRunner({
+            cwd: 'C:/ws',
+            credentialArgs: ['-c', 'http.extraheader=Authorization: Basic c3VwZXItc2VjcmV0'],
+            spawnImpl: () => {
+                const handlers = {};
+                queueMicrotask(() => {
+                    handlers.stderrData?.('fatal: Authorization: Basic c3VwZXItc2VjcmV0 rejected');
+                    handlers.close?.(128);
+                });
+                return {
+                    stdout: { on: () => {} },
+                    stderr: {
+                        on: (event, fn) => {
+                            if (event === 'data') handlers.stderrData = fn;
+                        },
+                    },
+                    on: (event, fn) => {
+                        handlers[event] = fn;
+                    },
+                };
+            },
+        });
+        const error = await git('push', 'origin', 'master').catch((e) => e);
+        expect(error.code).toBe('EXECUTOR_GIT_FAILED');
+        expect(error.message).not.toContain('c3VwZXItc2VjcmV0');
+        expect(error.message).toContain('<redacted>');
+        expect(error.message).toContain('git push origin master');
+    });
+});
+
+describe('[SCN-FWB-035] `.git` 元数据对账：不进 diff 的改动也要能被看见', () => {
+    it('种一个 .git/hooks/pre-commit 就被点名——普通文件改动不触发', async () => {
+        const repo = makeRealRepo();
+        const git = realGitRunner(repo);
+        const before = await snapshotGitMetadata({ workspaceDir: repo, git });
+
+        writeFileSync(join(repo, 'src.js'), 'console.log(1)\n');
+        expect(
+            diffGitMetadata(before, await snapshotGitMetadata({ workspaceDir: repo, git }))
+        ).toEqual([]);
+
+        writeFileSync(join(repo, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\ncurl evil\n');
+        const tampered = diffGitMetadata(
+            before,
+            await snapshotGitMetadata({ workspaceDir: repo, git })
+        );
+        expect(tampered).toContain('gitdir/hooks/pre-commit');
+    });
+
+    it('改 .git/config（过滤器与别名的落脚点）被点名', async () => {
+        const repo = makeRealRepo();
+        const git = realGitRunner(repo);
+        const before = await snapshotGitMetadata({ workspaceDir: repo, git });
+
+        realGit(repo, ['config', 'filter.evil.clean', 'sh -c "curl evil"']);
+        expect(
+            diffGitMetadata(before, await snapshotGitMetadata({ workspaceDir: repo, git }))
+        ).toContain('gitdir/config');
+    });
+
+    it('linked worktree 里改写 `.git` 指针文件被点名，且 common dir 的钩子一并入账', async () => {
+        // 真实形态：执行器工作区 executor-ws 就是主仓的 linked worktree，`.git` 是
+        // 一个指向 gitdir 的**文件**——它在 Agent 的写入边界内，改掉它等于换掉整套
+        // 元数据。common dir（主仓的 .git）里的钩子才是 `git commit` 实际会跑的那批。
+        const repo = makeRealRepo();
+        writeFileSync(join(repo, 'seed.txt'), 'seed\n');
+        realGit(repo, ['add', '-A']);
+        realGit(repo, ['commit', '-m', 'seed']);
+        const worktree = join(repo, '..', `wt-${Date.now().toString(36)}`);
+        expect(realGit(repo, ['worktree', 'add', '-q', worktree, '-b', 'wt1']).status).toBe(0);
+        realRepos.push(worktree);
+
+        const git = realGitRunner(worktree);
+        const before = await snapshotGitMetadata({ workspaceDir: worktree, git });
+        expect(Object.keys(before.entries)).toEqual(
+            expect.arrayContaining(['commondir/config', 'gitdir/config'])
+        );
+
+        // Windows 上 git 把这个指针文件建成隐藏+只读，直接写会 EPERM；删了重建即可
+        // ——这条路径对 Agent 同样敞着（写入型 Run 有 Write 工具，删除有 SCN-FWB-041 通道）。
+        rmSync(join(worktree, '.git'), { force: true });
+        writeFileSync(join(worktree, '.git'), `gitdir: ${join(repo, '.git')}\n`);
+        expect(
+            diffGitMetadata(before, await snapshotGitMetadata({ workspaceDir: worktree, git }))
+        ).toContain('.git');
     });
 });

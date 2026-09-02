@@ -17,6 +17,8 @@ import {
     evaluateReadAccess,
     gitArgsWithIsolatedCredentials,
     PRIMARY_WORKTREE_ROOT,
+    resolveGitCredentialMode,
+    sameGitRemote,
 } from '../executor/admission.js';
 
 const cleanups = [];
@@ -224,5 +226,64 @@ describe('[SCN-FWB-035] 工作区路径保留真实大小写', () => {
                 PRIMARY_WORKTREE_ROOT.replace(/^([A-Za-z]):/, (m, d) => `${d.toLowerCase()}:`)
             )
         ).toThrow('EXECUTOR_WORKSPACE_IS_PRIMARY');
+    });
+});
+
+describe('[SCN-FWB-035] S2 凭据模式必须是显式的（评审 §1.2）', () => {
+    // 历史坏行为：准入强制校验 HTTPS remote + PAT，而 `gitArgsWithIsolatedCredentials`
+    // 全仓没有生产调用点——push 走的是开发机凭据。校验过的 remote 与实际推送的
+    // remote 甚至可以不同源。「安检在前门、货从后门进」比没有安检更糟：它让人以为
+    // 隔离已生效。现在模式摆上台面，两条路都可执行、都可观测。
+    it('缺省是 inherited；isolated 合法；未知值拒绝启动而不是静默回落', () => {
+        expect(resolveGitCredentialMode({})).toBe('inherited');
+        expect(resolveGitCredentialMode({ FEEDBACK_EXECUTOR_GIT_CREDENTIALS: 'isolated' })).toBe(
+            'isolated'
+        );
+        expect(() =>
+            resolveGitCredentialMode({ FEEDBACK_EXECUTOR_GIT_CREDENTIALS: 'islolated' })
+        ).toThrow('EXECUTOR_UNKNOWN_GIT_CREDENTIAL_MODE');
+    });
+
+    it('isolated 模式必须有 HTTPS remote 与 PAT，并把 PAT 交给调用方接线', () => {
+        const clone = makeClone();
+        expect(() =>
+            admitExecutor({
+                workspaceDir: clone,
+                controlPlaneToken: 'bearer',
+                gitCredentialMode: 'isolated',
+            })
+        ).toThrow('EXECUTOR_REMOTE_NOT_HTTPS');
+
+        const admitted = admitExecutor({
+            workspaceDir: clone,
+            controlPlaneToken: 'bearer',
+            remoteUrl: 'https://github.com/a/b.git',
+            gitPat: 'github_pat_x',
+            gitCredentialMode: 'isolated',
+        });
+        expect(admitted.gitCredentials).toEqual({
+            mode: 'isolated',
+            remoteUrl: 'https://github.com/a/b.git',
+            pat: 'github_pat_x',
+        });
+    });
+
+    it('inherited 模式不把 PAT 递给下游——它在那条路上根本不会被用到', () => {
+        const clone = makeClone();
+        const admitted = admitExecutor({
+            workspaceDir: clone,
+            controlPlaneToken: 'bearer',
+            remoteUrl: 'https://github.com/a/b.git',
+            gitPat: 'github_pat_x',
+        });
+        expect(admitted.gitCredentials.mode).toBe('inherited');
+        expect(admitted.gitCredentials.pat).toBe('');
+    });
+
+    it('sameGitRemote 忽略 .git 后缀、结尾斜杠与大小写，其余一律算不同源', () => {
+        expect(sameGitRemote('https://github.com/a/b.git', 'https://github.com/A/B')).toBe(true);
+        expect(sameGitRemote('https://github.com/a/b/', 'https://github.com/a/b')).toBe(true);
+        expect(sameGitRemote('https://github.com/a/b', 'https://github.com/evil/b')).toBe(false);
+        expect(sameGitRemote('', 'https://github.com/a/b')).toBe(false);
     });
 });

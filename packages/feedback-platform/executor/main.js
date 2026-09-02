@@ -22,6 +22,10 @@
  *   FEEDBACK_EXECUTOR_STOP_FILE   可选：停止哨兵文件；出现即「跑完当前这轮后退出」
  *   FEEDBACK_EXECUTOR_LOG_FILE    可选：日志追加写入的文件（后台运行时由进程自己写）
  *   FEEDBACK_EXECUTOR_GIT_PAT     S2 专用 fine-grained PAT（读取型 MVP 可缺席）
+ *   FEEDBACK_EXECUTOR_GIT_CREDENTIALS  `inherited`（默认）或 `isolated`：release 的
+ *                                 fetch/push 用开发机凭据，还是用注入的专用 PAT
+ *                                 （禁用全局 credential helper 并核对 origin 同源）。
+ *                                 未知值启动即拒绝。
  *   FEEDBACK_EXECUTOR_COMMAND     provider 可执行文件（默认自动解析，见 provider-command.js）
  *   FEEDBACK_EXECUTOR_PROVIDER_HOME  provider 配置目录（codex 默认 `<workspace>-codex-home`；
  *                                    claude-code 默认继承开发者登录，设了才隔离）
@@ -50,7 +54,7 @@ import { appendFileSync, existsSync, mkdirSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { admitExecutor, buildChildEnv } from './admission.js';
+import { admitExecutor, buildChildEnv, resolveGitCredentialMode } from './admission.js';
 import { AppServerClient } from './app-server-client.js';
 import { createClaudeCliSession } from './claude-cli-session.js';
 import { createClaudeSdkSession } from './claude-sdk-session.js';
@@ -316,11 +320,14 @@ export async function runExecutorDaemon({ env = process.env, log = console.error
     // ——那时租约已领、Run 已置 running，一个 typo 会白烧一次修复回路名额。
     const claudeTransport = providerId === 'claude-code' ? resolveClaudeTransport(env) : null;
 
+    // S2 模式（评审 §1.2）：未知值在这里就拒绝启动，和 transport 同一条纪律。
+    const gitCredentialMode = resolveGitCredentialMode(env);
     const admitted = admitExecutor({
         workspaceDir: env.FEEDBACK_EXECUTOR_WORKSPACE,
         remoteUrl: env.FEEDBACK_EXECUTOR_REMOTE,
         gitPat: env.FEEDBACK_EXECUTOR_GIT_PAT,
         controlPlaneToken: env.FEEDBACK_EXECUTOR_TOKEN,
+        gitCredentialMode,
     });
     const executorId = String(env.FEEDBACK_EXECUTOR_ID || `executor-${hostname()}`).slice(0, 120);
     // 执行器自己的出站请求也要走代理（SCN-FWB-035）：S3 只把代理变量转发给 provider
@@ -354,6 +361,13 @@ export async function runExecutorDaemon({ env = process.env, log = console.error
     log(
         `[executor] ${provider.homeEnvName}=${effectiveHome}${inherited ? ' (inherited developer login)' : ' (isolated)'}`
     );
+    // S2 的实际形态每次启动都说一遍（评审 §1.2）：准入校验过 remote/PAT **不等于**
+    // push 用的是它们。inherited 模式下 S2 不成立，这行是唯一的告知。
+    log(
+        gitCredentialMode === 'isolated'
+            ? `[executor] git credentials=isolated (dedicated PAT, global helper disabled, origin must match ${admitted.gitCredentials.remoteUrl})`
+            : "[executor] warning: git credentials=inherited — S2 credential isolation is NOT in force; release push uses this machine's git credentials. Set FEEDBACK_EXECUTOR_GIT_CREDENTIALS=isolated with a real fine-grained PAT to enable it."
+    );
     if (!existsSync(join(effectiveHome, provider.credentialFile))) {
         log(
             `[executor] warning: no ${provider.credentialFile} in ${provider.homeEnvName} — log in there first (${provider.loginHint(effectiveHome)}); turns will fail with auth errors until then`
@@ -371,6 +385,7 @@ export async function runExecutorDaemon({ env = process.env, log = console.error
     const releasePipeline = createReleasePipeline({
         workspaceDir: admitted.workspaceDir,
         childEnv,
+        credentials: admitted.gitCredentials,
         log,
         fetchImpl: await resolveControlPlaneFetch({ env, log: () => {} }),
     });

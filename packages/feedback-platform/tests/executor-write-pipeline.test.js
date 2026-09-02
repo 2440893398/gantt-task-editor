@@ -404,3 +404,41 @@ describe('[SCN-FWB-041] 删除标记在暂存前兑现为真实删除', () => {
         expect(rmCalls).toEqual(['C:/ws/src/tiny.js']);
     });
 });
+
+describe('[SCN-FWB-035] `.git` 被动过就地终止（评审 §1.1）', () => {
+    // 坏行为画像：Agent 在 turn 里写 `.git/hooks/pre-commit` 或往 `.git/config` 塞一条
+    // filter 驱动。这些改动不进 diff（git 不跟踪 .git）、`reset --hard`/`clean -fd`
+    // 清不掉、跨 Run 存活，并会在带真实 push 凭据的 release 阶段兑现。门禁看不见它，
+    // 所以唯一的可见性只能来自 turn 前后的元数据对账。
+    const context = { ...CONTEXT };
+
+    it('turn 前后 `.git` 指纹不一致 → security_policy_violation，且不提交、不跑验证', async () => {
+        const { pipeline, git, verificationCalls } = makePipeline();
+        const outcome = await pipeline.finalize({
+            runId: 'run_w1',
+            context,
+            prep: {
+                baseCommit: BASE,
+                candidateRef: 'feedback/candidate/run_w1',
+                // prepare 阶段拍的基线；finalize 会重新采集并比对。
+                gitMetadata: { digest: 'before', entries: { 'gitdir/hooks/pre-commit': 'absent' } },
+            },
+        });
+        expect(outcome.outcome).toBe('failed');
+        expect(outcome.errorCode).toBe('security_policy_violation');
+        expect(outcome.failurePayload.violations).toContainEqual({
+            code: 'GIT_METADATA_TAMPERED',
+            file: 'gitdir/hooks/pre-commit',
+        });
+        // 终止必须发生在提交与验证之前：后面每一步都是「在这台机器上执行东西」。
+        expect(git.calls.some((call) => call.includes('commit'))).toBe(false);
+        expect(verificationCalls).toHaveLength(0);
+    });
+
+    it('`.git` 未被动过时照常走完预检→提交→验证', async () => {
+        const { pipeline } = makePipeline();
+        const prepared = await pipeline.prepare({ runId: 'run_w1', context });
+        const outcome = await pipeline.finalize({ runId: 'run_w1', context, prep: prepared });
+        expect(outcome.outcome).toBe('completed');
+    });
+});

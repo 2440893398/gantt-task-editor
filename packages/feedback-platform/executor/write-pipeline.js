@@ -35,8 +35,10 @@ import {
     commitCandidate,
     committedCandidateDiff,
     createGitRunner,
+    diffGitMetadata,
     prepareCandidateWorkspace,
     prepareReadOnlyWorkspace,
+    snapshotGitMetadata,
 } from './candidate.js';
 import { runCommand, runVerificationSteps } from './verification.js';
 
@@ -117,7 +119,9 @@ export function createWritePipeline({
     },
 } = {}) {
     if (!workspaceDir) throw new Error('EXECUTOR_WRITE_PIPELINE_WORKSPACE_REQUIRED');
-    const git = gitFactory({ cwd: workspaceDir });
+    // S3（评审 §1.1）：git 也是子进程，也只拿白名单环境——不传 env 就等于把
+    // FEEDBACK_EXECUTOR_TOKEN 与 PAT 交给一个「配置文件能定义任意命令」的程序。
+    const git = gitFactory({ cwd: workspaceDir, env: childEnv });
 
     /**
      * 「本轮产出了视觉证据」= evidence 目录里有**未跟踪的** png。判定走文件系统而
@@ -219,7 +223,7 @@ export function createWritePipeline({
          */
         async prepare({ runId, context }) {
             try {
-                return await prepareCandidateWorkspace({
+                const prepared = await prepareCandidateWorkspace({
                     runId,
                     defaultBranch: context?.defaultBranch || 'master',
                     git,
@@ -228,6 +232,12 @@ export function createWritePipeline({
                     // SCN-FWB-040：有上一轮候选就建在它之上，提交缺席时静默回落全新开工。
                     resumeFromCommit: String(context?.previousAttempt?.changeCommit || ''),
                 });
+                // 评审 §1.1：turn 之前的 `.git` 元数据基线。清场之后取——reset/clean/checkout
+                // 本来就会动 gitdir 里的东西，基线必须是「Agent 拿到工作区的那一刻」。
+                return {
+                    ...prepared,
+                    gitMetadata: await snapshotGitMetadata({ workspaceDir, git, fsImpl }),
+                };
             } catch (error) {
                 const wrapped = new Error(
                     `EXECUTOR_WORKSPACE_PREPARE_FAILED: ${String(error?.message || error)}`
@@ -273,6 +283,31 @@ export function createWritePipeline({
             const approvedPaths = Array.isArray(context?.approvedPaths)
                 ? context.approvedPaths
                 : [];
+
+            // 评审 §1.1：`.git` 被动过就地终止，先于删除标记与暂存——后面每一步
+            // （add/commit/npm ci/验证）都是「在这台机器上执行东西」，而门禁看不见
+            // `.git` 里的任何改动。这里是唯一能把它变成一次可见失败的地方。
+            const tampered = prep?.gitMetadata
+                ? diffGitMetadata(
+                      prep.gitMetadata,
+                      await snapshotGitMetadata({ workspaceDir, git, fsImpl })
+                  )
+                : [];
+            if (tampered.length) {
+                log(`[executor] .git metadata changed during turn: ${tampered.join(', ')}`);
+                return {
+                    outcome: 'failed',
+                    errorCode: 'security_policy_violation',
+                    summary: `交付被安全策略阻断：本轮 turn 改动了 .git 元数据（${tampered.slice(0, 8).join('、')}）——这类改动不进 diff、清不掉、跨 Run 存活。`,
+                    failurePayload: {
+                        violations: tampered.slice(0, 20).map((entry) => ({
+                            code: 'GIT_METADATA_TAMPERED',
+                            file: entry,
+                        })),
+                        verification: skippedReport(context),
+                    },
+                };
+            }
 
             // SCN-FWB-041：删除标记先于暂存兑现，删除以普通 diff 身份走完整门禁与验证。
             await applyDeleteMarkers();
