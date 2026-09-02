@@ -2246,6 +2246,23 @@ describe('feedback issue board Worker routes', () => {
         expect(html).toContain('@media (max-width: 1100px)');
     });
 
+    it('[SCN-FWB-018] legacy 页面的占位符必须全部替换掉（代码评审 §5.12）', async () => {
+        // 那 2000 行模板从内联字符串搬进了 `.txt` 资产，服务端注入改成 11 个
+        // `__TOKEN__` 替换。漏替一个的表现是页面上直接显示 `__STATUS_OPTIONS__`
+        // 这种字面量——所以渲染器自己会抛，这条用例守住「没人把那道自检删掉」。
+        const response = await request('/feedback/legacy', {}, env);
+        const html = await response.text();
+
+        expect(response.status).toBe(200);
+        expect(html).not.toMatch(/__[A-Z][A-Z0-9_]*__/);
+        // 三组由服务端拼装的 <option> 真的进了页面，而不是被替换成空串。
+        expect(html).toContain('<option value="needs_human">需人工处理</option>');
+        expect(html).toContain('<option value="urgent">紧急</option>');
+        expect(html).toContain('<option value="improvement">优化</option>');
+        // 浏览器端的模板字面量原样交付（内联时它们是被反斜杠转义过的）。
+        expect(html).toContain('${');
+    });
+
     it('only renders inline previews for the same inert raster image allowlist as the API', async () => {
         const response = await request('/feedback/legacy', {}, env);
         const html = await response.text();
@@ -15192,5 +15209,57 @@ describe('[SCN-FWB-018] MemoryD1 的失配必须炸而不是改道', () => {
                 ['select id from feedback_events']
             )
         ).toBe(false);
+    });
+});
+
+/**
+ * [SCN-FWB-017] CORS 来源回显（代码评审 2026-09-02 §5.4）。
+ *
+ * `corsHeaders` 此前签名零参而调用点一直在传 Origin——参数被静默丢掉，全站
+ * （含管理 API）一律 `Access-Control-Allow-Origin: *`。死参数最坏的地方不是那个
+ * `*`（本仓授权走 Authorization 头、不依赖 cookie），而是它让人以为来源是被检查过的。
+ */
+describe('[SCN-FWB-017] CORS 来源', () => {
+    const env = () => ({
+        ...createV2Env(),
+        FEEDBACK_PRODUCTION_ORIGIN: 'https://gantt-task-editor.pages.dev',
+        FEEDBACK_ALLOWED_ORIGINS: 'https://gantt.example.cn',
+    });
+
+    async function optionsFrom(origin, workerEnv) {
+        return worker.fetch(
+            new Request('https://worker.test/api/feedback/issues', {
+                method: 'OPTIONS',
+                headers: origin ? { Origin: origin } : {},
+            }),
+            workerEnv
+        );
+    }
+
+    it('允许清单内的来源被逐字回显，并带上 Vary: Origin', async () => {
+        const workerEnv = env();
+        for (const origin of ['https://gantt-task-editor.pages.dev', 'https://gantt.example.cn']) {
+            const response = await optionsFrom(origin, workerEnv);
+            expect(response.headers.get('Access-Control-Allow-Origin')).toBe(origin);
+            // 回显却不加 Vary 的话，中间缓存会把一个来源的响应喂给另一个。
+            expect(response.headers.get('Vary')).toBe('Origin');
+        }
+    });
+
+    it('本机开发的 localhost / 127.0.0.1 任意端口放行', async () => {
+        const response = await optionsFrom('http://localhost:5273', env());
+        expect(response.headers.get('Access-Control-Allow-Origin')).toBe('http://localhost:5273');
+    });
+
+    it('清单外的来源仍回 `*`——这是记录在案的取舍，不是忘了接线', async () => {
+        const response = await optionsFrom('https://evil.example', env());
+        expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
+        expect(response.headers.get('Vary')).toBeNull();
+    });
+
+    it('预检响应带 Max-Age，避免每次 API 调用多付一次往返', async () => {
+        const response = await optionsFrom('https://gantt-task-editor.pages.dev', env());
+        expect(response.status).toBe(204);
+        expect(response.headers.get('Access-Control-Max-Age')).toBe('86400');
     });
 });

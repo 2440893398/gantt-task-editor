@@ -13,10 +13,13 @@ export default defineConfig({
                     filePath.includes('/src/features/feedback/vendor/rrweb-replay-') &&
                     filePath.endsWith('.txt');
                 // Wrangler loads `**/*.txt` as text modules; mirror that for the
-                // workbench stylesheet and client script.
-                const isWorkbenchAsset =
-                    filePath.includes('/workers/feedback-workbench') && filePath.endsWith('.txt');
-                if (isVendorReplayAsset || isWorkbenchAsset) {
+                // workbench stylesheet/client script、marked 以及 legacy board 页面
+                // （代码评审 §5.12 把那 2000 行内联模板搬成了 `.txt` 资产）。
+                // 判定改成「workers/ 下的 .txt 一律按文本模块加载」——与 wrangler 的
+                // `**/*.txt` 规则同口径，免得每加一个资产就要来这里补一次前缀。
+                const isWorkerTextAsset =
+                    filePath.includes('/workers/') && filePath.endsWith('.txt');
+                if (isVendorReplayAsset || isWorkerTextAsset) {
                     return `export default ${JSON.stringify(readFileSync(filePath, 'utf8'))}`;
                 }
                 return null;

@@ -53,6 +53,12 @@ const workerModuleFiles = [
         outputName: 'feedback-workbench-client.js.txt',
     },
     {
+        // legacy board 页面模板（代码评审 2026-09-02 §5.12：从 share-worker.js 里
+        // 那 2000 行内联模板搬出来）。CN 形态同样要渲染 /feedback/legacy。
+        sourcePath: 'workers/feedback-board-page.html.txt',
+        outputName: 'feedback-board-page.html.txt',
+    },
+    {
         sourcePath: 'src/features/feedback/diff-gate.js',
         sourceImport: '../src/features/feedback/diff-gate.js',
         outputName: 'feedback-diff-gate.js',
