@@ -25,6 +25,7 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import { evaluateDiffGate, scnIdFromDiff } from '../../../src/features/feedback/diff-gate.js';
+import { evaluateReadAccess } from './admission.js';
 import {
     FEEDBACK_DELETE_MARKER,
     FEEDBACK_EVIDENCE_DIR,
@@ -175,6 +176,13 @@ export function createWritePipeline({
             );
             if (!file) continue;
             const absolute = join(workspaceDir, file);
+            // S3（§1.5）：执行器自己的读取过闸。porcelain 的路径是仓库相对的，
+            // 正常情况下永远在工作区内——但「正常情况下」不是防线，`.env` 类文件
+            // 更不该因为「它出现在 git status 里」就被读进内存。
+            if (!evaluateReadAccess(absolute, { workspaceDir }).allowed) {
+                log(`[executor] delete-marker scan skipped a denylisted path: ${file}`);
+                continue;
+            }
             let content = '';
             try {
                 // 体量守卫在读之前：标记文件（标记 + 注释包裹 + 空白）远小于 512 字节，

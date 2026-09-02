@@ -6,7 +6,7 @@
  * EXC-FWB-005 拍板的是「不容器化」，没有拍板「不设防」。
  */
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
@@ -285,5 +285,44 @@ describe('[SCN-FWB-035] S2 凭据模式必须是显式的（评审 §1.2）', ()
         expect(sameGitRemote('https://github.com/a/b/', 'https://github.com/a/b')).toBe(true);
         expect(sameGitRemote('https://github.com/a/b', 'https://github.com/evil/b')).toBe(false);
         expect(sameGitRemote('', 'https://github.com/a/b')).toBe(false);
+    });
+});
+
+/**
+ * [SCN-FWB-035] S3 读取闸的**实际**覆盖面（代码评审 2026-09-02 §1.5）。
+ *
+ * 此前 `evaluateReadAccess`/`assertReadAllowed` 全仓只有测试引用，而注释写的是
+ * 「执行器每次文件读取都过闸」——声明与接线断裂。现在执行器自己的三处读取真的过闸，
+ * 覆盖边界也在 admission.js 里写清楚了（Agent 的读取由 provider 的目录边界拦，
+ * 验证步骤跑任意仓库代码是 EXC-FWB-005 已接受的缺口）。
+ */
+describe('[SCN-FWB-035] S3 读取闸的覆盖面', () => {
+    it('requireInsideWorkspace=false 时仍拒绝清单路径——`.git` 对账要读工作区外的 common dir', () => {
+        const ws = makeClone();
+        const outside = join(homedir(), '.ssh', 'id_rsa');
+
+        // 默认口径：工作区外一律拒。
+        expect(evaluateReadAccess(outside, { workspaceDir: ws }).allowed).toBe(false);
+        // 放宽工作区边界之后，拒绝清单依然生效——这正是 `.git` common dir 需要的形状。
+        const verdict = evaluateReadAccess(outside, {
+            workspaceDir: ws,
+            requireInsideWorkspace: false,
+        });
+        expect(verdict.allowed).toBe(false);
+        expect(verdict.reason).toBe('EXECUTOR_READ_DENYLISTED_ROOT');
+    });
+
+    it('放宽工作区边界只放行普通路径，不放行 .env 类文件', () => {
+        const ws = makeClone();
+        const sibling = join(ws, '..', 'other-repo', '.git', 'config');
+        expect(
+            evaluateReadAccess(sibling, { workspaceDir: ws, requireInsideWorkspace: false }).allowed
+        ).toBe(true);
+        expect(
+            evaluateReadAccess(join(ws, '..', 'other', '.dev.vars'), {
+                workspaceDir: ws,
+                requireInsideWorkspace: false,
+            }).allowed
+        ).toBe(false);
     });
 });

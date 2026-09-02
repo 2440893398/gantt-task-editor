@@ -12,6 +12,7 @@ import {
     createFeedbackReplayAttachment,
     getFeedbackReplayContext,
 } from './feedbackReplay.js';
+import { sanitizeFeedbackUrl } from './feedback-url.js';
 
 const MAX_LOGS = 80;
 const MAX_LOG_LENGTH = 1200;
@@ -115,7 +116,8 @@ export function getFeedbackContext(extra = {}) {
         schemaVersion: 1,
         capturedAt: new Date().toISOString(),
         locale: i18n.getLanguage(),
-        url: window.location.href,
+        // §1.9：hash 里放着 owner capability token，原样上报等于把钥匙塞进 Issue。
+        url: sanitizeFeedbackUrl(window.location.href),
         title: document.title,
         viewport: {
             width: window.innerWidth,

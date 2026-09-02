@@ -17,6 +17,7 @@ import {
     statSync as fsStatSync,
 } from 'node:fs';
 import { join, resolve as resolvePath } from 'node:path';
+import { evaluateReadAccess } from './admission.js';
 
 /** 与 Worker 同源的净化：`String(run.id).replace(/[^a-zA-Z0-9_-]/g, '-')`。 */
 export function sanitizeCandidateRunId(runId) {
@@ -132,6 +133,12 @@ function digestOf(value) {
 }
 
 function fileFingerprint(path, fsImpl) {
+    // S3（§1.5）：gitdir 指针是 Agent 能写的文件，被改写后 `rev-parse --git-dir`
+    // 会把我们指向任意路径。工作区边界在这里不适用（linked worktree 的 common dir
+    // 本来就在主仓里），但拒绝清单适用——`.ssh`/`.env`/浏览器 profile 一律不读。
+    if (!evaluateReadAccess(path, { requireInsideWorkspace: false }).allowed) {
+        return 'denylisted';
+    }
     try {
         if (!fsImpl.existsSync(path)) return 'absent';
         if (fsImpl.statSync(path).isDirectory()) return 'directory';

@@ -28,8 +28,10 @@ export function createCodexAdapter() {
         evidenceDir: FEEDBACK_EVIDENCE_DIR,
 
         /** C1：与 GitHub 路径共用同一个按 policy 分支的 Prompt 构建器。 */
-        buildPrompt(context) {
-            return buildFeedbackPrompt(context);
+        buildPrompt(context, options) {
+            // options 透传是为了让围栏 nonce 可注入（§1.8）：默认每次随机，
+            // 测试需要逐字比对时才钉死一个值。
+            return buildFeedbackPrompt(context, options);
         },
 
         isWriteCapablePolicy,

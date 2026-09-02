@@ -14876,3 +14876,91 @@ describe('[SCN-FWB-017] 签名密钥不回退、缺配即拒、健康页说得�
         expect(JSON.stringify(health.health.signingSecrets)).not.toContain('unit-test');
     });
 });
+
+/**
+ * [SCN-FWB-001] 消毒器的已知 payload 回归（代码评审 2026-09-02 §1.6）。
+ *
+ * 现状：时间线正文用 `marked` 渲染，随后过一个**手写**消毒器；页面 CSP 是
+ * `script-src 'self' 'unsafe-inline'`，兜不住消毒器的任何一次回归。渲染的内容里既有
+ * 匿名提交（EXC-FWB-005：`POST /api/feedback` 公网可达），也有可被提示词注入引导的
+ * Agent 输出——手写消毒器最典型的失效方式是 mXSS：innerHTML 解析一次、序列化再解析
+ * 一次，两次之间标签边界发生漂移。
+ *
+ * 这组用例把已知形态钉住。它替代不了 DOMPurify 或 CSP nonce（那是结构性修复，
+ * 另行决策），但让「消毒器悄悄退化」这件事有机会见红。
+ */
+describe('[SCN-FWB-001] Markdown 消毒器的注入回归组', () => {
+    const PAYLOADS = [
+        ['裸 script 标签', '<script>window.__pwned = 1;</script>'],
+        ['img onerror', '<img src=x onerror="window.__pwned = 1">'],
+        ['svg onload', '<svg onload="window.__pwned = 1"></svg>'],
+        ['iframe srcdoc', '<iframe srcdoc="<script>parent.__pwned=1</script>"></iframe>'],
+        ['javascript: 链接', '[点我](javascript:window.__pwned=1)'],
+        [
+            'data: 链接',
+            '[点我](data:text/html;base64,PHNjcmlwdD53aW5kb3cuX19wd25lZD0xPC9zY3JpcHQ+)',
+        ],
+        // mXSS 家族：解析→序列化→再解析之间标签边界漂移。
+        [
+            'noscript 内的 img',
+            '<noscript><p title="</noscript><img src=x onerror=window.__pwned=1>">',
+        ],
+        ['style 内的表达式', '<style>@import "javascript:window.__pwned=1";</style>'],
+        [
+            'form + formaction',
+            '<form><button formaction="javascript:window.__pwned=1">go</button></form>',
+        ],
+        [
+            'a 标签 xlink',
+            '<svg><a xlink:href="javascript:window.__pwned=1"><text>x</text></a></svg>',
+        ],
+        ['大小写与换行绕过', '<ScRiPt\n>window.__pwned = 1;</ScRiPt>'],
+        ['注释里藏标签', '<!--><script>window.__pwned=1;</script>-->'],
+        ['object data', '<object data="javascript:window.__pwned=1"></object>'],
+        ['meta refresh', '<meta http-equiv="refresh" content="0;url=javascript:window.__pwned=1">'],
+        ['onfocus autofocus', '<input autofocus onfocus="window.__pwned=1">'],
+    ];
+
+    it('全部已知 payload 渲染后既不执行、也不留下可执行的属性或标签', async () => {
+        const env = createV2Env();
+        const dom = await openWorkbench(env, {
+            url: `https://worker.test/feedback#issue=${encodeURIComponent(
+                feedbackKey
+            )}&capability=owner-token`,
+            routes: ownerWorkbenchRoutes({
+                events: PAYLOADS.map(([name, payload], index) => ({
+                    id: `evt_payload_${index}`,
+                    sequence: index + 1,
+                    type: 'comment.created',
+                    actorType: 'agent',
+                    visibility: 'public',
+                    occurredAt: '2026-09-02T08:00:00.000Z',
+                    text: `### ${name}\n\n${payload}`,
+                    changes: {},
+                })),
+            }),
+        });
+        const document_ = dom.window.document;
+
+        await waitFor(() =>
+            expect(document_.getElementById('timeline').textContent).toContain('裸 script 标签')
+        );
+
+        const timeline = document_.getElementById('timeline');
+        expect(dom.window.__pwned).toBeUndefined();
+        expect(
+            timeline.querySelectorAll('script, iframe, object, embed, style, meta, form')
+        ).toHaveLength(0);
+        expect(
+            timeline.querySelectorAll('[onerror], [onload], [onfocus], [formaction], [srcdoc]')
+        ).toHaveLength(0);
+        for (const link of timeline.querySelectorAll('a[href]')) {
+            expect(link.getAttribute('href')).not.toMatch(/^(javascript|data):/i);
+        }
+        // 正文仍然在：消毒不能顺手把内容一起吃掉（那是另一种失败，不是安全）。
+        // 这里断言文本而不是 h3——JSDOM 里 marked 是动态 import，渲染形态由
+        // feedback-workbench.spec.js 的 E2E 负责钉死，本用例只管消毒。
+        expect(timeline.textContent).toContain('noscript 内的 img');
+        expect(timeline.textContent).toContain('meta refresh');
+    });
+});

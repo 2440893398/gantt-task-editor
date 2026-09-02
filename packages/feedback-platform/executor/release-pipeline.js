@@ -24,6 +24,34 @@ import { runCommand, runVerificationSteps } from './verification.js';
 const UUID_PATTERN = /[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i;
 
 /**
+ * 拼进 shell 命令的标识符必须先过字符集（代码评审 2026-09-02 §1.7）。
+ *
+ * 部署命令是 `shell: true` 下的字符串拼接，插进去的 `pagesProject`/`baseRef`/
+ * `integrationCommit` 全部来自控制面数据。信任模型是「控制面受信」，但那是一层
+ * **假设**而不是一道防线：Worker 被攻破或 D1 被注入的那一刻，它等价于开发机上的
+ * 任意命令执行。字符集断言把这条链掐断在执行器侧——一个分号或反引号根本走不到
+ * shell 面前。
+ *
+ * 注意与 `commands_json` 的区别：那些**本来就是**项目配置的 shell 命令
+ * （`npm test` 之类），按设计可以是任意命令行，不适用这道闸；这里管的是被拼进
+ * 命令的**标识符**。
+ */
+const SHELL_SAFE_TOKEN = /^[A-Za-z0-9._/@-]+$/;
+
+export function assertShellSafeToken(name, value) {
+    const token = String(value ?? '');
+    if (!token || !SHELL_SAFE_TOKEN.test(token)) {
+        const error = new Error(
+            `EXECUTOR_UNSAFE_SHELL_TOKEN: ${name} contains characters that must never reach a shell`
+        );
+        error.code = 'EXECUTOR_UNSAFE_SHELL_TOKEN';
+        error.field = name;
+        throw error;
+    }
+    return token;
+}
+
+/**
  * 从 wrangler 输出解析部署 id。worker：`wrangler deploy` 打印 Current Version ID；
  * pages：deploy 后用 `wrangler pages deployment list` 找到 UUID。Worker 侧的完成
  * 核验强制 UUID 形态——短 hash、URL 前缀都不合格。
@@ -70,8 +98,12 @@ export function createReleasePipeline({
         const direct = extractDeploymentId(deployOutput);
         if (target === 'worker' && direct) return direct;
         // pages：deploy 输出通常只有短 hash URL，查部署列表拿 UUID。
+        const pagesProject = assertShellSafeToken(
+            'deployConfig.pagesProject',
+            deployConfig?.pagesProject
+        );
         const listed = await runCommandImpl({
-            command: `npx wrangler pages deployment list --project-name ${deployConfig?.pagesProject || ''}`,
+            command: `npx wrangler pages deployment list --project-name ${pagesProject}`,
             cwd: workspaceDir,
             env: childEnv,
             timeoutMs: 120000,
@@ -253,10 +285,30 @@ export function createReleasePipeline({
             if (identity.deploymentRequired) {
                 await post('deployment.started', { integrationCommit });
                 const target = identity.deploymentTarget;
-                const deployCommand =
-                    target === 'worker'
-                        ? 'npx wrangler deploy'
-                        : `npx wrangler pages deploy dist --project-name ${deployConfig?.pagesProject || ''} --branch ${payload.baseRef} --commit-hash ${integrationCommit}`;
+                let deployCommand;
+                try {
+                    deployCommand =
+                        target === 'worker'
+                            ? 'npx wrangler deploy'
+                            : `npx wrangler pages deploy dist --project-name ${assertShellSafeToken(
+                                  'deployConfig.pagesProject',
+                                  deployConfig?.pagesProject
+                              )} --branch ${assertShellSafeToken(
+                                  'payload.baseRef',
+                                  payload.baseRef
+                              )} --commit-hash ${assertShellSafeToken(
+                                  'integrationCommit',
+                                  integrationCommit
+                              )}`;
+                } catch (error) {
+                    // §1.7：拼不安全的东西进 shell 之前先停。这属于外部配置问题，
+                    // 走 blocked_external——它会立卡请人修，而不是把 Release 判死。
+                    return fail(
+                        'blocked_external',
+                        `Refusing to build a deploy command: ${error.message}`,
+                        { integrationCommit }
+                    );
+                }
                 log(`[executor] release ${releaseId}: deploying (${target})`);
                 const deploy = await runCommandImpl({
                     command: deployCommand,

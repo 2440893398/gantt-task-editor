@@ -3,6 +3,8 @@
  * Uses rrweb's maintained record package to keep a compact interaction trace.
  */
 
+import { sanitizeFeedbackUrl, sanitizeReplayEvent } from './feedback-url.js';
+
 const MAX_REPLAY_EVENTS = 300;
 const MAX_REPLAY_BYTES = 2.5 * 1024 * 1024;
 /**
@@ -85,7 +87,8 @@ function buildReplayPayload(events, { droppedSegments = droppedSegmentCount } = 
         kind: 'rrweb-replay',
         schemaVersion: 1,
         createdAt: new Date().toISOString(),
-        url: window.location.href,
+        // §1.9：hash 里是 capability token；录像与上下文走同一把净化。
+        url: sanitizeFeedbackUrl(window.location.href),
         title: document.title,
         eventCount: events.length,
         startedAt: recordingStartedAt,
@@ -169,7 +172,9 @@ export function recordFeedbackReplayEvent(event, isCheckout = false) {
     if (isCheckout || replaySegments.length === 0) {
         replaySegments.push([]);
     }
-    replaySegments[replaySegments.length - 1].push(event);
+    // §1.9：Meta 事件带 href，而它正是每个 segment 的第一条——不在入缓冲时洗掉，
+    // 凭据只是换了个地方跟着录像上传。
+    replaySegments[replaySegments.length - 1].push(sanitizeReplayEvent(event));
     trimSegments();
 }
 

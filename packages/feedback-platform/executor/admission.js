@@ -159,9 +159,17 @@ export function gitArgsWithIsolatedCredentials(args, { pat = '' } = {}) {
 }
 
 /**
- * S3：读取路径拒绝清单。执行器自己的每一次文件读取（证据收集、输出提取、
- * 上下文装配）都必须过这道闸；命中即拒，不看内容。
- * 相对路径一律相对 `workspaceDir` 判定，越出工作区的读取默认拒绝。
+ * S3：读取路径拒绝清单。命中即拒，不看内容；相对路径一律相对 `workspaceDir` 判定。
+ *
+ * **覆盖边界必须说清楚**（代码评审 §1.5，此前注释写的是「每一次文件读取都过闸」，
+ * 而实际只有测试引用它）：
+ * - 管得住：执行器进程**自己**的文件读取——删除标记扫描、视觉证据判定、
+ *   `.git` 元数据对账。这三处现在都过闸。
+ * - 管不住：**Agent** 的读取。它由 provider 的工作目录边界拦（S8：只读工具一律不
+ *   经 `--allowed-tools` 预授权，越界读取由 provider 拒绝并记入 permission_denials）。
+ * - 管不住：**验证步骤**。`npm test`/`npm ci` 执行的是 Agent 刚改过的任意 JS，
+ *   拿不到白名单外的环境变量，但拥有当前用户的全部文件读写与出网能力。这是
+ *   EXC-FWB-005（不容器化）已接受的缺口，长期方向是降权/容器，不是这道闸能补的。
  */
 const DENYLIST_BASENAMES = [/^\.dev\.vars$/i, /^\.env(\..+)?$/i];
 
@@ -180,7 +188,16 @@ function denylistedRoots(home) {
     ];
 }
 
-export function evaluateReadAccess(path, { workspaceDir, home = homedir() } = {}) {
+/**
+ * `requireInsideWorkspace`（代码评审 2026-09-02 §1.5）：默认仍然是「越出工作区即拒」。
+ * 但 `.git` 元数据对账有一个**合法**的例外——linked worktree 的 common dir 就在主仓
+ * 里、天然在工作区之外。那条路径只需要拒绝清单（`.ssh`/`.env`/浏览器 profile），
+ * 不需要工作区边界，因此把两件事拆开可选，而不是让调用方干脆不过闸。
+ */
+export function evaluateReadAccess(
+    path,
+    { workspaceDir, home = homedir(), requireInsideWorkspace = true } = {}
+) {
     const raw = String(path || '');
     if (!raw.trim()) return { allowed: false, reason: 'EXECUTOR_READ_PATH_EMPTY' };
 
@@ -196,7 +213,7 @@ export function evaluateReadAccess(path, { workspaceDir, home = homedir() } = {}
             return { allowed: false, reason: 'EXECUTOR_READ_DENYLISTED_ROOT', path: absolute };
         }
     }
-    if (workspace && !isSameOrInside(absolute, workspace)) {
+    if (requireInsideWorkspace && workspace && !isSameOrInside(absolute, workspace)) {
         return { allowed: false, reason: 'EXECUTOR_READ_OUTSIDE_WORKSPACE', path: absolute };
     }
     return { allowed: true };

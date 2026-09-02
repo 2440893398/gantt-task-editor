@@ -49,7 +49,9 @@ describe('[SCN-FWB-032] 两个执行器 Adapter 的血泪规则来自同一份�
                 issue: { id: 'i1', businessType: 'bug', scope: 'small', title: 't' },
                 timeline: [],
             };
-            expect(claude.buildPrompt(context)).toBe(codex.buildPrompt(context));
+            // 围栏 nonce 每次随机（§1.8），钉死同一个值才谈得上逐字比对。
+            const options = { fenceNonce: 'fixed-nonce' };
+            expect(claude.buildPrompt(context, options)).toBe(codex.buildPrompt(context, options));
         }
     });
 

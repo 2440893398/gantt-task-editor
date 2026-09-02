@@ -75,8 +75,10 @@ export function createActionsAdapter({ provider = 'codex' } = {}) {
         evidenceDir: FEEDBACK_EVIDENCE_DIR,
 
         /** C1：Prompt 由单一构建器按 policy 分支产出。 */
-        buildPrompt(context) {
-            return buildFeedbackPrompt(context);
+        buildPrompt(context, options) {
+            // options 透传是为了让围栏 nonce 可注入（§1.8）：默认每次随机，
+            // 测试需要逐字比对时才钉死一个值。
+            return buildFeedbackPrompt(context, options);
         },
 
         isWriteCapablePolicy,
