@@ -62,6 +62,7 @@ import { createCodexSession } from './codex-session.js';
 import { createControlPlaneClient, resolveControlPlaneFetch } from './control-plane.js';
 import { PROVIDER_COMMAND_RESOLVERS } from './provider-command.js';
 import { createReleasePipeline } from './release-pipeline.js';
+import { acquireSingleInstanceLock, defaultLockFile } from './single-instance.js';
 import { executeLeasedRun } from './run-loop.js';
 import { createWritePipeline } from './write-pipeline.js';
 import { createClaudeCodeAdapter } from '../adapters/claude-code.js';
@@ -397,101 +398,127 @@ export async function runExecutorDaemon({ env = process.env, log = console.error
     process.once('SIGINT', () => stopController.request('SIGINT'));
     process.once('SIGTERM', () => stopController.request('SIGTERM'));
 
-    while (!stopController.shouldStop()) {
-        let lease = null;
-        try {
-            lease = await controlPlane.claimLease({
-                executorId,
-                capabilities: {
-                    providers: [providerId],
-                    policies: [
-                        'analyze',
-                        'review',
-                        'implement',
-                        'implement_and_verify',
-                        'local_required',
-                    ],
-                },
-                leaseSeconds: LEASE_SECONDS,
-            });
-        } catch (error) {
-            log('[executor] lease claim failed:', String(error?.message || error));
-        }
-
-        if (!lease) {
-            // 没有 Run 时看有没有待交付的 Release（阶段二）。Release 无租约是已
-            // 接受缺口：单执行器 + 同 id 退避 + release.failed 终态不可再认领兜底。
-            let releaseClaim = null;
+    async function pollForWork() {
+        while (!stopController.shouldStop()) {
+            let lease = null;
             try {
-                releaseClaim = await controlPlane.claimRelease();
+                lease = await controlPlane.claimLease({
+                    executorId,
+                    capabilities: {
+                        providers: [providerId],
+                        policies: [
+                            'analyze',
+                            'review',
+                            'implement',
+                            'implement_and_verify',
+                            'local_required',
+                        ],
+                    },
+                    leaseSeconds: LEASE_SECONDS,
+                });
             } catch (error) {
-                log('[executor] release claim failed:', String(error?.message || error));
+                log('[executor] lease claim failed:', String(error?.message || error));
             }
-            if (releaseClaim) {
-                log(
-                    `[executor] release claimed ${releaseClaim.releaseId} (${releaseClaim.status})`
-                );
-                await hotLoopGuard.pace(releaseClaim.releaseId, { log });
+
+            if (!lease) {
+                // 没有 Run 时看有没有待交付的 Release（阶段二）。Release 现在也有租约
+                // （评审 §3.2）：认领是 epoch CAS，事件上报回带 epoch，被顶掉即 409。
+                let releaseClaim = null;
                 try {
-                    const delivered = await releasePipeline.deliver({
-                        claim: releaseClaim,
-                        controlPlane,
-                    });
-                    log(
-                        `[executor] release ${releaseClaim.releaseId} → ${delivered.outcome}${delivered.errorCode ? ` (${delivered.errorCode})` : ''}`
-                    );
+                    releaseClaim = await controlPlane.claimRelease({ executorId });
                 } catch (error) {
-                    // 交付中途炸（git 故障、事件上报耗尽）：Release 状态留在服务端
-                    // 原地，下一轮重领续跑；决定性 eventId 让已发事件幂等去重。
-                    log(
-                        `[executor] release ${releaseClaim.releaseId} threw:`,
-                        String(error?.message || error)
-                    );
+                    log('[executor] release claim failed:', String(error?.message || error));
                 }
+                if (releaseClaim) {
+                    log(
+                        `[executor] release claimed ${releaseClaim.releaseId} (${releaseClaim.status}) epoch=${releaseClaim.leaseEpoch}`
+                    );
+                    await hotLoopGuard.pace(releaseClaim.releaseId, { log });
+                    try {
+                        const delivered = await releasePipeline.deliver({
+                            claim: releaseClaim,
+                            controlPlane,
+                        });
+                        log(
+                            `[executor] release ${releaseClaim.releaseId} → ${delivered.outcome}${delivered.errorCode ? ` (${delivered.errorCode})` : ''}`
+                        );
+                    } catch (error) {
+                        // 租约易主（评审 §3.2）：另一个执行器已经在跑这个 Release。
+                        // 不是可重试错误——这一轮就此停手，别的分支交给下一次认领。
+                        if (error?.code === 'FEEDBACK_EXECUTOR_LEASE_STALE') {
+                            log(
+                                `[executor] release ${releaseClaim.releaseId}: lease lost (another executor holds it); stopping this delivery`
+                            );
+                        } else {
+                            // 交付中途炸（git 故障、事件上报耗尽）：Release 状态留在服务端
+                            // 原地，下一轮重领续跑；决定性 eventId 让已发事件幂等去重。
+                            log(
+                                `[executor] release ${releaseClaim.releaseId} threw:`,
+                                String(error?.message || error)
+                            );
+                        }
+                    }
+                    continue;
+                }
+                await sleep(POLL_INTERVAL_MS);
                 continue;
             }
-            await sleep(POLL_INTERVAL_MS);
-            continue;
-        }
 
-        log(`[executor] leased run=${lease.runId} epoch=${lease.epoch}`);
-        await hotLoopGuard.pace(lease.runId, { log });
-        // executeLeasedRun 自己兜住 turn 内的一切，但它也有在 try 之外抛的路径
-        // （写入型 policy 的终态投递重试耗尽、createSession 里 buildSessionArgs 抛）。
-        // 一轮的失败只能终结这一轮：守护进程是常驻的，不能因为一条 Run 没跑成就退出。
-        try {
-            const result = await executeLeasedRun({
-                lease: {
-                    ...lease,
-                    executorId,
-                    workspaceDir: admitted.workspaceDir,
-                    // 引擎 id 由**执行器进程**决定，必须压在 lease.context 之上：
-                    // 控制面的 `provider` 是 GitHub 路径用的 AI 厂商字段（实测为 'codex'），
-                    // 与「哪个执行引擎在跑」无关。写在扩散前面会被它覆盖，于是事件翻译器选错——
-                    // provider 正常干活而一条协议事件都不发，Run 挂到 turn 超时。
-                    context: { ...lease.context, provider: providerId },
-                },
-                controlPlane,
-                adapter,
-                createSession: () =>
-                    provider.createSession({
-                        adapter,
-                        command,
-                        childEnv,
+            log(`[executor] leased run=${lease.runId} epoch=${lease.epoch}`);
+            await hotLoopGuard.pace(lease.runId, { log });
+            // executeLeasedRun 自己兜住 turn 内的一切，但它也有在 try 之外抛的路径
+            // （写入型 policy 的终态投递重试耗尽、createSession 里 buildSessionArgs 抛）。
+            // 一轮的失败只能终结这一轮：守护进程是常驻的，不能因为一条 Run 没跑成就退出。
+            try {
+                const result = await executeLeasedRun({
+                    lease: {
+                        ...lease,
+                        executorId,
                         workspaceDir: admitted.workspaceDir,
-                        context: lease.context,
-                        log,
-                    }),
-                log,
-                leaseSeconds: LEASE_SECONDS,
-                writePipeline,
-            });
-            log(
-                `[executor] run=${lease.runId} → ${result.status}${result.errorCode ? ` (${result.errorCode})` : ''}`
-            );
-        } catch (error) {
-            log(`[executor] run=${lease.runId} threw:`, String(error?.message || error));
+                        // 引擎 id 由**执行器进程**决定，必须压在 lease.context 之上：
+                        // 控制面的 `provider` 是 GitHub 路径用的 AI 厂商字段（实测为 'codex'），
+                        // 与「哪个执行引擎在跑」无关。写在扩散前面会被它覆盖，于是事件翻译器选错——
+                        // provider 正常干活而一条协议事件都不发，Run 挂到 turn 超时。
+                        context: { ...lease.context, provider: providerId },
+                    },
+                    controlPlane,
+                    adapter,
+                    createSession: () =>
+                        provider.createSession({
+                            adapter,
+                            command,
+                            childEnv,
+                            workspaceDir: admitted.workspaceDir,
+                            context: lease.context,
+                            log,
+                        }),
+                    log,
+                    leaseSeconds: LEASE_SECONDS,
+                    writePipeline,
+                });
+                log(
+                    `[executor] run=${lease.runId} → ${result.status}${result.errorCode ? ` (${result.errorCode})` : ''}`
+                );
+            } catch (error) {
+                log(`[executor] run=${lease.runId} threw:`, String(error?.message || error));
+            }
         }
+    }
+
+    // 单实例锁（评审 §3.2 的执行器侧）：控制面的租约挡住「两个执行器推同一个
+    // Release」，这道锁挡住更前面一步——同一台机器上根本不该有两个守护进程。
+    // 取不到锁就拒绝启动，不是打一行警告继续：并存的两个实例会互相碾压工作区
+    // （各自 reset --hard + checkout -B，症状是候选分支莫名指向别人的提交）。
+    const instanceLock = acquireSingleInstanceLock({
+        lockFile: defaultLockFile(env),
+        workspaceDir: admitted.workspaceDir,
+        log,
+    });
+    log(`[executor] single-instance lock held at ${instanceLock.path}`);
+    try {
+        await pollForWork();
+    } finally {
+        instanceLock.release();
     }
 
     // 后台运行时这是日志里唯一能区分「优雅收工」和「被硬杀/崩了」的一行。

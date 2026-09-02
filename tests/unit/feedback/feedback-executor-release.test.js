@@ -293,6 +293,7 @@ describe('[SCN-FWB-033] POST /api/executor/release 认领', () => {
             {
                 type: 'integration.started',
                 eventId: 'e1',
+                leaseEpoch: claim.leaseEpoch,
                 payload: { ...IDENTITY, changeCommit: 'd'.repeat(40) },
             },
             { token: claim.releaseToken }
@@ -302,7 +303,12 @@ describe('[SCN-FWB-033] POST /api/executor/release 认领', () => {
         const good = await post(
             env,
             '/api/feedback/releases/rel_1/events',
-            { type: 'integration.started', eventId: 'e2', payload: { ...IDENTITY } },
+            {
+                type: 'integration.started',
+                eventId: 'e2',
+                leaseEpoch: claim.leaseEpoch,
+                payload: { ...IDENTITY },
+            },
             { token: claim.releaseToken }
         );
         expect(good.response.status).toBe(201);
@@ -320,7 +326,7 @@ describe('[SCN-FWB-033] POST /api/executor/release 认领', () => {
             post(
                 env,
                 '/api/feedback/releases/rel_1/events',
-                { type, eventId, payload: { ...IDENTITY, ...extra } },
+                { type, eventId, leaseEpoch: claim.leaseEpoch, payload: { ...IDENTITY, ...extra } },
                 { token: claim.releaseToken }
             );
 
@@ -387,5 +393,137 @@ describe('[SCN-FWB-033] Release 交付只有 executor 认领一条路', () => {
             .prepare("SELECT status FROM feedback_releases WHERE candidate_id = 'cnd_rel_1'")
             .get();
         expect(release.status).toBe('integrating');
+    });
+});
+
+describe('[SCN-FWB-035] Release 租约：破坏力最大的一步也要有互斥（评审 §3.2）', () => {
+    // 坏行为画像：分支锁只保证「同时至多一个 Release 在跑」，不保证「同时至多一个
+    // 执行器在跑这个 Release」。两个守护进程（stop 超时后 -Force 留下的新旧实例、
+    // 或直接 `node main.js` 绕过进程名互斥）同时认领 → 并发 push 默认分支 + 并发
+    // 生产部署。此前这一步是控制面上唯一没有租约的写路径。
+    function seedClaimable(sqlite) {
+        seedProject(sqlite);
+        seedDeliverableCandidate(sqlite);
+        seedActiveRelease(sqlite);
+    }
+
+    it('两个执行器争同一个 Release：一个拿到租约，另一个 204 空手而归', async () => {
+        const sqlite = applyMigrations();
+        seedClaimable(sqlite);
+        const env = createEnv(sqlite);
+
+        const first = await post(env, '/api/executor/release', { executorId: 'executor-a' });
+        expect(first.response.status).toBe(200);
+        expect(first.payload.leaseEpoch).toBe(1);
+
+        const second = await post(env, '/api/executor/release', { executorId: 'executor-b' });
+        expect(second.response.status).toBe(204);
+
+        const row = sqlite
+            .prepare('SELECT lease_executor_id, lease_epoch FROM feedback_releases WHERE id = ?')
+            .get('rel_1');
+        expect(row.lease_executor_id).toBe('executor-a');
+        expect(row.lease_epoch).toBe(1);
+    });
+
+    it('租约过期后可被重新认领，epoch 递增——交付中途崩溃不得让 Release 永远卡住', async () => {
+        const sqlite = applyMigrations();
+        seedClaimable(sqlite);
+        const env = createEnv(sqlite);
+        await post(env, '/api/executor/release', { executorId: 'executor-a' });
+        sqlite
+            .prepare('UPDATE feedback_releases SET lease_expires_at = ? WHERE id = ?')
+            .run('2020-01-01T00:00:00.000Z', 'rel_1');
+
+        const retaken = await post(env, '/api/executor/release', { executorId: 'executor-b' });
+        expect(retaken.response.status).toBe(200);
+        expect(retaken.payload.leaseEpoch).toBe(2);
+    });
+
+    it('旧 epoch 的事件被 409 拒绝，且不推进 Release 状态', async () => {
+        const sqlite = applyMigrations();
+        seedClaimable(sqlite);
+        const env = createEnv(sqlite);
+        const { payload: first } = await post(env, '/api/executor/release', {
+            executorId: 'executor-a',
+        });
+        sqlite
+            .prepare('UPDATE feedback_releases SET lease_expires_at = ? WHERE id = ?')
+            .run('2020-01-01T00:00:00.000Z', 'rel_1');
+        const { payload: second } = await post(env, '/api/executor/release', {
+            executorId: 'executor-b',
+        });
+        expect(second.leaseEpoch).toBe(first.leaseEpoch + 1);
+
+        // 被顶掉的那个还在跑，照常上报——必须 409，并且这条 409 要能被执行器
+        // 客户端认出来（它按 payload.error === 'FEEDBACK_EXECUTOR_LEASE_STALE' 判定）。
+        const stale = await post(
+            env,
+            '/api/feedback/releases/rel_1/events',
+            {
+                type: 'integration.started',
+                eventId: 'stale-1',
+                leaseEpoch: first.leaseEpoch,
+                payload: { ...IDENTITY },
+            },
+            { token: first.releaseToken }
+        );
+        expect(stale.response.status).toBe(409);
+        expect(stale.payload.error).toBe('FEEDBACK_EXECUTOR_LEASE_STALE');
+
+        // 新持有者带自己的 epoch 上报则照常受理。
+        const fresh = await post(
+            env,
+            '/api/feedback/releases/rel_1/events',
+            {
+                type: 'integration.started',
+                eventId: 'fresh-1',
+                leaseEpoch: second.leaseEpoch,
+                payload: { ...IDENTITY },
+            },
+            { token: second.releaseToken }
+        );
+        expect(fresh.response.status).toBe(201);
+    });
+
+    it('不带 leaseEpoch 的上报同样被拒——租约凭证缺席不等于免检', async () => {
+        const sqlite = applyMigrations();
+        seedClaimable(sqlite);
+        const env = createEnv(sqlite);
+        const { payload: claim } = await post(env, '/api/executor/release', {
+            executorId: 'executor-a',
+        });
+        const noEpoch = await post(
+            env,
+            '/api/feedback/releases/rel_1/events',
+            { type: 'integration.started', eventId: 'no-epoch', payload: { ...IDENTITY } },
+            { token: claim.releaseToken }
+        );
+        expect(noEpoch.response.status).toBe(409);
+    });
+
+    it('可恢复失败（default_branch_drift）放掉租约——下一轮立刻可重领，不必等 TTL', async () => {
+        const sqlite = applyMigrations();
+        seedClaimable(sqlite);
+        const env = createEnv(sqlite);
+        const { payload: claim } = await post(env, '/api/executor/release', {
+            executorId: 'executor-a',
+        });
+        const failed = await post(
+            env,
+            '/api/feedback/releases/rel_1/events',
+            {
+                type: 'release.failed',
+                eventId: 'drift-1',
+                leaseEpoch: claim.leaseEpoch,
+                payload: { ...IDENTITY, errorCode: 'default_branch_drift', passed: false },
+            },
+            { token: claim.releaseToken }
+        );
+        expect(failed.response.status).toBe(201);
+
+        const retaken = await post(env, '/api/executor/release', { executorId: 'executor-a' });
+        expect(retaken.response.status).toBe(200);
+        expect(retaken.payload.leaseEpoch).toBe(claim.leaseEpoch + 1);
     });
 });

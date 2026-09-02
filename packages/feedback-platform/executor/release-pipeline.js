@@ -86,7 +86,7 @@ export function createReleasePipeline({
          * git 故障抛出，由守护循环兜住（Release 状态留在原地，下轮重领续跑）。
          */
         async deliver({ claim, controlPlane, resolveDeploymentIdImpl = resolveDeploymentId }) {
-            const { releaseId, releaseToken, payload, deployConfig } = claim;
+            const { releaseId, releaseToken, leaseEpoch, payload, deployConfig } = claim;
             const identity = {
                 candidateId: payload.candidateId,
                 repository: payload.repository,
@@ -104,6 +104,9 @@ export function createReleasePipeline({
                 return controlPlane.postReleaseEvent({
                     releaseId,
                     releaseToken,
+                    // 租约凭证（评审 §3.2）：租约易主后本进程的每一条上报都会 409，
+                    // 这正是「交付到一半被顶掉」时必须停手的信号。
+                    leaseEpoch,
                     event: {
                         type,
                         // 决定性 id：同一 Release 重领后重放同一序列会被幂等去重。

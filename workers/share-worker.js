@@ -262,6 +262,11 @@ const FEEDBACK_RELEASE_ACTIVE_STATUSES = new Set([
     'deploying',
     'smoke_testing',
 ]);
+// Release 租约 TTL（评审 §3.2）。Run 租约是 120 秒 + 每 30 秒心跳；Release 没有心跳
+// 通道，续期搭在事件上报上，而相邻两个事件之间可以隔着 npm ci + 全量测试 + 构建
+// （真机上十几分钟起步），所以 TTL 取 30 分钟：宁可让崩溃后的重新认领多等一会儿，
+// 也不能在交付跑到一半时把租约让出去——那正是并发 push 的成因。
+const FEEDBACK_RELEASE_LEASE_SECONDS = 30 * 60;
 // §15.4 Release event contract.
 const FEEDBACK_RELEASE_EVENT_TYPES = new Set([
     'integration.started',
@@ -6441,7 +6446,11 @@ async function dispatchFeedbackCreatedRelease(env, { release }) {
     // 随 GH 路径删除）。Release 保持 deliverFeedbackCandidate 建好的 integrating
     // 态，由 POST /api/executor/release 出站认领；重试/恢复路径走到这里同样只是
     // 清掉错误码等待认领。
-    await env.FEEDBACK_DB.prepare('UPDATE feedback_releases SET error_code = NULL WHERE id = ?')
+    // 租约一并放掉（评审 §3.2）：重试的语义就是「让执行器重新认领」，留着上一个
+    // 持有者的租约会让重试在 TTL 走完之前无人可领——按钮点了却什么都不发生。
+    await env.FEEDBACK_DB.prepare(
+        'UPDATE feedback_releases SET error_code = NULL, lease_expires_at = NULL WHERE id = ?'
+    )
         .bind(release.releaseId)
         .run();
     return { dispatched: true, mode: 'executor_pull', releaseId: release.releaseId };
@@ -6991,6 +7000,15 @@ async function appendFeedbackReleaseEvent(env, releaseId, body) {
     if (!FEEDBACK_RELEASE_ACTIVE_STATUSES.has(release.status)) {
         throw feedbackStorageError('FEEDBACK_RELEASE_ALREADY_TERMINAL');
     }
+    // 租约核验（评审 §3.2）：Release 一旦被认领，只有当前持有者能推进它。
+    // 与 Run 事件同一条语义——旧 epoch 是「租约已易主」，不是可重试错误，
+    // 上报方必须立刻停止对这个 Release 的一切写入（含 push 与部署）。
+    // 从未被认领过的 Release（lease_epoch = 0）不设这道闸：那是管理员手动重放
+    // 与迁移前遗留行的路径，它们本来就没有 epoch 可回带。
+    const leaseEpoch = Number(release.lease_epoch) || 0;
+    if (leaseEpoch > 0 && Number(body?.leaseEpoch) !== leaseEpoch) {
+        throw feedbackExecutorError('FEEDBACK_EXECUTOR_LEASE_STALE');
+    }
 
     const payload = body.payload && typeof body.payload === 'object' ? body.payload : {};
     if (!payload.candidateId || payload.candidateId !== release.candidate_id) {
@@ -7094,6 +7112,13 @@ async function appendFeedbackReleaseEvent(env, releaseId, body) {
                   },
               })
             : null;
+    // 租约续期搭事件的顺风车（评审 §3.2）：Release 没有心跳通道，而相邻两个事件
+    // 之间可以隔着十几分钟的验证。可恢复失败（default_branch_drift/blocked_external）
+    // 把 Release 留在原地等下轮重领，那就必须**同时**放掉租约——否则它要等满整个
+    // TTL 才可被认领，而它本来是立刻可以重跑的。
+    const nextLeaseExpiresAt = resumableReleaseFailure
+        ? null
+        : new Date(Date.now() + FEEDBACK_RELEASE_LEASE_SECONDS * 1000).toISOString();
     const statements = [
         env.FEEDBACK_DB.prepare(
             `UPDATE feedback_releases
@@ -7102,7 +7127,8 @@ async function appendFeedbackReleaseEvent(env, releaseId, body) {
                  deployment_id = COALESCE(?, deployment_id),
                  smoke_result_json = ?,
                  merged_at = COALESCE(?, merged_at), deployed_at = COALESCE(?, deployed_at),
-                 finished_at = COALESCE(?, finished_at), error_code = COALESCE(?, error_code)
+                 finished_at = COALESCE(?, finished_at), error_code = COALESCE(?, error_code),
+                 lease_expires_at = ?
              WHERE id = ?`
         ).bind(
             nextStatus,
@@ -7117,6 +7143,7 @@ async function appendFeedbackReleaseEvent(env, releaseId, body) {
                 ? now
                 : null,
             type === 'release.failed' ? limitText(payload.errorCode, 80) || 'release_failed' : null,
+            nextLeaseExpiresAt,
             releaseId
         ),
     ];
@@ -9331,6 +9358,9 @@ const FEEDBACK_ERROR_RESPONSES = {
     FEEDBACK_CANDIDATE_ABANDONED: [409, 'Candidate has been superseded'],
     FEEDBACK_ISSUE_NOT_READY_FOR_DEPLOY: [409, 'Issue is not ready for delivery'],
     FEEDBACK_DELIVERY_LOCK_HELD: [409, 'Another release is integrating on this branch'],
+    // 消息就是错误码本身：执行器客户端按 `payload.error === 'FEEDBACK_EXECUTOR_LEASE_STALE'`
+    // 认这条（control-plane.js），换成人话文案会让它退化成一个「普通 409」并继续交付。
+    FEEDBACK_EXECUTOR_LEASE_STALE: [409, 'FEEDBACK_EXECUTOR_LEASE_STALE'],
     FEEDBACK_MULTIPLE_DEPLOYMENT_TARGETS: [
         409,
         'Candidate requires separate Worker and Pages releases',
@@ -9812,18 +9842,29 @@ async function claimFeedbackExecutorLease(env, body) {
  * payload 由唯一构造函数产出（`integration.started` 的身份核验按候选行逐字段精确
  * 比对），release token 每次认领重新铸造（长交付不受 TTL 限制）。分支锁（每仓每
  * 分支至多一个活跃 Release）由 deliverFeedbackCandidate 保证，所以这里至多返回
- * 一行。**MVP 已接受缺口**：Release 无租约——单执行器 + 守护进程对同 id 的退避 +
- * `release.failed` 终态不可再认领三者兜底；多执行器之前必须补租约。
+ * 一行。
+ *
+ * 租约（代码评审 2026-09-02 §3.2）：分支锁保证的是「同时至多一个 Release 在跑」，
+ * 不是「同时至多一个执行器在跑这个 Release」——破坏力最大的一步（push 默认分支 +
+ * 生产部署）此前完全没有互斥。认领改为 epoch CAS：读到 epoch N 的那一方用
+ * `WHERE lease_epoch = N` 抢占，只有一方能 +1 成功；事件上报必须回带认领拿到的
+ * epoch，旧 epoch 一律 409（与 Run 事件的 stale lease 语义逐字一致）。
+ * 租约过期即可被重新认领——交付中途崩溃不能让 Release 永远卡住。
  */
-async function claimFeedbackExecutorRelease(env) {
+async function claimFeedbackExecutorRelease(env, body = {}) {
     if (!env.FEEDBACK_DB) throw feedbackExecutorError('FEEDBACK_DB_REQUIRED');
     const project = await resolveFeedbackProject(env);
+    const executorId = normalizeFeedbackExecutorId(body?.executorId) || 'executor-unknown';
+    const nowIso = new Date().toISOString();
 
     const releaseRow = await env.FEEDBACK_DB.prepare(
         `SELECT * FROM feedback_releases
          WHERE status IN ('integrating', 'merged', 'deploying', 'smoke_testing')
+           AND (lease_expires_at IS NULL OR lease_expires_at <= ?)
          ORDER BY started_at LIMIT 1`
-    ).first();
+    )
+        .bind(nowIso)
+        .first();
     if (!releaseRow) return null;
 
     const candidate = await env.FEEDBACK_DB.prepare(
@@ -9833,6 +9874,21 @@ async function claimFeedbackExecutorRelease(env) {
         .first();
     if (!candidate) return null;
 
+    // 抢占：epoch 是 CAS 的比较位。两个执行器读到同一行时只有一方的 UPDATE 命中，
+    // 另一方拿到零行——它必须空手而归，而不是「反正分支锁挡着」照跑不误。
+    const expiresAt = new Date(Date.now() + FEEDBACK_RELEASE_LEASE_SECONDS * 1000).toISOString();
+    const currentEpoch = Number(releaseRow.lease_epoch) || 0;
+    const claimed = await env.FEEDBACK_DB.prepare(
+        `UPDATE feedback_releases
+         SET lease_executor_id = ?, lease_epoch = lease_epoch + 1, lease_expires_at = ?
+         WHERE id = ? AND lease_epoch = ? AND (lease_expires_at IS NULL OR lease_expires_at <= ?)
+         RETURNING lease_epoch`
+    )
+        .bind(executorId, expiresAt, releaseRow.id, currentEpoch, nowIso)
+        .run();
+    const leaseEpoch = Number(claimed.results?.[0]?.lease_epoch);
+    if (!Number.isInteger(leaseEpoch)) return null;
+
     const release = feedbackReleaseFromRow(releaseRow);
     const repository = String(candidate.repository || project.repo || '');
     return {
@@ -9840,6 +9896,9 @@ async function claimFeedbackExecutorRelease(env) {
         issueId: release.issueId,
         candidateId: release.candidateId,
         status: releaseRow.status,
+        executorId,
+        leaseEpoch,
+        leaseExpiresAt: expiresAt,
         releaseToken: (await createFeedbackReleaseToken(env, release.releaseId)).token,
         payload: buildFeedbackReleaseDispatchPayload(env, { release, candidate, repository }),
         // 执行器侧集成验证与部署要用的项目数据（GitHub 交付线从 vars/secrets 拿，
@@ -12200,7 +12259,7 @@ export default {
                     return jsonResponse(await heartbeatFeedbackExecutor(env, body), { headers });
                 }
                 if (url.pathname === '/api/executor/release') {
-                    const releaseClaim = await claimFeedbackExecutorRelease(env);
+                    const releaseClaim = await claimFeedbackExecutorRelease(env, body);
                     return releaseClaim
                         ? jsonResponse(releaseClaim, { headers })
                         : new Response(null, { status: 204, headers });

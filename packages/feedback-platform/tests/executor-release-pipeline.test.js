@@ -385,3 +385,36 @@ describe('[SCN-FWB-035] S2 凭据在交付路径上真的被接上（评审 §1.
         expect(git.calls.some((call) => call === 'remote get-url origin')).toBe(false);
     });
 });
+
+describe('[SCN-FWB-035] Release 租约凭证随每条事件上报（评审 §3.2）', () => {
+    it('认领拿到的 leaseEpoch 出现在每一条事件上——不带它服务端一律 409', async () => {
+        const posted = [];
+        const { pipeline } = makePipeline();
+        const controlPlane = {
+            async postReleaseEvent(args) {
+                posted.push(args);
+                return { duplicate: false };
+            },
+        };
+        await pipeline.deliver({ claim: { ...claimFor(), leaseEpoch: 3 }, controlPlane });
+        expect(posted.length).toBeGreaterThan(0);
+        expect(posted.every((call) => call.leaseEpoch === 3)).toBe(true);
+    });
+
+    it('租约易主（409 StaleLease）时抛出，交由守护循环停手——不继续 push/部署', async () => {
+        const git = fakeGit();
+        const { pipeline } = makePipeline({ git });
+        const controlPlane = {
+            async postReleaseEvent() {
+                const error = new Error('FEEDBACK_EXECUTOR_LEASE_STALE');
+                error.code = 'FEEDBACK_EXECUTOR_LEASE_STALE';
+                throw error;
+            },
+        };
+        const error = await pipeline
+            .deliver({ claim: { ...claimFor(), leaseEpoch: 1 }, controlPlane })
+            .catch((e) => e);
+        expect(error.code).toBe('FEEDBACK_EXECUTOR_LEASE_STALE');
+        expect(git.calls.some((call) => call.startsWith('push'))).toBe(false);
+    });
+});

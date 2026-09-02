@@ -52,19 +52,27 @@ export function createControlPlaneClient({ origin, token, fetch: fetchImpl = fet
             return post('/api/executor/lease', { executorId, capabilities, leaseSeconds });
         },
 
-        /** 认领活跃 Release（SCN-FWB-033 阶段二）；无活可领返回 null（204）。 */
-        claimRelease() {
-            return post('/api/executor/release', {});
+        /**
+         * 认领活跃 Release（SCN-FWB-033 阶段二）；无活可领返回 null（204）。
+         * 响应带 `leaseEpoch`：交付的每一条事件都要回带它，旧 epoch 会拿到 409
+         * （评审 §3.2——push 默认分支 + 生产部署此前是唯一没有互斥的一步）。
+         */
+        claimRelease({ executorId } = {}) {
+            return post('/api/executor/release', { executorId });
         },
 
         /**
          * 上报 Release 进度事件。认证用认领时下发的 release token（不是执行器
          * bearer——与 GitHub 交付线走同一道 §21.3 闸）。重复 eventId 服务端幂等。
+         * `leaseEpoch` 是租约凭证：不带或带旧值即 409 StaleLeaseError，此时本进程
+         * 必须立刻停止对该 Release 的一切写入。
          */
-        postReleaseEvent({ releaseId, releaseToken, event }) {
-            return post(`/api/feedback/releases/${encodeURIComponent(releaseId)}/events`, event, {
-                bearer: releaseToken,
-            });
+        postReleaseEvent({ releaseId, releaseToken, leaseEpoch, event }) {
+            return post(
+                `/api/feedback/releases/${encodeURIComponent(releaseId)}/events`,
+                { ...event, leaseEpoch },
+                { bearer: releaseToken }
+            );
         },
 
         /** 续租；返回 { commands: [...] }（M4 起决议指令搭这班顺风车下行）。 */
