@@ -14,6 +14,27 @@ const MAX_REPLAY_BYTES = 2.5 * 1024 * 1024;
  */
 const CHECKOUT_EVERY_N_EVENTS = 100;
 
+/**
+ * 录制时长上限（代码评审 2026-09-02 §4.3）。
+ *
+ * 之前录制一旦开始就没有终点，直到页面关闭——用户点了「开始录制」，然后忘了这回事，
+ * 接下来一小时的所有操作（含与本次反馈无关的内容）都在缓冲里。Sentry Replay 有
+ * 60 分钟会话上限；这里取 5 分钟：一次复现操作远用不了这么久，而超时自动停止比
+ * 「一直录着」更容易解释。
+ */
+const MAX_RECORDING_MS = 5 * 60 * 1000;
+
+/**
+ * 已知敏感区域（§4.3）。`maskAllInputs` 只盖 input/textarea 的值，**页面文本不盖**：
+ * AI 配置弹窗里的 base_url、模型名与旁边的提示文本都会以文本节点进快照。
+ * 全量文本脱敏与「看得懂复现」的产品目标直接冲突，所以这里只点名两类：
+ * - AI 配置弹窗：整块 block 掉（连结构都不录，里面除了密钥没有复现价值）；
+ * - 反馈对话框自己的联系方式：文本脱敏（结构留着，值不留）。
+ * 这条是取舍不是完备防线，写在这里是为了让下一个人知道边界在哪。
+ */
+const REPLAY_BLOCK_SELECTOR = '#ai_config_modal, [data-feedback-replay-block]';
+const REPLAY_MASK_TEXT_SELECTOR = '#feedback-contact, [data-feedback-replay-mask]';
+
 /** rrweb 事件类型（`@rrweb/types` 的 EventType）。这里只用到这三个。 */
 const RRWEB_EVENT = Object.freeze({ FULL_SNAPSHOT: 2, INCREMENTAL: 3, META: 4 });
 
@@ -32,6 +53,9 @@ const RRWEB_EVENT = Object.freeze({ FULL_SNAPSHOT: 2, INCREMENTAL: 3, META: 4 })
 let replaySegments = [];
 let droppedSegmentCount = 0;
 let checkoutScheduled = false;
+let autoStopTimer = null;
+/** 上一次录制是否因为到达时长上限而自动停止——UI 要能说清楚为什么停了。 */
+let autoStopped = false;
 const listeners = new Set();
 
 let recordApi = null;
@@ -202,6 +226,9 @@ export function getFeedbackReplayContext() {
         eventCount: events.length,
         segmentCount: replaySegments.length,
         droppedSegments: droppedSegmentCount,
+        // §4.3：到点自停要能被说出来，否则用户只看到「怎么不录了」。
+        maxDurationMs: MAX_RECORDING_MS,
+        autoStopped,
         playable: isPlayable(events),
         firstEventAt: getEventTime(events[0]),
         lastEventAt: getEventTime(events[events.length - 1]),
@@ -263,6 +290,7 @@ export async function startFeedbackReplayRecording() {
 
     replaySegments = [];
     droppedSegmentCount = 0;
+    autoStopped = false;
     recordingStartedAt = null;
     recordingEndedAt = null;
     recordingError = null;
@@ -276,6 +304,11 @@ export async function startFeedbackReplayRecording() {
 export function stopFeedbackReplayRecording() {
     if (!stopRecording) {
         return false;
+    }
+
+    if (autoStopTimer) {
+        clearTimeout(autoStopTimer);
+        autoStopTimer = null;
     }
 
     try {
@@ -307,6 +340,9 @@ async function startReplayRecording() {
             // 操作，而按条数裁剪时必须有足够密的段边界，才有整段可丢、且丢完仍可播。
             checkoutEveryNth: CHECKOUT_EVERY_N_EVENTS,
             maskAllInputs: true,
+            // §4.3：已知敏感区域。maskAllInputs 只盖输入值，页面文本照录。
+            blockSelector: REPLAY_BLOCK_SELECTOR,
+            maskTextSelector: REPLAY_MASK_TEXT_SELECTOR,
             inlineImages: false,
             collectFonts: false,
             recordCanvas: false,
@@ -318,6 +354,14 @@ async function startReplayRecording() {
                 input: 'last',
             },
         });
+
+        // §4.3：到点自动停。定时器在 stop 里清掉，避免停了之后还留一个待触发的回调。
+        autoStopTimer = setTimeout(() => {
+            autoStopTimer = null;
+            if (!stopRecording) return;
+            autoStopped = true;
+            stopFeedbackReplayRecording();
+        }, MAX_RECORDING_MS);
 
         emitReplayState();
         return !!stopRecording;

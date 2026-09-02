@@ -205,9 +205,17 @@ document.addEventListener(
         initGeoSeo();
         console.log('📊 Analytics & SEO 初始化完成');
 
-        // 初始化问题反馈模块
-        initFeedbackModule();
-        console.log('📝 问题反馈模块初始化完成');
+        // 初始化问题反馈模块。
+        // 代码评审 2026-09-02 §4.8：这里原本是裸调用。反馈是**遥测组件**，它自己挂了
+        // 不能带走宿主——而裸调用时一次抛错会跳过后面的 setupAutoSave 与
+        // hideLoadingScreen：用户看到的是一个永远转圈、且不再自动保存的应用，
+        // 而根因只是「反馈按钮没挂上」。
+        try {
+            initFeedbackModule();
+            console.log('📝 问题反馈模块初始化完成');
+        } catch (error) {
+            console.error('📝 问题反馈模块初始化失败（已跳过，不影响主功能）:', error);
+        }
 
         // 设置数据变化时自动保存
         setupAutoSave();

@@ -143,3 +143,56 @@ describe('[SCN-FWB-049] 录制接线：段边界由 rrweb 的 isCheckout 划', (
         stopFeedbackReplayRecording();
     });
 });
+
+describe('[SCN-FWB-049] 录制有时长上限与已知敏感区域（代码评审 §4.3）', () => {
+    beforeEach(() => {
+        vi.resetModules();
+        vi.useRealTimers();
+    });
+
+    it('到达上限自动停止，并在 context 里说清楚是自停', async () => {
+        // 坏行为：录制一旦开始就没有终点，直到页面关闭——用户点了「开始录制」然后
+        // 忘了这回事，接下来一小时里所有与本次反馈无关的操作都在缓冲里。
+        vi.useFakeTimers();
+        const captured = {};
+        vi.doMock('@rrweb/record', () => ({
+            record: (options) => {
+                captured.options = options;
+                return () => {
+                    captured.stopped = true;
+                };
+            },
+        }));
+        const { startFeedbackReplayRecording, getFeedbackReplayContext } =
+            await import('../../../src/features/feedback/feedbackReplay.js');
+
+        await startFeedbackReplayRecording();
+        expect(getFeedbackReplayContext().enabled).toBe(true);
+        expect(getFeedbackReplayContext().maxDurationMs).toBe(5 * 60 * 1000);
+
+        vi.advanceTimersByTime(5 * 60 * 1000 + 10);
+        expect(captured.stopped).toBe(true);
+        const state = getFeedbackReplayContext();
+        expect(state.enabled).toBe(false);
+        expect(state.autoStopped).toBe(true);
+        vi.useRealTimers();
+    });
+
+    it('录制选项里点名屏蔽 AI 配置弹窗、脱敏联系方式', async () => {
+        const captured = {};
+        vi.doMock('@rrweb/record', () => ({
+            record: (options) => {
+                captured.options = options;
+                return () => {};
+            },
+        }));
+        const { startFeedbackReplayRecording, stopFeedbackReplayRecording } =
+            await import('../../../src/features/feedback/feedbackReplay.js');
+        await startFeedbackReplayRecording();
+
+        // maskAllInputs 只盖输入值，页面文本照录——密钥所在的整块必须 block。
+        expect(captured.options.blockSelector).toContain('#ai_config_modal');
+        expect(captured.options.maskTextSelector).toContain('#feedback-contact');
+        stopFeedbackReplayRecording();
+    });
+});

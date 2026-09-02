@@ -141,8 +141,12 @@ export function createReleasePipeline({
                     leaseEpoch,
                     event: {
                         type,
-                        // 决定性 id：同一 Release 重领后重放同一序列会被幂等去重。
-                        eventId: `executor-${sequence}-${type}`,
+                        // 决定性 id：同一 Release 重领后重放**同一条**序列会被幂等去重。
+                        // 掺进 leaseEpoch（评审 §3.9）：重领意味着新 epoch，而重跑携带的
+                        // 事实可能与上一轮不同（典型：push 成功 deploy 失败后重跑，
+                        // integrationCommit 走的是另一条路径算出来的）。同 eventId 会让
+                        // 服务端把**带着新事实的事件**当重放丢掉，时间线于是停在旧事实上。
+                        eventId: `executor-e${leaseEpoch ?? 0}-${sequence}-${type}`,
                         payload: { ...identity, ...extra },
                     },
                 });
@@ -204,7 +208,25 @@ export function createReleasePipeline({
             // 集成：base 未动用候选提交本身；动了则 cherry-pick 重放。
             const releaseBranch = `feedback/release/${sanitizeCandidateRunId(releaseId)}`;
             let integrationCommit;
-            if (originHead === payload.baseCommit) {
+            // 代码评审 2026-09-02 §3.9：**先看这次交付是不是已经推上去了**。
+            // 「push 成功但 deploy 失败」之后重领，originHead 已经不等于 baseCommit，
+            // 于是走 cherry-pick 分支——而那个提交已经在 origin 的历史里，
+            // cherry-pick 会以「空提交」报错，被判成 `review_required`：一次本该
+            // 只重跑部署的恢复，变成了一张「候选无法安全集成」的人工卡。
+            let alreadyMerged = false;
+            try {
+                await git('merge-base', '--is-ancestor', payload.changeCommit, originHead);
+                alreadyMerged = true;
+            } catch {
+                // 非零退出 = 不是祖先，正常走下面的集成。
+            }
+            if (alreadyMerged) {
+                integrationCommit = payload.changeCommit;
+                log(
+                    `[executor] release ${releaseId}: candidate ${integrationCommit.slice(0, 12)} is already on origin/${payload.baseRef}; skipping integration and resuming at deployment`
+                );
+                await git('checkout', '-B', releaseBranch, integrationCommit);
+            } else if (originHead === payload.baseCommit) {
                 integrationCommit = payload.changeCommit;
                 await git('checkout', '-B', releaseBranch, integrationCommit);
             } else {

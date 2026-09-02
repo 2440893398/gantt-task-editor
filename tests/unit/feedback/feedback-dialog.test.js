@@ -218,3 +218,112 @@ describe('FeedbackDialog', () => {
         await Promise.resolve();
     });
 });
+
+/**
+ * [SCN-FWB-049] 附件闸与监听器生命周期（代码评审 2026-09-02 §4.6/§4.7）。
+ */
+describe('[SCN-FWB-049] 附件上限与 paste 监听器', () => {
+    beforeEach(() => {
+        vi.resetModules();
+        document.body.innerHTML = '';
+        mockShowToast.mockReset();
+        mockSubmitFeedback.mockReset();
+        mockSubmitFeedback.mockResolvedValue({ key: 'feedback:1' });
+        HTMLDialogElement.prototype.showModal = vi.fn(function () {
+            this.open = true;
+        });
+        HTMLDialogElement.prototype.close = vi.fn(function () {
+            this.open = false;
+        });
+        vi.stubGlobal('requestAnimationFrame', (callback) => {
+            callback();
+            return 1;
+        });
+    });
+
+    /** addFiles 是逐个 await 的循环；微任务刷一次不够，直接让出宏任务。 */
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+    function pasteFiles(count) {
+        const files = Array.from({ length: count }, (_, index) => ({
+            name: `paste-${index}.png`,
+            size: 1024,
+            type: 'image/png',
+        }));
+        const event = new Event('paste', { bubbles: true });
+        event.clipboardData = { files };
+        document.getElementById('feedback-form').dispatchEvent(event);
+        return event;
+    }
+
+    it('[§4.6] 反复打开对话框不会累加 paste 监听器', async () => {
+        // 坏行为：监听器挂在复用的 modal 上，打开 N 次就挂 N 个——粘一次图触发
+        // N 次 FileReader，且每个旧处理器都握着自己那份含 base64 的附件数组与
+        // 已被 innerHTML 重建掉的节点，谁都回收不了。
+        let calls = 0;
+        const fileToAttachment = vi.fn(async (file) => {
+            calls += 1;
+            return { name: file.name, type: file.type, size: file.size, dataUrl: 'data:,' };
+        });
+        const { openFeedbackDialog } = await (async () => {
+            vi.doMock('../../../src/features/feedback/feedbackService.js', () => ({
+                fileToAttachment,
+                submitFeedback: mockSubmitFeedback,
+            }));
+            return import('../../../src/features/feedback/FeedbackDialog.js');
+        })();
+
+        openFeedbackDialog();
+        openFeedbackDialog();
+        openFeedbackDialog();
+
+        pasteFiles(1);
+        await flush();
+
+        expect(calls).toBe(1);
+    });
+
+    it('[§4.7] 附件数量超过 5 个时拒绝并说明，而不是攒成一个必被 413 的请求', async () => {
+        const fileToAttachment = vi.fn(async (file) => ({
+            name: file.name,
+            type: file.type,
+            size: file.size,
+            dataUrl: 'data:,',
+        }));
+        vi.doMock('../../../src/features/feedback/feedbackService.js', () => ({
+            fileToAttachment,
+            submitFeedback: mockSubmitFeedback,
+        }));
+        const { openFeedbackDialog } =
+            await import('../../../src/features/feedback/FeedbackDialog.js');
+        openFeedbackDialog();
+
+        pasteFiles(7);
+        await flush();
+
+        expect(fileToAttachment).toHaveBeenCalledTimes(5);
+        expect(mockShowToast).toHaveBeenCalledWith(expect.stringContaining('5'), 'error');
+    });
+
+    it('[§4.7] 附件总量超过 8MB 时拒绝——单文件 4MB 的闸拦不住六张 3.9MB', async () => {
+        const fileToAttachment = vi.fn(async (file) => ({
+            name: file.name,
+            type: file.type,
+            size: 3.9 * 1024 * 1024,
+            dataUrl: 'data:,',
+        }));
+        vi.doMock('../../../src/features/feedback/feedbackService.js', () => ({
+            fileToAttachment,
+            submitFeedback: mockSubmitFeedback,
+        }));
+        const { openFeedbackDialog } =
+            await import('../../../src/features/feedback/FeedbackDialog.js');
+        openFeedbackDialog();
+
+        pasteFiles(4);
+        await flush();
+
+        // 3.9 + 3.9 = 7.8MB 放得下，第三张就超 8MB。
+        expect(mockShowToast).toHaveBeenCalledWith(expect.stringContaining('8MB'), 'error');
+    });
+});

@@ -875,6 +875,20 @@ class MemoryD1 {
         }
 
         // --- feedback_usage_daily ---
+        // 三种形态：读、补一行 0（占额度的第一步）、CAS 自增（第二步）。
+        // 代码评审 §3.10 之后配额与记账合成一条 UPDATE ... WHERE run_count < ?，
+        // 替身必须跟着建模，否则测试只会看到一个「未知查询」。
+        if (normalized.startsWith('update feedback_usage_daily')) {
+            const [usageDate, scopeId, limit, bypass] = values;
+            const key = `${usageDate}:issue:${scopeId}`;
+            const current = this.tables.feedback_usage_daily.get(key);
+            if (!current) return ok([]);
+            const allowed = Number(bypass) === 1 || Number(current.run_count) < Number(limit);
+            if (!allowed) return ok([]);
+            const next = { ...current, run_count: Number(current.run_count) + 1 };
+            this.tables.feedback_usage_daily.set(key, next);
+            return ok([{ run_count: next.run_count }], 1);
+        }
         if (normalized.includes('from feedback_usage_daily')) {
             const row = this.tables.feedback_usage_daily.get(`${values[0]}:issue:${values[1]}`);
             return ok(row ? [{ ...row }] : []);
@@ -883,11 +897,15 @@ class MemoryD1 {
             const [usageDate, scopeId] = values;
             const key = `${usageDate}:issue:${scopeId}`;
             const current = this.tables.feedback_usage_daily.get(key);
+            // `... VALUES (?, 'issue', ?, 0, 0) ON CONFLICT DO NOTHING` 只保证行存在；
+            // 老的 `DO UPDATE SET run_count = run_count + 1` 才是自增。按 SQL 文本区分。
+            const insertsZero = normalized.includes(', 0, 0)');
+            if (current && (insertsZero || normalized.includes('do nothing'))) return ok([], 0);
             this.tables.feedback_usage_daily.set(key, {
                 usage_date: usageDate,
                 scope_type: 'issue',
                 scope_id: scopeId,
-                run_count: (current?.run_count || 0) + 1,
+                run_count: insertsZero ? 0 : (current?.run_count || 0) + 1,
                 estimated_cost: 0,
             });
             return ok([], 1);
@@ -9135,6 +9153,14 @@ describe('feedback workbench V2 event dispatch', () => {
         expect(suppressed).toHaveLength(1);
         // §10.2: quota noise is admin-only, not public timeline content.
         expect(suppressed[0].visibility).toBe('admin');
+
+        // 代码评审 §3.10：占额度与判定合成一条 CAS 之后，被拒的那次不得再消耗额度
+        // ——否则一条已经满额的 Issue 会被后续事件把计数越推越高，账面用量与真实
+        // 轮次彻底对不上。
+        expect(
+            env.FEEDBACK_DB.tables.feedback_usage_daily.get(`${usageDate}:issue:${feedbackKey}`)
+                .run_count
+        ).toBe(20);
     });
 
     it('[SCN-FWB-010] delivers the §12.1 envelope with a valid signature', async () => {

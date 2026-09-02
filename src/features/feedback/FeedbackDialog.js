@@ -179,7 +179,12 @@ function renderFeedbackDialog(modal, defaults) {
         fileInput.value = '';
     });
 
-    modal.addEventListener('paste', async (event) => {
+    // 代码评审 2026-09-02 §4.6：paste 监听器挂在 modal 上，而 modal 是复用的
+    // ——每打开一次就多挂一个。打开 N 次之后粘贴一张图会触发 N 次 FileReader，
+    // 且每个旧处理器都握着自己那份 attachments 数组（含 base64 dataUrl）与
+    // 已被 innerHTML 重建掉的节点，谁都回收不了。改挂在 form 上：它随每次
+    // renderFeedbackDialog 的 innerHTML 一起被替换，旧监听器跟着一起消失。
+    form.addEventListener('paste', async (event) => {
         const files = Array.from(event.clipboardData?.files || []);
         if (files.length > 0) {
             await addFiles(files, attachments, updateAttachmentList);
@@ -267,10 +272,43 @@ async function startReplayFromDialog(modal, replayStatus, draft = {}) {
     showToast(i18n.t('feedback.recordingStarted') || '复现录制已开始', 'success', 4000);
 }
 
+/**
+ * §4.7：客户端的数量与总量闸。此前只有「单文件 ≤ 4MB」，粘 6 张 3.9MB 的图就是
+ * 一个 23MB 的请求体——服务端 18MB 上限会把它 413 掉，而用户看到的是「提交失败」，
+ * 既不知道是哪一张、也不知道该删几张。在这里拦下才有话可说。
+ * 数量上限与服务端的 5 个一致（MAX_FEEDBACK_COMMENT_ATTACHMENTS）。
+ */
+const MAX_ATTACHMENT_COUNT = 5;
+const MAX_ATTACHMENT_TOTAL_BYTES = 8 * 1024 * 1024;
+
+function attachmentsTotalBytes(attachments) {
+    return attachments.reduce((total, item) => total + (Number(item?.size) || 0), 0);
+}
+
 async function addFiles(files, attachments, updateAttachmentList) {
     for (const file of files) {
+        if (attachments.length >= MAX_ATTACHMENT_COUNT) {
+            showToast(
+                i18n.t('feedback.attachmentTooMany', { count: MAX_ATTACHMENT_COUNT }) ||
+                    `最多只能添加 ${MAX_ATTACHMENT_COUNT} 个附件`,
+                'error'
+            );
+            break;
+        }
         try {
-            attachments.push(await fileToAttachment(file));
+            const attachment = await fileToAttachment(file);
+            if (
+                attachmentsTotalBytes(attachments) + (Number(attachment?.size) || 0) >
+                MAX_ATTACHMENT_TOTAL_BYTES
+            ) {
+                showToast(
+                    i18n.t('feedback.attachmentTotalTooLarge') ||
+                        '附件总量超过 8MB，请删掉几个或压缩后再试',
+                    'error'
+                );
+                break;
+            }
+            attachments.push(attachment);
         } catch (error) {
             const message =
                 error.message === 'ATTACHMENT_TOO_LARGE'

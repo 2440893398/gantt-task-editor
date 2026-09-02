@@ -212,3 +212,93 @@ describe('feedbackService', () => {
         expect(body.submittedType).toBe('bug');
     });
 });
+
+/**
+ * [SCN-FWB-049] 自动上报与提交的健壮性（代码评审 2026-09-02 §4.4/§4.5/§4.8）。
+ */
+describe('[SCN-FWB-049] 自动上报的冷却、指纹与 fail-safe', () => {
+    // 这是一个**平级** describe：外层那个 beforeEach 不会跑到这里来。模块状态
+    // （冷却时间戳、错误指纹）是模块级的，不重置就会串味。
+    beforeEach(() => {
+        vi.resetModules();
+        vi.unstubAllGlobals();
+        global.fetch = vi.fn().mockResolvedValue({
+            ok: true,
+            json: vi.fn().mockResolvedValue({ key: 'feedback:1', stored: true }),
+        });
+    });
+
+    it('[§4.5] 上报失败不烧掉冷却窗口——最需要上报的那一刻不能最安静', async () => {
+        const { reportRuntimeError } =
+            await import('../../../src/features/feedback/feedbackService.js');
+
+        global.fetch = vi.fn().mockRejectedValue(new Error('offline'));
+        await expect(
+            reportRuntimeError({ kind: 'error', message: 'Boom', source: 'a.js', line: 1 })
+        ).rejects.toThrow();
+
+        // 坏行为：冷却在发送**前**扣除，于是这条失败之后 60 秒内的真实错误全部静默丢弃。
+        global.fetch = vi.fn().mockResolvedValue({
+            ok: true,
+            json: vi.fn().mockResolvedValue({ key: 'feedback:1' }),
+        });
+        const retried = await reportRuntimeError({
+            kind: 'error',
+            message: 'Boom',
+            source: 'a.js',
+            line: 1,
+        });
+        expect(retried).not.toBeNull();
+        expect(fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('[§4.5] 冷却按错误指纹算：同一个错误压住，不同的错误照报', async () => {
+        const { reportRuntimeError } =
+            await import('../../../src/features/feedback/feedbackService.js');
+
+        const first = { kind: 'error', message: 'Boom', source: 'a.js', line: 1 };
+        const same = { kind: 'error', message: 'Boom', source: 'a.js', line: 1 };
+        const other = { kind: 'error', message: 'Different', source: 'b.js', line: 9 };
+
+        expect(await reportRuntimeError(first)).not.toBeNull();
+        expect(await reportRuntimeError(same)).toBeNull();
+        // 坏行为：只按时间去重时，这条真实的新错误会被上一条的窗口吃掉。
+        expect(await reportRuntimeError(other)).not.toBeNull();
+        expect(fetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('[§4.4] 提交带超时——挂起的请求不能让按钮永远停在「提交中」', async () => {
+        const { submitFeedback } =
+            await import('../../../src/features/feedback/feedbackService.js');
+        await submitFeedback({ submittedType: 'bug', title: 't', description: 'd' });
+        const [, options] = fetch.mock.calls[0];
+        expect(options.signal).toBeInstanceOf(AbortSignal);
+    });
+
+    it('[§4.4] 静默的 auto_error 用 keepalive，手动提交不用', async () => {
+        const { submitFeedback, reportRuntimeError } =
+            await import('../../../src/features/feedback/feedbackService.js');
+        // 页面卸载前的自动上报不带 keepalive 就会随导航一起丢。
+        await reportRuntimeError({ kind: 'error', message: 'Boom', source: 'a.js', line: 3 });
+        expect(fetch.mock.calls[0][1].keepalive).toBe(true);
+
+        await submitFeedback({ submittedType: 'bug', title: 't', description: 'd' });
+        expect(fetch.mock.calls[1][1].keepalive).toBeUndefined();
+    });
+
+    it('[§4.8] 采集环节抛错不得带走宿主的 console', async () => {
+        const { initFeedbackMonitoring } =
+            await import('../../../src/features/feedback/feedbackService.js');
+        initFeedbackMonitoring();
+
+        // 构造一个采集必然抛错的参数：normalizeLogArg 会去读它的属性。
+        const hostile = {
+            get message() {
+                throw new Error('hostile getter');
+            },
+        };
+        // 坏行为：采集在前、原始调用在后且不接住异常——宿主的每一次 console.log
+        // 都会跟着抛，业务代码被一个遥测组件打死。
+        expect(() => console.log('before', hostile)).not.toThrow();
+    });
+});

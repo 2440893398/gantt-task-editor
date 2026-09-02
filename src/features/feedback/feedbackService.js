@@ -18,10 +18,13 @@ const MAX_LOGS = 80;
 const MAX_LOG_LENGTH = 1200;
 const MAX_ATTACHMENT_SIZE = 4 * 1024 * 1024;
 const AUTO_REPORT_COOLDOWN_MS = 60 * 1000;
+/** §4.4：提交超时。挂起的请求会让对话框永远停在「提交中」。 */
+const SUBMIT_TIMEOUT_MS = 15 * 1000;
 const logs = [];
 
 let originalConsole = null;
 let lastAutoReportAt = 0;
+let lastAutoReportFingerprint = '';
 let errorListenersInstalled = false;
 
 function getFeedbackApiBase() {
@@ -85,8 +88,16 @@ function patchConsole() {
 
     for (const level of Object.keys(originalConsole)) {
         console[level] = (...args) => {
-            recordFeedbackLog(level, args);
-            originalConsole[level].apply(console, args);
+            // 代码评审 2026-09-02 §4.8：采集在前、原始调用在后，且采集抛错会连累
+            // **宿主的每一次 console 调用**。遥测组件的第一纪律是「自己挂了不能带走
+            // 宿主」——所以采集包在 try 里，原始调用放 finally。
+            try {
+                recordFeedbackLog(level, args);
+            } catch {
+                // 采集失败只损失几行日志，不该让业务代码的 console.log 抛异常。
+            } finally {
+                originalConsole[level].apply(console, args);
+            }
         };
     }
 }
@@ -186,6 +197,13 @@ export async function submitFeedback(feedback) {
         }),
     };
 
+    // §4.4：超时与 keepalive。没有超时的话，请求挂起时对话框会永远停在「提交中」；
+    // auto_error 是页面卸载前最可能发生的一类上报，不带 keepalive 会随导航被丢弃。
+    // keepalive 有 64KB 上限，所以只给不带附件的自动上报用。
+    const body = JSON.stringify(payload);
+    const useKeepalive =
+        payload.sourceType === 'auto_error' && attachments.length === 0 && body.length < 60 * 1024;
+
     let response;
     try {
         response = await fetch(`${getFeedbackApiBase()}/api/feedback`, {
@@ -193,10 +211,13 @@ export async function submitFeedback(feedback) {
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify(payload),
+            body,
+            signal: AbortSignal.timeout(SUBMIT_TIMEOUT_MS),
+            ...(useKeepalive ? { keepalive: true } : {}),
         });
     } catch (error) {
-        throw new Error(`FEEDBACK_NETWORK_ERROR: ${error.message}`);
+        const reason = error?.name === 'TimeoutError' ? 'FEEDBACK_TIMEOUT' : error.message;
+        throw new Error(`FEEDBACK_NETWORK_ERROR: ${reason}`);
     }
 
     if (!response.ok) {
@@ -217,14 +238,31 @@ export async function submitFeedback(feedback) {
     }
 }
 
+/** 同一个错误的身份：位置 + 文案。时间窗口挡不住「同一个错误每 61 秒来一次」。 */
+function runtimeErrorFingerprint(errorInfo) {
+    return [
+        errorInfo?.kind || '',
+        errorInfo?.message || '',
+        errorInfo?.source || '',
+        errorInfo?.line ?? '',
+        errorInfo?.column ?? '',
+    ].join('|');
+}
+
 export async function reportRuntimeError(errorInfo) {
     const now = Date.now();
-    if (now - lastAutoReportAt < AUTO_REPORT_COOLDOWN_MS) {
+    const fingerprint = runtimeErrorFingerprint(errorInfo);
+    // §4.5：同一个错误在冷却窗口内只报一次；**不同**的错误不该被上一个的窗口吃掉。
+    // 旧实现只看时间：首条上报之后 60 秒内的真实新错误全部静默丢弃，而同一个错误
+    // 每 61 秒还会重复上报一次。
+    if (
+        fingerprint === lastAutoReportFingerprint &&
+        now - lastAutoReportAt < AUTO_REPORT_COOLDOWN_MS
+    ) {
         return null;
     }
-    lastAutoReportAt = now;
 
-    return submitFeedback({
+    const result = await submitFeedback({
         type: 'auto_error',
         sourceType: 'auto_error',
         submittedType: 'bug',
@@ -235,6 +273,12 @@ export async function reportRuntimeError(errorInfo) {
             auto: true,
         },
     });
+
+    // §4.5：**成功之后**才扣冷却。发送前就扣的话，第一条上报失败会连带把随后
+    // 60 秒内的真实错误一起静默丢掉——最需要上报的那一刻反而最安静。
+    lastAutoReportAt = Date.now();
+    lastAutoReportFingerprint = fingerprint;
+    return result;
 }
 
 export function initFeedbackMonitoring() {

@@ -696,6 +696,22 @@ export class FeedbackWorkflow extends WorkflowEntrypoint {
         // §6.1/§13.4: one business Workflow owns successive short-lived Runs.
         // It hibernates between Runs, so waiting for a person consumes no Runner.
         while (true) {
+            // 代码评审 2026-09-02 §3.8：cycle 上限。修复轮有预算（3 次），但
+            // 「人答复 → resume → 新 Run」这条路没有——每个 cycle 6~8 个 step，
+            // 一条长命 Issue 最终会撞上 Workflows 的步数硬上限，死在一个
+            // `isFeedbackWorkflowTimeout` 认不出的异常上（僵尸 Workflow：
+            // Issue 停在 in_progress，谁也不知道它已经不会再动了）。
+            // 到顶就诚实收尾；下一条评论会开新 generation（机制现成），
+            // 处理不因此中断，只是换一个 Workflow 实例继续。
+            if (cycle > FEEDBACK_MAX_WORKFLOW_CYCLES) {
+                await this.recordTerminal(step, {
+                    issueId,
+                    instanceId,
+                    reason: 'cycle_budget_exhausted',
+                    stepSuffix: ` ${cycle}`,
+                });
+                return { ...latestResult, workflowStatus: 'terminated' };
+            }
             const stepSuffix = ` ${cycle}`;
             const run = await step.do(
                 `create run${stepSuffix}`,
@@ -4103,6 +4119,57 @@ async function checkFeedbackDispatchQuota(env, issueId) {
 }
 
 /**
+ * 一步到位地「占额度」（代码评审 2026-09-02 §3.10）。
+ *
+ * 原来是 check-then-record：先读 run_count 判断，派发跑完再 +1。两次派发并发时
+ * 都读到 limit-1，于是都放行——日配额可以被超过。配额本身是烧钱闸，超一点不致命，
+ * 但同一份数据上「读一次、隔一段时间再写一次」的形态是错的，它也解释了为什么
+ * 账面用量与真实轮次对不齐。
+ *
+ * 现在是一条 CAS：`WHERE run_count < limit` 的自增拿不到行就说明额度已满。
+ * 行不存在时先补一行 0（`ON CONFLICT DO NOTHING`），两条放一个 batch。
+ * `bypass`（人工决定）仍然照常记账——SCN-FWB-036 的教训是「配额可以跳过，记账不行」。
+ */
+async function claimFeedbackDispatchQuota(env, issueId, { bypass = false } = {}) {
+    const usageDate = new Date().toISOString().slice(0, 10);
+    const [, claimed] = await env.FEEDBACK_DB.batch([
+        env.FEEDBACK_DB.prepare(
+            `INSERT INTO feedback_usage_daily (usage_date, scope_type, scope_id, run_count, estimated_cost)
+             VALUES (?, 'issue', ?, 0, 0)
+             ON CONFLICT(usage_date, scope_type, scope_id) DO NOTHING`
+        ).bind(usageDate, issueId),
+        env.FEEDBACK_DB.prepare(
+            `UPDATE feedback_usage_daily
+             SET run_count = run_count + 1
+             WHERE usage_date = ? AND scope_type = 'issue' AND scope_id = ?
+               AND (run_count < ? OR ?)
+             RETURNING run_count`
+        ).bind(usageDate, issueId, FEEDBACK_DAILY_DISPATCH_QUOTA, bypass ? 1 : 0),
+    ]);
+    const row = claimed.results?.[0];
+    if (!row) {
+        const current = await env.FEEDBACK_DB.prepare(
+            `SELECT run_count FROM feedback_usage_daily
+             WHERE usage_date = ? AND scope_type = 'issue' AND scope_id = ?`
+        )
+            .bind(usageDate, issueId)
+            .first();
+        return {
+            allowed: false,
+            used: Number(current?.run_count) || 0,
+            limit: FEEDBACK_DAILY_DISPATCH_QUOTA,
+            usageDate,
+        };
+    }
+    return {
+        allowed: true,
+        used: Number(row.run_count) || 0,
+        limit: FEEDBACK_DAILY_DISPATCH_QUOTA,
+        usageDate,
+    };
+}
+
+/**
  * 匿名写端点的滥用闸（代码评审 2026-09-02 §1.4）。
  *
  * 现状是「全文没有任何速率限制」：`POST /api/feedback` 每条最大 18MB + 5 个附件直传
@@ -5038,9 +5105,9 @@ async function dispatchFeedbackEvent(
     // 「这次派发不存在」。此前用量记账挂在 `if (quota)` 上，于是绕过配额的派发连计数
     // 一起跳过了——#czi9c6 的重跑循环因此在 `feedback_usage_daily` 上完全不可见：
     // 真实额度一轮轮烧，账面用量停在 0。配额检查可以跳过，记账不行。
-    const usageDate = new Date().toISOString().slice(0, 10);
-    const quota = bypassQuota ? null : await checkFeedbackDispatchQuota(env, issueId);
-    if (quota && !quota.allowed) {
+    // §3.10：占额度与判定是同一条语句。bypass 时照样自增（配额可以跳过，记账不行）。
+    const quota = await claimFeedbackDispatchQuota(env, issueId, { bypass: bypassQuota });
+    if (!quota.allowed) {
         await appendFeedbackSystemEvent(env, issueId, {
             type: 'automation.suppressed',
             visibility: 'admin',
@@ -5089,7 +5156,7 @@ async function dispatchFeedbackEvent(
         }
     }
 
-    await recordFeedbackDispatchUsage(env, issueId, quota?.usageDate || usageDate);
+    // 记账已经在 claimFeedbackDispatchQuota 里随判定一起完成，这里不再重复自增。
     const workflow = orchestrate
         ? await ensureFeedbackWorkflowForEvent(env, issueId, {
               deliveryId: deliverToHook ? deliveryId : null,
@@ -5120,6 +5187,15 @@ async function dispatchFeedbackEvent(
  * 3 = 首轮 + 2 轮修复。超过后失败进入人工决策，不再自动烧预算。
  */
 const FEEDBACK_MAX_VERIFICATION_FAILURES = 3;
+
+/**
+ * 一代 Workflow 内的 cycle 上限（代码评审 2026-09-02 §3.8）。
+ *
+ * 每个 cycle 6~8 个 step；Cloudflare Workflows 的单实例步数是硬上限。20 轮足够
+ * 覆盖任何正常的「问-答-再处理」往复，而撞上平台上限的死法是一个不可识别的异常
+ * ——Issue 停在 in_progress，没有终态、没有决策卡，谁也不知道它已经不会再动了。
+ */
+const FEEDBACK_MAX_WORKFLOW_CYCLES = 20;
 
 /**
  * SCN-FWB-038（2026-08-27 修订）：有界修复回路覆盖的错误码。`verification_failed`

@@ -42,11 +42,22 @@ function claimFor(overrides = {}) {
     };
 }
 
-function fakeGit({ originHead = BASE, cherryPickFails = false, pushFails = false } = {}) {
+function fakeGit({
+    originHead = BASE,
+    cherryPickFails = false,
+    pushFails = false,
+    alreadyMerged = false,
+} = {}) {
     const calls = [];
     const git = async (...args) => {
         const joined = args.join(' ');
         calls.push(joined);
+        // `merge-base --is-ancestor` 用退出码回答问题：0 = 是祖先。默认不是。
+        if (joined.startsWith('merge-base --is-ancestor') && !alreadyMerged) {
+            const error = new Error('EXECUTOR_GIT_FAILED: not an ancestor');
+            error.code = 'EXECUTOR_GIT_FAILED';
+            throw error;
+        }
         if (joined.startsWith('rev-parse origin/'))
             return { code: 0, stdout: `${originHead}\n`, stderr: '' };
         if (joined.startsWith('rev-parse HEAD'))
@@ -477,5 +488,44 @@ describe('[SCN-FWB-035] 部署命令的字符集闸', () => {
         for (const bad of ['a b', 'a;b', 'a`b`', 'a$(b)', 'a|b', 'a&b', '', '  ']) {
             expect(() => assertShellSafeToken('x', bad)).toThrow('EXECUTOR_UNSAFE_SHELL_TOKEN');
         }
+    });
+});
+
+/**
+ * [SCN-FWB-033] 「push 成功、deploy 失败」之后的重跑（代码评审 2026-09-02 §3.9）。
+ */
+describe('[SCN-FWB-033] 重领时先认已合入的候选', () => {
+    it('候选已经在 origin 历史里时跳过集成，直接续跑部署——不再误报 review_required', async () => {
+        // 坏行为画像：重领后 originHead 已不等于 baseCommit（因为上一轮 push 成功了），
+        // 于是走 cherry-pick 分支；而那个提交已经在历史里，cherry-pick 以「空提交」
+        // 报错，被判成 review_required——一次本该只重跑部署的恢复，变成一张
+        // 「候选无法安全集成」的人工卡，而候选其实好好地躺在 master 上。
+        const git = fakeGit({ originHead: 'f'.repeat(40), alreadyMerged: true });
+        const { pipeline, events, controlPlane } = makePipeline({ git });
+
+        const result = await pipeline.deliver({ claim: claimFor(), controlPlane });
+
+        expect(result.outcome).toBe('completed');
+        expect(git.calls.some((call) => call.startsWith('cherry-pick'))).toBe(false);
+        // 集成提交就是候选提交本身——它已经是 origin 历史的一部分。
+        expect(
+            events.find((event) => event.type === 'integration.rebased').payload.integrationCommit
+        ).toBe(CHANGE);
+    });
+
+    it('事件 id 掺入 leaseEpoch——重领带来的新事实不会被当成重放丢掉', async () => {
+        const posted = [];
+        const { pipeline } = makePipeline();
+        const controlPlane = {
+            async postReleaseEvent(args) {
+                posted.push(args.event.eventId);
+                return { duplicate: false };
+            },
+        };
+        await pipeline.deliver({ claim: { ...claimFor(), leaseEpoch: 2 }, controlPlane });
+        expect(posted[0]).toBe('executor-e2-1-integration.started');
+        // 坏行为：eventId 只按序号编，第二次交付的第一条事件与第一次逐字相同，
+        // 服务端按幂等去重丢弃——携带新 integrationCommit 的事实就此消失。
+        expect(posted.every((id) => id.startsWith('executor-e2-'))).toBe(true);
     });
 });
