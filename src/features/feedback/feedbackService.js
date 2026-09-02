@@ -7,7 +7,11 @@
 
 import { state } from '../../core/store.js';
 import { i18n } from '../../utils/i18n.js';
-import { createFeedbackReplayAttachment, getFeedbackReplayContext } from './feedbackReplay.js';
+import {
+    clearFeedbackReplayBuffer,
+    createFeedbackReplayAttachment,
+    getFeedbackReplayContext,
+} from './feedbackReplay.js';
 
 const MAX_LOGS = 80;
 const MAX_LOG_LENGTH = 1200;
@@ -197,6 +201,12 @@ export async function submitFeedback(feedback) {
         const errorText = await response.text();
         throw new Error(`Feedback submit failed: ${response.status} ${errorText}`);
     }
+
+    // 评审 §4.2：录像已经随这一条上传，缓冲就此清空。不清的话，此后每一次运行时
+    // 错误的**静默**自动上报都会把这段与错误无关的录像再传一遍——用户对「这段录像
+    // 随本次反馈上传」的授权被无限延伸。清空发生在服务端确认接收之后：提交失败时
+    // 录像必须留着，否则用户重试一次就只剩下点「重试」那几秒。
+    clearFeedbackReplayBuffer();
 
     try {
         return await response.json();

@@ -142,6 +142,59 @@ describe('feedbackService', () => {
         expect(body.context.replay.enabled).toBe(false);
     });
 
+    it('[SCN-FWB-049] 提交成功后清空录像，后续静默上报不再搭车带走它', async () => {
+        // 坏行为画像：缓冲只在录制 start 时清空。用户手动提交一次之后，此后**每一次**
+        // 运行时错误的自动上报（用户完全无感知）都会把那段与错误无关的完整录像再传
+        // 一遍——一次授权被无限延伸。
+        const { recordFeedbackReplayEvent } =
+            await import('../../../src/features/feedback/feedbackReplay.js');
+        const { submitFeedback, reportRuntimeError } =
+            await import('../../../src/features/feedback/feedbackService.js');
+
+        recordFeedbackReplayEvent(
+            { type: 4, timestamp: Date.now(), data: { href: 'http://localhost/#/demo' } },
+            true
+        );
+        recordFeedbackReplayEvent({ type: 2, timestamp: Date.now(), data: { node: { id: 1 } } });
+
+        await submitFeedback({ submittedType: 'bug', title: '第一次', description: '手动提交' });
+        const firstBody = JSON.parse(fetch.mock.calls[0][1].body);
+        expect(firstBody.attachments.some((item) => item.name.startsWith('feedback-rrweb-'))).toBe(
+            true
+        );
+
+        await reportRuntimeError({ message: 'Boom', stack: 'Error: Boom' });
+        const secondBody = JSON.parse(fetch.mock.calls[1][1].body);
+        expect(secondBody.attachments.some((item) => item.name.startsWith('feedback-rrweb-'))).toBe(
+            false
+        );
+        expect(secondBody.context.replay.eventCount).toBe(0);
+    });
+
+    it('[SCN-FWB-049] 提交失败时录像必须留着——否则用户重试只剩点「重试」那几秒', async () => {
+        const { recordFeedbackReplayEvent, getFeedbackReplayContext } =
+            await import('../../../src/features/feedback/feedbackReplay.js');
+        const { submitFeedback } =
+            await import('../../../src/features/feedback/feedbackService.js');
+
+        recordFeedbackReplayEvent(
+            { type: 4, timestamp: Date.now(), data: { href: 'http://localhost/#/demo' } },
+            true
+        );
+        recordFeedbackReplayEvent({ type: 2, timestamp: Date.now(), data: { node: { id: 1 } } });
+
+        global.fetch = vi.fn().mockResolvedValue({
+            ok: false,
+            status: 500,
+            text: vi.fn().mockResolvedValue('boom'),
+        });
+        await expect(
+            submitFeedback({ submittedType: 'bug', title: '失败', description: '服务端 500' })
+        ).rejects.toThrow('Feedback submit failed');
+
+        expect(getFeedbackReplayContext().eventCount).toBe(2);
+    });
+
     it('reports runtime errors as auto error bugs', async () => {
         const { reportRuntimeError } =
             await import('../../../src/features/feedback/feedbackService.js');

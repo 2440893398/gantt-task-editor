@@ -761,6 +761,8 @@ export default {
         previewSubtitle: '{{count}} events recorded. Use this to check the capture.',
         previewHint:
             'Preview is local only. The rrweb JSON is uploaded when feedback is submitted.',
+        previewUnplayable:
+            'This recording has no page snapshot to mount, so it cannot be replayed. Start a new recording and reproduce the issue; the raw events are still uploaded with the feedback.',
         attachmentHint: 'Each attachment must be under 4MB. Pasted screenshots are supported.',
         contextHint:
             'Page URL, browser info, current project summary, and recent console logs are included. rrweb replay events are attached after manual recording.',

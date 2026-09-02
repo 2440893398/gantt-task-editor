@@ -725,6 +725,8 @@ export default {
         previewTitle: '再現記録をプレビュー',
         previewSubtitle: '{{count}} 件のイベントを記録しました。',
         previewHint: 'プレビューはローカル確認用です。送信時に rrweb JSON をアップロードします。',
+        previewUnplayable:
+            'この記録にはマウントできるスナップショットがないため再生できません。録画をやり直して再現してください。生イベントはフィードバックと一緒に送信されます。',
         attachmentHint: '添付は1件4MBまで。貼り付け画像にも対応しています。',
         contextHint:
             'ページURL、ブラウザ情報、現在のプロジェクト概要、最近のコンソールログを含めます。',

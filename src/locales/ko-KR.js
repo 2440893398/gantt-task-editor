@@ -721,6 +721,8 @@ export default {
         previewTitle: '재현 기록 미리보기',
         previewSubtitle: '{{count}}개 이벤트가 기록되었습니다.',
         previewHint: '미리보기는 로컬 확인용입니다. 제출 시 rrweb JSON이 업로드됩니다.',
+        previewUnplayable:
+            '이 기록에는 마운트할 페이지 스냅샷이 없어 재생할 수 없습니다. 다시 녹화하여 문제를 재현해 주세요. 원본 이벤트는 피드백과 함께 업로드됩니다.',
         attachmentHint: '첨부 파일은 각각 4MB 이하여야 하며, 붙여넣기 이미지도 지원합니다.',
         contextHint: '페이지 URL, 브라우저 정보, 현재 프로젝트 요약, 최근 콘솔 로그가 포함됩니다.',
         submit: '피드백 제출',

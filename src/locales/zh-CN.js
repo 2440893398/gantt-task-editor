@@ -782,6 +782,8 @@ export default {
         previewTitle: '预览复现记录',
         previewSubtitle: '共 {{count}} 条事件，可用于检查录制效果。',
         previewHint: '预览内容仅用于本地确认，提交时会上传 rrweb JSON。',
+        previewUnplayable:
+            '本次录制缺少可挂载的页面快照，没法回放。请重新开始录制并复现一次问题；原始事件仍会随反馈上传供排查。',
         attachmentHint: '单个附件不超过 4MB，可直接粘贴截图。',
         contextHint:
             '会自动附带页面地址、浏览器、当前项目摘要和最近控制台日志；手动录制后会附带 rrweb 复现事件。',

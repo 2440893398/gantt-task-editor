@@ -131,6 +131,17 @@ export function openFeedbackReplayPreview() {
     modal.showModal();
 
     const root = modal.querySelector('#feedback-replay-preview-root');
+    if (!payload.playable) {
+        // 代码评审 §4.1：没有可挂载的快照时，Replayer 渲染出来的是一片空白，而且
+        // 不说为什么。缓冲改成按 segment 裁剪之后这种情况已经很难出现，但真出现时
+        // 必须说人话——「黑屏」是这个功能最贵的失败形态。
+        root.innerHTML = `<div class="flex h-full items-center justify-center p-6 text-center text-sm text-base-content/60">${
+            i18n.t('feedback.previewUnplayable') ||
+            '本次录制缺少可挂载的页面快照，没法回放。请重新开始录制并复现一次问题。'
+        }</div>`;
+        return true;
+    }
+
     const viewport = getReplayViewport(payload.events);
     replayer = new Replayer(payload.events, {
         root,
