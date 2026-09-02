@@ -1835,7 +1835,12 @@ function createEnv(seed = {}) {
         SHARE_KV: kv,
         FEEDBACK_KV: kv,
         FEEDBACK_ADMIN_PASSWORD: 'admin-pass',
+        // 四类签名密钥互不回退（代码评审 2026-09-02 §1.3），因此测试环境也必须四把
+        // 都配齐——而且**故意各不相同**：任何一处偷偷复用另一类的密钥都会当场签不对。
         FEEDBACK_ADMIN_TOKEN_SECRET: 'unit-test-secret',
+        FEEDBACK_ATTACHMENT_TOKEN_SECRET: 'unit-test-attachment-secret',
+        FEEDBACK_RUN_TOKEN_SECRET: 'unit-test-run-secret',
+        FEEDBACK_RELEASE_TOKEN_SECRET: 'unit-test-release-secret',
         FEEDBACK_PII_KEY: 'unit-test-pii-key',
     };
 }
@@ -9542,7 +9547,7 @@ describe('feedback workbench V2 Run and Callback', () => {
             .replace(/=+$/, '');
         const key = await crypto.subtle.importKey(
             'raw',
-            new TextEncoder().encode('unit-test-secret'),
+            new TextEncoder().encode('unit-test-run-secret'),
             { name: 'HMAC', hash: 'SHA-256' },
             false,
             ['sign']
@@ -11342,7 +11347,7 @@ describe('feedback workbench V2 Run and Callback', () => {
             .replace(/=+$/, '');
         const key = await crypto.subtle.importKey(
             'raw',
-            new TextEncoder().encode('unit-test-secret'),
+            new TextEncoder().encode('unit-test-run-secret'),
             { name: 'HMAC', hash: 'SHA-256' },
             false,
             ['sign']
@@ -11554,7 +11559,7 @@ describe('feedback workbench V2 Run and Callback', () => {
             .replace(/=+$/, '');
         const key = await crypto.subtle.importKey(
             'raw',
-            new TextEncoder().encode('unit-test-secret'),
+            new TextEncoder().encode('unit-test-run-secret'),
             { name: 'HMAC', hash: 'SHA-256' },
             false,
             ['sign']
@@ -12242,7 +12247,7 @@ describe('feedback workbench V2 Run and Callback', () => {
                 .replace(/=+$/, '');
             const key = await crypto.subtle.importKey(
                 'raw',
-                new TextEncoder().encode('unit-test-secret'),
+                new TextEncoder().encode('unit-test-run-secret'),
                 { name: 'HMAC', hash: 'SHA-256' },
                 false,
                 ['sign']
@@ -12889,7 +12894,7 @@ describe('feedback workbench V2 run creation and manifest verification', () => {
             .replace(/=+$/, '');
         const key = await crypto.subtle.importKey(
             'raw',
-            new TextEncoder().encode('unit-test-secret'),
+            new TextEncoder().encode('unit-test-run-secret'),
             { name: 'HMAC', hash: 'SHA-256' },
             false,
             ['sign']
@@ -13211,7 +13216,7 @@ describe('feedback workbench V2 Candidate and Release', () => {
             .replace(/=+$/, '');
         const key = await crypto.subtle.importKey(
             'raw',
-            new TextEncoder().encode('unit-test-secret'),
+            new TextEncoder().encode('unit-test-run-secret'),
             { name: 'HMAC', hash: 'SHA-256' },
             false,
             ['sign']
@@ -14775,5 +14780,99 @@ describe('feedback workbench V2 reconcile sweep', () => {
         expect(payload.health.reconcile.runCount).toBe(0);
         // The daily sweep exists, but nothing polls for Agent work.
         expect(payload.health.pollingCronConfigured).toBe(false);
+    });
+});
+
+/**
+ * [SCN-FWB-017] 四类签名密钥互不回退（代码评审 2026-09-02 §1.3）。
+ *
+ * 坏行为画像：回退链 admin token secret → **登录密码**；附件 token → admin secret；
+ * run token → admin secret；release token → run token。任一变量漏配，管理员登录密码
+ * 就成了 HMAC 签名密钥——密码泄露即可伪造 admin session、附件访问 URL、run 回调
+ * token 与 release token 全套，而且回退是静默的：运维从任何地方都看不出自己在裸奔。
+ */
+describe('[SCN-FWB-017] 签名密钥不回退、缺配即拒、健康页说得出缺哪一把', () => {
+    function envWithout(kind) {
+        const env = createV2Env();
+        delete env[kind];
+        return env;
+    }
+
+    it('只配了登录密码时，登录返回 503 而不是拿密码当签名密钥铸票', async () => {
+        const env = envWithout('FEEDBACK_ADMIN_TOKEN_SECRET');
+        const response = await request(
+            '/api/feedback/admin/session',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: 'admin-pass' }),
+            },
+            env
+        );
+        // 坏行为下这里是 200 + 一张用登录密码签的 admin token。
+        expect(response.status).toBe(503);
+        expect((await json(response)).error).toBe('FEEDBACK_SIGNING_SECRET_MISSING');
+    });
+
+    it('用登录密码签出来的 admin token 一律不认', async () => {
+        const env = createV2Env();
+        const payload = Buffer.from(
+            JSON.stringify({ role: 'admin', exp: Date.now() + 60_000 }),
+            'utf8'
+        )
+            .toString('base64')
+            .replace(/\+/g, '-')
+            .replace(/\//g, '_')
+            .replace(/=+$/, '');
+        const key = await crypto.subtle.importKey(
+            'raw',
+            new TextEncoder().encode('admin-pass'),
+            { name: 'HMAC', hash: 'SHA-256' },
+            false,
+            ['sign']
+        );
+        const signature = Array.from(
+            new Uint8Array(
+                await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload))
+            ),
+            (byte) => byte.toString(16).padStart(2, '0')
+        ).join('');
+
+        const response = await request(
+            '/api/feedback/issues',
+            { headers: { Authorization: `Bearer ${payload}.${signature}` } },
+            env
+        );
+        expect(response.status).toBe(401);
+    });
+
+    it('健康页逐把列出签名密钥的配置状态（只报名字与在否，不报值）', async () => {
+        const env = envWithout('FEEDBACK_RUN_TOKEN_SECRET');
+        const headers = await (async () => {
+            const session = await json(
+                await request(
+                    '/api/feedback/admin/session',
+                    {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ password: 'admin-pass' }),
+                    },
+                    env
+                )
+            );
+            return { Authorization: `Bearer ${session.token}` };
+        })();
+
+        const health = await json(
+            await request('/api/feedback/automation/health', { headers }, env)
+        );
+        const byName = Object.fromEntries(
+            health.health.signingSecrets.map((entry) => [entry.name, entry.configured])
+        );
+        expect(byName.FEEDBACK_RUN_TOKEN_SECRET).toBe(false);
+        expect(byName.FEEDBACK_ADMIN_TOKEN_SECRET).toBe(true);
+        expect(byName.FEEDBACK_ATTACHMENT_TOKEN_SECRET).toBe(true);
+        expect(byName.FEEDBACK_RELEASE_TOKEN_SECRET).toBe(true);
+        expect(JSON.stringify(health.health.signingSecrets)).not.toContain('unit-test');
     });
 });

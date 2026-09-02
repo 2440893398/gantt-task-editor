@@ -706,6 +706,9 @@ export class FeedbackWorkflow extends WorkflowEntrypoint {
                         workflowId: instanceId,
                         provider: String(triggerEvent.payload?.provider || ''),
                         triggerEventId: String(triggerEvent.payload?.eventId || ''),
+                        // §3.1：`(workflowId, cycle)` 就是这条 Run 的身份，step 重放
+                        // 因此不会插出第二条。step 名字用的也是同一个 cycle。
+                        cycle,
                     })
             );
 
@@ -1236,16 +1239,48 @@ async function signValueHex(value, secret) {
     return bytesToHex(new Uint8Array(signature));
 }
 
+/**
+ * 四类签名密钥，互不回退（代码评审 2026-09-02 §1.3）。
+ *
+ * 原来是一条回退链：admin token secret → 登录密码；附件 token → admin secret；
+ * run token → admin secret；release token → run token。任一环境变量漏配，**登录密码
+ * 就成了 HMAC 签名密钥**——密码一泄露即可伪造 admin session、附件访问 URL、
+ * run 回调 token 与 release token 全套；而且回退是静默的，运维看不到自己正在裸奔。
+ *
+ * 现在每一类只认自己那一个变量：缺了就 fail-closed（该功能拒绝服务），并在
+ * `readAutomationHealth` 里把「哪一把没配」摆到台面上。密钥轮换 = 换掉对应那一把，
+ * 只让那一类 token 全体失效，不再牵连其他三类。
+ */
+const FEEDBACK_SIGNING_SECRETS = Object.freeze({
+    admin: 'FEEDBACK_ADMIN_TOKEN_SECRET',
+    attachment: 'FEEDBACK_ATTACHMENT_TOKEN_SECRET',
+    run: 'FEEDBACK_RUN_TOKEN_SECRET',
+    release: 'FEEDBACK_RELEASE_TOKEN_SECRET',
+});
+
+function getFeedbackSigningSecret(env, kind) {
+    return String(env?.[FEEDBACK_SIGNING_SECRETS[kind]] || '').trim();
+}
+
+/** 缺密钥时铸造 token 等于发一张没人能验的票——直接拒绝，并说清缺哪一把。 */
+function requireFeedbackSigningSecret(env, kind) {
+    const secret = getFeedbackSigningSecret(env, kind);
+    if (!secret) {
+        const error = feedbackStorageError('FEEDBACK_SIGNING_SECRET_MISSING');
+        error.secretName = FEEDBACK_SIGNING_SECRETS[kind];
+        throw error;
+    }
+    return secret;
+}
+
 function getAdminSecret(env) {
-    // 回退用登录密码当 HMAC 密钥仅为兼容旧部署：密码一旦泄露即可伪造 token。
-    // 生产应显式设置 FEEDBACK_ADMIN_TOKEN_SECRET（wrangler secret put）。
-    return env.FEEDBACK_ADMIN_TOKEN_SECRET || env.FEEDBACK_ADMIN_PASSWORD || '';
+    return getFeedbackSigningSecret(env, 'admin');
 }
 
 async function createAdminToken(env) {
     const expiresAtMs = Date.now() + ADMIN_SESSION_TTL_SECONDS * 1000;
     const payload = base64UrlEncode(JSON.stringify({ role: 'admin', exp: expiresAtMs }));
-    const signature = await signValue(payload, getAdminSecret(env));
+    const signature = await signValue(payload, requireFeedbackSigningSecret(env, 'admin'));
 
     return {
         token: `${payload}.${signature}`,
@@ -1403,7 +1438,7 @@ async function isValidFeedbackOwnerCapability(request, env, issueId) {
 }
 
 function getFeedbackAttachmentTokenSecret(env) {
-    return String(env.FEEDBACK_ATTACHMENT_TOKEN_SECRET || getAdminSecret(env));
+    return getFeedbackSigningSecret(env, 'attachment');
 }
 
 async function createFeedbackAttachmentAccessUrl(request, env, issueId, attachmentId) {
@@ -3413,7 +3448,11 @@ async function collectFeedbackMetrics(env) {
             rowsOf('SELECT type, status FROM feedback_human_actions'),
             rowsOf('SELECT status FROM feedback_candidates'),
             rowsOf('SELECT status, error_code FROM feedback_releases'),
-            rowsOf('SELECT run_count, estimated_cost FROM feedback_usage_daily'),
+            // §1.4：滥用闸把每 IP 的写请求也记在这张表里（scope_type = 'ip_*'）。
+            // 成本指标只算派发用量，否则一次刷接口的攻击会被读成「今天跑了 800 个 Run」。
+            rowsOf(
+                "SELECT run_count, estimated_cost FROM feedback_usage_daily WHERE scope_type = 'issue'"
+            ),
             rowsOf('SELECT type FROM feedback_events'),
         ]);
 
@@ -4063,6 +4102,100 @@ async function checkFeedbackDispatchQuota(env, issueId) {
     };
 }
 
+/**
+ * 匿名写端点的滥用闸（代码评审 2026-09-02 §1.4）。
+ *
+ * 现状是「全文没有任何速率限制」：`POST /api/feedback` 每条最大 18MB + 5 个附件直传
+ * R2 并触发一次分类，`POST /api/share` 匿名写 KV，管理员登录口既不计失败也不退避。
+ * 端点公网可达，S-G 的「单人自用」只降低了动机、没降低可达性。
+ *
+ * 这里做的是**代码层兜底**，不是替代 Cloudflare WAF 的 rate-limiting 规则（那条规则
+ * 更靠前、更便宜，仍然该配）：复用既有的 `feedback_usage_daily` 配额机制，按
+ * `scope_type = 'ip_*'` 记账，一条 UPSERT 同时完成「加一」与「读回」——check-then-act
+ * 会在并发下漏计，`RETURNING` 让计数与判定成为同一次写。
+ *
+ * 三条口径：
+ * - **IP 只存哈希**：原始 IP 是 PII，落库没有必要；哈希足以当计数键。
+ * - **被拒的尝试照样计数**：否则攻击者被拒之后立刻又获得配额。
+ * - **D1 不可用时放行**（Pages 形态没有 D1 绑定）：一个把功能打死的安全闸比不安全更贵，
+ *   而写路径本来就只在 Worker 上。
+ */
+const FEEDBACK_ABUSE_LIMITS = Object.freeze({
+    // 每 IP 每天的匿名 Issue 提交数。日常自用远低于此，灌库要付出的代价则线性上升。
+    ip_feedback: 50,
+    // 每 IP 每天的匿名分享写入数。
+    ip_share: 100,
+    // 每 IP 每**小时**的登录失败数（见下方 bucket 说明）。够手滑几次，不够离线爆破。
+    ip_login_fail: 10,
+});
+
+/** 登录失败按小时分桶，其余按天——密码错了不该把人锁到第二天。 */
+function feedbackAbuseBucket(scopeType, now = new Date()) {
+    const iso = now.toISOString();
+    return scopeType === 'ip_login_fail' ? iso.slice(0, 13) : iso.slice(0, 10);
+}
+
+function feedbackClientIp(request) {
+    return (
+        request.headers.get('CF-Connecting-IP') ||
+        request.headers.get('X-Forwarded-For') ||
+        'unknown'
+    );
+}
+
+/**
+ * 只读当前计数（不加一）。登录口用它：额度用完之后**连正确密码也不放行**——
+ * 只拦失败的请求等于没拦，攻击者照样可以一直猜，猜中即入。计数按 IP 记，被锁的是
+ * 攻击者自己那个 IP。
+ */
+async function readFeedbackAbuseCount(env, request, scopeType) {
+    const limit = FEEDBACK_ABUSE_LIMITS[scopeType];
+    if (!env.FEEDBACK_DB || !limit) return { allowed: true, used: 0, limit: limit || 0 };
+    try {
+        const scopeId = (await hashFeedbackValue(feedbackClientIp(request))).slice(0, 32);
+        const row = await env.FEEDBACK_DB.prepare(
+            `SELECT run_count FROM feedback_usage_daily
+             WHERE usage_date = ? AND scope_type = ? AND scope_id = ?`
+        )
+            .bind(feedbackAbuseBucket(scopeType), scopeType, scopeId)
+            .first();
+        const used = Number(row?.run_count) || 0;
+        return { allowed: used < limit, used, limit };
+    } catch (error) {
+        logFeedback('warn', 'abuse gate lookup failed', { error });
+        return { allowed: true, used: 0, limit };
+    }
+}
+
+/**
+ * 记一次并判定是否超限。返回 `{ allowed, used, limit }`；D1 缺席时一律放行。
+ * 调用方超限时回 429 —— 429 是「稍后再来」，不是「你错了」。
+ */
+async function recordFeedbackAbuseAttempt(env, request, scopeType) {
+    const limit = FEEDBACK_ABUSE_LIMITS[scopeType];
+    if (!env.FEEDBACK_DB || !limit) return { allowed: true, used: 0, limit: limit || 0 };
+
+    const scopeId = (await hashFeedbackValue(feedbackClientIp(request))).slice(0, 32);
+    const bucket = feedbackAbuseBucket(scopeType);
+    try {
+        const result = await env.FEEDBACK_DB.prepare(
+            `INSERT INTO feedback_usage_daily (usage_date, scope_type, scope_id, run_count, estimated_cost)
+             VALUES (?, ?, ?, 1, 0)
+             ON CONFLICT(usage_date, scope_type, scope_id)
+             DO UPDATE SET run_count = run_count + 1
+             RETURNING run_count`
+        )
+            .bind(bucket, scopeType, scopeId)
+            .run();
+        const used = Number(result.results?.[0]?.run_count) || 0;
+        return { allowed: used <= limit, used, limit };
+    } catch (error) {
+        // 计数写不进去不能反过来把写路径打死（与日志写失败同一条纪律）。
+        logFeedback('warn', 'abuse gate accounting failed', { error });
+        return { allowed: true, used: 0, limit };
+    }
+}
+
 async function recordFeedbackDispatchUsage(env, issueId, usageDate) {
     await env.FEEDBACK_DB.prepare(
         `INSERT INTO feedback_usage_daily (usage_date, scope_type, scope_id, run_count, estimated_cost)
@@ -4381,11 +4514,11 @@ function buildFeedbackWorkflowInstanceId(issueId, generation) {
 }
 
 function getFeedbackRunTokenSecret(env) {
-    return String(env.FEEDBACK_RUN_TOKEN_SECRET || getAdminSecret(env));
+    return getFeedbackSigningSecret(env, 'run');
 }
 
 function getFeedbackReleaseTokenSecret(env) {
-    return String(env.FEEDBACK_RELEASE_TOKEN_SECRET || getFeedbackRunTokenSecret(env));
+    return getFeedbackSigningSecret(env, 'release');
 }
 
 /**
@@ -4401,7 +4534,11 @@ async function verifyFeedbackRunToken(request, env, { runId, audience }) {
     const [payload, signature] = token.split('.');
     if (!payload || !signature) return null;
 
-    const expected = await signValue(payload, getFeedbackRunTokenSecret(env));
+    // §1.3：没有密钥就没有可信的签名。空密钥下 HMAC 仍然算得出结果，而那个结果
+    // 是**人人可复现**的——放行等于把这道闸拆了，所以缺配即拒。
+    const secret = getFeedbackRunTokenSecret(env);
+    if (!secret) return null;
+    const expected = await signValue(payload, secret);
     if (!feedbackHashesMatch(expected, signature)) return null;
 
     try {
@@ -4466,9 +4603,33 @@ async function resolveFeedbackProject(env) {
     };
 }
 
-async function createFeedbackRun(env, { issueId, workflowId, provider, triggerEventId = '' }) {
+/**
+ * 一个 Workflow 周期一条 Run 的决定性身份（评审 §3.1）。
+ *
+ * `step.do` 的重试语义是**整体重放**：函数跑到一半失败（第一条 INSERT 成功、
+ * 后面的 UPDATE 挂了），重试会把整个函数从头再跑一遍。id 用 `crypto.randomUUID()`
+ * 时第二遍插的是一条全新的 Run——写入型有 partial unique index 兜底，而占多数的
+ * analyze/review 没有：留下孤儿 run 行，`last_run_id` 指向后插的那条，前一条的
+ * 回调再也对不上号。决定性 id 让重放变成幂等的 no-op（ON CONFLICT DO NOTHING）。
+ *
+ * 字符集与 `sanitizeCandidateRunId`（执行器侧）一致：候选分支名是
+ * `feedback/candidate/<净化后的 runId>`，服务端按逐字符相等复核。
+ */
+function feedbackRunIdFor(workflowId, cycle) {
+    return `run_${String(workflowId).replace(/[^a-zA-Z0-9_-]/g, '-')}_c${cycle}`;
+}
+
+async function createFeedbackRun(
+    env,
+    { issueId, workflowId, provider, triggerEventId = '', cycle }
+) {
     if (!env.FEEDBACK_DB) {
         throw feedbackStorageError('FEEDBACK_DB_REQUIRED');
+    }
+    // 缺 cycle 就退回随机 id，等于把幂等性静默关掉——这类静默回落是本仓最贵的
+    // 失败（SCN-FWB-032）。调用方只有 Workflow 一个，它永远知道自己在第几轮。
+    if (!Number.isInteger(cycle) || cycle < 1) {
+        throw feedbackStorageError('FEEDBACK_RUN_CYCLE_REQUIRED');
     }
 
     const issue = await env.FEEDBACK_DB.prepare(
@@ -4522,13 +4683,16 @@ async function createFeedbackRun(env, { issueId, workflowId, provider, triggerEv
             throw feedbackStorageError('FEEDBACK_SELF_TARGET_WRITE_FORBIDDEN');
         }
 
+        // `id != ?`（评审 §3.1）：本轮自己的那条 Run 不算「另一个活跃写入 Run」。
+        // 决定性 id 之后，step 重放会看见上一次已插入的同一条——不排除它的话，
+        // 重放会把「我自己」报成冲突，Workflow 随即以 WRITE_RUN_ALREADY_ACTIVE 终止。
         const conflicting = await env.FEEDBACK_DB.prepare(
             `SELECT id FROM feedback_runs
-             WHERE issue_id = ? AND status NOT IN
+             WHERE issue_id = ? AND id != ? AND status NOT IN
                  ('succeeded', 'failed', 'cancelled', 'timed_out')
                AND policy IN ('implement', 'implement_and_verify', 'local_required')`
         )
-            .bind(issueId)
+            .bind(issueId, feedbackRunIdFor(workflowId, cycle))
             .first();
         if (conflicting) {
             return { blocked: true, reason: 'WRITE_RUN_ALREADY_ACTIVE', runId: conflicting.id };
@@ -4541,19 +4705,25 @@ async function createFeedbackRun(env, { issueId, workflowId, provider, triggerEv
         return { blocked: true, reason: 'LOCAL_RUNNER_NOT_ENABLED', policy };
     }
 
-    const runId = `run_${crypto.randomUUID()}`;
+    const runId = feedbackRunIdFor(workflowId, cycle);
     const now = new Date().toISOString();
-    await env.FEEDBACK_DB.prepare(
-        // permission_profile 必须显式写：这一列的 DDL 默认值是字面量 `':read-only'`
-        // （0003），漏写就等于给这一行盖一个「以只读跑过」的假章。
-        `INSERT INTO feedback_runs (
-            id, issue_id, workflow_id, candidate_id, design_id, policy, delivery_mode, provider,
-            runner_type, runner_label, status, attempt, base_commit, change_commit,
-            provider_session_id, started_at, finished_at, error_code, permission_profile
-        ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, NULL, 'created', 1,
-                  NULL, NULL, NULL, ?, NULL, NULL, ?)`
-    )
-        .bind(
+    // 三条语句一个 batch（评审 §3.1）：原来是三次独立 `.run()`，第一条成功、第二条
+    // 失败时 step 重放会再插一条 Run，而 `last_run_id` 停在旧值。batch 是原子的，
+    // `ON CONFLICT DO NOTHING` 让重放不覆盖已经跑起来的那一行（它可能已经不是
+    // `created` 了），两条 UPDATE 写的是同一个决定性 id，重放天然幂等。
+    // 顺带省两次跨区往返（本仓的经验：慢的是往返次数，不是 SQL）。
+    await env.FEEDBACK_DB.batch([
+        env.FEEDBACK_DB.prepare(
+            // permission_profile 必须显式写：这一列的 DDL 默认值是字面量 `':read-only'`
+            // （0003），漏写就等于给这一行盖一个「以只读跑过」的假章。
+            `INSERT INTO feedback_runs (
+                id, issue_id, workflow_id, candidate_id, design_id, policy, delivery_mode, provider,
+                runner_type, runner_label, status, attempt, base_commit, change_commit,
+                provider_session_id, started_at, finished_at, error_code, permission_profile
+            ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, NULL, 'created', 1,
+                      NULL, NULL, NULL, ?, NULL, NULL, ?)
+            ON CONFLICT(id) DO NOTHING`
+        ).bind(
             runId,
             issueId,
             workflowId,
@@ -4564,16 +4734,15 @@ async function createFeedbackRun(env, { issueId, workflowId, provider, triggerEv
             runnerType,
             now,
             feedbackPermissionProfileFor(policy)
-        )
-        .run();
-    await env.FEEDBACK_DB.prepare('UPDATE feedback_issues SET last_run_id = ? WHERE id = ?')
-        .bind(runId, issueId)
-        .run();
-    await env.FEEDBACK_DB.prepare(
-        'UPDATE feedback_workflows SET active_run_id = ? WHERE instance_id = ?'
-    )
-        .bind(runId, workflowId)
-        .run();
+        ),
+        env.FEEDBACK_DB.prepare('UPDATE feedback_issues SET last_run_id = ? WHERE id = ?').bind(
+            runId,
+            issueId
+        ),
+        env.FEEDBACK_DB.prepare(
+            'UPDATE feedback_workflows SET active_run_id = ? WHERE instance_id = ?'
+        ).bind(runId, workflowId),
+    ]);
 
     // GH 派发的 dispatchPayload 与随派发下发的 run 级 token 已随 GH 路径删除
     // （2026-08-27）：执行器经 /api/executor/lease 领取时拿到自己的 context，
@@ -6947,7 +7116,8 @@ function resolveFeedbackDeploymentRequirement(changedFiles) {
 async function createFeedbackReleaseToken(env, releaseId) {
     const expiresAt = Date.now() + FEEDBACK_RUN_TOKEN_TTL_SECONDS * 1000;
     const payload = base64UrlEncode(JSON.stringify({ aud: 'release', releaseId, exp: expiresAt }));
-    const signature = await signValue(payload, getFeedbackReleaseTokenSecret(env));
+    // §1.3：缺密钥时铸出来的是一张谁都能伪造的票，宁可让认领当场失败。
+    const signature = await signValue(payload, requireFeedbackSigningSecret(env, 'release'));
 
     return { token: `${payload}.${signature}`, expiresAt: new Date(expiresAt).toISOString() };
 }
@@ -6958,7 +7128,9 @@ async function verifyFeedbackReleaseToken(request, env, releaseId) {
 
     const [payload, signature] = token.split('.');
     if (!payload || !signature) return null;
-    const expected = await signValue(payload, getFeedbackReleaseTokenSecret(env));
+    const secret = getFeedbackReleaseTokenSecret(env);
+    if (!secret) return null;
+    const expected = await signValue(payload, secret);
     if (!feedbackHashesMatch(expected, signature)) return null;
 
     try {
@@ -8163,6 +8335,14 @@ async function appendFeedbackComment(
         reason: nextStatus === 'resolved' ? 'issue_resolved' : 'issue_closed',
     });
     if (workflowTerminationStatement) statements.push(workflowTerminationStatement);
+    // 评审 §5.8：这条语句原本还挂着一句
+    // `resolved_at = CASE WHEN ? = 'closed' THEN resolved_at ELSE resolved_at END`
+    // ——两个分支逐字相同，写了等于没写。核实后确认它该被删掉而不是补全：本路径的
+    // nextStatus 只可能是 closed / queued / 原值，永远不是 `resolved`；「解决时间」的
+    // 口径由另外两处持有——管理员 PATCH（resolved 盖时间戳、closed 保留既有值）与
+    // 重开路径（清空）。评审提到的「resolution time 指标缺数」核不实：`resolved_at`
+    // 当前没有任何读者（collectFeedbackMetrics 只读 status，前端与工作台都不展示），
+    // 补一个「关单时间」属于新指标决策，不该顺手塞进这条语句里。
     statements.push(
         env.FEEDBACK_DB.prepare(
             `UPDATE feedback_issues
@@ -8170,8 +8350,7 @@ async function appendFeedbackComment(
                  attachment_count = ?,
                  active_workflow_id = CASE WHEN ? THEN NULL ELSE active_workflow_id END,
                  active_human_action_id = CASE WHEN ? THEN NULL ELSE active_human_action_id END,
-                 updated_at = ?, version = version + 1,
-                 resolved_at = CASE WHEN ? = 'closed' THEN resolved_at ELSE resolved_at END
+                 updated_at = ?, version = version + 1
              WHERE id = ? AND version = ?
                AND EXISTS (
                    SELECT 1 FROM feedback_events
@@ -8184,7 +8363,6 @@ async function appendFeedbackComment(
             isTerminalTransition ? 1 : 0,
             resumedHumanAction ? 1 : 0,
             occurredAt,
-            nextStatus,
             issueId,
             expectedVersion,
             commentEventId
@@ -9228,6 +9406,14 @@ async function readAutomationHealth(env) {
         deadLetterCount: byStatus.dead_letter || 0,
         pendingCount: byStatus.pending || 0,
         needsHumanCount: Number(waiting?.total) || 0,
+        // §1.3：四类签名密钥互不回退，缺哪一把就在这里说出来。回退链时代「漏配一个
+        // 就悄悄拿登录密码当签名密钥」是看不见的，能看见才修得掉。只报名字与在否，
+        // 不报值。
+        signingSecrets: Object.entries(FEEDBACK_SIGNING_SECRETS).map(([kind, name]) => ({
+            kind,
+            name,
+            configured: Boolean(getFeedbackSigningSecret(env, kind)),
+        })),
         // §19.4: the daily sweep is identified separately so it is never read as
         // a periodic Agent poll. With nothing stuck it produces zero Runs.
         reconcile: {
@@ -9358,6 +9544,8 @@ const FEEDBACK_ERROR_RESPONSES = {
     FEEDBACK_CANDIDATE_ABANDONED: [409, 'Candidate has been superseded'],
     FEEDBACK_ISSUE_NOT_READY_FOR_DEPLOY: [409, 'Issue is not ready for delivery'],
     FEEDBACK_DELIVERY_LOCK_HELD: [409, 'Another release is integrating on this branch'],
+    // §1.3：密钥缺配是运维事故，不是调用方参数错。503 + 明确错误码，别让它伪装成 400。
+    FEEDBACK_SIGNING_SECRET_MISSING: [503, 'FEEDBACK_SIGNING_SECRET_MISSING'],
     // 消息就是错误码本身：执行器客户端按 `payload.error === 'FEEDBACK_EXECUTOR_LEASE_STALE'`
     // 认这条（control-plane.js），换成人话文案会让它退化成一个「普通 409」并继续交付。
     FEEDBACK_EXECUTOR_LEASE_STALE: [409, 'FEEDBACK_EXECUTOR_LEASE_STALE'],
@@ -12334,6 +12522,18 @@ export default {
         }
 
         if (request.method === 'POST' && url.pathname === '/api/feedback/admin/session') {
+            // §1.3：密钥缺配不是「密码错」。回退链删掉之后，没有 ADMIN_TOKEN_SECRET
+            // 就铸不出可验证的 session——这时必须说是配置问题，否则运维会对着一个
+            // 正确的密码反复重试，而日志里只有 401。
+            if (!getAdminSecret(env)) {
+                return errorResponse('FEEDBACK_SIGNING_SECRET_MISSING', 503, headers);
+            }
+            // §1.4：这个 IP 的失败额度用完了就整段拒绝——包括正确密码。只拦失败的
+            // 请求等于没拦：攻击者可以一直猜，猜中即入。
+            const loginGate = await readFeedbackAbuseCount(env, request, 'ip_login_fail');
+            if (!loginGate.allowed) {
+                return errorResponse('FEEDBACK_RATE_LIMITED', 429, headers);
+            }
             try {
                 const body = await request.json();
                 // 哈希后常数时间比较，避免明文直比的时序侧信道
@@ -12344,6 +12544,9 @@ export default {
                         await hashFeedbackValue(env.FEEDBACK_ADMIN_PASSWORD)
                     );
                 if (!passwordMatches) {
+                    // 只有失败才计数：成功的登录不消耗额度，否则正常使用会把自己锁死。
+                    // 按小时分桶，手滑几次等一会儿即可，离线爆破则被按住。
+                    await recordFeedbackAbuseAttempt(env, request, 'ip_login_fail');
                     return errorResponse('Unauthorized', 401, headers);
                 }
 
@@ -12441,6 +12644,12 @@ export default {
 
         // POST /api/share — 上传快照
         if (request.method === 'POST' && url.pathname === '/api/share') {
+            // §1.4：匿名 KV 写路径的滥用闸。计数在解析请求体之前——被拒的请求不该
+            // 先付出解析与写入的成本。
+            const shareGate = await recordFeedbackAbuseAttempt(env, request, 'ip_share');
+            if (!shareGate.allowed) {
+                return errorResponse('FEEDBACK_RATE_LIMITED', 429, headers);
+            }
             try {
                 const rawBody = await request.text();
                 if (rawBody.length > MAX_SHARE_SNAPSHOT_BYTES) {
@@ -13364,6 +13573,13 @@ export default {
         if (request.method === 'POST' && url.pathname === '/api/feedback') {
             if (!env.FEEDBACK_DB) {
                 return errorResponse('Feedback storage is unavailable', 503, headers);
+            }
+
+            // §1.4：匿名投递口的滥用闸。单条最大 18MB + 5 个附件直传 R2，并且每条都
+            // 触发一次分类与派发——不设闸时灌满 R2/D1 的成本对攻击者是零。
+            const feedbackGate = await recordFeedbackAbuseAttempt(env, request, 'ip_feedback');
+            if (!feedbackGate.allowed) {
+                return errorResponse('FEEDBACK_RATE_LIMITED', 429, headers);
             }
 
             try {

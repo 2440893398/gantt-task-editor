@@ -1436,3 +1436,323 @@ describe('[SCN-FWB-022] executor capabilities are matched across both provider v
         expect(settings.settings.providers.codex.connectionState).toBe('unverified');
     });
 });
+
+/**
+ * [SCN-FWB-018] Workflow step 重放不得插出第二条 Run（代码评审 2026-09-02 §3.1）。
+ *
+ * 坏行为画像：`createFeedbackRun` 用 `crypto.randomUUID()` 造 id，三次独立 `.run()`
+ * 写三张表。`step.do` 的重试是**整体重放**——第一条 INSERT 成功、`last_run_id` 那条
+ * 失败时，重试会插一条全新的 Run：写入型 policy 有 partial unique index 兜底，
+ * analyze/review 没有，于是留下孤儿 run 行、`last_run_id` 指向后插的那条，
+ * 先插那条的回调再也对不上号（durable execution 的第一戒律就是 step 必须幂等）。
+ */
+describe('[SCN-FWB-018] Run 创建在 Workflow step 重放下幂等', () => {
+    const ISSUE_ID = 'feedback:1780194478721:idempotent';
+    const INSTANCE_ID = 'feedback-1780194478721-idempotent-g1';
+
+    function seedIssueOnly(sqlite) {
+        const now = '2026-09-02T08:00:00.000Z';
+        sqlite
+            .prepare(
+                `INSERT INTO feedback_issues (
+                    id, title, description, business_type, scope, automation_decision, status,
+                    created_at, updated_at, project_id
+                 ) VALUES (?, 'replay test', 'desc', 'bug', 'small', 'implement_and_verify',
+                           'queued', ?, ?, 'proj_gantt')`
+            )
+            .run(ISSUE_ID, now, now);
+    }
+
+    /** 只跑到「建 Run」为止：waitForEvent 抛出，等价于 Workflow 在那一步之后中断。 */
+    async function runWorkflowUntilWait(env, { generation = 1 } = {}) {
+        const step = {
+            async do(name, configOrCallback, maybeCallback) {
+                const callback =
+                    typeof configOrCallback === 'function' ? configOrCallback : maybeCallback;
+                return callback();
+            },
+            async waitForEvent() {
+                throw new Error('WORKFLOW_TEST_STOP_AFTER_RUN_CREATED');
+            },
+        };
+        try {
+            return await new FeedbackWorkflow({}, env).run(
+                {
+                    instanceId: `feedback-1780194478721-idempotent-g${generation}`,
+                    payload: { issueId: ISSUE_ID, generation, contextVersion: 1 },
+                },
+                step
+            );
+        } catch (error) {
+            if (!String(error?.message).includes('WORKFLOW_TEST_STOP_AFTER_RUN_CREATED'))
+                throw error;
+            return null;
+        }
+    }
+
+    it('同一 generation 重放两次只有一条 Run，且 last_run_id / active_run_id 指向它', async () => {
+        const sqlite = applyMigrations();
+        seedIssueOnly(sqlite);
+        const env = createEnv(sqlite);
+
+        await runWorkflowUntilWait(env);
+        await runWorkflowUntilWait(env);
+
+        const runs = sqlite
+            .prepare('SELECT id, policy, status FROM feedback_runs WHERE issue_id = ?')
+            .all(ISSUE_ID);
+        expect(runs).toHaveLength(1);
+        // 决定性 id：`(workflowId, cycle)` 就是这条 Run 的身份。
+        expect(runs[0].id).toBe(`run_${INSTANCE_ID}_c1`);
+
+        const issue = sqlite
+            .prepare('SELECT last_run_id FROM feedback_issues WHERE id = ?')
+            .get(ISSUE_ID);
+        expect(issue.last_run_id).toBe(runs[0].id);
+        const workflow = sqlite
+            .prepare('SELECT active_run_id FROM feedback_workflows WHERE instance_id = ?')
+            .get(INSTANCE_ID);
+        expect(workflow.active_run_id).toBe(runs[0].id);
+    });
+
+    it('重放不得把「上一次的自己」当成另一个活跃写入 Run 而拦下来', async () => {
+        // 坏行为：写入型 policy 的冲突检查若不排除本轮自己的决定性 id，第二次重放
+        // 会以 WRITE_RUN_ALREADY_ACTIVE 阻断，Workflow 随即终止——一次本该无害的
+        // 重试把整条 Issue 处理掐死。
+        const sqlite = applyMigrations();
+        seedIssueOnly(sqlite);
+        const env = createEnv(sqlite);
+
+        await runWorkflowUntilWait(env);
+        await runWorkflowUntilWait(env);
+
+        const suppressed = sqlite
+            .prepare(
+                `SELECT body_json FROM feedback_events
+                 WHERE issue_id = ? AND type = 'automation.suppressed'`
+            )
+            .all(ISSUE_ID);
+        expect(suppressed.map((row) => row.body_json).join('')).not.toContain(
+            'WRITE_RUN_ALREADY_ACTIVE'
+        );
+        expect(
+            sqlite
+                .prepare('SELECT COUNT(*) AS n FROM feedback_runs WHERE issue_id = ?')
+                .get(ISSUE_ID).n
+        ).toBe(1);
+    });
+
+    it('别的活跃写入 Run 仍然拦得住——排除的只有本轮自己', async () => {
+        const sqlite = applyMigrations();
+        seedIssueOnly(sqlite);
+        const env = createEnv(sqlite);
+        // 同一个 Issue 上已经有一条别人的活跃写入 Run（上一代结束了、Run 还挂着）。
+        sqlite
+            .prepare(
+                `INSERT INTO feedback_workflows (
+                    issue_id, generation, instance_id, status, started_at
+                 ) VALUES (?, 9, 'wf_other', 'succeeded', ?)`
+            )
+            .run(ISSUE_ID, '2026-09-02T07:00:00.000Z');
+        sqlite
+            .prepare(
+                `INSERT INTO feedback_runs (
+                    id, issue_id, workflow_id, policy, delivery_mode, provider,
+                    runner_type, status, attempt, started_at, permission_profile
+                 ) VALUES ('run_someone_else', ?, 'wf_other', 'implement_and_verify',
+                           'candidate_review', 'codex', 'executor', 'running', 1, ?, 'write')`
+            )
+            .run(ISSUE_ID, '2026-09-02T08:00:00.000Z');
+
+        await runWorkflowUntilWait(env);
+        const suppressed = sqlite
+            .prepare(
+                `SELECT body_json FROM feedback_events
+                 WHERE issue_id = ? AND type = 'automation.suppressed'`
+            )
+            .all(ISSUE_ID);
+        expect(suppressed.map((row) => row.body_json).join('')).toContain(
+            'WRITE_RUN_ALREADY_ACTIVE'
+        );
+    });
+});
+
+/**
+ * [SCN-FWB-011] 评论关单不碰 `resolved_at`（代码评审 2026-09-02 §5.8）。
+ *
+ * 那条语句原本写的是
+ * `resolved_at = CASE WHEN ? = 'closed' THEN resolved_at ELSE resolved_at END`
+ * ——两个分支逐字相同。核实后删掉而不是补全：本路径的 nextStatus 只能是
+ * closed/queued/原值，永远不是 resolved；解决时间的口径在管理员 PATCH 与重开路径。
+ * 这条用例把口径钉住：谁想「顺手修好」它（改成盖新时间戳或写 NULL）都会见红。
+ */
+describe('[SCN-FWB-011] 评论关单保留既有解决时间', () => {
+    const ISSUE_ID = 'feedback:1780194478722:resolvedat';
+    const RESOLVED_AT = '2026-09-01T10:00:00.000Z';
+
+    it('关单后 resolved_at 原样保留，状态转 closed', async () => {
+        const sqlite = applyMigrations();
+        const now = '2026-09-02T08:00:00.000Z';
+        sqlite
+            .prepare(
+                `INSERT INTO feedback_issues (
+                    id, title, description, business_type, scope, automation_decision, status,
+                    created_at, updated_at, resolved_at, project_id
+                 ) VALUES (?, 'resolved issue', 'desc', 'bug', 'small', 'implement_and_verify',
+                           'resolved', ?, ?, ?, 'proj_gantt')`
+            )
+            .run(ISSUE_ID, now, now, RESOLVED_AT);
+        const env = {
+            ...createEnv(sqlite),
+            FEEDBACK_ADMIN_PASSWORD: 'admin-pass',
+            FEEDBACK_ADMIN_TOKEN_SECRET: 'unit-test-secret',
+        };
+        const session = await (
+            await worker.fetch(
+                new Request('https://worker.test/api/feedback/admin/session', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password: 'admin-pass' }),
+                }),
+                env
+            )
+        ).json();
+        const issueVersion = sqlite
+            .prepare('SELECT version FROM feedback_issues WHERE id = ?')
+            .get(ISSUE_ID).version;
+
+        const response = await worker.fetch(
+            new Request(
+                `https://worker.test/api/feedback/issues/${encodeURIComponent(ISSUE_ID)}/comments`,
+                {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${session.token}`,
+                    },
+                    body: JSON.stringify({
+                        body: '收工，关了。',
+                        mode: 'close',
+                        expectedVersion: issueVersion,
+                        requestId: 'req_close_1',
+                    }),
+                }
+            ),
+            env
+        );
+        expect(response.status).toBe(201);
+
+        const issue = sqlite
+            .prepare('SELECT status, resolved_at FROM feedback_issues WHERE id = ?')
+            .get(ISSUE_ID);
+        expect(issue.status).toBe('closed');
+        expect(issue.resolved_at).toBe(RESOLVED_AT);
+    });
+});
+
+/**
+ * [SCN-FWB-012] 匿名写端点的滥用闸（代码评审 2026-09-02 §1.4）。
+ *
+ * 坏行为画像：全文没有任何速率限制。任何人可以零成本反复调用 `POST /api/feedback`
+ * （单条 18MB + 5 个附件直传 R2，每条还触发一次分类与派发）灌满 R2/D1，也可以对着
+ * 管理员登录口无限次离线试密码——失败既不计数也不退避。
+ *
+ * 这些用例跑真实 SQLite：闸的实现是一条 UPSERT + RETURNING，假 D1 解析不了它时会
+ * 走 fail-open 分支，跑绿不代表闸真的合上了。
+ */
+describe('[SCN-FWB-012] 匿名写端点的滥用闸', () => {
+    function abuseEnv(sqlite) {
+        return {
+            FEEDBACK_DB: new SqliteD1(sqlite),
+            FEEDBACK_ADMIN_PASSWORD: 'admin-pass',
+            FEEDBACK_ADMIN_TOKEN_SECRET: 'unit-test-secret',
+        };
+    }
+
+    async function login(env, password, ip = '203.0.113.7') {
+        return worker.fetch(
+            new Request('https://worker.test/api/feedback/admin/session', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'CF-Connecting-IP': ip },
+                body: JSON.stringify({ password }),
+            }),
+            env
+        );
+    }
+
+    it('登录失败 10 次后转 429，且换一个 IP 不受影响', async () => {
+        const sqlite = applyMigrations();
+        const env = abuseEnv(sqlite);
+
+        for (let attempt = 1; attempt <= 10; attempt += 1) {
+            expect((await login(env, 'wrong')).status).toBe(401);
+        }
+        expect((await login(env, 'wrong')).status).toBe(429);
+        // 密码对了也照样被闸挡住——这一小时内这个 IP 就是被按住了。
+        expect((await login(env, 'admin-pass')).status).toBe(429);
+        // 另一个 IP 的额度是独立的。
+        expect((await login(env, 'admin-pass', '198.51.100.9')).status).toBe(200);
+    });
+
+    it('成功登录不消耗额度——正常使用不会把自己锁死', async () => {
+        const sqlite = applyMigrations();
+        const env = abuseEnv(sqlite);
+        for (let attempt = 0; attempt < 20; attempt += 1) {
+            expect((await login(env, 'admin-pass')).status).toBe(200);
+        }
+        expect(
+            sqlite
+                .prepare(
+                    "SELECT COUNT(*) AS n FROM feedback_usage_daily WHERE scope_type = 'ip_login_fail'"
+                )
+                .get().n
+        ).toBe(0);
+    });
+
+    it('IP 只存哈希，不落明文', async () => {
+        const sqlite = applyMigrations();
+        const env = abuseEnv(sqlite);
+        await login(env, 'wrong', '203.0.113.42');
+        const row = sqlite
+            .prepare("SELECT scope_id FROM feedback_usage_daily WHERE scope_type = 'ip_login_fail'")
+            .get();
+        expect(row.scope_id).not.toContain('203.0.113.42');
+        expect(row.scope_id).toMatch(/^[0-9a-f]{32}$/);
+    });
+
+    it('匿名投递超额后 429，且不写入任何 Issue 行', async () => {
+        const sqlite = applyMigrations();
+        const env = abuseEnv(sqlite);
+        const submit = () =>
+            worker.fetch(
+                new Request('https://worker.test/api/feedback', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'CF-Connecting-IP': '203.0.113.8',
+                    },
+                    body: JSON.stringify({ description: '页面打不开', type: 'bug' }),
+                }),
+                env
+            );
+
+        const first = await submit();
+        expect(first.status).toBeLessThan(400);
+        const issuesAfterFirst = sqlite
+            .prepare('SELECT COUNT(*) AS n FROM feedback_issues')
+            .get().n;
+
+        // 把这个 IP 的当日计数顶到上限，下一条必须被拒——半写入才是真风险，
+        // 所以同时断言 Issue 表没有增长。
+        sqlite
+            .prepare(
+                "UPDATE feedback_usage_daily SET run_count = 999 WHERE scope_type = 'ip_feedback'"
+            )
+            .run();
+        const blocked = await submit();
+        expect(blocked.status).toBe(429);
+        expect(sqlite.prepare('SELECT COUNT(*) AS n FROM feedback_issues').get().n).toBe(
+            issuesAfterFirst
+        );
+    });
+});
