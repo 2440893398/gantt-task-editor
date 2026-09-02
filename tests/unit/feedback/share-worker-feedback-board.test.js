@@ -94,6 +94,27 @@ class MemoryR2 {
     }
 }
 
+/**
+ * 全等匹配的替代（代码评审 2026-09-02 §2.4）。
+ *
+ * MemoryD1 的分支表里原本有 11 处 `normalized === '<整句 SQL>'`。Worker 那边任何一次
+ * 无害的 SQL 微调（换个列序、加个条件、prettier 折行）都会让全等匹配失配，而失配之后
+ * 这条查询**不会报错**——它继续往下走，落进某个语义不同的通用分支，测试照绿。
+ * 「绿色退化」比直接失败贵得多：它把一次真实回归伪装成没事发生。
+ *
+ * 改为：命中全部特征子串才认领，并核对占位符数与 values.length；对不上立刻抛。
+ */
+function claimsQuery(normalized, values, fragments) {
+    if (!fragments.every((fragment) => normalized.includes(fragment))) return false;
+    const placeholders = (normalized.match(/\?/g) || []).length;
+    if (placeholders !== values.length) {
+        throw new Error(
+            `MemoryD1 claimed a query by [${fragments.join(' + ')}] but it binds ${values.length} value(s) against ${placeholders} placeholder(s): ${normalized}`
+        );
+    }
+    return true;
+}
+
 class MemoryD1Statement {
     constructor(database, query) {
         this.database = database;
@@ -224,6 +245,16 @@ class MemoryD1 {
     async execute(query, values) {
         const normalized = query.replace(/\s+/g, ' ').trim().toLowerCase();
         this.queries.push({ query: normalized, values });
+
+        // 代码评审 §2.4：占位符与绑定值的全局对账。分支表按位置解构 values
+        // （最长的一处解构 19 个），列序或条件一变就会把值读到别的列上——那种错误
+        // 不抛异常，只会安静地产出错误数据。数量对不上先炸在这里。
+        const placeholderCount = (normalized.match(/\?/g) || []).length;
+        if (placeholderCount !== (values?.length ?? 0)) {
+            throw new Error(
+                `MemoryD1 placeholder mismatch: ${placeholderCount} placeholder(s) vs ${values?.length ?? 0} bound value(s): ${normalized}`
+            );
+        }
 
         const workbenchResult = this.executeWorkbenchQuery(normalized, values);
         if (workbenchResult) return workbenchResult;
@@ -715,8 +746,11 @@ class MemoryD1 {
 
         // --- feedback_human_actions ---
         if (
-            normalized ===
-            'select resolved_at from feedback_human_actions where issue_id = ? and status = \'resolved\' and resolution_json like \'%"policydecision":"reanalyze"%\' order by resolved_at desc limit 1'
+            claimsQuery(normalized, values, [
+                'select resolved_at from feedback_human_actions',
+                'policydecision":"reanalyze',
+                'order by resolved_at desc',
+            ])
         ) {
             // SCN-FWB-040：候选恢复的改向守卫。放在通用 issue_id handler 之前，
             // 否则会拿到未过滤的全量动作列表，守卫结果随排序漂移。
@@ -1172,8 +1206,11 @@ class MemoryD1 {
             return ok(rows.slice(0, 25));
         }
         if (
-            normalized ===
-            "select count(*) as failures from feedback_runs where issue_id = ? and workflow_id = ? and status = 'failed' and error_code in ('verification_failed', 'provider_turn_failed')"
+            claimsQuery(normalized, values, [
+                'count(*) as failures from feedback_runs',
+                "status = 'failed'",
+                'verification_failed',
+            ])
         ) {
             const failures = Array.from(this.tables.feedback_runs.values()).filter(
                 (row) =>
@@ -1476,17 +1513,23 @@ class MemoryD1 {
             return ok([], 1);
         }
 
-        if (normalized === 'select id from feedback_events where id = ?') {
+        if (claimsQuery(normalized, values, ['select id from feedback_events where id = ?'])) {
             const row = this.tables.feedback_events.get(values[0]);
             return ok(row ? [{ id: row.id }] : []);
         }
-        if (normalized === 'select id, type, body_json from feedback_events where id = ?') {
+        if (
+            claimsQuery(normalized, values, [
+                'select id, type, body_json from feedback_events where id = ?',
+            ])
+        ) {
             const row = this.tables.feedback_events.get(values[0]);
             return ok(row ? [{ id: row.id, type: row.type, body_json: row.body_json }] : []);
         }
         if (
-            normalized ===
-            "select body_json from feedback_events where id = ? and issue_id = ? and type = 'comment.created'"
+            claimsQuery(normalized, values, [
+                'select body_json from feedback_events where id = ?',
+                "type = 'comment.created'",
+            ])
         ) {
             const row = this.tables.feedback_events.get(values[0]);
             return ok(
@@ -1496,8 +1539,12 @@ class MemoryD1 {
             );
         }
         if (
-            normalized ===
-            "select body_json from feedback_events where issue_id = ? and run_id = ? and type = 'run.failed' order by sequence desc limit 1"
+            claimsQuery(normalized, values, [
+                'select body_json from feedback_events',
+                'run_id = ?',
+                "type = 'run.failed'",
+                'order by sequence desc limit 1',
+            ])
         ) {
             const row = Array.from(this.tables.feedback_events.values())
                 .filter(
@@ -1510,8 +1557,11 @@ class MemoryD1 {
             return ok(row ? [{ body_json: row.body_json }] : []);
         }
         if (
-            normalized ===
-            "select run_id, occurred_at, body_json from feedback_events where issue_id = ? and type = 'run.failed' order by sequence desc limit 10"
+            claimsQuery(normalized, values, [
+                'select run_id, occurred_at, body_json from feedback_events',
+                "type = 'run.failed'",
+                'limit 10',
+            ])
         ) {
             // SCN-FWB-040：previousAttempt 推导读的是全 Issue 最近的失败事件。
             const rows = Array.from(this.tables.feedback_events.values())
@@ -1527,8 +1577,10 @@ class MemoryD1 {
             );
         }
         if (
-            normalized ===
-            "select body_json from feedback_events where issue_id = ? and type = 'gate.scope_granted' order by sequence desc limit 1"
+            claimsQuery(normalized, values, [
+                'select body_json from feedback_events',
+                "type = 'gate.scope_granted'",
+            ])
         ) {
             const row = Array.from(this.tables.feedback_events.values())
                 .filter(
@@ -1538,8 +1590,11 @@ class MemoryD1 {
             return ok(row ? [{ body_json: row.body_json }] : []);
         }
         if (
-            normalized ===
-            "select body_json from feedback_events where issue_id = ? and run_id = ? and type = 'agent.message' order by sequence desc limit 1"
+            claimsQuery(normalized, values, [
+                'select body_json from feedback_events',
+                'run_id = ?',
+                "type = 'agent.message'",
+            ])
         ) {
             const row = Array.from(this.tables.feedback_events.values())
                 .filter(
@@ -1552,8 +1607,10 @@ class MemoryD1 {
             return ok(row ? [{ body_json: row.body_json }] : []);
         }
         if (
-            normalized ===
-            'select actor_type, actor_id from feedback_events where id = ? and issue_id = ?'
+            claimsQuery(normalized, values, [
+                'select actor_type, actor_id from feedback_events',
+                'issue_id = ?',
+            ])
         ) {
             const row = this.tables.feedback_events.get(values[0]);
             return ok(row && row.issue_id === values[1] ? [{ ...row }] : []);
@@ -8286,7 +8343,11 @@ describe('feedback workbench V2 routes', () => {
         });
         env.FEEDBACK_DB.execute = async (query, values) => {
             const normalized = query.replace(/\s+/g, ' ').trim().toLowerCase();
-            if (normalized === 'select * from feedback_human_actions where id = ?') {
+            if (
+                claimsQuery(normalized, values, [
+                    'select * from feedback_human_actions where id = ?',
+                ])
+            ) {
                 readers += 1;
                 if (readers === 2) releaseReaders();
                 await bothRead;
@@ -14962,5 +15023,90 @@ describe('[SCN-FWB-001] Markdown 消毒器的注入回归组', () => {
         // feedback-workbench.spec.js 的 E2E 负责钉死，本用例只管消毒。
         expect(timeline.textContent).toContain('noscript 内的 img');
         expect(timeline.textContent).toContain('meta refresh');
+    });
+});
+
+/**
+ * [SCN-FWB-030] 阶段事件在工作台上渲染成人话（代码评审 2026-09-02 §2.3）。
+ *
+ * 这一条原来写在 `feedback-run-phase.test.js` 里，形态是
+ * `expect(clientSource).toContain('正在运行浏览器回归验证')`——字符串搬个家、
+ * 分支写反、函数没接上，它都照绿。改成走真客户端渲染。
+ */
+describe('[SCN-FWB-030] 工作台把阶段事件渲染成人话', () => {
+    it('run.phase_changed 显示该阶段的说明，而不是事件类型名', async () => {
+        const env = createV2Env();
+        const dom = await openWorkbench(env, {
+            url: `https://worker.test/feedback#issue=${encodeURIComponent(
+                feedbackKey
+            )}&capability=owner-token`,
+            routes: ownerWorkbenchRoutes({
+                events: [
+                    {
+                        id: 'evt_phase',
+                        sequence: 1,
+                        type: 'run.phase_changed',
+                        actorType: 'agent',
+                        visibility: 'internal',
+                        occurredAt: '2026-09-02T08:00:00.000Z',
+                        text: '',
+                        phase: 'browser_verification',
+                        changes: {},
+                    },
+                ],
+            }),
+        });
+
+        await waitFor(() =>
+            expect(dom.window.document.getElementById('timeline').textContent).toContain(
+                '正在运行浏览器回归验证'
+            )
+        );
+        // 坏行为下这里是事件类型名或一句「该事件已记录」。
+        expect(dom.window.document.getElementById('timeline').textContent).not.toContain(
+            'run.phase_changed'
+        );
+    });
+});
+
+/**
+ * [SCN-FWB-018] 测试替身自己的防线（代码评审 2026-09-02 §2.4）。
+ *
+ * MemoryD1 是一个 1600 行的手写 SQL 解释器：Worker 那边一次无害的 SQL 微调会让
+ * 某条分支失配，而失配后查询**继续往下走**，落进语义不同的通用分支——测试照绿。
+ * 这种「绿色退化」比直接失败贵得多。两道机械防线：占位符对账、认领即校验。
+ * 防线本身也要被测，否则它和被它替代的全等匹配一样是一句声明。
+ */
+describe('[SCN-FWB-018] MemoryD1 的失配必须炸而不是改道', () => {
+    it('占位符数与绑定值数对不上时立刻抛——不让错位的值安静写进别的列', async () => {
+        const database = new MemoryD1();
+        await expect(
+            database.execute('SELECT * FROM feedback_issues WHERE id = ? AND version = ?', ['x'])
+        ).rejects.toThrow('placeholder mismatch');
+    });
+
+    it('完全不认识的查询仍然抛——兜底 throw 是这套替身可信的前提', async () => {
+        const database = new MemoryD1();
+        await expect(
+            database.execute('SELECT nonsense FROM feedback_unknown_table', [])
+        ).rejects.toThrow(/Unsupported in-memory D1/);
+    });
+
+    it('claimsQuery 认领后发现绑定数不符即抛，而不是返回 false 让它改道', () => {
+        expect(() =>
+            claimsQuery(
+                'select id from feedback_events where id = ?',
+                [],
+                ['select id from feedback_events']
+            )
+        ).toThrow('MemoryD1 claimed a query');
+        // 特征子串没全中 = 这条不归它管，正常放行给后面的分支。
+        expect(
+            claimsQuery(
+                'select id from feedback_runs where id = ?',
+                ['r1'],
+                ['select id from feedback_events']
+            )
+        ).toBe(false);
     });
 });

@@ -1,6 +1,16 @@
-import { describe, expect, it } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterAll, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+
+/** CLI 行为用例建的临时仓库；跑完删掉。 */
+const cliRepos = [];
+afterAll(() => {
+    while (cliRepos.length) rmSync(cliRepos.pop(), { recursive: true, force: true });
+});
 import {
     classifyFeedbackQualityTier,
     classifyDiffPath,
@@ -410,29 +420,60 @@ describe('[SCN-FWB-012] feedback diff gate', () => {
             // A declared `--scn` is a string the caller picked; it can name a
             // scenario the diff never touches. The added lines cannot lie.
             //
-            // The extractor now lives in the shared module so the gate CLI and the
-            // Adapter conformance suite (C5 / SCN-FWB-032) run one implementation —
-            // the CLI carries a shebang and cannot be imported by a test at all.
-            const shared = readProjectFile('src/features/feedback/diff-gate.js');
-            expect(shared).toContain('export function scnIdFromDiff');
-            expect(shared).toContain('CONTRACT_AWARE_PATTERNS.some');
-            expect(shared).toMatch(/SCN-\[A-Z\]\+-\\d\{3\}/);
+            // 代码评审 2026-09-02 §2.3：这条原来是「源码里存在 `const scnId =
+            // scnIdFromDiff(diffText);` 且可执行行里不出现 args.scn」——改个变量名就
+            // 假红，把旁路挪进一个函数里就假绿。CLI 带 shebang 不能被 import
+            // （见 memory: vitest-shebang-import-trap），但它**可以被 spawn**：
+            // 给它一个同时声明了假 --scn 与假环境变量的调用，看它认哪一个。
+            const repo = mkdtempSync(join(tmpdir(), 'diff-gate-cli-'));
+            cliRepos.push(repo);
+            const git = (args) =>
+                spawnSync('git', args, { cwd: repo, encoding: 'utf8', windowsHide: true });
+            git(['init', '-q']);
+            git(['config', 'user.email', 'gate@localhost']);
+            git(['config', 'user.name', 'gate']);
+            writeFileSync(join(repo, 'seed.txt'), 'seed');
+            git(['add', '-A']);
+            git(['commit', '-m', 'seed']);
+            const base = git(['rev-parse', 'HEAD']).stdout.trim();
 
-            // The assignment must have no caller-supplied alternative. The previous
-            // assertion only required the substring `scnIdFromDiff(diffText)`, which
-            // `args.scn || process.env.FEEDBACK_SCN_ID || scnIdFromDiff(diffText)`
-            // also satisfies — so it stayed green for as long as that precedence
-            // existed. Pin the whole statement instead.
-            expect(gate).toContain('const scnId = scnIdFromDiff(diffText);');
-            // Only executable lines count — the comment above that statement names
-            // the removed precedence on purpose, so a whole-file substring check
-            // would flag its own explanation.
-            const executable = gate
-                .split(/\r?\n/)
-                .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
-                .join('\n');
-            expect(executable).not.toMatch(/scnId\s*=\s*args\.scn/);
-            expect(executable).not.toContain('FEEDBACK_SCN_ID');
+            // SCN-ID 只从**契约文件**的新增行里读（CONTRACT_AWARE_PATTERNS：
+            // 场景清单与 expected/CHANGES.md）——改动自己声明的是 SCN-REAL-001。
+            mkdirSync(join(repo, 'tests', 'scenarios'), { recursive: true });
+            writeFileSync(
+                join(repo, 'tests', 'scenarios', 'demo.md'),
+                '| SCN-REAL-001 | P0 | 新场景 | 验证点 | active |'
+            );
+            git(['add', '-A']);
+
+            const result = spawnSync(
+                process.execPath,
+                [
+                    path.resolve(process.cwd(), 'scripts/feedback-diff-gate.mjs'),
+                    '--base',
+                    base,
+                    '--staged',
+                    'true',
+                    // 改契约本身需要授权，否则门禁直接判负、连 manifest 都不打印。
+                    '--contract-run',
+                    'true',
+                    '--scn',
+                    'SCN-DECLARED-999',
+                ],
+                {
+                    cwd: repo,
+                    encoding: 'utf8',
+                    windowsHide: true,
+                    // 环境变量旁路同样不该被认——GITHUB_ENV 污染在本仓是真实威胁模型。
+                    env: { ...process.env, FEEDBACK_SCN_ID: 'SCN-FROM-ENV-888' },
+                }
+            );
+
+            const stdoutLines = result.stdout.trim().split(/\r?\n/);
+            const manifest = JSON.parse(stdoutLines[stdoutLines.length - 1]);
+            expect(manifest.scnId).toBe('SCN-REAL-001');
+            expect(manifest.scnId).not.toBe('SCN-DECLARED-999');
+            expect(manifest.scnId).not.toBe('SCN-FROM-ENV-888');
         });
 
         it('[SCN-FWB-012] hands the same authorization to the workbench re-check', () => {

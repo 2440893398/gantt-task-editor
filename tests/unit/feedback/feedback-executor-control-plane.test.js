@@ -1756,3 +1756,190 @@ describe('[SCN-FWB-012] 匿名写端点的滥用闸', () => {
         );
     });
 });
+
+/**
+ * [SCN-FWB-026] 附件与评论的上限路径（代码评审 2026-09-02 §2.6）。
+ *
+ * `FEEDBACK_ATTACHMENT_TOO_LARGE` / `FEEDBACK_ATTACHMENTS_TOO_MANY` /
+ * `FEEDBACK_COMMENT_TOO_LARGE` 在改这批代码之前**全部测试零命中**——同族的 Issue 级
+ * 40 个配额却有测试，说明是漏网不是取舍。上限路径的真正风险不是「拒绝得不够快」，
+ * 而是**半写入**：附件已经落 R2、事件行已经插入，然后才在某一步抛错。所以每条都
+ * 同时断言「拒绝」与「一行都没写」。
+ */
+describe('[SCN-FWB-026] 附件与评论的上限', () => {
+    const ISSUE_ID = 'feedback:1780194478723:limits';
+
+    function seedOpenIssue(sqlite) {
+        const now = '2026-09-02T08:00:00.000Z';
+        sqlite
+            .prepare(
+                `INSERT INTO feedback_issues (
+                    id, title, description, business_type, scope, automation_decision, status,
+                    created_at, updated_at, project_id
+                 ) VALUES (?, 'limits', 'desc', 'bug', 'small', 'implement_and_verify',
+                           'open', ?, ?, 'proj_gantt')`
+            )
+            .run(ISSUE_ID, now, now);
+    }
+
+    async function adminHeadersFor(env) {
+        const session = await (
+            await worker.fetch(
+                new Request('https://worker.test/api/feedback/admin/session', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password: 'admin-pass' }),
+                }),
+                env
+            )
+        ).json();
+        return {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${session.token}`,
+        };
+    }
+
+    function limitsEnv(sqlite) {
+        return {
+            ...createEnv(sqlite),
+            FEEDBACK_ADMIN_PASSWORD: 'admin-pass',
+            FEEDBACK_ADMIN_TOKEN_SECRET: 'unit-test-secret',
+            FEEDBACK_ATTACHMENT_TOKEN_SECRET: 'unit-test-attachment-secret',
+            // R2 桩：上限用例里它必须**一次都不被调用**。绑定名必须与生产一致
+            // （`FEEDBACK_ARTIFACTS`），名字写错的话「没调用」是白拿的。
+            FEEDBACK_ARTIFACTS: {
+                puts: [],
+                async put(key, body) {
+                    this.puts.push({ key, size: body?.byteLength ?? 0 });
+                    return { key };
+                },
+                async get() {
+                    return null;
+                },
+                async delete() {},
+            },
+        };
+    }
+
+    async function postComment(env, headers, body) {
+        return worker.fetch(
+            new Request(
+                `https://worker.test/api/feedback/issues/${encodeURIComponent(ISSUE_ID)}/comments`,
+                { method: 'POST', headers, body: JSON.stringify(body) }
+            ),
+            env
+        );
+    }
+
+    const countEvents = (sqlite) =>
+        sqlite.prepare('SELECT COUNT(*) AS n FROM feedback_events WHERE issue_id = ?').get(ISSUE_ID)
+            .n;
+    const countAttachments = (sqlite) =>
+        sqlite.prepare('SELECT COUNT(*) AS n FROM feedback_attachments').get().n;
+
+    it('对照组：合规附件确实会落 R2 并插行——「没写入」的断言才有意义', async () => {
+        // 没有这条对照，上面几条的 `puts).toHaveLength(0)` 可能只是因为这条路径
+        // 压根没调用 R2（比如绑定名写错），断言就成了白拿的绿色。
+        const sqlite = applyMigrations();
+        seedOpenIssue(sqlite);
+        const env = limitsEnv(sqlite);
+        const headers = await adminHeadersFor(env);
+
+        const response = await postComment(env, headers, {
+            body: '一个小附件',
+            mode: 'record',
+            expectedVersion: 1,
+            requestId: 'req_ok_attachment',
+            attachments: [
+                {
+                    name: 'ok.png',
+                    type: 'image/png',
+                    dataUrl: `data:image/png;base64,${Buffer.from('small').toString('base64')}`,
+                },
+            ],
+        });
+
+        expect(response.status).toBe(201);
+        expect(env.FEEDBACK_ARTIFACTS.puts).toHaveLength(1);
+        expect(countAttachments(sqlite)).toBe(1);
+    });
+
+    it('单个附件超过 4MB → 413，且不落 R2、不插事件与附件行', async () => {
+        const sqlite = applyMigrations();
+        seedOpenIssue(sqlite);
+        const env = limitsEnv(sqlite);
+        const headers = await adminHeadersFor(env);
+        const before = countEvents(sqlite);
+
+        // 4MB + 一点：base64 体量约为字节数的 4/3。
+        const oversized = 'A'.repeat(Math.ceil(((4 * 1024 * 1024 + 1024) * 4) / 3));
+        const response = await postComment(env, headers, {
+            body: '带一个超大附件',
+            mode: 'record',
+            expectedVersion: 1,
+            requestId: 'req_big_attachment',
+            attachments: [
+                {
+                    name: 'huge.png',
+                    type: 'image/png',
+                    dataUrl: `data:image/png;base64,${oversized}`,
+                },
+            ],
+        });
+
+        expect(response.status).toBe(413);
+        expect(countEvents(sqlite)).toBe(before);
+        expect(countAttachments(sqlite)).toBe(0);
+        expect(env.FEEDBACK_ARTIFACTS.puts).toHaveLength(0);
+    });
+
+    it('一条评论超过 5 个附件 → 400，且什么都没写', async () => {
+        const sqlite = applyMigrations();
+        seedOpenIssue(sqlite);
+        const env = limitsEnv(sqlite);
+        const headers = await adminHeadersFor(env);
+        const before = countEvents(sqlite);
+
+        const tiny = `data:image/png;base64,${Buffer.from('x').toString('base64')}`;
+        const response = await postComment(env, headers, {
+            body: '六个附件',
+            mode: 'record',
+            expectedVersion: 1,
+            requestId: 'req_too_many',
+            attachments: Array.from({ length: 6 }, (_, index) => ({
+                name: `a${index}.png`,
+                type: 'image/png',
+                dataUrl: tiny,
+            })),
+        });
+
+        expect(response.status).toBe(400);
+        expect(countEvents(sqlite)).toBe(before);
+        expect(countAttachments(sqlite)).toBe(0);
+        expect(env.FEEDBACK_ARTIFACTS.puts).toHaveLength(0);
+    });
+
+    it('评论请求体超过 18MB → 413，在解析之前就被拒', async () => {
+        const sqlite = applyMigrations();
+        seedOpenIssue(sqlite);
+        const env = limitsEnv(sqlite);
+        const headers = await adminHeadersFor(env);
+        const before = countEvents(sqlite);
+
+        const response = await worker.fetch(
+            new Request(
+                `https://worker.test/api/feedback/issues/${encodeURIComponent(ISSUE_ID)}/comments`,
+                {
+                    method: 'POST',
+                    headers,
+                    // 直接给一个超限的原始串：这条闸在 JSON.parse 之前。
+                    body: `{"body":"${'x'.repeat(18 * 1024 * 1024 + 16)}"}`,
+                }
+            ),
+            env
+        );
+
+        expect(response.status).toBe(413);
+        expect(countEvents(sqlite)).toBe(before);
+    });
+});

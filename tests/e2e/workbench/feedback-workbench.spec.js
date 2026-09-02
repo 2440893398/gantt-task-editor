@@ -40,10 +40,10 @@ function readDevVar(name) {
 
 const ADMIN_PASSWORD =
     readDevVar('FEEDBACK_ADMIN_PASSWORD') || process.env.FEEDBACK_ADMIN_PASSWORD || '';
-const RUN_TOKEN_SECRET =
-    readDevVar('FEEDBACK_RUN_TOKEN_SECRET') ||
-    readDevVar('FEEDBACK_ADMIN_TOKEN_SECRET') ||
-    ADMIN_PASSWORD;
+// 代码评审 2026-09-02 §1.3：Worker 侧的密钥回退链已删除（run token 不再回退到
+// admin secret、更不回退到登录密码）。这里的回退必须跟着删——留着的话，`.dev.vars`
+// 漏配 run 密钥时这套 E2E 会用**另一把**密钥签出 token，然后收到一串读不懂的 401。
+const RUN_TOKEN_SECRET = readDevVar('FEEDBACK_RUN_TOKEN_SECRET');
 const PROJECT_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 const WRANGLER_CLI = resolve(PROJECT_ROOT, 'node_modules/wrangler/bin/wrangler.js');
 const VIEWPORTS = [
@@ -116,6 +116,13 @@ function createRunCallbackToken(runId) {
         }),
         'utf8'
     ).toString('base64url');
+    if (!RUN_TOKEN_SECRET) {
+        // 缺密钥时签出来的是一张服务端一定验不过的票，收到的会是一串没有信息量的
+        // 401。直说缺什么。
+        throw new Error(
+            'FEEDBACK_RUN_TOKEN_SECRET is missing from .dev.vars — run-scoped callbacks cannot be signed'
+        );
+    }
     const signature = createHmac('sha256', RUN_TOKEN_SECRET).update(claims).digest('base64url');
     return `${claims}.${signature}`;
 }

@@ -5780,7 +5780,10 @@ async function appendFeedbackCallbackEvent(env, runId, body) {
                     callback.payload.verification,
                     resultViolations
                 ),
-                phase: callback.payload.phase || '',
+                // 与 `/api/feedback/runs/:id/events` 那条路径同一口径（`:7634`）：
+                // 40 字符封顶。provider 报什么这里就存什么的话，一个超长阶段名会原样
+                // 进时间线（代码评审 §2.3 的行为测试把这条不一致找了出来）。
+                phase: limitText(callback.payload.phase, 40),
                 // SCN-FWB-037：Agent 提议的下一步只保留能落到这条 HumanAction 允许的
                 // 返回状态上的那些。文案是模型的，权限永远不是——词表外或越权的一律丢掉，
                 // 否则一次提示词注入就能在页面上长出一个状态机里没有的按钮。
