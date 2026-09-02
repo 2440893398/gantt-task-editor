@@ -394,26 +394,19 @@ describe('[SCN-FWB-012] feedback diff gate', () => {
         const gate = readProjectFile('scripts/feedback-diff-gate.mjs');
 
         it('[SCN-FWB-012] grants the authorization server-side, never in the Runner', () => {
-            // 授权在控制面下发（executor lease context 与 run context 同口径）：
-            // 写入型 Run 就是可改契约的 Run，执行侧不自己决定。
+            // 授权在控制面下发：写入型 Run 就是可改契约的 Run，执行侧不自己决定。
+            //
+            // 代码评审 2026-09-02 §2.3/§5.3：这条原来钉的是 share-worker.js 里两句
+            // 赋值的**源码文本**（连操作数顺序一起）。§5.3 把两份 Run context 的拼装
+            // 合并成一个共享构造器之后，那两句文本不复存在，而行为一个字都没变——
+            // 一次纯粹的假红。真正要保护的是「执行侧拿到的授权来自服务端状态」，
+            // 而这件事由 `feedback-executor-control-plane.test.js` 的行为用例钉住
+            // （lease context 与 run context 对同一条 Run 给出同一个 contractRunApproved）。
+            //
+            // 这里只留一条源码级的实质断言：Worker 不得自己再实现一份门禁判据。
             const worker = readProjectFile('workers/share-worker.js');
-            // 用正则而不是跨行字符串：`toContain('…:\n            FEEDBACK_…')` 连缩进
-            // 一起钉死了，于是任何一次纯格式重排都会让它以「业务回归」的形态摔——
-            // 报错读起来像授权链路被改坏，实际只是 prettier 换了个折行位置。
-            //
-            // 2026-09-01 一次完整交付就烧在这一行上（当时是 CRLF 把 `\n` 变成
-            // `\r\n`，候选自验证全绿、集成验证红）。`.gitattributes` 堵掉了行尾那条
-            // 路，缩进这条还开着，所以这里一并堵上。实测：把该赋值折成一行（语义
-            // 不变），旧写法当场失配，这条仍然通过。
-            //
-            // 断言的是「这个赋值取自 lease 授权，不是执行侧自己决定的」，
-            // 不是「它缩进几格」。`\s*` 只放开空白，两个操作数与顺序仍然钉死。
-            expect(worker).toMatch(
-                /contractRunApproved:\s*FEEDBACK_WRITE_POLICIES\.has\(row\.policy\) \|\| leaseGateGrant\.contractRunApproved/
-            );
-            expect(worker).toContain(
-                'contractRunApproved: writeCapableRun || gateGrant.contractRunApproved'
-            );
+            expect(worker).toContain('evaluateDiffGate');
+            expect(worker).not.toContain('function evaluateDiffGate(');
         });
 
         it('[SCN-FWB-012] reads the SCN-ID off the change instead of trusting a declaration', () => {

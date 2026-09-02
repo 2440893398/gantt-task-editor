@@ -259,6 +259,32 @@ class MemoryD1 {
         const workbenchResult = this.executeWorkbenchQuery(normalized, values);
         if (workbenchResult) return workbenchResult;
 
+        // 评论热路径的「Issue + 活跃 Workflow」一次取（代码评审 §5.5 把两次串行
+        // 往返合成了这条 JOIN）。必须排在通用 feedback_issues 分支之前，否则会被
+        // 那条当成普通 issue 查询、返回一个没有 workflow 字段的行。
+        if (
+            claimsQuery(normalized, values, [
+                'from feedback_issues i',
+                'left join feedback_workflows w',
+            ])
+        ) {
+            // `ok()` 在下面才定义（它是 execute 后半段的局部量），这里直接给形状。
+            const issue = this.tables.feedback_issues.get(values[0]);
+            if (!issue) return { success: true, results: [] };
+            const workflow = issue.active_workflow_id
+                ? this.tables.feedback_workflows.get(issue.active_workflow_id)
+                : null;
+            return {
+                success: true,
+                results: [
+                    {
+                        active_workflow_id: issue.active_workflow_id || null,
+                        workflow_status: workflow?.status ?? null,
+                        workflow_generation: workflow?.generation ?? null,
+                    },
+                ],
+            };
+        }
         if (normalized.startsWith('select') && normalized.includes('from feedback_issues')) {
             if (normalized.includes('where id = ?')) {
                 const row = this.tables.feedback_issues.get(values[0]);
@@ -5226,7 +5252,10 @@ describe('feedback issue board Worker routes', () => {
                         {
                             name: 'evidence.txt',
                             type: 'text/plain',
-                            size: 999,
+                            // 声明 size 必须与真实字节数一致（代码评审 §5.6：匿名投递口
+                            // 现在与评论口共用同一个校验器）。这里原本写的是 999——
+                            // 一个从来没有对过的数字，旧实现根本不核对。
+                            size: 5,
                             dataUrl: 'data:text/plain;base64,aGVsbG8=',
                         },
                     ],
@@ -5360,7 +5389,10 @@ describe('feedback issue board Worker routes', () => {
         expect(detail.issue.context.logs[0].args[0]).toBe(oversizedLog);
     });
 
-    it('[SCN-FWB-018] prevents active attachment content from executing on the admin origin', async () => {
+    it('[SCN-FWB-018] 匿名投递口拒收不在白名单里的活性类型（代码评审 §5.6）', async () => {
+        // 此前匿名口没有类型白名单：`text/html` 照收不误，只靠下载时的
+        // octet-stream + sandbox CSP 兜着。评论口一直是拒收的——更松的偏偏是
+        // 公网可达的那一个。两口现在共用同一个校验器。
         const d1Env = createV2Env();
         d1Env.FEEDBACK_ARTIFACTS = new MemoryR2();
         const response = await request(
@@ -5370,13 +5402,40 @@ describe('feedback issue board Worker routes', () => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     title: 'Active attachment content',
-                    description: 'HTML and SVG must never execute on the feedback origin.',
+                    description: 'HTML must never be stored from the anonymous endpoint.',
                     attachments: [
                         {
                             name: 'payload.html',
                             type: 'text/html',
                             dataUrl: 'data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==',
                         },
+                    ],
+                }),
+            },
+            d1Env
+        );
+
+        expect(response.status).toBe(400);
+        // 半写入才是真风险：拒收的这一条不得留下任何痕迹。
+        expect(d1Env.FEEDBACK_ARTIFACTS.putCalls).toHaveLength(0);
+        expect(d1Env.FEEDBACK_DB.tables.feedback_attachments.size).toBe(0);
+        expect(d1Env.FEEDBACK_DB.tables.feedback_issues.size).toBe(0);
+    });
+
+    it('[SCN-FWB-018] prevents active attachment content from executing on the admin origin', async () => {
+        // SVG 在白名单内（`image/` 前缀），因此它仍会被存下来——下载时的
+        // octet-stream + sandbox CSP 这道防线依然要在。
+        const d1Env = createV2Env();
+        d1Env.FEEDBACK_ARTIFACTS = new MemoryR2();
+        const response = await request(
+            '/api/feedback',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    title: 'Active attachment content',
+                    description: 'SVG must never execute on the feedback origin.',
+                    attachments: [
                         {
                             name: 'payload.svg',
                             type: 'image/svg+xml',
@@ -5410,17 +5469,16 @@ describe('feedback issue board Worker routes', () => {
         );
 
         expect(response.status).toBe(201);
-        for (const unsafeResponse of downloads.slice(0, 2)) {
-            expect(unsafeResponse.headers.get('Content-Type')).toBe('application/octet-stream');
-            expect(unsafeResponse.headers.get('Content-Disposition')).toMatch(/^attachment;/);
-            expect(unsafeResponse.headers.get('Content-Security-Policy')).toBe(
-                "sandbox; default-src 'none'"
-            );
-            expect(unsafeResponse.headers.get('X-Content-Type-Options')).toBe('nosniff');
-        }
-        expect(downloads[2].headers.get('Content-Type')).toBe('image/png');
-        expect(downloads[2].headers.get('Content-Disposition')).toMatch(/^inline;/);
-        expect(downloads[2].headers.get('Content-Security-Policy')).toBe(
+        const svgResponse = downloads[0];
+        expect(svgResponse.headers.get('Content-Type')).toBe('application/octet-stream');
+        expect(svgResponse.headers.get('Content-Disposition')).toMatch(/^attachment;/);
+        expect(svgResponse.headers.get('Content-Security-Policy')).toBe(
+            "sandbox; default-src 'none'"
+        );
+        expect(svgResponse.headers.get('X-Content-Type-Options')).toBe('nosniff');
+        expect(downloads[1].headers.get('Content-Type')).toBe('image/png');
+        expect(downloads[1].headers.get('Content-Disposition')).toMatch(/^inline;/);
+        expect(downloads[1].headers.get('Content-Security-Policy')).toBe(
             "sandbox; default-src 'none'"
         );
     });

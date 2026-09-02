@@ -37,6 +37,7 @@
         "format:check": "prettier --check \"src/**/*.js\" \"tests/**/*.js\"",
         "check": "npm run lint && npm run format:check",
         "check:scenarios": "node scripts/check-scenario-coverage.mjs",
+        "check:migrations": "node scripts/check-feedback-migrations.mjs",
         "check:full": "npm run lint && npm run format:check && npm run test",
         "prepare": "husky",
         "agent:preflight": "node scripts/agent-preflight.mjs"

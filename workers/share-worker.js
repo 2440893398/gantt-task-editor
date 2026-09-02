@@ -1325,14 +1325,12 @@ async function isValidAdminToken(request, env) {
 }
 
 function normalizeFeedbackPayload(body, request) {
-    const attachments = Array.isArray(body.attachments)
-        ? body.attachments.slice(0, 5).map((item) => ({
-              name: limitText(item.name, 160),
-              type: limitText(item.type, 120),
-              size: Number(item.size) || 0,
-              dataUrl: limitText(item.dataUrl, MAX_FEEDBACK_BYTES),
-          }))
-        : [];
+    // 代码评审 2026-09-02 §5.6：匿名投递口与评论口的附件校验原本是双标，而**更松的
+    // 恰恰是匿名的那个**：没有类型白名单、不核对声明 size 与真实字节数、
+    // 并且用 `limitText(dataUrl, 18MB)` 静默截断——超限的附件不是被拒，而是被截成
+    // 一个损坏的 base64 存下来，事后没有任何线索能解释它为什么打不开。
+    // 两口现在共用同一个校验器：拒绝优于悄悄存坏。
+    const attachments = normalizeFeedbackCommentAttachments(body.attachments);
     const legacySubmittedType = normalizeLegacySubmittedType(body.type);
     const sourceType = legacySubmittedType
         ? normalizeSourceType(body.sourceType, 'manual')
@@ -4973,6 +4971,85 @@ async function verifyRunCompletionManifest({ env, run, payload }) {
 }
 
 /**
+ * 两条路径共用的「Agent 能看到的 Issue 事实」（代码评审 2026-09-02 §5.3）。
+ *
+ * `readFeedbackRunContext`（run 级协议端点）与 `readFeedbackExecutorContext`
+ * （执行器 lease）此前各自拼一份，而 Prompt 构建器只有一份——**两边必须逐字段同形**。
+ * 漂移过一次就付过代价：执行器那份的 `issue.description` 曾经是裸字符串且缺
+ * `id/businessType/scope`，`?? ''` 把用户正文静默吞掉、缺席字段渲染成字面量
+ * "undefined"，Agent 被要求分析一段它根本看不到的反馈，只能照标题编——产出看起来
+ * 完全正常却没有任何依据。共用构造器就是不让这件事再靠人记得。
+ *
+ * `includeIssueContext` / `includeEventBodies` 是两条路径真实存在的差异（执行器要
+ * 原始 context 与事件 body），除此之外一个字段都不许各写各的。
+ */
+async function buildFeedbackAgentContextCore(
+    env,
+    row,
+    { includeIssueContext = false, includeEventBodies = false } = {}
+) {
+    const [timelineResult, attachments] = await Promise.all([
+        env.FEEDBACK_DB.prepare(
+            `SELECT type, actor_type, actor_id, occurred_at, body_json
+             FROM feedback_events
+             WHERE issue_id = ? AND visibility = 'public'
+             ORDER BY sequence`
+        )
+            .bind(row.issue_id)
+            .all(),
+        readFeedbackRunContextAttachments(env, row.issue_id),
+    ]);
+
+    const writeCapableRun = FEEDBACK_WRITE_POLICIES.has(row.policy);
+    const gateGrant = writeCapableRun
+        ? await readFeedbackGateGrant(env, row.issue_id)
+        : { approvedPaths: [], contractRunApproved: false };
+    const previousAttempt = await readFeedbackPreviousAttempt(env, {
+        issueId: row.issue_id,
+        policy: row.policy,
+        automationDecision: row.automation_decision,
+    });
+
+    return {
+        // §16.4/SCN-FWB-020：只读 Run 也可能要交 Design 而不是解释。
+        requiresDesign: requiresFeedbackDesign({
+            businessType: row.business_type,
+            scope: row.scope,
+            automationDecision: row.automation_decision,
+        }),
+        // SCN-FWB-039：门禁授权是服务端状态，随 context 下发（write-pipeline 只认
+        // `context.approvedPaths`/`contractRunApproved`，缺席即为未授权 C5）。
+        approvedPaths: gateGrant.approvedPaths,
+        contractRunApproved: writeCapableRun || gateGrant.contractRunApproved,
+        // SCN-FWB-040：执行器把候选工作区建在这个提交之上，prompt 明示只修失败点。
+        previousAttempt,
+        issue: {
+            id: row.issue_id,
+            version: Number(row.version) || 1,
+            status: row.issue_status,
+            title: row.title,
+            // §18.2：不可信的报告人文本要打标签，让 Prompt 能把数据和指令分开。
+            description: { untrustedUserContent: row.description },
+            businessType: row.business_type,
+            scope: row.scope,
+            ...(includeIssueContext ? { context: parseStoredJson(row.context_json, {}) } : {}),
+        },
+        attachments,
+        timeline: (timelineResult.results || []).map((event) => {
+            const body = parseStoredJson(event.body_json, {});
+            return {
+                type: event.type,
+                actorType: event.actor_type,
+                occurredAt: event.occurred_at,
+                // Prompt 渲染读的是 `text`；只给 `body` 会让整条时间线渲染成空。
+                text: limitText(body.text || body.publicNote, 4000),
+                ...(includeEventBodies ? { actorId: event.actor_id || '', body } : {}),
+            };
+        }),
+    };
+}
+
+/**
  * §13.1 step 5: the minimal, immutable snapshot a Runner is allowed to read.
  * PII (`contact`), attachment bodies and admin notes are deliberately absent.
  */
@@ -4989,27 +5066,13 @@ async function readFeedbackRunContext(env, runId) {
         .first();
     if (!row) return null;
 
-    const events = await env.FEEDBACK_DB.prepare(
-        `SELECT type, actor_type, occurred_at, body_json FROM feedback_events
-         WHERE issue_id = ? AND visibility = 'public' ORDER BY sequence`
-    )
-        .bind(row.issue_id)
-        .all();
     const design = row.design_id
         ? await env.FEEDBACK_DB.prepare('SELECT * FROM feedback_designs WHERE id = ?')
               .bind(row.design_id)
               .first()
         : null;
-    const attachments = await readFeedbackRunContextAttachments(env, row.issue_id);
-    const writeCapableRun = FEEDBACK_WRITE_POLICIES.has(row.policy);
-    const gateGrant = writeCapableRun
-        ? await readFeedbackGateGrant(env, row.issue_id)
-        : { approvedPaths: [], contractRunApproved: false };
-    const previousAttempt = await readFeedbackPreviousAttempt(env, {
-        issueId: row.issue_id,
-        policy: row.policy,
-        automationDecision: row.automation_decision,
-    });
+    // §5.3：Issue 事实由共享构造器给，run 级特有的字段在这里补。
+    const core = await buildFeedbackAgentContextCore(env, row);
 
     return {
         runId: row.run_id,
@@ -5019,42 +5082,7 @@ async function readFeedbackRunContext(env, runId) {
         runStatus: row.run_status,
         baseCommit: row.base_commit || null,
         design: design ? serializeFeedbackDesign(design) : null,
-        // §16.4/SCN-FWB-020: tells a read-only Run that its deliverable is a
-        // Design, not just an explanation. Without it the Runner cannot know
-        // that finishing with `run.completed` would strand the Issue.
-        requiresDesign: requiresFeedbackDesign({
-            businessType: row.business_type,
-            scope: row.scope,
-            automationDecision: row.automation_decision,
-        }),
-        // SCN-FWB-039：门禁授权是服务端状态，随 context 下发（write-pipeline 只认
-        // `context.approvedPaths`/`contractRunApproved`，此前控制面从未给过——管道
-        // 两头都在，中间没接）。契约授权与执行器 lease context 同款口径。
-        approvedPaths: gateGrant.approvedPaths,
-        contractRunApproved: writeCapableRun || gateGrant.contractRunApproved,
-        // SCN-FWB-040：执行器把候选工作区建在这个提交之上，prompt 明示只修失败点。
-        previousAttempt,
-        issue: {
-            id: row.issue_id,
-            version: Number(row.version) || 1,
-            status: row.issue_status,
-            title: row.title,
-            // §18.2: untrusted reporter text is labelled so the prompt can
-            // separate data from instructions.
-            description: { untrustedUserContent: row.description },
-            businessType: row.business_type,
-            scope: row.scope,
-        },
-        attachments,
-        timeline: (events.results || []).map((event) => {
-            const body = parseStoredJson(event.body_json, {});
-            return {
-                type: event.type,
-                actorType: event.actor_type,
-                occurredAt: event.occurred_at,
-                text: limitText(body.text || body.publicNote, 4000),
-            };
-        }),
+        ...core,
     };
 }
 
@@ -8211,18 +8239,25 @@ async function appendFeedbackComment(
     const runnerSettings = (await readFeedbackSettings(env, 'runners')).settings;
     const { mention, provider: mentionProvider } = parseFeedbackMention(text);
     const isOwner = actorType === 'user';
+    // 代码评审 2026-09-02 §5.5：这里原本是两次串行往返——先读 issue 的
+    // `active_workflow_id`，再拿它去读 workflow。JOIN 一次拿全（本仓的经验记录：
+    // 慢的是往返次数，不是 SQL）。
+    //
+    // 仍未合并的三次读（issue、活跃 HumanAction、runner settings）各自有专用的
+    // 解析函数；把它们的 SQL 抠出来塞进一个 batch 会重新造出「同一份数据两处各写
+    // 一遍」的漂移风险——§5.3 刚清掉的正是那种东西。要合并的话应该先给这些读法
+    // 一个共享的 snapshot 构造器（`readFeedbackWorkbenchSnapshotRows` 是现成的样板）。
     const issueState = await env.FEEDBACK_DB.prepare(
-        'SELECT active_workflow_id FROM feedback_issues WHERE id = ?'
+        `SELECT i.active_workflow_id, w.status AS workflow_status, w.generation AS workflow_generation
+         FROM feedback_issues i
+         LEFT JOIN feedback_workflows w ON w.instance_id = i.active_workflow_id
+         WHERE i.id = ?`
     )
         .bind(issueId)
         .first();
     const activeWorkflowId = issueState?.active_workflow_id || '';
     const activeWorkflow = activeWorkflowId
-        ? await env.FEEDBACK_DB.prepare(
-              'SELECT status, generation FROM feedback_workflows WHERE instance_id = ?'
-          )
-              .bind(activeWorkflowId)
-              .first()
+        ? { status: issueState.workflow_status, generation: issueState.workflow_generation }
         : null;
     const canResumeWaitingWorkflow = Boolean(
         status === 'needs_human' &&
@@ -9752,24 +9787,12 @@ async function readFeedbackExecutorContext(env, runId) {
         .first();
     if (!row) return null;
 
-    const [timelineResult, attachments] = await Promise.all([
-        env.FEEDBACK_DB.prepare(
-            `SELECT type, actor_type, actor_id, occurred_at, body_json
-             FROM feedback_events
-             WHERE issue_id = ? AND visibility = 'public'
-             ORDER BY sequence`
-        )
-            .bind(row.issue_id)
-            .all(),
-        readFeedbackRunContextAttachments(env, row.issue_id),
-    ]);
-    const leaseGateGrant = FEEDBACK_WRITE_POLICIES.has(row.policy)
-        ? await readFeedbackGateGrant(env, row.issue_id)
-        : { approvedPaths: [], contractRunApproved: false };
-    const leasePreviousAttempt = await readFeedbackPreviousAttempt(env, {
-        issueId: row.issue_id,
-        policy: row.policy,
-        automationDecision: row.automation_decision,
+    // §5.3：Issue 事实（含时间线、附件清单、门禁授权、上一轮候选）由共享构造器
+    // 给出，执行器特有的项目数据在下面补。两条路径的 issue/timeline 形状因此
+    // 不可能再各写各的。
+    const core = await buildFeedbackAgentContextCore(env, row, {
+        includeIssueContext: true,
+        includeEventBodies: true,
     });
 
     return {
@@ -9784,50 +9807,7 @@ async function readFeedbackExecutorContext(env, runId) {
         defaultBranch: row.default_branch || 'master',
         commands: parseStoredJson(row.commands_json, {}),
         deployConfig: parseStoredJson(row.deploy_config_json, {}),
-        // §16.4/SCN-FWB-020：只读 Run 也可能要交 Design 而不是解释。
-        requiresDesign: requiresFeedbackDesign({
-            businessType: row.business_type,
-            scope: row.scope,
-            automationDecision: row.automation_decision,
-        }),
-        // SCN-FWB-039：与 run 级协议端点的 `readFeedbackRunContext` 同形——write-pipeline
-        // 消费 `context.approvedPaths`/`contractRunApproved`，缺席即为未授权（C5）。
-        approvedPaths: leaseGateGrant.approvedPaths,
-        contractRunApproved:
-            FEEDBACK_WRITE_POLICIES.has(row.policy) || leaseGateGrant.contractRunApproved,
-        // SCN-FWB-040：与 `readFeedbackRunContext` 同形；执行器 write-pipeline 与
-        // prompt 构建器消费，缺席即为从零开工。
-        previousAttempt: leasePreviousAttempt,
-        // 形状必须与 `readFeedbackRunContext` 逐字段一致：Prompt 构建器
-        // 只有一份，读的是 `issue.description?.untrustedUserContent` 与
-        // `issue.id/businessType/scope`。这里曾经给的是裸字符串且缺那三个字段，
-        // `?? ''` 把用户正文**静默吞掉**、缺席字段渲染成字面量 "undefined"——
-        // Agent 被要求分析一段它根本看不到的反馈，只能照标题编，产出看起来完全正常
-        // 却没有任何依据。两条路径共用一个 Prompt 构建器的前提是 context 同形。
-        issue: {
-            id: row.issue_id,
-            version: Number(row.version) || 1,
-            status: row.issue_status,
-            title: row.title,
-            // §18.2：不可信的报告人文本要打标签，让 Prompt 能把数据和指令分开。
-            description: { untrustedUserContent: row.description },
-            businessType: row.business_type,
-            scope: row.scope,
-            context: parseStoredJson(row.context_json, {}),
-        },
-        attachments,
-        timeline: (timelineResult.results || []).map((event) => {
-            const body = parseStoredJson(event.body_json, {});
-            return {
-                type: event.type,
-                actorType: event.actor_type,
-                actorId: event.actor_id || '',
-                occurredAt: event.occurred_at,
-                // Prompt 渲染读的是 `text`；只给 `body` 会让整条时间线渲染成空。
-                text: limitText(body.text || body.publicNote, 4000),
-                body,
-            };
-        }),
+        ...core,
     };
 }
 
@@ -12731,7 +12711,11 @@ export default {
             }
             try {
                 const rawBody = await request.text();
-                if (rawBody.length > MAX_SHARE_SNAPSHOT_BYTES) {
+                // 代码评审 2026-09-02 §5.9：`String.length` 数的是 UTF-16 code unit，
+                // 不是字节。中文快照里一个汉字算 1 而实际占 3 字节——名义 5MB 的闸
+                // 对中文内容能放进接近 15MB。同文件另外两处（评论与投递）早就用
+                // TextEncoder 了，这里跟上，别让同一个上限有两种含义。
+                if (new TextEncoder().encode(rawBody).length > MAX_SHARE_SNAPSHOT_BYTES) {
                     return new Response('Payload too large', { status: 413, headers });
                 }
                 const body = JSON.parse(rawBody);
@@ -13704,21 +13688,12 @@ export default {
                     { status: 201, headers }
                 );
             } catch (e) {
-                if (e?.code === 'FEEDBACK_ATTACHMENTS_REQUIRE_R2') {
-                    return errorResponse(
-                        'Feedback attachment storage is unavailable',
-                        503,
-                        headers
-                    );
-                }
-                if (e?.code === 'INVALID_FEEDBACK_ATTACHMENT') {
-                    return errorResponse('Invalid feedback attachment', 400, headers);
-                }
-                if (e?.code === 'FEEDBACK_ATTACHMENT_TOO_LARGE') {
-                    return errorResponse('Feedback attachment is too large', 413, headers);
-                }
-                if (e?.code === 'FEEDBACK_ATTACHMENT_UPLOAD_FAILED') {
-                    return errorResponse('Feedback attachment upload failed', 503, headers);
+                // §5.11：这里原本手工映射 8 个错误码，与 FEEDBACK_ERROR_RESPONSES 重复
+                // 且已经漏了两个（ATTACHMENTS_TOO_MANY / ATTACHMENT_TYPE_NOT_ALLOWED
+                // 会掉进 500——把「你传的东西不合规」说成「服务器炸了」）。
+                // 表在前，特例在后。
+                if (FEEDBACK_ERROR_RESPONSES[e?.code]) {
+                    return feedbackErrorResponse(e, headers);
                 }
                 if (e?.code === 'FEEDBACK_CONTEXT_REQUIRES_R2') {
                     return errorResponse('Feedback context storage is unavailable', 503, headers);

@@ -164,7 +164,12 @@ describe('[SCN-FWB-020] design proposal from a read-only Run', () => {
         // handoff wording must all agree on "needs a design".
         expect(handoff).toContain('export function requiresFeedbackDesign(');
         expect(worker).toContain('requiresFeedbackDesign,');
+        // Worker 不得自己再实现一份判据——这条是「单一实现」的实质。
         expect(worker).not.toContain('function requiresFeedbackDesign(');
-        expect(worker.match(/requiresFeedbackDesign\(\{/g)?.length).toBeGreaterThanOrEqual(3);
+        // 调用点计数（原来要求 ≥3）已删除：代码评审 §5.3 把两份 Run context 的
+        // 拼装合并成一个共享构造器之后，调用点从 3 处变成 2 处，而**行为完全没变**。
+        // 数调用点是在给实现形状钉钉子，不是在保护判据的唯一性——后者由上面那条
+        // 「Worker 里没有第二份实现」与 handoff 的行为用例负责。
+        expect(worker.match(/requiresFeedbackDesign\(\{/g)?.length).toBeGreaterThanOrEqual(1);
     });
 });

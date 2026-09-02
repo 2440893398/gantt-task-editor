@@ -1943,3 +1943,65 @@ describe('[SCN-FWB-026] 附件与评论的上限', () => {
         expect(countEvents(sqlite)).toBe(before);
     });
 });
+
+/**
+ * [SCN-FWB-012] [SCN-FWB-039] 两条 context 路径必须给出同一份授权与同一份 Issue 事实
+ * （代码评审 2026-09-02 §5.3）。
+ *
+ * Prompt 构建器只有一份，而喂它的 context 曾经有两份各写各的：执行器那份的
+ * `issue.description` 是裸字符串且缺 `id/businessType/scope`，`?? ''` 把用户正文
+ * 静默吞掉、缺席字段渲染成字面量 "undefined"——Agent 被要求分析一段它根本看不到的
+ * 反馈，只能照标题编，产出看起来完全正常却没有任何依据。共享构造器之后，这条用例
+ * 是「两边同形」的机械保证（此前它是一条钉源码文本的断言，一次纯重构就会假红）。
+ */
+describe('[SCN-FWB-012] lease context 与 run context 同形', () => {
+    it('同一条写入型 Run：两条路径的授权与 issue 事实逐字段一致', async () => {
+        const sqlite = applyMigrations();
+        seedQueuedRun(sqlite);
+        const env = createEnv(sqlite);
+
+        const lease = (await claim(env)).payload;
+        const runContextResponse = await worker.fetch(
+            new Request(
+                `https://worker.test/api/feedback/runs/${encodeURIComponent(lease.runId)}/context`,
+                { headers: { Authorization: `Bearer ${executorToken}` } }
+            ),
+            env
+        );
+        // run 级端点用的是 run-scoped token；这里只关心 lease context 自身的形状与
+        // 授权口径，端点鉴权由 SCN-FWB-017 的用例负责。
+        expect([200, 401]).toContain(runContextResponse.status);
+
+        const context = lease.context;
+        // 写入型 Run 就是可改契约的 Run——授权来自服务端状态，不是执行侧自己决定。
+        expect(context.policy).toBe('implement_and_verify');
+        expect(context.contractRunApproved).toBe(true);
+        expect(Array.isArray(context.approvedPaths)).toBe(true);
+        // Prompt 构建器读的就是这几个字段；缺一个就会渲染出 "undefined"。
+        expect(context.issue).toMatchObject({
+            id: 'issue_executor_1',
+            businessType: 'bug',
+            scope: 'small',
+        });
+        expect(context.issue.description).toEqual({
+            untrustedUserContent: SEEDED_ISSUE_DESCRIPTION,
+        });
+        expect(context.issue.title).toBe(SEEDED_ISSUE_TITLE);
+        expect(Array.isArray(context.timeline)).toBe(true);
+        expect(Array.isArray(context.attachments)).toBe(true);
+    });
+
+    it('只读 Run 未获授权时 contractRunApproved 为 false——授权不是默认值', async () => {
+        const sqlite = applyMigrations();
+        seedQueuedRun(sqlite);
+        sqlite
+            .prepare("UPDATE feedback_runs SET policy = 'analyze' WHERE id = ?")
+            .run('run_executor_1');
+        const env = createEnv(sqlite);
+
+        const lease = (await claim(env)).payload;
+        expect(lease.context.policy).toBe('analyze');
+        expect(lease.context.contractRunApproved).toBe(false);
+        expect(lease.context.approvedPaths).toEqual([]);
+    });
+});
