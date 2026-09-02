@@ -157,6 +157,61 @@ describe('[SCN-FWB-012] feedback diff gate', () => {
             );
         });
 
+        it('[SCN-FWB-012] rejects a deep compare downgraded to a truthy matcher in the same hunk', () => {
+            // README §3.2 的原话是「放宽比较（如深比较降级为 truthy）」——这个形态
+            // 必须有自己的名字，且不能被「新增了一条断言」的置换额度抵掉。
+            const diff = [
+                '--- a/tests/unit/example.test.js',
+                '+++ b/tests/unit/example.test.js',
+                '@@ -10,1 +10,1 @@',
+                '-        expect(loaded).toEqual(snapshot);',
+                '+        expect(loaded).toBeTruthy();',
+            ].join('\n');
+
+            expect(findVerificationWeakening(diff)).toContainEqual(
+                expect.objectContaining({ code: 'DEEP_COMPARE_WEAKENED' })
+            );
+
+            const result = evaluateDiffGate({
+                changedFiles: ['tests/unit/example.test.js'],
+                diffText: diff,
+                writeAllowed: true,
+            });
+            expect(result.allowed).toBe(false);
+            expect(result.violations).toContainEqual(
+                expect.objectContaining({
+                    code: 'VERIFICATION_WEAKENED',
+                    detail: 'DEEP_COMPARE_WEAKENED',
+                })
+            );
+        });
+
+        it('[SCN-FWB-012] weak matchers earn no replacement credit for a removed assertion', () => {
+            const diff = [
+                '--- a/tests/unit/example.test.js',
+                '+++ b/tests/unit/example.test.js',
+                '@@ -10,1 +10,1 @@',
+                '-        expect(result.count).toBe(3);',
+                '+        expect(result.count).toBeDefined();',
+            ].join('\n');
+
+            expect(findVerificationWeakening(diff)).toContainEqual(
+                expect.objectContaining({ code: 'ASSERTION_REMOVED' })
+            );
+        });
+
+        it('[SCN-FWB-012] still allows replacing a deep compare with another strong assertion', () => {
+            const diff = [
+                '--- a/tests/unit/example.test.js',
+                '+++ b/tests/unit/example.test.js',
+                '@@ -10,1 +10,1 @@',
+                '-        expect(loaded).toEqual(oldSnapshot);',
+                '+        expect(loaded).toEqual(newSnapshot);',
+            ].join('\n');
+
+            expect(findVerificationWeakening(diff)).toEqual([]);
+        });
+
         it('does not flag context lines that merely mention the pattern', () => {
             const diff = [
                 '--- a/docs/testing.md',

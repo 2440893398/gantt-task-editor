@@ -68,6 +68,17 @@ const VERIFICATION_WEAKENING_PATTERNS = [
 
 const ASSERTION_ADDED_PATTERN = /^\+\s*(?:await\s+)?expect\s*\(/;
 
+/**
+ * Matchers that pass for almost any live value. An added `expect` line using
+ * one of these is not a replacement for a deleted assertion — counting it as
+ * replacement credit is exactly the "deep compare downgraded to truthy" move
+ * tests/scenarios/README.md §3.2 forbids, and it used to sail through here.
+ */
+const WEAK_ASSERTION_PATTERN =
+    /\.\s*(?:toBeTruthy|toBeDefined|toBeFalsy)\s*\(|\.\s*toBe\s*\(\s*(?:true|false)\s*\)|\.\s*not\s*\.\s*(?:toBeNull|toBeUndefined)\s*\(/;
+
+const DEEP_COMPARE_PATTERN = /\.\s*(?:toEqual|toStrictEqual)\s*\(/;
+
 // docs/ai-development-quality-gates.md defines these as Tier 3 core flows.
 // Keep the list mechanical and conservative: an Agent cannot self-report a
 // lower tier to unlock autonomous delivery.
@@ -182,19 +193,30 @@ export function findVerificationWeakening(diffText) {
     const lines = String(diffText || '').split(/\r?\n/);
     let currentFile = '';
     let hunkFindings = [];
-    let addedAssertions = 0;
+    let addedStrongAssertions = 0;
+    let addedWeakAssertions = 0;
 
     const flushHunk = () => {
-        let replacementCredits = addedAssertions;
+        // Only strong additions buy replacement credit; weak matchers never do.
+        let replacementCredits = addedStrongAssertions;
         for (const finding of hunkFindings) {
-            if (finding.code === 'ASSERTION_REMOVED' && replacementCredits > 0) {
-                replacementCredits -= 1;
-                continue;
+            if (finding.code === 'ASSERTION_REMOVED') {
+                if (replacementCredits > 0) {
+                    replacementCredits -= 1;
+                    continue;
+                }
+                // A deleted deep compare next to weak-matcher additions is the
+                // README-named downgrade — report it under its own name so the
+                // decision card says what actually happened.
+                if (addedWeakAssertions > 0 && DEEP_COMPARE_PATTERN.test(finding.line)) {
+                    finding.code = 'DEEP_COMPARE_WEAKENED';
+                }
             }
             findings.push(finding);
         }
         hunkFindings = [];
-        addedAssertions = 0;
+        addedStrongAssertions = 0;
+        addedWeakAssertions = 0;
     };
 
     for (const line of lines) {
@@ -211,7 +233,10 @@ export function findVerificationWeakening(diffText) {
         if (line.startsWith('+++') || line.startsWith('---')) continue;
         if (!line.startsWith('+') && !line.startsWith('-')) continue;
 
-        if (ASSERTION_ADDED_PATTERN.test(line)) addedAssertions += 1;
+        if (ASSERTION_ADDED_PATTERN.test(line)) {
+            if (WEAK_ASSERTION_PATTERN.test(line)) addedWeakAssertions += 1;
+            else addedStrongAssertions += 1;
+        }
 
         for (const rule of VERIFICATION_WEAKENING_PATTERNS) {
             if (rule.pattern.test(line)) {

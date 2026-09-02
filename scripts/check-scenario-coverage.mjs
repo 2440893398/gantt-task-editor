@@ -167,6 +167,13 @@ for (const [id, meta] of inventory) {
     if (meta.status === 'deprecated' && refs.has(id)) {
         problems.push(`孤儿测试: ${id} 已废弃，但仍被引用于 ${refs.get(id).join(', ')}`);
     }
+    // todo 有引用不报会让状态回写永远断档：这些场景的测试被删、标题被去掉
+    // [SCN-xxx] 都不会有任何机制见红，「每条 active 场景必须有覆盖」对它们失效。
+    if (meta.status === 'todo' && refs.has(id)) {
+        problems.push(
+            `状态滞后: ${id} 状态为 todo 但已被测试引用（${refs.get(id).join(', ')}）——转 active 并记变更日志（${meta.file}）`
+        );
+    }
 }
 
 for (const [id, files] of refs) {
