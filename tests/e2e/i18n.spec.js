@@ -100,4 +100,94 @@ test.describe('Internationalization (I18n)', () => {
         // The date format change is verified by the gantt chart re-rendering
         // This test mainly ensures no errors occur during the switch
     });
+
+    test('TC-I18N-006: Missing translation keys should be present in English locale', async ({
+        page,
+    }) => {
+        // Test for feedback:1788009725608:tvrcd55pws - English interface should display correct translations, not key names
+        // Switch to English
+        await page.locator('#more-actions-dropdown > label').click();
+        await page.locator('#language-menu summary').click();
+        await page.locator('#language-menu .dropdown-item[data-lang="en-US"]').click();
+
+        // Wait for language switch
+        await page.waitForTimeout(500);
+
+        // Verify that i18n object exists and has all required translations
+        const translations = await page.evaluate(() => {
+            const i18n = window.i18n;
+            if (!i18n || !i18n.t) {
+                return { error: 'i18n not found' };
+            }
+
+            return {
+                // Editor translations (6 keys)
+                editor_bold: i18n.t('editor.bold'),
+                editor_italic: i18n.t('editor.italic'),
+                editor_heading: i18n.t('editor.heading'),
+                editor_list: i18n.t('editor.list'),
+                editor_quote: i18n.t('editor.quote'),
+                editor_code: i18n.t('editor.code'),
+
+                // AI result translations (9 keys)
+                ai_result_original: i18n.t('ai.result.original'),
+                ai_result_optimized: i18n.t('ai.result.optimized'),
+                ai_result_reasoning: i18n.t('ai.result.reasoning'),
+                ai_result_apply: i18n.t('ai.result.apply'),
+                ai_result_undo: i18n.t('ai.result.undo'),
+                ai_result_applied: i18n.t('ai.result.applied'),
+                ai_result_originalTask: i18n.t('ai.result.originalTask'),
+                ai_result_subtasks: i18n.t('ai.result.subtasks'),
+                ai_result_createSubtasks: i18n.t('ai.result.createSubtasks'),
+
+                // AI prompt translations (3 keys)
+                ai_prompt_additionalInstruction: i18n.t('ai.prompt.additionalInstruction'),
+                ai_prompt_placeholder: i18n.t('ai.prompt.placeholder'),
+                ai_prompt_hint: i18n.t('ai.prompt.hint'),
+
+                // Project translations (5 keys)
+                project_namePlaceholder: i18n.t('project.namePlaceholder'),
+                project_color: i18n.t('project.color'),
+                project_description: i18n.t('project.description'),
+                project_descPlaceholder: i18n.t('project.descPlaceholder'),
+                project_deleteConfirm: i18n.t('project.deleteConfirm'),
+
+                // Common translations (1 key)
+                common_optional: i18n.t('common.optional'),
+            };
+        });
+
+        // Verify none of the translations are raw key names (which would indicate missing translations)
+        const keyNamePattern = /^(editor\.|ai\.result\.|ai\.prompt\.|project\.|common\.)/;
+
+        for (const [key, value] of Object.entries(translations)) {
+            if (key === 'error') {
+                // Skip error key if present
+                continue;
+            }
+            expect(value, `Translation for ${key} should not be a raw key name`).not.toMatch(
+                keyNamePattern
+            );
+            expect(value, `Translation for ${key} should not be empty`).toBeTruthy();
+        }
+
+        // Specific assertions to verify correct translations
+        expect(translations.editor_bold).toBe('Bold');
+        expect(translations.editor_italic).toBe('Italic');
+        expect(translations.editor_heading).toBe('Heading');
+        expect(translations.editor_list).toBe('List');
+        expect(translations.editor_quote).toBe('Quote');
+        expect(translations.editor_code).toBe('Code');
+
+        expect(translations.ai_result_original).toBe('Original');
+        expect(translations.ai_result_optimized).toBe('Optimized');
+        expect(translations.ai_result_apply).toBe('Apply');
+        expect(translations.ai_result_undo).toBe('Undo');
+        expect(translations.ai_result_applied).toBe('Applied');
+
+        expect(translations.project_namePlaceholder).toBe('Enter project name');
+        expect(translations.project_color).toBe('Project Color');
+        expect(translations.project_description).toBe('Project Description');
+        expect(translations.common_optional).toBe('Optional');
+    });
 });

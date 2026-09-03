@@ -347,6 +347,16 @@ export default {
         sheetName: 'Tasks',
     },
 
+    // Rich Text Editor
+    editor: {
+        bold: 'Bold',
+        italic: 'Italic',
+        heading: 'Heading',
+        list: 'List',
+        quote: 'Quote',
+        code: 'Code',
+    },
+
     // DHTMLX Gantt Labels
     gantt: {
         dragToReorder: 'Drag to reorder',
@@ -482,6 +492,24 @@ export default {
             bugReport: 'Bug Report',
             taskBreakdown: 'Task Breakdown',
             timeEstimate: 'Time Estimate',
+        },
+        // Result Display
+        result: {
+            original: 'Original',
+            optimized: 'Optimized',
+            reasoning: 'View optimization reason',
+            apply: 'Apply',
+            undo: 'Undo',
+            applied: 'Applied',
+            originalTask: 'Original Task',
+            subtasks: 'Breakdown Subtasks',
+            createSubtasks: 'Create Subtasks',
+        },
+        // Prompt Editing
+        prompt: {
+            additionalInstruction: 'Additional Instruction (Optional)',
+            placeholder: 'Enter additional instructions or requirements...',
+            hint: 'For example: "Please use a more formal tone" or "Add acceptance criteria"',
         },
         // Errors
         error: {
@@ -630,10 +658,16 @@ export default {
         created: 'Project created',
         manage: 'Manage Projects',
         name: 'Project Name',
+        namePlaceholder: 'Enter project name',
+        color: 'Project Color',
+        description: 'Project Description',
+        descPlaceholder: 'Enter project description...',
         taskCount: 'Tasks',
         createdAt: 'Created',
         deleted: 'Project deleted',
         deleteTitle: 'Delete Project',
+        deleteConfirm:
+            'Confirm deleting project "{name}"? This project contains {count} tasks and cannot be recovered after deletion.',
         fieldConfig: 'Field Configuration',
         fieldConfigCopyCurrent: 'Copy current project config',
         fieldConfigDefaults: 'Use system defaults',
@@ -803,5 +837,6 @@ export default {
         success: 'Success',
         error: 'Error',
         warning: 'Warning',
+        optional: 'Optional',
     },
 };
