@@ -5041,22 +5041,151 @@ async function verifyRunCompletionManifest({ env, run, payload }) {
  * `includeIssueContext` / `includeEventBodies` 是两条路径真实存在的差异（执行器要
  * 原始 context 与事件 body），除此之外一个字段都不许各写各的。
  */
+/**
+ * SCN-FWB-034（2026-09-03 收紧）：上下文快照分层压缩的参数。生产实锤 #czi9c6：
+ * 11 代后快照 134KB、15 轮累计重放 1.07MB 且无上限——长命 Issue 的 context 随
+ * 代数线性膨胀，agent 的有效工作空间反而被历史挤掉。
+ */
+const FEEDBACK_CONTEXT_SNAPSHOT_BUDGET_BYTES = 65536;
+const FEEDBACK_CONTEXT_DIGEST_TEXT_LIMIT = 800;
+const FEEDBACK_CONTEXT_EVIDENCE_LIST_LIMIT = 20;
+
+/**
+ * 证据体按类瘦身：violations / changedFiles 各截 20 并带总数。门禁拦截卡的
+ * 40 文件清单是快照膨胀的大头，而 agent 修复只需要前排样本 + 规模感。
+ */
+function slimFeedbackEventBody(body) {
+    if (!body || typeof body !== 'object') return body;
+    const evidence = body.resultEvidence;
+    if (!evidence || typeof evidence !== 'object') return body;
+    const slimmed = { ...evidence };
+    for (const key of ['violations', 'changedFiles']) {
+        if (
+            Array.isArray(slimmed[key]) &&
+            slimmed[key].length > FEEDBACK_CONTEXT_EVIDENCE_LIST_LIMIT
+        ) {
+            slimmed[`${key}Total`] = slimmed[key].length;
+            slimmed[key] = slimmed[key].slice(0, FEEDBACK_CONTEXT_EVIDENCE_LIST_LIMIT);
+        }
+    }
+    return { ...body, resultEvidence: slimmed };
+}
+
+function renderFeedbackTimelineEvent(event, includeEventBodies) {
+    const body = parseStoredJson(event.body_json, {});
+    return {
+        type: event.type,
+        actorType: event.actor_type,
+        occurredAt: event.occurred_at,
+        // Prompt 渲染读的是 `text`；只给 `body` 会让整条时间线渲染成空。
+        text: limitText(body.text || body.publicNote, 4000),
+        ...(includeEventBodies
+            ? { actorId: event.actor_id || '', body: slimFeedbackEventBody(body) }
+            : {}),
+    };
+}
+
+/**
+ * SCN-FWB-034：分层压缩的折叠核心。「目的」永不压缩——人写的事件（user/owner/
+ * admin：评论、决策备注）跨代逐字保留；当前代事件逐字；**只有能确凿归属到旧代的
+ * 机器事件**（agent/system 且 generation < 当前代）折叠为每代一条确定性摘要
+ * （`generation.digest` 合成 timeline 条目，prompt 侧零改动）。归属不明（无
+ * generation、当前代未知）一律逐字保留——宁可胖，不可忘。摘要保留该代结局与
+ * 最终结论（优先 agent.message），跨代 nonce 连续性因此仍成立。
+ */
+function buildCompactFeedbackTimeline(events, { currentGeneration, includeEventBodies }) {
+    if (!Number.isInteger(currentGeneration)) {
+        return events.map((event) => renderFeedbackTimelineEvent(event, includeEventBodies));
+    }
+    const out = [];
+    let pending = null;
+    const flush = () => {
+        if (!pending) return;
+        const conclusion = pending.lastAgentText || pending.lastText || '（无文字结论）';
+        const outcome = pending.outcome ? `以 ${pending.outcome} 收尾` : '已收尾';
+        out.push({
+            type: 'generation.digest',
+            actorType: 'system',
+            occurredAt: pending.lastAt,
+            text: limitText(
+                `[第 ${pending.generation} 代摘要] ${outcome}，${pending.count} 条过程事件已折叠。结论：${conclusion}`,
+                FEEDBACK_CONTEXT_DIGEST_TEXT_LIMIT
+            ),
+            ...(includeEventBodies
+                ? {
+                      actorId: '',
+                      body: { generation: pending.generation, foldedEvents: pending.count },
+                  }
+                : {}),
+        });
+        pending = null;
+    };
+    for (const event of events) {
+        const generation = event.generation == null ? null : Number(event.generation);
+        const machineActor = event.actor_type === 'agent' || event.actor_type === 'system';
+        const foldable =
+            machineActor && Number.isInteger(generation) && generation < currentGeneration;
+        if (!foldable) {
+            if (pending && Number.isInteger(generation) && generation !== pending.generation) {
+                flush();
+            }
+            out.push(renderFeedbackTimelineEvent(event, includeEventBodies));
+            continue;
+        }
+        if (pending && pending.generation !== generation) flush();
+        const body = parseStoredJson(event.body_json, {});
+        const text = String(body.text || body.publicNote || '');
+        if (!pending) {
+            pending = {
+                generation,
+                count: 0,
+                lastText: '',
+                lastAgentText: '',
+                outcome: '',
+                lastAt: event.occurred_at,
+            };
+        }
+        pending.count += 1;
+        pending.lastAt = event.occurred_at;
+        if (text) pending.lastText = text;
+        if (event.type === 'agent.message' && text) pending.lastAgentText = text;
+        if (event.type === 'run.failed') pending.outcome = String(body.errorCode || 'failed');
+        else if (event.type === 'run.completed') pending.outcome = 'run.completed';
+        else if (event.type === 'run.cancelled') pending.outcome = 'run.cancelled';
+    }
+    flush();
+    return out;
+}
+
 async function buildFeedbackAgentContextCore(
     env,
     row,
     { includeIssueContext = false, includeEventBodies = false } = {}
 ) {
-    const [timelineResult, attachments] = await Promise.all([
+    const [timelineResult, attachments, currentWorkflow] = await Promise.all([
         env.FEEDBACK_DB.prepare(
-            `SELECT type, actor_type, actor_id, occurred_at, body_json
-             FROM feedback_events
-             WHERE issue_id = ? AND visibility = 'public'
-             ORDER BY sequence`
+            `SELECT e.type, e.actor_type, e.actor_id, e.occurred_at, e.body_json,
+                    w.generation AS generation
+             FROM feedback_events e
+             LEFT JOIN feedback_runs r ON r.id = e.run_id
+             LEFT JOIN feedback_workflows w ON w.instance_id = r.workflow_id
+             WHERE e.issue_id = ? AND e.visibility = 'public'
+             ORDER BY e.sequence`
         )
             .bind(row.issue_id)
             .all(),
         readFeedbackRunContextAttachments(env, row.issue_id),
+        row.workflow_id
+            ? env.FEEDBACK_DB.prepare(
+                  `SELECT status, generation FROM feedback_workflows WHERE instance_id = ?`
+              )
+                  .bind(row.workflow_id)
+                  .first()
+            : Promise.resolve(null),
     ]);
+    const currentGeneration = Number.isInteger(Number(currentWorkflow?.generation))
+        ? Number(currentWorkflow.generation)
+        : null;
 
     const writeCapableRun = FEEDBACK_WRITE_POLICIES.has(row.policy);
     const gateGrant = writeCapableRun
@@ -5068,7 +5197,7 @@ async function buildFeedbackAgentContextCore(
         automationDecision: row.automation_decision,
     });
 
-    return {
+    const core = {
         // §16.4/SCN-FWB-020：只读 Run 也可能要交 Design 而不是解释。
         requiresDesign: requiresFeedbackDesign({
             businessType: row.business_type,
@@ -5093,18 +5222,33 @@ async function buildFeedbackAgentContextCore(
             ...(includeIssueContext ? { context: parseStoredJson(row.context_json, {}) } : {}),
         },
         attachments,
-        timeline: (timelineResult.results || []).map((event) => {
-            const body = parseStoredJson(event.body_json, {});
-            return {
-                type: event.type,
-                actorType: event.actor_type,
-                occurredAt: event.occurred_at,
-                // Prompt 渲染读的是 `text`；只给 `body` 会让整条时间线渲染成空。
-                text: limitText(body.text || body.publicNote, 4000),
-                ...(includeEventBodies ? { actorId: event.actor_id || '', body } : {}),
-            };
+        timeline: buildCompactFeedbackTimeline(timelineResult.results || [], {
+            currentGeneration,
+            includeEventBodies,
         }),
     };
+
+    // SCN-FWB-034：64KB 预算闸。超限只丢最老的代摘要（timeline 里最靠前的
+    // digest），永不裁任务卡与人写事件；发生裁剪在快照留标记 + 日志留痕。
+    let serialized = JSON.stringify(core);
+    if (serialized.length > FEEDBACK_CONTEXT_SNAPSHOT_BUDGET_BYTES) {
+        let dropped = 0;
+        while (serialized.length > FEEDBACK_CONTEXT_SNAPSHOT_BUDGET_BYTES) {
+            const oldest = core.timeline.findIndex((entry) => entry.type === 'generation.digest');
+            if (oldest < 0) break;
+            core.timeline.splice(oldest, 1);
+            dropped += 1;
+            serialized = JSON.stringify(core);
+        }
+        if (dropped > 0) {
+            core.contextTrimmed = { droppedGenerationDigests: dropped };
+            logFeedback('warn', 'Context snapshot over budget; dropped oldest generation digests', {
+                issueId: row.issue_id,
+                dropped,
+            });
+        }
+    }
+    return core;
 }
 
 /**
@@ -5113,7 +5257,8 @@ async function buildFeedbackAgentContextCore(
  */
 async function readFeedbackRunContext(env, runId) {
     const row = await env.FEEDBACK_DB.prepare(
-        `SELECT r.id AS run_id, r.policy, r.provider, r.runner_type, r.status AS run_status,
+        `SELECT r.id AS run_id, r.workflow_id, r.policy, r.provider, r.runner_type,
+                r.status AS run_status,
                 r.base_commit, r.design_id, i.id AS issue_id, i.version, i.title, i.description,
                 i.business_type, i.scope, i.automation_decision, i.status AS issue_status
          FROM feedback_runs r

@@ -2058,3 +2058,254 @@ describe('[SCN-FWB-012] lease context 与 run context 同形', () => {
         expect(lease.context.approvedPaths).toEqual([]);
     });
 });
+
+describe('[SCN-FWB-034] 上下文快照分层压缩：目的永不压缩，旧代折叠为摘要', () => {
+    let sqlite;
+    let env;
+
+    const ISSUE_ID = 'feedback:ctx-compact-1';
+
+    function insertEvent(seq, type, actorType, runId, body, occurredAt) {
+        sqlite
+            .prepare(
+                `INSERT INTO feedback_events (
+                    id, issue_id, sequence, type, actor_type, visibility,
+                    run_id, occurred_at, body_json
+                 ) VALUES (?, ?, ?, ?, ?, 'public', ?, ?, ?)`
+            )
+            .run(
+                `evt_ctx_${seq}`,
+                ISSUE_ID,
+                seq,
+                type,
+                actorType,
+                runId,
+                occurredAt,
+                JSON.stringify(body)
+            );
+    }
+
+    function insertGeneration(gen, { status, terminalReason, runStatus, errorCode, startedAt }) {
+        sqlite
+            .prepare(
+                `INSERT INTO feedback_workflows (
+                    issue_id, generation, instance_id, status, started_at, terminal_reason
+                 ) VALUES (?, ?, ?, ?, ?, ?)`
+            )
+            .run(ISSUE_ID, gen, `wf_ctx_${gen}`, status, startedAt, terminalReason ?? null);
+        sqlite
+            .prepare(
+                `INSERT INTO feedback_runs (
+                    id, issue_id, workflow_id, policy, delivery_mode, provider,
+                    runner_type, status, attempt, started_at, error_code
+                 ) VALUES (?, ?, ?, 'implement_and_verify', 'candidate_review', 'claude',
+                           'executor', ?, 1, ?, ?)`
+            )
+            .run(
+                `run_ctx_${gen}`,
+                ISSUE_ID,
+                `wf_ctx_${gen}`,
+                runStatus,
+                startedAt,
+                errorCode ?? null
+            );
+    }
+
+    function seedThreeGenerations() {
+        sqlite
+            .prepare(
+                `INSERT INTO feedback_issues (
+                    id, title, description, business_type, scope, automation_decision, status,
+                    created_at, updated_at, project_id
+                 ) VALUES (?, '压缩测试 Issue', '原始诉求：去掉基线功能', 'bug', 'small',
+                           'implement_and_verify', 'queued', '2026-08-20T08:00:00.000Z',
+                           '2026-08-24T08:00:00.000Z', 'proj_gantt')`
+            )
+            .run(ISSUE_ID);
+
+        insertGeneration(1, {
+            status: 'terminated',
+            terminalReason: 'run.failed',
+            runStatus: 'failed',
+            errorCode: 'verification_failed',
+            startedAt: '2026-08-20T09:00:00.000Z',
+        });
+        insertGeneration(2, {
+            status: 'succeeded',
+            terminalReason: 'run.completed',
+            runStatus: 'succeeded',
+            startedAt: '2026-08-21T09:00:00.000Z',
+        });
+        insertGeneration(3, {
+            status: 'queued',
+            runStatus: 'created',
+            startedAt: '2026-08-24T09:00:00.000Z',
+        });
+
+        insertEvent(1, 'run.started', 'agent', 'run_ctx_1', {}, '2026-08-20T09:00:01.000Z');
+        insertEvent(
+            2,
+            'run.phase_changed',
+            'agent',
+            'run_ctx_1',
+            { phase: 'testing' },
+            '2026-08-20T09:05:00.000Z'
+        );
+        insertEvent(
+            3,
+            'agent.message',
+            'agent',
+            'run_ctx_1',
+            { text: '第一代结论：根因是 NONCE-G1-7788，方案见下。' },
+            '2026-08-20T09:10:00.000Z'
+        );
+        insertEvent(
+            4,
+            'run.failed',
+            'agent',
+            'run_ctx_1',
+            { text: '验证未通过。', errorCode: 'verification_failed' },
+            '2026-08-20T09:20:00.000Z'
+        );
+        insertEvent(
+            5,
+            'comment.created',
+            'user',
+            null,
+            { text: '用户补充：导出按钮也要一起处理。' },
+            '2026-08-20T12:00:00.000Z'
+        );
+        insertEvent(6, 'run.started', 'agent', 'run_ctx_2', {}, '2026-08-21T09:00:01.000Z');
+        insertEvent(
+            7,
+            'run.completed',
+            'agent',
+            'run_ctx_2',
+            { text: '第二代结论：已完成修复并通过验证。' },
+            '2026-08-21T09:30:00.000Z'
+        );
+        insertEvent(
+            8,
+            'status.changed',
+            'admin',
+            null,
+            {
+                publicNote: '管理员备注：按方案B交付。',
+                changes: { status: ['needs_human', 'queued'] },
+            },
+            '2026-08-22T08:00:00.000Z'
+        );
+        insertEvent(9, 'run.started', 'agent', 'run_ctx_3', {}, '2026-08-24T09:00:01.000Z');
+    }
+
+    beforeEach(() => {
+        sqlite = applyMigrations();
+        seedThreeGenerations();
+        env = createEnv(sqlite);
+    });
+
+    it('[SCN-FWB-034] 旧代折叠为每代一条摘要，人写事件与当前代逐字保留', async () => {
+        const leased = await claim(env, 'executor-a');
+        expect(leased.response.status).toBe(201);
+        const timeline = leased.payload.context.timeline;
+
+        // 任务卡（目的）永不压缩。
+        expect(leased.payload.context.issue.title).toBe('压缩测试 Issue');
+        expect(leased.payload.context.issue.description.untrustedUserContent).toContain(
+            '去掉基线功能'
+        );
+
+        // 旧代（g1/g2）的机器过程事件不再逐条出现。
+        expect(timeline.filter((e) => e.type === 'run.phase_changed')).toHaveLength(0);
+        expect(timeline.filter((e) => e.type === 'run.started')).toHaveLength(1);
+
+        // 每个已收尾的旧代恰好一条确定性摘要，且保留最终结论（跨代 nonce 连续性）。
+        const digests = timeline.filter((e) => e.type === 'generation.digest');
+        expect(digests).toHaveLength(2);
+        expect(digests[0].text).toContain('NONCE-G1-7788');
+        expect(digests[0].text).toContain('verification_failed');
+        expect(digests[1].text).toContain('第二代结论');
+
+        // 人写的事件跨代逐字保留。
+        expect(timeline.some((e) => (e.text || '').includes('导出按钮也要一起处理'))).toBe(true);
+        expect(timeline.some((e) => (e.text || '').includes('按方案B交付'))).toBe(true);
+    });
+
+    it('[SCN-FWB-034] 当前代事件的超长证据体按类截断且带总数', async () => {
+        const violations = Array.from({ length: 30 }, (_, i) => ({
+            code: 'VERIFICATION_WEAKENED',
+            file: `tests/unit/file-${i}.test.js`,
+            detail: 'ASSERTION_REMOVED',
+        }));
+        const changedFiles = Array.from({ length: 30 }, (_, i) => `src/mod-${i}.js`);
+        insertEvent(
+            10,
+            'run.failed',
+            'agent',
+            'run_ctx_3',
+            { text: '当前代被门禁拦下。', resultEvidence: { violations, changedFiles } },
+            '2026-08-24T09:05:00.000Z'
+        );
+
+        const leased = await claim(env, 'executor-a');
+        const entry = leased.payload.context.timeline.find(
+            (e) => e.type === 'run.failed' && (e.text || '').includes('当前代被门禁拦下')
+        );
+        expect(entry).toBeTruthy();
+        expect(entry.body.resultEvidence.violations).toHaveLength(20);
+        expect(entry.body.resultEvidence.violationsTotal).toBe(30);
+        expect(entry.body.resultEvidence.changedFiles).toHaveLength(20);
+        expect(entry.body.resultEvidence.changedFilesTotal).toBe(30);
+    });
+
+    it('[SCN-FWB-034] 超出 64KB 预算时只丢最老的代摘要，任务卡与人写事件不动', async () => {
+        // 再堆 120 个已收尾旧代，每代一条长结论——摘要总量必然冲破预算。
+        const filler = 'F'.repeat(2400);
+        for (let gen = 4; gen <= 123; gen += 1) {
+            insertGeneration(gen, {
+                status: 'terminated',
+                terminalReason: 'run.failed',
+                runStatus: 'failed',
+                errorCode: 'verification_failed',
+                startedAt: `2026-08-23T0${gen % 10}:00:00.000Z`,
+            });
+            insertEvent(
+                100 + gen,
+                'agent.message',
+                'agent',
+                `run_ctx_${gen}`,
+                { text: `第${gen}代结论：${filler}` },
+                '2026-08-23T10:00:00.000Z'
+            );
+        }
+        // 当前代换成 g124，保证唯一 created run 可被认领。
+        sqlite.prepare("UPDATE feedback_runs SET status = 'failed' WHERE id = 'run_ctx_3'").run();
+        sqlite
+            .prepare(
+                "UPDATE feedback_workflows SET status = 'terminated' WHERE instance_id = 'wf_ctx_3'"
+            )
+            .run();
+        insertGeneration(124, {
+            status: 'queued',
+            runStatus: 'created',
+            startedAt: '2026-08-24T12:00:00.000Z',
+        });
+
+        const leased = await claim(env, 'executor-a');
+        expect(leased.response.status).toBe(201);
+        const context = leased.payload.context;
+
+        expect(JSON.stringify(context).length).toBeLessThan(65536);
+        expect(context.contextTrimmed?.droppedGenerationDigests).toBeGreaterThan(0);
+        // 裁的是最老的代：最新的旧代摘要仍在，最老的已让位。
+        const digestTexts = context.timeline
+            .filter((e) => e.type === 'generation.digest')
+            .map((e) => e.text);
+        expect(digestTexts.some((t) => t.includes('第123代结论'))).toBe(true);
+        // 任务卡与人写事件毫发无损。
+        expect(context.issue.title).toBe('压缩测试 Issue');
+        expect(context.timeline.some((e) => (e.text || '').includes('导出按钮也要一起处理'))).toBe(
+            true
+        );
+    });
+});

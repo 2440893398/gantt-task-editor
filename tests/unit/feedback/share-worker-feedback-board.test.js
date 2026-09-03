@@ -1210,6 +1210,7 @@ class MemoryD1 {
             return ok([
                 {
                     run_id: run.id,
+                    workflow_id: run.workflow_id,
                     policy: run.policy,
                     provider: run.provider,
                     runner_type: run.runner_type,
