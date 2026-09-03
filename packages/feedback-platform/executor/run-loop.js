@@ -338,8 +338,45 @@ export async function executeLeasedRun({
 
         // 写入型：turn 完成后由执行器跑 run-plan 的五个写入步骤并显式收尾。
         // Agent 没有命令通道，验证只可能发生在这里（SCN-FWB-032）。
+        //
+        // 评审二审 高-6：`.git` 对账对**每一种**收场方式生效，不只是成功走到
+        // finalize 的轮次。原实现里 Agent 改完 `.git` 后只要让本轮以失败收场
+        // （最便宜的是交一轮空响应），对账就被跳过——而下一轮 prepare 会把篡改后
+        // 的状态重新拍成基线，后门从此免检、跨 Run 存活。`?.` 只为让旧测试的最小
+        // stub 不炸；生产接线由 wiring 测试钉死（同 prepareReadOnly 的模式）。
+        // finalize 自己那份对账保持不变，这里只兜不经 finalize 的路径。
         let writeOutcome = null;
-        if (writeCapable && normalizer.turnCompleted && !normalizer.terminalEmitted) {
+        const willFinalize =
+            writeCapable &&
+            normalizer.turnCompleted &&
+            !normalizer.terminalEmitted &&
+            Boolean(normalizer.finalAgentText.trim());
+        if (writeCapable && !willFinalize) {
+            const tampered =
+                (await writePipeline.reconcileGitMetadata?.({ prep: candidatePrep })) ?? [];
+            if (tampered.length) {
+                writeOutcome = { outcome: 'failed', errorCode: 'security_policy_violation' };
+                if (normalizer.terminalEmitted) {
+                    // 终态已投出去了，不能再补一条；至少在本机日志里点名。
+                    log(
+                        `[executor] run=${lease.runId} .git metadata tampered on a failed turn: ${tampered.join(', ')}`
+                    );
+                } else {
+                    await enqueueDelivery(
+                        normalizer.buildFailure(
+                            'security_policy_violation',
+                            `交付被安全策略阻断：本轮 turn 改动了 .git 元数据（${tampered.slice(0, 8).join('、')}）——这类改动不进 diff、清不掉、跨 Run 存活。`
+                        )
+                    );
+                }
+            }
+        }
+        if (
+            writeCapable &&
+            !writeOutcome &&
+            normalizer.turnCompleted &&
+            !normalizer.terminalEmitted
+        ) {
             if (!normalizer.finalAgentText.trim()) {
                 // C2 精神的引申：注定 empty_agent_response 的 Run 不配烧验证预算。
                 writeOutcome = { outcome: 'failed', errorCode: 'empty_agent_response' };
@@ -405,15 +442,31 @@ export async function executeLeasedRun({
         // C4：执行器自身故障也要把 Run 送到终态，绝不留在 running。
         // 有明确协议错误码的（如 S6 工具面越界）如实带出，不要一律压成
         // executor_internal_error——那会让工作台上一次「拒绝开跑」和一次真崩溃同形。
-        const errorCode = String(error?.errorCode || 'executor_internal_error');
+        let errorCode = String(error?.errorCode || 'executor_internal_error');
+        let failureMessage = String(error?.message || error);
+        // 评审二审 高-6：异常/超时收场的写入轮同样要对账——否则「改完 .git 再干等
+        // 超时」仍是免检通道。对账自己失败（git 往往正是崩溃元凶）不掩盖原始错误。
+        if (writeCapable) {
+            try {
+                const tampered =
+                    (await writePipeline.reconcileGitMetadata?.({ prep: candidatePrep })) ?? [];
+                if (tampered.length) {
+                    errorCode = 'security_policy_violation';
+                    failureMessage = `交付被安全策略阻断：本轮 turn 改动了 .git 元数据（${tampered.slice(0, 8).join('、')}）；原始失败：${failureMessage}`;
+                }
+            } catch (reconcileError) {
+                log(
+                    `[executor] run=${lease.runId} .git reconcile failed on crash path:`,
+                    String(reconcileError?.message || reconcileError)
+                );
+            }
+        }
         if (!normalizer.terminalEmitted) {
             // buildFailure 自己也可能抛（归一化产出不合协议时它是故意炸的）。
             // 在这里抛出去会越过 finally 之后一路冒到守护循环，把「如实上报一次
             // 失败」变成「进程死掉」——C4 的整个意义就没了。
             try {
-                await enqueueDelivery(
-                    normalizer.buildFailure(errorCode, String(error?.message || error))
-                );
+                await enqueueDelivery(normalizer.buildFailure(errorCode, failureMessage));
             } catch (deliveryError) {
                 log(
                     'terminal failure delivery failed:',

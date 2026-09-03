@@ -275,6 +275,21 @@ export function createWritePipeline({
         },
 
         /**
+         * 评审二审 高-6：`.git` 对账不能只在成功走到 finalize 的轮次跑。Agent 改过
+         * `.git` 后只要让本轮以失败收场（空响应、超时、任何异常），finalize 里的
+         * 对账就被跳过，而下一轮 prepare 会把篡改后的状态重新拍成基线——防线从此
+         * 对这个后门永久失明。run-loop 在所有不经 finalize 的写入轮收尾路径上调用
+         * 这里；返回被改动的元数据条目（空数组 = 干净或没拍过基线）。
+         */
+        async reconcileGitMetadata({ prep }) {
+            if (!prep?.gitMetadata) return [];
+            return diffGitMetadata(
+                prep.gitMetadata,
+                await snapshotGitMetadata({ workspaceDir, git, fsImpl })
+            );
+        },
+
+        /**
          * turn 完成后的五步。返回 `{outcome: 'completed', completionPayload}` 或
          * `{outcome: 'failed', errorCode, summary, failurePayload}`——不抛业务失败，
          * 抛出的只有执行器自身故障（由 run-loop 的 C4 兜底接住）。

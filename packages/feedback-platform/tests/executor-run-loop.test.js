@@ -249,6 +249,80 @@ describe('[SCN-FWB-032] 写入型 Run 的完整一轮', () => {
     });
 });
 
+describe('[SCN-FWB-035] `.git` 对账对失败收场的轮次同样生效（二次评审 高-6）', () => {
+    // 坏行为画像：对账只在成功走到 finalize 的轮次跑。Agent 改完 `.git` 后交一轮
+    // 空响应（或干等超时/任何异常）就能跳过检查，而下一轮 prepare 会把篡改后的
+    // 状态重新拍成基线——防线从此对这个后门永久失明。
+    function tamperedPipeline() {
+        return {
+            finalized: [],
+            async prepare() {
+                return {
+                    baseCommit: 'a'.repeat(40),
+                    candidateRef: 'feedback/candidate/run_loop_1',
+                    gitMetadata: { digest: 'before', entries: {} },
+                };
+            },
+            async reconcileGitMetadata() {
+                return ['gitdir/config'];
+            },
+            async finalize(options) {
+                this.finalized.push(options);
+                return { outcome: 'completed', completionPayload: {} };
+            },
+        };
+    }
+
+    it('空响应收场 + `.git` 被动过 → security_policy_violation，不是 empty_agent_response', async () => {
+        const { controlPlane, promise } = run({
+            context: { policy: 'implement' },
+            options: { writePipeline: tamperedPipeline() },
+            fake: {
+                script: [
+                    ['turn/started', {}],
+                    ['turn/completed', {}],
+                ],
+            },
+        });
+        const result = await promise;
+
+        expect(result).toEqual(
+            expect.objectContaining({ status: 'failed', errorCode: 'security_policy_violation' })
+        );
+        const terminal = controlPlane.events.at(-1).event;
+        expect(terminal.type).toBe('run.failed');
+        expect(terminal.payload.errorCode).toBe('security_policy_violation');
+    });
+
+    it('异常收场 + `.git` 被动过 → 终态同样升级为 security_policy_violation', async () => {
+        const controlPlane = createFakeControlPlane();
+        const server = createFakeAppServer({ script: [] });
+        server.request = async (method) => {
+            if (method === 'thread/start') return { threadId: 'thread-42' };
+            if (method === 'turn/start') throw new Error('provider crashed before turn');
+            return {};
+        };
+        const result = await executeLeasedRun({
+            lease: baseLease({ policy: 'implement' }),
+            controlPlane,
+            adapter: createCodexAdapter(),
+            createSession: () =>
+                createCodexSession({ client: server, workspaceDir: baseLease().workspaceDir }),
+            retryDelaysMs: [0],
+            setIntervalFn: () => null,
+            clearIntervalFn: () => {},
+            writePipeline: tamperedPipeline(),
+        });
+
+        expect(result).toEqual(
+            expect.objectContaining({ status: 'failed', errorCode: 'security_policy_violation' })
+        );
+        const terminal = controlPlane.events.at(-1).event;
+        expect(terminal.type).toBe('run.failed');
+        expect(terminal.payload.errorCode).toBe('security_policy_violation');
+    });
+});
+
 describe('[SCN-FWB-035] 审批 fail-closed（M0-V5：只拦文件闸会被命令执行绕过）', () => {
     it('全部 */requestApproval 都被拒绝并上报为 HumanAction', async () => {
         const { controlPlane, promise } = run({

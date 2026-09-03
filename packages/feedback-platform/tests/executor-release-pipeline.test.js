@@ -513,6 +513,27 @@ describe('[SCN-FWB-033] 重领时先认已合入的候选', () => {
         ).toBe(CHANGE);
     });
 
+    it('已合入的候选不再 push——否则基线再前进一步，交付就变成永动循环', async () => {
+        // 坏行为画像：alreadyMerged 分支自称「跳过集成直达部署」，但 push 没跳。
+        // push 成功后交付中途崩溃 → 租约过期重领，期间 master 又合入了别的提交 →
+        // 判已合入 → 完整跑 npm ci + 验证 → push 祖先提交被真 git 以
+        // non-fast-forward 拒绝 → default_branch_drift（可恢复，放租约）→ 重领 →
+        // 永远循环：每轮烧一次完整验证，Release 永不终态、也不出人工卡。
+        const git = fakeGit({
+            originHead: 'f'.repeat(40),
+            alreadyMerged: true,
+            pushFails: true,
+        });
+        const { pipeline, events, controlPlane } = makePipeline({ git });
+
+        const result = await pipeline.deliver({ claim: claimFor(), controlPlane });
+
+        expect(result.outcome).toBe('completed');
+        expect(git.calls.some((call) => call.startsWith('push'))).toBe(false);
+        // 服务端状态机仍要看到 merged 事件才能推进到部署段。
+        expect(events.some((event) => event.type === 'integration.merged')).toBe(true);
+    });
+
     it('事件 id 掺入 leaseEpoch——重领带来的新事实不会被当成重放丢掉', async () => {
         const posted = [];
         const { pipeline } = makePipeline();

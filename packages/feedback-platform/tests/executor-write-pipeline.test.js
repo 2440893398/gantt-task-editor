@@ -441,4 +441,22 @@ describe('[SCN-FWB-035] `.git` 被动过就地终止（评审 §1.1）', () => {
         const outcome = await pipeline.finalize({ runId: 'run_w1', context, prep: prepared });
         expect(outcome.outcome).toBe('completed');
     });
+
+    it('生产工厂暴露 reconcileGitMetadata——失败收场的轮次由 run-loop 补对账（二次评审 高-6）', async () => {
+        // 坏行为画像：对账只在成功走到 finalize 的轮次跑。Agent 改完 `.git` 后
+        // 只要让本轮以失败收场（空响应、超时、任何异常），对账即被跳过——而下
+        // 一轮 prepare 会把篡改后的状态重新拍成基线，后门从此免检、跨 Run 存活。
+        // run-loop 用 `writePipeline.reconcileGitMetadata?.()` 兼容旧测试 stub，
+        // 生产接线由这条钉死（同 SCN-FWB-044 prepareReadOnly 的模式）。
+        const { pipeline } = makePipeline();
+        expect(pipeline.reconcileGitMetadata).toBeTypeOf('function');
+        const tampered = await pipeline.reconcileGitMetadata({
+            prep: {
+                gitMetadata: { digest: 'before', entries: { 'gitdir/hooks/pre-commit': 'absent' } },
+            },
+        });
+        expect(tampered).toContain('gitdir/hooks/pre-commit');
+        // 没拍过基线（只读轮/prepare 失败）时不误报。
+        expect(await pipeline.reconcileGitMetadata({ prep: null })).toEqual([]);
+    });
 });

@@ -248,7 +248,11 @@ export function createReleasePipeline({
             }
             await post('integration.rebased', {
                 integrationCommit,
-                strategy: originHead === payload.baseCommit ? 'fast_forward' : 'rebase',
+                strategy: alreadyMerged
+                    ? 'already_merged'
+                    : originHead === payload.baseCommit
+                      ? 'fast_forward'
+                      : 'rebase',
             });
 
             // 依赖就绪（与写入管线同一判定）。
@@ -293,14 +297,24 @@ export function createReleasePipeline({
             }
 
             // merged = 真实 push。被拒即基线漂移：可恢复失败，服务端状态不动，下轮重领。
-            try {
-                await git('push', 'origin', `${integrationCommit}:refs/heads/${payload.baseRef}`);
-            } catch (error) {
-                return fail(
-                    'default_branch_drift',
-                    `Push to origin/${payload.baseRef} was rejected: ${String(error?.message || error).slice(0, 300)}`,
-                    { integrationCommit }
-                );
+            // 已合入的候选**不 push**：它本来就在 origin 历史里，而 origin 若又前进了，
+            // push 祖先提交会被 non-fast-forward 拒绝——「已合入 → push 被拒 →
+            // default_branch_drift 放租约 → 重领又判已合入」是一个每轮烧完整验证、
+            // 永不终态的死循环。
+            if (!alreadyMerged) {
+                try {
+                    await git(
+                        'push',
+                        'origin',
+                        `${integrationCommit}:refs/heads/${payload.baseRef}`
+                    );
+                } catch (error) {
+                    return fail(
+                        'default_branch_drift',
+                        `Push to origin/${payload.baseRef} was rejected: ${String(error?.message || error).slice(0, 300)}`,
+                        { integrationCommit }
+                    );
+                }
             }
             await post('integration.merged', { integrationCommit });
 
