@@ -1234,7 +1234,8 @@ class MemoryD1 {
         ) {
             const rows = [];
             for (const issue of this.tables.feedback_issues.values()) {
-                if (!['in_progress', 'testing', 'test_failed'].includes(issue.status)) continue;
+                if (!['queued', 'in_progress', 'testing', 'test_failed'].includes(issue.status))
+                    continue;
                 if (issue.active_workflow_id) continue;
                 if (issue.active_human_action_id) continue;
                 const run = issue.last_run_id
@@ -14786,6 +14787,62 @@ describe('feedback workbench V2 reconcile sweep', () => {
         );
         expect(action).toEqual(
             expect.objectContaining({ type: 'approve_gate_scope', run_id: 'run_zombie' })
+        );
+
+        // 幂等：再跑一次不重复建卡。
+        const second = await runScheduled(env);
+        expect(second.repairedZombieIssues).toBe(0);
+        expect(
+            Array.from(env.FEEDBACK_DB.tables.feedback_human_actions.values()).filter(
+                (row) => row.status === 'active'
+            ).length
+        ).toBe(1);
+    });
+
+    it('[SCN-FWB-038] repairs a stranded queued issue whose run timed out unclaimed', async () => {
+        // #czi9c6 g9 的生产形状（2026-09-01）：Issue 刚被重新排队（queued），执行器
+        // 单槽被另一条 Run 占用后进程死亡，这一轮 run 从未被认领（无租约）就静默
+        // 超时——没有 executor_lost 卡、active_workflow_id 已被超时闸清空。三态扫描
+        // （in_progress/testing/test_failed）捞不到它，连续两晚 reconcile 跳过不救，
+        // 工作台永远显示「已排队」。
+        const env = createV2Env(
+            {},
+            {
+                feedback_issues: [
+                    createD1IssueRow({
+                        status: 'queued',
+                        automation_decision: 'implementation_approved',
+                        last_run_id: 'run_zombie_queued',
+                        active_workflow_id: null,
+                    }),
+                ],
+                feedback_runs: [
+                    {
+                        id: 'run_zombie_queued',
+                        issue_id: feedbackKey,
+                        workflow_id: 'wf_dead',
+                        policy: 'implement_and_verify',
+                        provider: 'claude',
+                        runner_type: 'executor',
+                        status: 'timed_out',
+                        error_code: 'run_timeout',
+                        created_at: '2026-09-01T14:23:18.900Z',
+                    },
+                ],
+            }
+        );
+
+        const summary = await runScheduled(env);
+        expect(summary.repairedZombieIssues).toBe(1);
+        expect(summary.runCount).toBe(0);
+
+        const issue = env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey);
+        expect(issue.status).toBe('needs_human');
+        const action = Array.from(env.FEEDBACK_DB.tables.feedback_human_actions.values()).find(
+            (row) => row.status === 'active'
+        );
+        expect(action).toEqual(
+            expect.objectContaining({ type: 'developer_fix_required', run_id: 'run_zombie_queued' })
         );
 
         // 幂等：再跑一次不重复建卡。

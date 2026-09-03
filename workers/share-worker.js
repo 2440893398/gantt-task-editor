@@ -9341,11 +9341,15 @@ async function runFeedbackReconcile(env, now = new Date()) {
     // 对用户显示为永远的「AI 正在处理」（#czi9c6 在生产上停了 19 小时）。只修这种
     // 已卡死的耦合断裂——不扫描健康 Issue、不创建 Agent Run（SCN-FWB-002 仍成立），
     // 也兜住本修复上线之前就已经卡死的存量。
+    // `queued` 也在捞取范围内（SCN-FWB-038，2026-09-03）：run 从未被执行器认领
+    // （无租约）而超时的那一代不会产生 executor_lost 卡，Issue 停在「已排队」、
+    // active_workflow_id 已被超时闸清空——#czi9c6 g9 连续两晚被本巡检跳过。健康的
+    // 重排队 Issue 在派发认领时就写入 active_workflow_id，不会被误捞。
     const zombieIssues = await env.FEEDBACK_DB.prepare(
         `SELECT i.id AS issue_id, r.id AS run_id, r.error_code
          FROM feedback_issues i
          JOIN feedback_runs r ON r.id = i.last_run_id
-         WHERE i.status IN ('in_progress', 'testing', 'test_failed')
+         WHERE i.status IN ('queued', 'in_progress', 'testing', 'test_failed')
            AND i.active_workflow_id IS NULL
            AND i.active_human_action_id IS NULL
            AND r.status IN ('failed', 'timed_out')
@@ -9939,10 +9943,15 @@ async function expireFeedbackExecutorLeases(env, now = new Date()) {
                  SET status = 'needs_human', active_human_action_id = ?, updated_at = ?
                  WHERE id = ?`
             ).bind(actionId, nowIso, lease.issue_id),
+            // SCN-FWB-035：只把仍在跑的实例改成「等人」。超时闸可能先于租约过期把该代
+            // 记成 terminated（生产 2026-09-01：run_timeout 15:22、租约过期 15:30）——
+            // 复活已终态的行会让派发端把死实例当「等待中」去 sendEvent，新 generation
+            // 永远开不出来，Issue 死在「已排队」。
             env.FEEDBACK_DB.prepare(
                 `UPDATE feedback_workflows
                  SET status = 'waiting', waiting_until = NULL
-                 WHERE instance_id = ?`
+                 WHERE instance_id = ?
+                   AND status IN ('queued', 'running', 'waiting')`
             ).bind(lease.workflow_id),
             env.FEEDBACK_DB.prepare(
                 `UPDATE feedback_executors

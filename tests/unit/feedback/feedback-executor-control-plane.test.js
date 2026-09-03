@@ -489,6 +489,59 @@ describe('[SCN-FWB-035] executor leases and heartbeats', () => {
             status: 'active',
         });
     });
+
+    it('[SCN-FWB-035] 租约过期收尾不复活已被超时闸终止的 Workflow 行', async () => {
+        // 生产竞态实录（2026-09-01 #tvrcd5 g2）：Workflow 的超时闸先跑——run 记
+        // timed_out、工作流行记 terminated（15:22）；执行器租约 8 分钟后才过期
+        // （15:30）。过期收尾把 terminated 行无守卫地改回 waiting 后，派发端会把
+        // 死实例当「等待中」去 sendEvent，新 generation 永远开不出来——executor_lost
+        // 卡以 queued 解决也没用，Issue 死在「已排队」。
+        const leased = await claim(env, 'executor-a');
+        sqlite
+            .prepare(
+                `UPDATE feedback_runs
+                 SET status = 'timed_out', error_code = 'run_timeout',
+                     finished_at = '2026-09-01T15:22:46.212Z'
+                 WHERE id = ?`
+            )
+            .run(leased.payload.runId);
+        sqlite
+            .prepare(
+                `UPDATE feedback_workflows
+                 SET status = 'terminated', active_run_id = NULL, waiting_until = NULL,
+                     finished_at = '2026-09-01T15:22:46.212Z', terminal_reason = 'run_timeout'
+                 WHERE instance_id = 'wf_executor_1'`
+            )
+            .run();
+        sqlite
+            .prepare(
+                `UPDATE feedback_executor_leases
+                 SET expires_at = '2020-01-01T00:00:00.000Z'
+                 WHERE id = ?`
+            )
+            .run(leased.payload.leaseId);
+
+        await claim(env, 'executor-b');
+
+        const workflow = sqlite
+            .prepare(
+                `SELECT status, terminal_reason FROM feedback_workflows
+                 WHERE instance_id = 'wf_executor_1'`
+            )
+            .get();
+        expect(workflow.status).toBe('terminated');
+        expect(workflow.terminal_reason).toBe('run_timeout');
+        // 只挡工作流行的复活：Run 停在自己的终态，决策卡照建（用户仍要决定下一步）。
+        expect(
+            sqlite
+                .prepare('SELECT status FROM feedback_runs WHERE id = ?')
+                .get(leased.payload.runId).status
+        ).toBe('timed_out');
+        expect(sqlite.prepare('SELECT type, status FROM feedback_human_actions').get()).toEqual({
+            type: 'executor_lost',
+            status: 'active',
+        });
+    });
 });
 
 describe('[SCN-FWB-034] [SCN-FWB-035] executor event and approval ingress', () => {
