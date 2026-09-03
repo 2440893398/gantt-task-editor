@@ -90,7 +90,7 @@ undo/redo. Keep verification targeted, but include fresh evidence in the final r
 
 ## Deployment (two copies, one codebase)
 
-`npm run build:cn` copies `workers/share-worker.js` verbatim into the Pages artifact as
+`npm run build` copies `workers/share-worker.js` verbatim into the Pages artifact as
 `_worker.js`, so **the Pages site and the `gantt-share` Worker run the same code in two
 deployments**. They differ only in bindings: the Pages project has KV + Durable Object,
 while D1, R2 and Workflows exist only on the Worker — which is why the feedback write path
@@ -100,16 +100,22 @@ needs its `_worker.js` because `/feedback` is rendered, not a static file.
 - **Changing `workers/share-worker.js` means deploying both sides.** Deploying only one
   leaves the page UI and the API on different versions — that drift is what users perceive
   as "the styling is wrong". Worker: `npx wrangler deploy --config wrangler.toml`.
-  Pages: `npm run deploy:cn`.
+  Pages: `npm run deploy`.
 - **Pages is the only entry a person should see** (SCN-FWB-028). User-facing links use
   `FEEDBACK_PRODUCTION_ORIGIN`, and `/feedback` on `*.workers.dev` 302s back to Pages.
   Attachment signed URLs stay on the Worker — they need R2 and the signing secret.
 - **New modules imported by the Worker must be registered** in `workerModuleFiles`
-  (`scripts/prepare-cloudflare-pages.js`), or the CN build validation fails.
+  (`scripts/prepare-cloudflare-pages.js`), or the build validation fails.
 - **`.github/workflows/` changes do not take effect via deploy.** The Worker dispatches
   workflows from `master` (`FEEDBACK_GITHUB_REF`), so they must be merged first.
 - Pre-flight checks that need no credentials: `npm run feedback:worker:dry-run` and
-  `npm run build:cn`.
+  `npm run build`.
+- **There is exactly one build and one deploy script**, producing the single artifact
+  `dist-cn` (2026-09-03). The old international pair — `npm run build` → `dist` plus
+  `vercel.json` — is gone: two look-alike output directories let the delivery pipeline
+  ship the wrong one, which stripped `_worker.js` from Pages and took `/feedback` and
+  every `/api/*` down while every status-code smoke check stayed green. Adding a second
+  build output is a regression; `tests/unit/build/cn-build-config.test.js` fails on it.
 
 ## Boundaries
 

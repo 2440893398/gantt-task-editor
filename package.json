@@ -11,8 +11,7 @@
     },
     "scripts": {
         "dev": "vite",
-        "build": "vite build",
-        "build:cn": "vite build --config vite.config.cn.js && node scripts/prepare-cloudflare-pages.js",
+        "build": "vite build && node scripts/prepare-cloudflare-pages.js",
         "check:artifacts": "node scripts/prepare-cloudflare-pages.js --check",
         "executor:start": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/executor/executor.ps1 start",
         "executor:stop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/executor/executor.ps1 stop",
@@ -22,7 +21,7 @@
         "feedback:worker:dry-run": "wrangler deploy --dry-run --config wrangler.toml",
         "feedback:migrate:local": "wrangler d1 migrations apply FEEDBACK_DB --local --config wrangler.toml",
         "feedback:migrate:remote": "wrangler d1 migrations apply FEEDBACK_DB --remote --config wrangler.toml",
-        "deploy:cn": "npm run build:cn && npx wrangler pages deploy dist-cn --project-name gantt-task-editor --branch master",
+        "deploy": "npm run build && npx wrangler pages deploy dist-cn --project-name gantt-task-editor --branch master",
         "preview": "vite preview",
         "test": "vitest run",
         "test:watch": "vitest",

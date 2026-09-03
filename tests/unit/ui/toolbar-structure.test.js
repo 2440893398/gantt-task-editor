@@ -48,8 +48,9 @@ describe('toolbar structure in index.html', () => {
         expect(source).toContain('window.openShareDialog');
     });
 
-    it('uses shared index.html for the CN build entry', () => {
-        const source = fs.readFileSync(path.resolve(process.cwd(), 'vite.config.cn.js'), 'utf8');
+    it('uses shared index.html for the build entry', () => {
+        // 2026-09-03：构建配置只剩一份（国际版与 vercel.json 已退役）。
+        const source = fs.readFileSync(path.resolve(process.cwd(), 'vite.config.js'), 'utf8');
 
         expect(source).toContain("input: 'index.html'");
     });

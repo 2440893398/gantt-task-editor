@@ -10,27 +10,49 @@ function readRootFile(fileName) {
     return fs.readFileSync(path.resolve(process.cwd(), fileName), 'utf8');
 }
 
-describe('CN build configuration', () => {
+describe('build configuration', () => {
+    // 2026-09-03：仓库只保留一份构建/部署配置。此前 `vite.config.js`（国际版 →
+    // `dist`）与 `vite.config.cn.js`（→ `dist-cn`）并存，交付管线挑错产物就把
+    // Pages 变成纯静态站（生产事故，见 SCN-FWB-033）。这里钉住「只有一份」。
+    it('keeps exactly one build config and one deploy script', () => {
+        expect(fs.existsSync(path.resolve(process.cwd(), 'vite.config.cn.js'))).toBe(false);
+        // vercel.json 曾把 `npm run build` + `dist` 定为另一条部署线，一并退役。
+        expect(fs.existsSync(path.resolve(process.cwd(), 'vercel.json'))).toBe(false);
+
+        const packageJson = JSON.parse(readRootFile('package.json'));
+        const buildScripts = Object.keys(packageJson.scripts).filter(
+            (name) => name === 'build' || name.startsWith('build:')
+        );
+        const deployScripts = Object.keys(packageJson.scripts).filter(
+            (name) => name === 'deploy' || name.startsWith('deploy:')
+        );
+        expect(buildScripts).toEqual(['build']);
+        expect(deployScripts).toEqual(['deploy']);
+        // 唯一的构建必须产出 Pages 需要的东西：vite 产物 + Pages 打包脚本。
+        expect(packageJson.scripts.build).toContain('prepare-cloudflare-pages');
+    });
+
     it('defaults feedback submissions to the dedicated production Worker', () => {
-        const configSource = readRootFile('vite.config.cn.js');
+        const configSource = readRootFile('vite.config.js');
 
         expect(configSource).toContain("'import.meta.env.VITE_FEEDBACK_API_URL'");
         expect(configSource).toContain('https://gantt-share.ch451314.workers.dev');
     });
 
-    it('deploys the CN Pages build explicitly to the production branch', () => {
+    it('deploys the Pages build explicitly to the production branch', () => {
         const packageJson = JSON.parse(readRootFile('package.json'));
 
-        expect(packageJson.scripts['deploy:cn']).toContain('--branch master');
+        expect(packageJson.scripts.deploy).toContain('--branch master');
+        expect(packageJson.scripts.deploy).toContain('dist-cn');
     });
 
     it('uses index.html as the only maintained HTML entry', () => {
-        expect(readRootFile('vite.config.cn.js')).toContain("input: 'index.html'");
+        expect(readRootFile('vite.config.js')).toContain("input: 'index.html'");
         expect(fs.existsSync(path.resolve(process.cwd(), 'index.cn.html'))).toBe(false);
     });
 
     it('rewrites CN-only browser assets from the shared index.html', () => {
-        const configSource = readRootFile('vite.config.cn.js');
+        const configSource = readRootFile('vite.config.js');
 
         expect(configSource).toContain('/lib/dhtmlxgantt.css');
         expect(configSource).toContain('/lib/dhtmlxgantt.js');

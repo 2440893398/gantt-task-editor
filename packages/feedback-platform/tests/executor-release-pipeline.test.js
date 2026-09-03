@@ -27,7 +27,7 @@ function claimFor(overrides = {}) {
             pagesProject: 'gantt-task-editor',
             branch: 'master',
             pagesOutputDir: 'dist-cn',
-            pagesBuildCommand: 'npm run build:cn',
+            pagesBuildCommand: 'npm run build',
         },
         payload: {
             releaseId: 'rel_x1',
@@ -357,7 +357,7 @@ describe('[SCN-FWB-033] Pages 部署产物由项目数据决定（生产事故 2
                 pagesProject: 'gantt-task-editor',
                 branch: 'master',
                 pagesOutputDir: 'dist-cn',
-                pagesBuildCommand: 'npm run build:cn',
+                pagesBuildCommand: 'npm run build',
             }),
             controlPlane,
         });
@@ -367,7 +367,7 @@ describe('[SCN-FWB-033] Pages 部署产物由项目数据决定（生产事故 2
         expect(deployCommand).toContain('pages deploy dist-cn');
         expect(deployCommand).not.toContain('pages deploy dist ');
         // 构建必须发生在部署之前，否则部署的是上一次的产物。
-        const buildIndex = commands.indexOf('npm run build:cn');
+        const buildIndex = commands.indexOf('npm run build');
         expect(buildIndex).toBeGreaterThanOrEqual(0);
         expect(buildIndex).toBeLessThan(commands.indexOf(deployCommand));
     });
@@ -410,7 +410,7 @@ describe('[SCN-FWB-033] Pages 部署产物由项目数据决定（生产事故 2
             pagesProject: 'gantt-task-editor',
             branch: 'master',
             pagesOutputDir: 'dist-cn',
-            pagesBuildCommand: 'npm run build:cn',
+            pagesBuildCommand: 'npm run build',
         });
         claim.payload.smokeUrls = ['/', '/api/feedback/issues'];
 

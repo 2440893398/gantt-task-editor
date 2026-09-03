@@ -2,11 +2,10 @@
  * 生成静态 agent skill：`public/agent-skill.md` + `public/agent-skill/<key>.md`。
  *
  * 为什么是 vite 插件而不是 npm 的 prebuild 钩子：npm 的 pre 钩子按脚本名精确绑定，
- * `prebuild` 只在 `npm run build` 前触发，**不在 `build:cn` 前触发**。而 CN 部署走的
- * 是 `npm run build:cn`（package.json），挂 prebuild 会让 CN 带着旧的甚至压根没有的
- * skill 上线，而且是静默的——CN 本来就有部署滞后的前科。插件挂在 buildStart 上，
- * build / build:cn / dev 三条路径全覆盖；dev 也覆盖到，否则本地开发时 public/ 里没有
- * 生成物，Agent 会一直走「取不到 skill」的降级路径，把误报当成真问题查。
+ * 换个入口名（本仓就发生过：曾经的 `build:cn` 不触发 `prebuild`）就静默失效，产物带着
+ * 旧的甚至压根没有的 skill 上线。插件挂在 buildStart 上，build / dev 两条路径全覆盖；
+ * dev 也覆盖到，否则本地开发时 public/ 里没有生成物，Agent 会一直走「取不到 skill」
+ * 的降级路径，把误报当成真问题查。
  *
  * 生成物进 .gitignore：手改会在下次构建被覆盖，不如从一开始就不让它进版本库。
  *
@@ -83,7 +82,7 @@ export function writeAgentSkillFiles() {
     return { version, count: shards.length + 1 };
 }
 
-/** 挂进两份 vite config 的 plugins，覆盖 build / build:cn / dev 三条路径。 */
+/** 挂进唯一那份 vite config 的 plugins，覆盖 build / dev 两条路径。 */
 export function agentSkillPlugin() {
     return {
         name: 'agent-skill-static',
