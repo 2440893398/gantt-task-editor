@@ -724,6 +724,11 @@ export default {
         previewUnplayable:
             '이 기록에는 마운트할 페이지 스냅샷이 없어 재생할 수 없습니다. 다시 녹화하여 문제를 재현해 주세요. 원본 이벤트는 피드백과 함께 업로드됩니다.',
         attachmentHint: '첨부 파일은 각각 4MB 이하여야 하며, 붙여넣기 이미지도 지원합니다.',
+        attachmentTooMany: '첨부 파일은 최대 {{count}}개까지 추가할 수 있습니다',
+        attachmentTooManyWithReplay:
+            '재현 녹화가 첨부 슬롯 1개를 사용하므로 {{count}}개까지만 더 추가할 수 있습니다',
+        attachmentTotalTooLarge:
+            '첨부 파일 총량이 8MB를 초과했습니다. 일부를 삭제하거나 압축한 뒤 다시 시도해 주세요.',
         contextHint: '페이지 URL, 브라우저 정보, 현재 프로젝트 요약, 최근 콘솔 로그가 포함됩니다.',
         submit: '피드백 제출',
         submitting: '제출 중...',

@@ -17,14 +17,22 @@ import { sanitizeFeedbackUrl } from './feedback-url.js';
 const MAX_LOGS = 80;
 const MAX_LOG_LENGTH = 1200;
 const MAX_ATTACHMENT_SIZE = 4 * 1024 * 1024;
+/** 与服务端 MAX_FEEDBACK_COMMENT_ATTACHMENTS 对齐：它数的是含录像的总数。 */
+const MAX_SERVER_ATTACHMENT_COUNT = 5;
 const AUTO_REPORT_COOLDOWN_MS = 60 * 1000;
+/** §中-4：动态指纹的错误风暴每指纹窗口拦不住，全局速率上限是客户端最后一道闸。 */
+const AUTO_REPORT_WINDOW_MS = 60 * 1000;
+const AUTO_REPORT_MAX_PER_WINDOW = 5;
 /** §4.4：提交超时。挂起的请求会让对话框永远停在「提交中」。 */
 const SUBMIT_TIMEOUT_MS = 15 * 1000;
 const logs = [];
 
 let originalConsole = null;
-let lastAutoReportAt = 0;
-let lastAutoReportFingerprint = '';
+/** §中-4：每指纹各有冷却窗口。只存「上一条」的话，交替指纹（同一根因同时触发
+ * error 与 unhandledrejection）会把冷却整个绕空。窗口外条目在成功后顺手清理，有界。 */
+const autoReportAtByFingerprint = new Map();
+/** 全局窗口内成功上报的时间戳（滑动窗口）。 */
+let autoReportSentAt = [];
 let errorListenersInstalled = false;
 
 function getFeedbackApiBase() {
@@ -180,8 +188,21 @@ export async function submitFeedback(feedback, { includeReplay = true } = {}) {
     // 录像只随用户**主动**提交上传。auto_error 走 includeReplay:false——用户点
     // 「录制复现」去重现一个会抛错的 bug 时，恰恰是抛错触发的自动上报会把他尚未
     // 授权提交的复现段静默传走并清空，等他手动提交时只剩清空之后那几秒。
-    const replayAttachment = includeReplay ? await createFeedbackReplayAttachment() : null;
-
+    let replayAttachment = includeReplay ? await createFeedbackReplayAttachment() : null;
+    // 上下文在收尾快照之后取，计数才与附件一致。
+    const replayContext = getFeedbackReplayContext();
+    // §中-5：录像因故缺席时必须留痕——`eventCount>0, playable:true` 却没有附件的
+    // Issue 会误导排查者。有事件却拿不出附件，唯一原因是单段超字节预算被整体丢弃。
+    let replayDropped =
+        includeReplay && !replayAttachment && replayContext.eventCount > 0
+            ? 'over_byte_budget'
+            : '';
+    if (replayAttachment && attachments.length >= MAX_SERVER_ATTACHMENT_COUNT) {
+        // §中-2：服务端数的是总数，5 个用户附件 + 录像 = 6 会整单 400。用户自己
+        // 挑的附件优先，录像让位；没上传就不清缓冲，下次名额够时还能带上。
+        replayDropped = 'attachment_slots_exhausted';
+        replayAttachment = null;
+    }
     if (replayAttachment) {
         attachments.push(replayAttachment);
     }
@@ -195,17 +216,24 @@ export async function submitFeedback(feedback, { includeReplay = true } = {}) {
         contact: feedback.contact || '',
         attachments,
         context: getFeedbackContext({
-            replay: getFeedbackReplayContext(),
+            replay: replayDropped
+                ? { ...replayContext, attachmentDropped: replayDropped }
+                : replayContext,
             ...(feedback.context || {}),
         }),
     };
 
     // §4.4：超时与 keepalive。没有超时的话，请求挂起时对话框会永远停在「提交中」；
     // auto_error 是页面卸载前最可能发生的一类上报，不带 keepalive 会随导航被丢弃。
-    // keepalive 有 64KB 上限，所以只给不带附件的自动上报用。
+    // keepalive 有 64KB 上限，所以只给不带附件的自动上报用。判定必须按 UTF-8 字节
+    // （§中-3）：JSON.stringify 不转义 CJK，`body.length` 数的是 code unit，中文日志
+    // 下 code unit 在限内而真实字节超限——浏览器对超限 keepalive 直接 TypeError，
+    // 加了 keepalive 的上报反而必败。
     const body = JSON.stringify(payload);
     const useKeepalive =
-        payload.sourceType === 'auto_error' && attachments.length === 0 && body.length < 60 * 1024;
+        payload.sourceType === 'auto_error' &&
+        attachments.length === 0 &&
+        new TextEncoder().encode(body).length < 60 * 1024;
 
     let response;
     try {
@@ -261,10 +289,14 @@ export async function reportRuntimeError(errorInfo) {
     // §4.5：同一个错误在冷却窗口内只报一次；**不同**的错误不该被上一个的窗口吃掉。
     // 旧实现只看时间：首条上报之后 60 秒内的真实新错误全部静默丢弃，而同一个错误
     // 每 61 秒还会重复上报一次。
-    if (
-        fingerprint === lastAutoReportFingerprint &&
-        now - lastAutoReportAt < AUTO_REPORT_COOLDOWN_MS
-    ) {
+    const lastForFingerprint = autoReportAtByFingerprint.get(fingerprint) || 0;
+    if (now - lastForFingerprint < AUTO_REPORT_COOLDOWN_MS) {
+        return null;
+    }
+    // §中-4：指纹带动态 id/时间戳时每条都是「新错误」，上面的窗口拦不住——
+    // 全局速率上限封顶持续风暴（窗口内不同的真实错误照报）。
+    autoReportSentAt = autoReportSentAt.filter((at) => now - at < AUTO_REPORT_WINDOW_MS);
+    if (autoReportSentAt.length >= AUTO_REPORT_MAX_PER_WINDOW) {
         return null;
     }
 
@@ -286,8 +318,14 @@ export async function reportRuntimeError(errorInfo) {
 
     // §4.5：**成功之后**才扣冷却。发送前就扣的话，第一条上报失败会连带把随后
     // 60 秒内的真实错误一起静默丢掉——最需要上报的那一刻反而最安静。
-    lastAutoReportAt = Date.now();
-    lastAutoReportFingerprint = fingerprint;
+    const sentAt = Date.now();
+    autoReportAtByFingerprint.set(fingerprint, sentAt);
+    autoReportSentAt.push(sentAt);
+    for (const [key, at] of autoReportAtByFingerprint) {
+        if (sentAt - at >= AUTO_REPORT_COOLDOWN_MS) {
+            autoReportAtByFingerprint.delete(key);
+        }
+    }
     return result;
 }
 

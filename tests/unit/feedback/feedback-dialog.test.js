@@ -6,6 +6,7 @@ const mockStartReplayRecording = vi.fn();
 const mockStopReplayRecording = vi.fn();
 const mockSubmitFeedback = vi.fn();
 let mockReplayEnabled = false;
+let mockReplayEventCount = 0;
 
 vi.mock('../../../src/utils/i18n.js', () => ({
     i18n: {
@@ -29,10 +30,10 @@ vi.mock('../../../src/utils/toast.js', () => ({
 vi.mock('../../../src/features/feedback/feedbackReplay.js', () => ({
     getFeedbackReplayContext: () => ({
         enabled: mockReplayEnabled,
-        eventCount: 0,
+        eventCount: mockReplayEventCount,
     }),
     onFeedbackReplayStateChange: (listener) => {
-        listener({ enabled: mockReplayEnabled, eventCount: 0 });
+        listener({ enabled: mockReplayEnabled, eventCount: mockReplayEventCount });
         return vi.fn();
     },
     startFeedbackReplayRecording: mockStartReplayRecording,
@@ -303,6 +304,35 @@ describe('[SCN-FWB-049] 附件上限与 paste 监听器', () => {
 
         expect(fileToAttachment).toHaveBeenCalledTimes(5);
         expect(mockShowToast).toHaveBeenCalledWith(expect.stringContaining('5'), 'error');
+    });
+
+    it('[§中-2] 有录像在缓冲时用户附件上限降为 4——录像要占一个服务端名额', async () => {
+        // 坏行为画像：数量闸只闸用户附件。5 图 + 录像 = 6 > 服务端上限 5，
+        // 整单 400，且最认真复现（又录像又贴满图）的用户必败。
+        mockReplayEventCount = 12;
+        const fileToAttachment = vi.fn(async (file) => ({
+            name: file.name,
+            type: file.type,
+            size: file.size,
+            dataUrl: 'data:,',
+        }));
+        vi.doMock('../../../src/features/feedback/feedbackService.js', () => ({
+            fileToAttachment,
+            submitFeedback: mockSubmitFeedback,
+        }));
+        const { openFeedbackDialog } =
+            await import('../../../src/features/feedback/FeedbackDialog.js');
+        openFeedbackDialog();
+
+        try {
+            pasteFiles(5);
+            await flush();
+        } finally {
+            mockReplayEventCount = 0;
+        }
+
+        expect(fileToAttachment).toHaveBeenCalledTimes(4);
+        expect(mockShowToast).toHaveBeenCalledWith(expect.stringContaining('4'), 'error');
     });
 
     it('[§4.7] 附件总量超过 8MB 时拒绝——单文件 4MB 的闸拦不住六张 3.9MB', async () => {

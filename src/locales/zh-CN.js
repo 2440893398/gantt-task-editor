@@ -785,6 +785,9 @@ export default {
         previewUnplayable:
             '本次录制缺少可挂载的页面快照，没法回放。请重新开始录制并复现一次问题；原始事件仍会随反馈上传供排查。',
         attachmentHint: '单个附件不超过 4MB，可直接粘贴截图。',
+        attachmentTooMany: '最多只能添加 {{count}} 个附件',
+        attachmentTooManyWithReplay: '复现录像占一个附件名额，最多再添加 {{count}} 个附件',
+        attachmentTotalTooLarge: '附件总量超过 8MB，请删掉几个或压缩后再试',
         contextHint:
             '会自动附带页面地址、浏览器、当前项目摘要和最近控制台日志；手动录制后会附带 rrweb 复现事件。',
         submit: '提交反馈',

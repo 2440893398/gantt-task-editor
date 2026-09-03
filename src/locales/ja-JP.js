@@ -728,6 +728,11 @@ export default {
         previewUnplayable:
             'この記録にはマウントできるスナップショットがないため再生できません。録画をやり直して再現してください。生イベントはフィードバックと一緒に送信されます。',
         attachmentHint: '添付は1件4MBまで。貼り付け画像にも対応しています。',
+        attachmentTooMany: '添付できるのは最大 {{count}} 件です',
+        attachmentTooManyWithReplay:
+            '再現録画が添付枠を1件使うため、追加できるのはあと {{count}} 件です',
+        attachmentTotalTooLarge:
+            '添付の合計が8MBを超えています。いくつか削除するか圧縮してからお試しください。',
         contextHint:
             'ページURL、ブラウザ情報、現在のプロジェクト概要、最近のコンソールログを含めます。',
         submit: '送信',

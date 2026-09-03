@@ -221,6 +221,71 @@ describe('feedbackService', () => {
         expect(getFeedbackReplayContext().eventCount).toBe(2);
     });
 
+    it('[SCN-FWB-049] 五个用户附件占满名额时录像让位并留痕，不整单被服务端拒绝', async () => {
+        // 坏行为画像：数量闸只闸用户附件。5 图 + 录像 = 6 > 服务端上限 5，
+        // 整单 400 且失败不清缓冲——重试永远失败，最认真复现的用户必败。
+        const { recordFeedbackReplayEvent, getFeedbackReplayContext } =
+            await import('../../../src/features/feedback/feedbackReplay.js');
+        const { submitFeedback } =
+            await import('../../../src/features/feedback/feedbackService.js');
+
+        recordFeedbackReplayEvent(
+            { type: 4, timestamp: Date.now(), data: { href: 'http://localhost/#/demo' } },
+            true
+        );
+        recordFeedbackReplayEvent({ type: 2, timestamp: Date.now(), data: { node: { id: 1 } } });
+
+        const five = Array.from({ length: 5 }, (_, index) => ({
+            name: `shot-${index}.png`,
+            type: 'image/png',
+            size: 10,
+            dataUrl: 'data:image/png;base64,aWs=',
+        }));
+        await submitFeedback({
+            submittedType: 'bug',
+            title: '满员',
+            description: '五张图加一段录像',
+            attachments: five,
+        });
+
+        const body = JSON.parse(fetch.mock.calls[0][1].body);
+        expect(body.attachments).toHaveLength(5);
+        expect(body.attachments.some((item) => item.name.startsWith('feedback-rrweb-'))).toBe(
+            false
+        );
+        // 让位必须留痕：否则工作台看到 eventCount>0 却没有附件，只能瞎猜。
+        expect(body.context.replay.attachmentDropped).toBe('attachment_slots_exhausted');
+        // 让位不等于上传：缓冲原封不动，下次名额够时还能带上。
+        expect(getFeedbackReplayContext().eventCount).toBe(2);
+    });
+
+    it('[SCN-FWB-049] 录像超字节预算被整体丢弃时，context.replay 写明 attachmentDropped', async () => {
+        // 坏行为画像：单段超 2.5MB → fitEventsToBudget 返回 null → 附件静默缺席，
+        // Issue 里 eventCount>0、playable:true 却没有附件，误导排查者；
+        // 旧实现还会在「成功」后把这段从未离开本机的录像清掉。
+        const { recordFeedbackReplayEvent, getFeedbackReplayContext } =
+            await import('../../../src/features/feedback/feedbackReplay.js');
+        const { submitFeedback } =
+            await import('../../../src/features/feedback/feedbackService.js');
+
+        recordFeedbackReplayEvent(
+            { type: 4, timestamp: Date.now(), data: { href: 'http://localhost/#/demo' } },
+            true
+        );
+        recordFeedbackReplayEvent({
+            type: 2,
+            timestamp: Date.now(),
+            data: { node: { id: 1 }, bulk: 'y'.repeat(3 * 1024 * 1024) },
+        });
+
+        await submitFeedback({ submittedType: 'bug', title: '大快照', description: '超预算' });
+
+        const body = JSON.parse(fetch.mock.calls[0][1].body);
+        expect(body.attachments).toHaveLength(0);
+        expect(body.context.replay.attachmentDropped).toBe('over_byte_budget');
+        expect(getFeedbackReplayContext().eventCount).toBe(2);
+    });
+
     it('reports runtime errors as auto error bugs', async () => {
         const { reportRuntimeError } =
             await import('../../../src/features/feedback/feedbackService.js');
@@ -299,6 +364,61 @@ describe('[SCN-FWB-049] 自动上报的冷却、指纹与 fail-safe', () => {
         await submitFeedback({ submittedType: 'bug', title: 't', description: 'd' });
         const [, options] = fetch.mock.calls[0];
         expect(options.signal).toBeInstanceOf(AbortSignal);
+    });
+
+    it('[§中-3] keepalive 的 60KB 闸按 UTF-8 字节计量——中文日志不例外', async () => {
+        // 坏行为画像：body.length 数的是 UTF-16 code unit。JSON.stringify 不转义
+        // CJK，中文 3 字节/字——code unit 在限内而真实字节超限时，Chrome 对超限
+        // keepalive 请求直接 TypeError，加了 keepalive 的上报反而必败。
+        const { recordFeedbackLog, reportRuntimeError } =
+            await import('../../../src/features/feedback/feedbackService.js');
+
+        // 25 条 × 1200 个中文字 ≈ 3 万 code unit（限内）≈ 9 万字节（超限）。
+        for (let index = 0; index < 25; index += 1) {
+            recordFeedbackLog('error', ['错'.repeat(1200)]);
+        }
+        await reportRuntimeError({ kind: 'error', message: 'Boom', source: 'a.js', line: 1 });
+
+        const [, options] = fetch.mock.calls[0];
+        expect(new TextEncoder().encode(options.body).length).toBeGreaterThan(60 * 1024);
+        expect(options.body.length).toBeLessThan(60 * 1024);
+        expect(options.keepalive).toBeUndefined();
+    });
+
+    it('[§中-4] 交替指纹绕不空冷却——同根因的 error/unhandledrejection 风暴被压住', async () => {
+        // 坏行为画像：指纹只存「上一条」。同一根因常常同时触发 error 与
+        // unhandledrejection 两种 kind，A/B 交替时每条都完整跑 submitFeedback
+        // （含最大 2.5MB 的 stringify + 网络请求），客户端零限速。
+        const { reportRuntimeError } =
+            await import('../../../src/features/feedback/feedbackService.js');
+
+        const a = { kind: 'error', message: 'Boom', source: 'a.js', line: 1 };
+        const b = { kind: 'unhandledrejection', message: 'Boom', source: 'a.js', line: 1 };
+        for (let index = 0; index < 10; index += 1) {
+            await reportRuntimeError(index % 2 ? b : a);
+        }
+
+        // A 与 B 各自的冷却窗口只放一条，其余交替全部压住。
+        expect(fetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('[§中-4] 动态指纹的错误风暴被全局速率上限封顶', async () => {
+        // 指纹带动态 id/时间戳时每条都是「新错误」，每指纹窗口拦不住——
+        // 全局上限是最后一道客户端防线（服务端 per-IP 闸之前）。
+        const { reportRuntimeError } =
+            await import('../../../src/features/feedback/feedbackService.js');
+
+        for (let index = 0; index < 12; index += 1) {
+            await reportRuntimeError({
+                kind: 'error',
+                message: `Boom ${index}`,
+                source: 'a.js',
+                line: index,
+            });
+        }
+
+        expect(fetch.mock.calls.length).toBeLessThanOrEqual(5);
+        expect(fetch.mock.calls.length).toBeGreaterThanOrEqual(1);
     });
 
     it('[§4.4] 静默的 auto_error 用 keepalive，手动提交不用', async () => {

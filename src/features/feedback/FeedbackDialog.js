@@ -285,12 +285,25 @@ function attachmentsTotalBytes(attachments) {
     return attachments.reduce((total, item) => total + (Number(item?.size) || 0), 0);
 }
 
+/**
+ * §中-2：服务端数的是**总数**。缓冲里有录像时它提交会占一个名额，
+ * 5 个用户附件 + 录像 = 6 会整单 400——最认真复现（又录像又贴满图）的用户必败。
+ */
+function currentAttachmentLimit() {
+    const reserved = getFeedbackReplayContext().eventCount > 0 ? 1 : 0;
+    return MAX_ATTACHMENT_COUNT - reserved;
+}
+
 async function addFiles(files, attachments, updateAttachmentList) {
     for (const file of files) {
-        if (attachments.length >= MAX_ATTACHMENT_COUNT) {
+        const limit = currentAttachmentLimit();
+        if (attachments.length >= limit) {
             showToast(
-                i18n.t('feedback.attachmentTooMany', { count: MAX_ATTACHMENT_COUNT }) ||
-                    `最多只能添加 ${MAX_ATTACHMENT_COUNT} 个附件`,
+                limit < MAX_ATTACHMENT_COUNT
+                    ? i18n.t('feedback.attachmentTooManyWithReplay', { count: limit }) ||
+                          `复现录像占一个附件名额，最多再添加 ${limit} 个附件`
+                    : i18n.t('feedback.attachmentTooMany', { count: limit }) ||
+                          `最多只能添加 ${limit} 个附件`,
                 'error'
             );
             break;

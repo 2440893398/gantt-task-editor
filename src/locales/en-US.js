@@ -764,6 +764,11 @@ export default {
         previewUnplayable:
             'This recording has no page snapshot to mount, so it cannot be replayed. Start a new recording and reproduce the issue; the raw events are still uploaded with the feedback.',
         attachmentHint: 'Each attachment must be under 4MB. Pasted screenshots are supported.',
+        attachmentTooMany: 'You can attach at most {{count}} files',
+        attachmentTooManyWithReplay:
+            'The replay recording uses one attachment slot; you can add up to {{count}} more files',
+        attachmentTotalTooLarge:
+            'Attachments exceed 8MB in total. Remove or compress some and try again.',
         contextHint:
             'Page URL, browser info, current project summary, and recent console logs are included. rrweb replay events are attached after manual recording.',
         submit: 'Submit feedback',
