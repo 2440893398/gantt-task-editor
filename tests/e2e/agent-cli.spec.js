@@ -160,13 +160,21 @@ test.describe('agent command layer', () => {
 
         await page.locator('#agent-guide-copy-prompt').click();
 
+        // SCN-AGT-038/039（2026-08-31 拍板）：提示词是「指路 + 兜底」——页面地址、带
+        // 版本 query 的 skill 地址、三条最小安全规则；细则（dryRun/ifRev/命令清单）
+        // 已移入分层 skill，入口不再包含。此前断言的是拆分前的 1978 字长文案，
+        // 56f35c5 落地瘦身后本用例在 master 上一直红，e2e 验证门因此对所有
+        // 基于新 master 的候选一律误判。
         const copied = await page.evaluate(() => window.__agentGuideCopiedText);
         expect(copied).toContain(pageUrl);
         expect(copied).toContain('先打开这个页面地址');
-        expect(copied).toContain('#agent-guide-command-input');
         expect(copied).toContain('window.app');
-        expect(copied).toContain('dryRun');
-        expect(copied).toContain('ifRev');
+        expect(copied).toContain('/agent-skill.md?v=');
+        expect(copied).toContain('取不到这个地址就说出来');
+        expect(copied).toContain('PROJECT_NOT_FOUND');
+        // 入口不含命令清单与运行时细则（SCN-AGT-038），长度受 SCN-AGT-039 约束。
+        expect(copied).not.toContain('dryRun');
+        expect(copied.length).toBeLessThan(700);
 
         await panel.locator('#agent-guide-command-input').fill(
             JSON.stringify(
