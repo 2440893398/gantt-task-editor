@@ -21,7 +21,14 @@ function claimFor(overrides = {}) {
         candidateId: 'cnd_x1',
         status: 'integrating',
         releaseToken: 'tok.sig',
-        deployConfig: { pagesProject: 'gantt-task-editor', branch: 'master' },
+        // SCN-FWB-033（2026-09-03 收紧）：pages 部署的产物目录与构建命令是项目数据，
+        // 缺失即 fail-closed。夹具照生产 feedback_projects 的配置给全。
+        deployConfig: {
+            pagesProject: 'gantt-task-editor',
+            branch: 'master',
+            pagesOutputDir: 'dist-cn',
+            pagesBuildCommand: 'npm run build:cn',
+        },
         payload: {
             releaseId: 'rel_x1',
             issueId: 'issue_x1',
@@ -115,7 +122,19 @@ function makePipeline({
         fsImpl: { existsSync: (p) => true },
         fetchImpl: async (url) => {
             const next = fetchResponses.shift() ?? { status: 200 };
-            return { status: next.status, url };
+            // 真实响应带 content-type：坏部署的形态正是「200 + text/html」，
+            // 只给 status 的假响应会让这类故障在测试里根本无法表达。
+            const contentType =
+                next.contentType ??
+                (String(url).includes('/api/') ? 'application/json' : 'text/html; charset=utf-8');
+            return {
+                status: next.status,
+                url,
+                headers: {
+                    get: (name) =>
+                        String(name).toLowerCase() === 'content-type' ? contentType : null,
+                },
+            };
         },
     });
     return { pipeline, events, commands, controlPlane, git };
@@ -301,6 +320,108 @@ describe('[SCN-FWB-033] pages 交付（deploymentRequired=true）', () => {
             { path: '/feedback', status: 200, assertion: 'status_2xx' },
             { path: '/api/feedback/issues', status: 401, assertion: 'protected_auth_required' },
         ]);
+    });
+});
+
+describe('[SCN-FWB-033] Pages 部署产物由项目数据决定（生产事故 2026-09-03）', () => {
+    const DEPLOYMENT_ID = '12345678-1234-4234-9234-123456789abc';
+
+    function pagesClaimWith(deployConfig) {
+        const claim = claimFor({
+            changedFiles: ['src/app.js'],
+            deploymentRequired: true,
+            deploymentTarget: 'pages',
+            smokeUrls: ['/'],
+        });
+        return { ...claim, deployConfig };
+    }
+
+    it('按 deployConfig 部署 dist-cn 并先跑 CN 构建——写死 dist 会把 _worker.js 从 Pages 上抹掉', async () => {
+        // 生产实锤：管线写死 `pages deploy dist`（国际版静态站），部署后 Pages 上
+        // 没有 _worker.js，/feedback 与全部 /api/* 落到 SPA 静态兜底，首页还从
+        // vendored dhtmlx 9.1.1 变成 CDN 10.0。产物目录与构建命令必须来自项目数据。
+        const { pipeline, commands, controlPlane } = makePipeline({
+            commandResults: {
+                'npx wrangler pages deployment list --project-name gantt-task-editor': {
+                    ok: true,
+                    exitCode: 0,
+                    timedOut: false,
+                    output: DEPLOYMENT_ID,
+                },
+            },
+            fetchResponses: [{ status: 200 }],
+        });
+
+        const result = await pipeline.deliver({
+            claim: pagesClaimWith({
+                pagesProject: 'gantt-task-editor',
+                branch: 'master',
+                pagesOutputDir: 'dist-cn',
+                pagesBuildCommand: 'npm run build:cn',
+            }),
+            controlPlane,
+        });
+
+        expect(result.outcome).toBe('completed');
+        const deployCommand = commands.find((command) => command.includes('pages deploy'));
+        expect(deployCommand).toContain('pages deploy dist-cn');
+        expect(deployCommand).not.toContain('pages deploy dist ');
+        // 构建必须发生在部署之前，否则部署的是上一次的产物。
+        const buildIndex = commands.indexOf('npm run build:cn');
+        expect(buildIndex).toBeGreaterThanOrEqual(0);
+        expect(buildIndex).toBeLessThan(commands.indexOf(deployCommand));
+    });
+
+    it('缺 pagesOutputDir 时以 blocked_external 停下，绝不回落默认目录', async () => {
+        // 静默的默认值正是本次事故的形态：配置没说部署什么，就不许猜。
+        const { pipeline, commands, events, controlPlane } = makePipeline({
+            fetchResponses: [{ status: 200 }],
+        });
+
+        const result = await pipeline.deliver({
+            claim: pagesClaimWith({ pagesProject: 'gantt-task-editor', branch: 'master' }),
+            controlPlane,
+        });
+
+        expect(result.errorCode).toBe('blocked_external');
+        expect(commands.some((command) => command.includes('pages deploy'))).toBe(false);
+        expect(events.some((event) => event.type === 'deployment.completed')).toBe(false);
+    });
+
+    it('冒烟必须证明 Functions 仍在接管：/api 返回 200 但 text/html 判失败', async () => {
+        // 坏部署下 `/` 与 `/feedback` 照样 200（静态兜底返回首页），只看状态码
+        // 的冒烟会全绿放行——判据必须落在「这条 API 真的由 Worker 回答」上。
+        const { pipeline, events, controlPlane } = makePipeline({
+            commandResults: {
+                'npx wrangler pages deployment list --project-name gantt-task-editor': {
+                    ok: true,
+                    exitCode: 0,
+                    timedOut: false,
+                    output: DEPLOYMENT_ID,
+                },
+            },
+            fetchResponses: [
+                { status: 200 },
+                { status: 200, contentType: 'text/html; charset=utf-8' },
+            ],
+        });
+
+        const claim = pagesClaimWith({
+            pagesProject: 'gantt-task-editor',
+            branch: 'master',
+            pagesOutputDir: 'dist-cn',
+            pagesBuildCommand: 'npm run build:cn',
+        });
+        claim.payload.smokeUrls = ['/', '/api/feedback/issues'];
+
+        const result = await pipeline.deliver({ claim, controlPlane });
+
+        expect(result.errorCode).toBe('smoke_failed');
+        const smoke = events.find((event) => event.type === 'smoke.completed');
+        expect(smoke.payload.passed).toBe(false);
+        expect(
+            smoke.payload.checks.find((check) => check.path === '/api/feedback/issues').assertion
+        ).toBe('unexpected_content_type');
     });
 });
 

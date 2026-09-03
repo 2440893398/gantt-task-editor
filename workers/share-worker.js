@@ -7418,7 +7418,11 @@ function resolveFeedbackDeploymentRequirement(changedFiles) {
         return {
             required: true,
             target: 'pages',
-            smokeUrls: ['/'],
+            // `/` 对「Pages Functions 没在接管」这类故障没有分辨力：静态兜底照样
+            // 200 返回首页。生产事故 2026-09-03——坏部署抹掉 `_worker.js` 后
+            // `/` 与 `/feedback` 双双 200，冒烟全绿放行，而工作台与全部 API 已死。
+            // 加一条只有 Worker 才答得出的路径，执行器侧再校 JSON content-type。
+            smokeUrls: ['/', '/api/feedback/issues'],
             reason: 'frontend_surface_changed',
         };
     }

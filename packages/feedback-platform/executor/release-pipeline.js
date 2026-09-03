@@ -61,10 +61,22 @@ export function extractDeploymentId(output) {
     return match ? match[0] : '';
 }
 
-function smokeAssertionFor(path, status) {
-    if (status >= 200 && status < 300) return 'status_2xx';
-    if (path === '/api/feedback/issues' && (status === 401 || status === 403)) {
+/**
+ * 生产事故 2026-09-03：坏部署把 Pages 换成纯静态站后，`/` 与 `/feedback` 依旧
+ * 200——SPA 静态兜底对任意路径都回首页 HTML，只看状态码的冒烟因此全绿放行，
+ * 而 `/feedback` 工作台和全部 `/api/*` 实际已经不由 Worker 回答了。所以 API 路径
+ * 的判据必须落在响应体裁上：JSON 才算「Functions 仍在接管」。
+ */
+function smokeAssertionFor(path, status, contentType = '') {
+    const isApi = path.startsWith('/api/');
+    if (isApi && (status === 401 || status === 403)) {
         return 'protected_auth_required';
+    }
+    if (status >= 200 && status < 300) {
+        if (isApi && !String(contentType).toLowerCase().includes('json')) {
+            return 'unexpected_content_type';
+        }
+        return 'status_2xx';
     }
     return 'unexpected_status';
 }
@@ -322,20 +334,34 @@ export function createReleasePipeline({
                 await post('deployment.started', { integrationCommit });
                 const target = identity.deploymentTarget;
                 let deployCommand;
+                let pagesBuildCommand = '';
                 try {
-                    deployCommand =
-                        target === 'worker'
-                            ? 'npx wrangler deploy'
-                            : `npx wrangler pages deploy dist --project-name ${assertShellSafeToken(
-                                  'deployConfig.pagesProject',
-                                  deployConfig?.pagesProject
-                              )} --branch ${assertShellSafeToken(
-                                  'payload.baseRef',
-                                  payload.baseRef
-                              )} --commit-hash ${assertShellSafeToken(
-                                  'integrationCommit',
-                                  integrationCommit
-                              )}`;
+                    if (target === 'worker') {
+                        deployCommand = 'npx wrangler deploy';
+                    } else {
+                        // 产物目录是项目数据，绝不回落默认值。写死 `dist` 的那版把本仓
+                        // Pages 换成了国际版静态站：`_worker.js` 消失，/feedback 与全部
+                        // /api/* 落到 SPA 静态兜底，首页从 vendored dhtmlx 改引 CDN
+                        // （生产事故 2026-09-03）。配置没说部署什么，就停下来问人。
+                        const pagesProject = assertShellSafeToken(
+                            'deployConfig.pagesProject',
+                            deployConfig?.pagesProject
+                        );
+                        const outputDir = assertShellSafeToken(
+                            'deployConfig.pagesOutputDir',
+                            deployConfig?.pagesOutputDir
+                        );
+                        // 部署前按项目命令重建产物：跑的是 CN 构建还是国际构建，同样是
+                        // 项目数据。缺省则沿用集成验证阶段已经产出的产物。
+                        pagesBuildCommand = String(deployConfig?.pagesBuildCommand || '').trim();
+                        deployCommand = `npx wrangler pages deploy ${outputDir} --project-name ${pagesProject} --branch ${assertShellSafeToken(
+                            'payload.baseRef',
+                            payload.baseRef
+                        )} --commit-hash ${assertShellSafeToken(
+                            'integrationCommit',
+                            integrationCommit
+                        )}`;
+                    }
                 } catch (error) {
                     // §1.7：拼不安全的东西进 shell 之前先停。这属于外部配置问题，
                     // 走 blocked_external——它会立卡请人修，而不是把 Release 判死。
@@ -344,6 +370,22 @@ export function createReleasePipeline({
                         `Refusing to build a deploy command: ${error.message}`,
                         { integrationCommit }
                     );
+                }
+                if (pagesBuildCommand) {
+                    log(`[executor] release ${releaseId}: building pages artifact`);
+                    const build = await runCommandImpl({
+                        command: pagesBuildCommand,
+                        cwd: workspaceDir,
+                        env: childEnv,
+                        log,
+                    });
+                    if (!build.ok) {
+                        return fail(
+                            'deployment_failed',
+                            `Pages build failed: ${build.output.slice(-800)}`,
+                            { integrationCommit }
+                        );
+                    }
                 }
                 log(`[executor] release ${releaseId}: deploying (${target})`);
                 const deploy = await runCommandImpl({
@@ -384,19 +426,29 @@ export function createReleasePipeline({
                 const checks = [];
                 for (const path of payload.smokeUrls || []) {
                     let status = 0;
+                    let contentType = '';
                     try {
                         const response = await fetchImpl(`${payload.productionOrigin}${path}`, {
                             method: 'GET',
                         });
                         status = Number(response.status) || 0;
+                        contentType = String(response.headers?.get?.('content-type') || '');
                     } catch {
                         status = 0;
                     }
-                    checks.push({ path, status, assertion: smokeAssertionFor(path, status) });
+                    checks.push({
+                        path,
+                        status,
+                        assertion: smokeAssertionFor(path, status, contentType),
+                    });
                 }
+                // 白名单而不是黑名单：新增一种失败断言时，忘记同步这里会让它静默通过
+                // ——`unexpected_content_type` 第一次落地时就正是这么漏的。
                 const smokePassed =
                     checks.length === (payload.smokeUrls || []).length &&
-                    checks.every((check) => check.assertion !== 'unexpected_status');
+                    checks.every((check) =>
+                        ['status_2xx', 'protected_auth_required'].includes(check.assertion)
+                    );
                 await post('smoke.completed', {
                     integrationCommit,
                     deployedCommit: integrationCommit,

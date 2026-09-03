@@ -396,6 +396,43 @@ describe('[SCN-FWB-033] Release 交付只有 executor 认领一条路', () => {
     });
 });
 
+describe('[SCN-FWB-033] pages 冒烟必须能识破「Functions 没在接管」', () => {
+    it('前端面变更的 Release 冒烟带上 /api/feedback/issues，而不是只探首页', async () => {
+        // 生产事故 2026-09-03：坏部署把 Pages 换成纯静态站后 `/` 照样 200
+        // （SPA 兜底返回首页），冒烟全绿放行，而 /feedback 工作台和全部 /api/*
+        // 已经不由 Worker 回答了。首页在这类故障下没有分辨力，判据必须落在
+        // 「有一条只有 Functions 才答得出的路径」上。
+        const sqlite = applyMigrations();
+        seedProject(sqlite);
+        seedDeliverableCandidate(sqlite);
+        sqlite
+            .prepare(
+                `UPDATE feedback_candidates SET changed_files_json = '["src/app.js"]'
+                 WHERE id = 'cnd_rel_1'`
+            )
+            .run();
+        const env = createEnv(sqlite);
+        const admin = await mintAdminToken();
+
+        const { response } = await post(
+            env,
+            '/api/feedback/candidates/cnd_rel_1/deliver',
+            {},
+            { token: admin }
+        );
+        expect(response.status).toBe(201);
+
+        const release = sqlite
+            .prepare(
+                `SELECT deployment_target, smoke_urls_json FROM feedback_releases
+                 WHERE candidate_id = 'cnd_rel_1'`
+            )
+            .get();
+        expect(release.deployment_target).toBe('pages');
+        expect(JSON.parse(release.smoke_urls_json)).toContain('/api/feedback/issues');
+    });
+});
+
 describe('[SCN-FWB-035] Release 租约：破坏力最大的一步也要有互斥（评审 §3.2）', () => {
     // 坏行为画像：分支锁只保证「同时至多一个 Release 在跑」，不保证「同时至多一个
     // 执行器在跑这个 Release」。两个守护进程（stop 超时后 -Force 留下的新旧实例、
