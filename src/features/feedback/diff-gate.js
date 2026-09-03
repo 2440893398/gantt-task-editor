@@ -58,10 +58,21 @@ export const CONTRACT_AWARE_PATTERNS = [
 ];
 
 /** Edits that remove verification rather than change behaviour (§14.4). */
+// 二次评审 高-7（实测绕过）：vitest 还导出 `suite`（describe 的别名）；
+// `skipIf(...)` / `runIf(...)` / `it['skip']` 与 `.skip` 等价；`.fails` 让失败的
+// 测试假绿。词表认不出这些形态时，Agent 可以整组静音失败测试且全链路零发现——
+// 场景 checker 只看内层 it 标题，`suite.skip` 连它都拦不住。
+const TEST_FN_NAMES = String.raw`(?:test|it|describe|suite)`;
+const TEST_FN_CHAIN = String.raw`(?:\s*\.\s*(?:concurrent|sequential|shuffle))*`;
+const testModifierPattern = (names, modifiers) =>
+    new RegExp(
+        String.raw`^\+.*\b${names}${TEST_FN_CHAIN}\s*(?:\.\s*(?:${modifiers})\s*\(|\[\s*['"\x60](?:${modifiers})['"\x60]\s*\]\s*\()`
+    );
 const VERIFICATION_WEAKENING_PATTERNS = [
-    { code: 'TEST_SKIP', pattern: /^\+.*\b(?:test|it|describe)\s*\.\s*skip\s*\(/ },
-    { code: 'TEST_TODO', pattern: /^\+.*\b(?:test|it|describe)\s*\.\s*todo\s*\(/ },
-    { code: 'TEST_ONLY', pattern: /^\+.*\b(?:test|it|describe)\s*\.\s*only\s*\(/ },
+    { code: 'TEST_SKIP', pattern: testModifierPattern(TEST_FN_NAMES, 'skip|skipIf|runIf') },
+    { code: 'TEST_TODO', pattern: testModifierPattern(TEST_FN_NAMES, 'todo') },
+    { code: 'TEST_ONLY', pattern: testModifierPattern(TEST_FN_NAMES, 'only') },
+    { code: 'TEST_FAILS', pattern: testModifierPattern(String.raw`(?:test|it)`, 'fails') },
     { code: 'ASSERTION_REMOVED', pattern: /^-\s*(?:await\s+)?expect\s*\(/ },
     { code: 'DEEP_COMPARE_WEAKENED', pattern: /^-\s*.*\.\s*(?:toEqual|toStrictEqual)\s*\(/ },
 ];
@@ -76,6 +87,23 @@ const ASSERTION_ADDED_PATTERN = /^\+\s*(?:await\s+)?expect\s*\(/;
  */
 const WEAK_ASSERTION_PATTERN =
     /\.\s*(?:toBeTruthy|toBeDefined|toBeFalsy)\s*\(|\.\s*toBe\s*\(\s*(?:true|false)\s*\)|\.\s*not\s*\.\s*(?:toBeNull|toBeUndefined)\s*\(/;
+
+// 二次评审 高-4（实测绕过）：恒真形态不是强断言。toMatchObject({}) 对任意对象
+// 为真；toEqual(expect.anything()) / toEqual(expect.any(Object)) 是 deep-compare
+// 外形的恒真式；expect(<字面量>) 断的是常量，与被测值无关。它们抵不了置换额度。
+// 词法门禁根治不了「新增无关但真实的断言抵账」——那一半靠候选人审。
+const ALWAYS_TRUE_MATCHER_PATTERN =
+    /\.\s*toMatchObject\s*\(\s*\{\s*\}\s*\)|\.\s*(?:toEqual|toStrictEqual|toMatchObject)\s*\(\s*expect\s*\.\s*(?:anything\s*\(\s*\)|any\s*\(\s*Object\s*\))\s*\)/;
+const LITERAL_EXPECT_SUBJECT_PATTERN =
+    /^\+\s*(?:await\s+)?expect\s*\(\s*(?:-?\d+(?:\.\d+)?|true|false|null|undefined|'[^']*'|"[^"]*")\s*\)/;
+
+function isWeakAssertionAddition(line) {
+    return (
+        WEAK_ASSERTION_PATTERN.test(line) ||
+        ALWAYS_TRUE_MATCHER_PATTERN.test(line) ||
+        LITERAL_EXPECT_SUBJECT_PATTERN.test(line)
+    );
+}
 
 const DEEP_COMPARE_PATTERN = /\.\s*(?:toEqual|toStrictEqual)\s*\(/;
 
@@ -234,7 +262,7 @@ export function findVerificationWeakening(diffText) {
         if (!line.startsWith('+') && !line.startsWith('-')) continue;
 
         if (ASSERTION_ADDED_PATTERN.test(line)) {
-            if (WEAK_ASSERTION_PATTERN.test(line)) addedWeakAssertions += 1;
+            if (isWeakAssertionAddition(line)) addedWeakAssertions += 1;
             else addedStrongAssertions += 1;
         }
 

@@ -222,6 +222,83 @@ describe('[SCN-FWB-012] feedback diff gate', () => {
             expect(findVerificationWeakening(diff)).toEqual([]);
         });
 
+        it('[SCN-FWB-012] 恒真断言抵不了置换额度：toMatchObject({}) / expect.anything() / 字面量主语', () => {
+            // 二次评审 高-4 实测：三种形态在旧词表下都被计成「强断言」抵掉了
+            // 被删的深比较——allowed:true 零违规。toMatchObject({}) 对任意对象
+            // 恒真；toEqual(expect.anything()) 是 deep-compare 外形的恒真式；
+            // expect(1).toBe(1) 断的是常量，与被测值无关。
+            const alwaysTrueAdditions = [
+                '+        expect(loaded).toMatchObject({});',
+                '+        expect(loaded).toEqual(expect.anything());',
+                '+        expect(1).toBe(1);',
+            ];
+            for (const added of alwaysTrueAdditions) {
+                const diff = [
+                    '--- a/tests/unit/example.test.js',
+                    '+++ b/tests/unit/example.test.js',
+                    '@@ -10,1 +10,1 @@',
+                    '-        expect(loaded).toEqual(snapshot);',
+                    added,
+                ].join('\n');
+
+                const result = evaluateDiffGate({
+                    changedFiles: ['tests/unit/example.test.js'],
+                    diffText: diff,
+                    writeAllowed: true,
+                });
+                expect(result.allowed, added).toBe(false);
+                expect(result.violations, added).toContainEqual(
+                    expect.objectContaining({
+                        code: 'VERIFICATION_WEAKENED',
+                        detail: 'DEEP_COMPARE_WEAKENED',
+                    })
+                );
+            }
+        });
+
+        it('[SCN-FWB-012] suite.skip / skipIf / runIf / 括号取值都是 TEST_SKIP', () => {
+            // 二次评审 高-7 实测：vitest 真导出 `suite` 作为 describe 的别名，
+            // skipIf(true)、runIf(false)、it['skip'] 与 `.skip` 等价——旧词表只认
+            // test|it|describe 加字面 `.skip`，这些形态全链路零发现。
+            const skipForms = [
+                "+suite.skip('quiet the failing group', () => {});",
+                "+it.skipIf(true)('flaky path', () => {});",
+                "+test.runIf(false)('never runs', () => {});",
+                "+it['skip']('bracket access', () => {});",
+                "+it.concurrent.skip('chained modifier', () => {});",
+            ];
+            for (const added of skipForms) {
+                const diff = [
+                    '--- a/tests/unit/example.test.js',
+                    '+++ b/tests/unit/example.test.js',
+                    added,
+                ].join('\n');
+                expect(findVerificationWeakening(diff), added).toContainEqual(
+                    expect.objectContaining({ code: 'TEST_SKIP' })
+                );
+            }
+        });
+
+        it('[SCN-FWB-012] it.fails 让失败测试假绿——与 skip 同罪且授权不放行', () => {
+            const diff = [
+                '--- a/tests/unit/example.test.js',
+                '+++ b/tests/unit/example.test.js',
+                "+it.fails('now passes when it fails', () => {});",
+            ].join('\n');
+
+            expect(findVerificationWeakening(diff)).toContainEqual(
+                expect.objectContaining({ code: 'TEST_FAILS' })
+            );
+            const result = evaluateDiffGate({
+                changedFiles: ['tests/unit/example.test.js'],
+                diffText: diff,
+                approvedPaths: ['tests/unit/example.test.js'],
+                contractRunApproved: true,
+                writeAllowed: true,
+            });
+            expect(result.allowed).toBe(false);
+        });
+
         it('does not flag context lines that merely mention the pattern', () => {
             const diff = [
                 '--- a/docs/testing.md',
