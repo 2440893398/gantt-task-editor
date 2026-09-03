@@ -190,3 +190,11 @@
 | 高-5 alreadyMerged 不再 push（已合入候选跳过 push 直达部署；`integration.merged` 事件保留推进状态机）；顺带修低项 strategy 标签失真（`already_merged`） | 已修（先见红：fakeGit pushFails + alreadyMerged 场景） | `72f05f4` |
 | 高-6 `.git` 对账覆盖失败收场：write-pipeline 暴露 `reconcileGitMetadata`，run-loop 在空响应/provider 自宣失败/异常超时三类不经 finalize 的收尾路径补对账，篡改升级为 `security_policy_violation`；生产接线按 prepareReadOnly 模式用 wiring 测试钉死 | 已修（先见红：空响应与异常两条路径测试） | `72f05f4` |
 | 高-7 skip 家族词表补全：`suite` 别名、`skipIf`/`runIf`、括号取值 `it['skip']`、链式 `it.concurrent.skip`、新码 `TEST_FAILS`（`it.fails` 让失败测试假绿），全部不可被授权放行 | 已修（五种实测绕过 + fails 各有红转绿测试） | `c714314` |
+| 中-1 cycle 撞顶走 SCN-FWB-038 (b) 既有路径：复用 `ensureFeedbackRunFailureEscalation` 落 `needs_human` + `developer_fix_required` 决策卡，owner 评论可开新 generation（SCN-FWB-038 契约收紧为 (b2)） | 已修（先见红：21 轮真实 Workflow 循环测试） | `a611a3e` |
+| 中-2 录像占附件名额：录制中用户附件上限降 4（新文案键入四语言包）；提交时名额仍不够则用户附件优先、录像让位且不清缓冲，`context.replay.attachmentDropped='attachment_slots_exhausted'` 留痕 | 已修（先见红：dialog 与 service 各一条） | `512ae42` |
+| 中-3 keepalive 60KB 闸改 `TextEncoder` 字节计量 | 已修（先见红：25×1200 CJK 日志构造「code unit 限内、字节超限」区间） | `512ae42` |
+| 中-4 指纹去重有界两层：每指纹 60s 窗口（Map，成功后清窗口外条目）+ 全局 5 条/分钟滑动窗口；仍保持「成功后才扣」与「不同错误照报」 | 已修（先见红：交替指纹与动态指纹两条风暴测试） | `512ae42` |
+| 中-5 录像超字节预算整体丢弃时 `context.replay.attachmentDropped='over_byte_budget'` 留痕，且不再清空从未上传的缓冲 | 已修（先见红：3MB 单段快照场景） | `512ae42` |
+| 中-6 diff 头注入：`+++ b/...` 只有紧跟真实 `--- ` 头（或 `diff --git`）才算文件头；`+++ /dev/null` 按 `--- a/` 归属被删文件。残留：双行伪造（先在早前 Run 植入 `-- a/x` 行再删除）理论可行，单 Run 路径已死 | 已修（三条实测绕过红转绿） | `0f8930c` |
+| 中-7 两个 checker 接机械执行点：pre-commit 直跑 + `npm test` 内真实清单对账（执行器验证序列跑 `npm test` 即被覆盖），新增 `tests/unit/business-testing/gate-wiring.test.js` | 已修 | `0f8930c` |
+| 中-8 迁移重号豁免钉死为精确文件名集合（多一个/少一个/换名都硬错误）；脚本加 `FEEDBACK_MIGRATIONS_DIR` 注入口使豁口可测 | 已修（先见红：第三个 0003 夹具） | `0f8930c` |
