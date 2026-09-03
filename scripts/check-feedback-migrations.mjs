@@ -18,7 +18,10 @@ import { fileURLToPath } from 'node:url';
 
 const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const migrationsDir = path.join(root, 'src', 'features', 'feedback', 'migrations');
+// FEEDBACK_MIGRATIONS_DIR 只供测试注入夹具目录（gate-wiring.test.js）。
+const migrationsDir = process.env.FEEDBACK_MIGRATIONS_DIR
+    ? path.resolve(process.env.FEEDBACK_MIGRATIONS_DIR)
+    : path.join(root, 'src', 'features', 'feedback', 'migrations');
 
 const problems = [];
 const files = readdirSync(migrationsDir)
@@ -28,35 +31,47 @@ const files = readdirSync(migrationsDir)
 if (files.length === 0) problems.push(`没有找到任何迁移文件：${migrationsDir}`);
 
 // 已知且已拍板的重号例外。改名会与生产 `d1_migrations` 里已记录的文件名对不上
-// （那张表按文件名记账），代价远大于收益，所以这一对**留着并写死在这里**——
-// 新出现的任何重号仍然是硬错误。
-const ACCEPTED_DUPLICATE_NUMBERS = new Map([
+// （那张表按文件名记账），代价远大于收益，所以这一对**留着并写死在这里**。
+// 例外钉死为**精确的文件名集合**而不是编号（二次评审 中-8）：按编号豁免的话，
+// 任何新增的第三个 `0003_*.sql` 也会打着「已拍板的例外」横幅静默放行——而迁移
+// 目录不在 diff-gate 的 admin-approval 清单里，Agent 写入无需授权。集合不同
+// （多一个、少一个、换名字）都是硬错误。
+const ACCEPTED_DUPLICATE_SETS = new Map([
     [
         '0003',
-        '0003_feedback_agent_runs.sql 是 2026-08-27 的重建件（生产 d1_migrations 里有这一行、仓库历史里没有），与 0003_feedback_workbench_settings.sql 并存；改名会让生产记账对不上',
+        {
+            files: ['0003_feedback_agent_runs.sql', '0003_feedback_workbench_settings.sql'],
+            reason: '0003_feedback_agent_runs.sql 是 2026-08-27 的重建件（生产 d1_migrations 里有这一行、仓库历史里没有），与 0003_feedback_workbench_settings.sql 并存；改名会让生产记账对不上',
+        },
     ],
 ]);
 
 // 1) 编号唯一性。重号不会立刻出错，但它把「应用顺序」交给了文件名的其余部分。
-const byNumber = new Map();
+const filesByNumber = new Map();
 for (const name of files) {
     const match = name.match(/^(\d{4})_/);
     if (!match) {
         problems.push(`文件名不符合 NNNN_name.sql：${name}`);
         continue;
     }
-    const existing = byNumber.get(match[1]);
-    if (existing) {
-        const accepted = ACCEPTED_DUPLICATE_NUMBERS.get(match[1]);
-        if (accepted) {
-            console.log(`编号重复（已拍板的例外）: ${match[1]} — ${accepted}`);
-        } else {
-            problems.push(
-                `编号重复: ${match[1]} 同时属于 ${existing} 与 ${name}——应用顺序此时由文件名其余部分的字典序决定，不是设计出来的`
-            );
-        }
+    if (!filesByNumber.has(match[1])) filesByNumber.set(match[1], []);
+    filesByNumber.get(match[1]).push(name);
+}
+for (const [number, names] of filesByNumber) {
+    if (names.length === 1) continue;
+    const accepted = ACCEPTED_DUPLICATE_SETS.get(number);
+    const matchesAcceptedSet =
+        accepted &&
+        names.length === accepted.files.length &&
+        accepted.files.every((file) => names.includes(file));
+    if (matchesAcceptedSet) {
+        console.log(`编号重复（已拍板的例外，按文件名对钉死）: ${number} — ${accepted.reason}`);
     } else {
-        byNumber.set(match[1], name);
+        problems.push(
+            `编号重复: ${number} 同时属于 ${names.join('、')}——` +
+                (accepted ? `与已拍板的例外文件集合（${accepted.files.join('、')}）不一致；` : '') +
+                '应用顺序此时由文件名其余部分的字典序决定，不是设计出来的'
+        );
     }
 }
 

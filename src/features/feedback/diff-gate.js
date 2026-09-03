@@ -146,10 +146,12 @@ function matchesAny(patterns, filePath) {
  */
 export function scnIdFromDiff(diff) {
     let currentFile = '';
+    let previousLine = '';
     for (const line of String(diff || '').split(/\r?\n/)) {
-        const header = line.match(/^\+\+\+ b\/(.+)$/);
-        if (header) {
-            currentFile = header[1].replace(/\\/g, '/');
+        const headerFile = diffHeaderFile(line, previousLine);
+        previousLine = line;
+        if (headerFile !== null) {
+            currentFile = headerFile;
             continue;
         }
         if (line.startsWith('+++') || !line.startsWith('+')) continue;
@@ -158,6 +160,28 @@ export function scnIdFromDiff(diff) {
         if (match) return match[0];
     }
     return '';
+}
+
+/**
+ * 二次评审 中-6（实测绕过）：`+++ b/...` 只有紧跟在 `--- ` 头或 `diff --git`
+ * 行之后才是文件头。diff 里的新增行 = `+` 前缀 + 内容，内容以 `++ b/<路径>`
+ * 开头时拼出来恰是合法头形态——可把同 hunk 的违规归属到已授权路径降档，也可
+ * 从非契约文件「新增行」里拿到 SCN，掏空「SCN 只从契约文件读」的收紧。
+ * 同根修复：`+++ /dev/null` 是删除文件的合法头，此时归属取自前一行的
+ * `--- a/<路径>`，否则被删文件的每条删除行都会误归属到 diff 里前一个文件。
+ * 返回 null = 不是头；返回字符串 = 新的归属文件（可为空串）。
+ */
+function diffHeaderFile(line, previousLine) {
+    if (!previousLine.startsWith('--- ') && !previousLine.startsWith('diff --git ')) {
+        return null;
+    }
+    const added = line.match(/^\+\+\+ b\/(.+)$/);
+    if (added) return normalizeDiffPath(added[1]);
+    if (line === '+++ /dev/null') {
+        const removed = previousLine.match(/^--- a\/(.+)$/);
+        return removed ? normalizeDiffPath(removed[1]) : '';
+    }
+    return null;
 }
 
 export function normalizeDiffPath(filePath) {
@@ -247,17 +271,21 @@ export function findVerificationWeakening(diffText) {
         addedWeakAssertions = 0;
     };
 
+    let previousLine = '';
     for (const line of lines) {
-        const header = line.match(/^\+\+\+ b\/(.+)$/);
-        if (header) {
+        const headerFile = diffHeaderFile(line, previousLine);
+        previousLine = line;
+        if (headerFile !== null) {
             flushHunk();
-            currentFile = normalizeDiffPath(header[1]);
+            currentFile = headerFile;
             continue;
         }
         if (line.startsWith('@@')) {
             flushHunk();
             continue;
         }
+        // 伪造的 `+++ b/...` 新增行（未紧跟 `--- ` 头）落到这里被当作噪声跳过：
+        // 它既不改归属，也不参与断言计数。
         if (line.startsWith('+++') || line.startsWith('---')) continue;
         if (!line.startsWith('+') && !line.startsWith('-')) continue;
 

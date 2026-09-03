@@ -1,1 +1,6 @@
+# 门禁脚本的机械执行点（二次评审 中-7）：CLAUDE.md 声称「提交前 check:scenarios
+# 必须通过」，但此前没有任何东西真的在提交前跑它——全靠交互纪律，正是本仓命名的
+# 「声明与接线断裂」。npm test 里另有一份真实清单对账兜住执行器验证路径。
+npm run check:scenarios
+npm run check:migrations
 npx lint-staged

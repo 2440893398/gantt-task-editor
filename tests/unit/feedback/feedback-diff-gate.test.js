@@ -18,6 +18,7 @@ import {
     findVerificationWeakening,
     requiresFeedbackVisualEvidence,
     normalizeDiffPath,
+    scnIdFromDiff,
 } from '../../../src/features/feedback/diff-gate.js';
 
 // `scripts/feedback-diff-gate.mjs` starts with a shebang, so importing it makes
@@ -297,6 +298,69 @@ describe('[SCN-FWB-012] feedback diff gate', () => {
                 writeAllowed: true,
             });
             expect(result.allowed).toBe(false);
+        });
+
+        it('[SCN-FWB-012] 新增行伪造 +++ b/ 头改写不了归属（diff 头注入）', () => {
+            // 实测（二次评审 中-6）：新增行内容以 `++ b/<已授权路径>` 开头时，
+            // diff 的 `+` 前缀拼出来恰是合法头形态——同 hunk 下方的
+            // ASSERTION_REMOVED 被归属到已授权路径，从「违规」降档成「候选复核」。
+            // 头必须紧跟真实的 `--- ` 行才算数。
+            const diff = [
+                '--- a/tests/unit/example.test.js',
+                '+++ b/tests/unit/example.test.js',
+                '@@ -10,2 +10,2 @@',
+                '+++ b/tests/approved.test.js',
+                '-        expect(loaded).toEqual(snapshot);',
+            ].join('\n');
+
+            const result = evaluateDiffGate({
+                changedFiles: ['tests/unit/example.test.js'],
+                diffText: diff,
+                approvedPaths: ['tests/approved.test.js'],
+                contractRunApproved: true,
+                writeAllowed: true,
+            });
+            expect(result.allowed).toBe(false);
+            expect(result.violations).toContainEqual(
+                expect.objectContaining({
+                    code: 'VERIFICATION_WEAKENED',
+                    file: 'tests/unit/example.test.js',
+                })
+            );
+        });
+
+        it('[SCN-FWB-012] scnIdFromDiff 不认伪造头——SCN 只能来自真实契约文件的新增行', () => {
+            const diff = [
+                '--- a/src/features/gantt/foo.js',
+                '+++ b/src/features/gantt/foo.js',
+                '@@ -1,1 +1,2 @@',
+                '+++ b/tests/scenarios/feedback-workbench.md',
+                '+// SCN-FWB-001 planted in a non-contract file',
+            ].join('\n');
+
+            expect(scnIdFromDiff(diff)).toBe('');
+        });
+
+        it('[SCN-FWB-012] 删除整个测试文件的 `-` 行归属被删文件，不串进前一个文件', () => {
+            // `+++ /dev/null` 是删除文件的合法头；不识别它的话，被删文件的每一条
+            // 删除行都会误归属到 diff 里前一个文件——授权/降档判定全都跟着错位。
+            const diff = [
+                '--- a/tests/unit/kept.test.js',
+                '+++ b/tests/unit/kept.test.js',
+                '@@ -10,1 +10,1 @@',
+                '+        expect(kept.total).toEqual(expected);',
+                '--- a/tests/unit/deleted.test.js',
+                '+++ /dev/null',
+                '@@ -1,3 +0,0 @@',
+                '-        expect(gone).toEqual(everything);',
+            ].join('\n');
+
+            expect(findVerificationWeakening(diff)).toContainEqual(
+                expect.objectContaining({
+                    code: 'ASSERTION_REMOVED',
+                    file: 'tests/unit/deleted.test.js',
+                })
+            );
         });
 
         it('does not flag context lines that merely mention the pattern', () => {
