@@ -20,6 +20,24 @@ export default defineConfig({
         warmup: {
             clientFiles: ['./src/main.js'],
         },
+        /*
+         * E2E「Execution context was destroyed」flaky 的真凶（2026-09-03 实锤）：
+         * Playwright 录 trace 时往 test-results/.playwright-artifacts-N/traces/
+         * resources/ 写 .html 资源文件，vite 默认 watch 整个项目根，对任何 .html
+         * 变化广播整页 full-reload——正在跑的测试页面被连坐重载，page.evaluate
+         * 落在重载窗口里就报 context destroyed。门禁配置 trace: 'on-first-retry'
+         * 使得「一条测试进重试 → 开录 trace → 写 .html → 广播 reload → 砸中后续
+         * 无辜测试」级联放大：一个 flaky 制造一串 flaky（#tvrcd5 / #czi9c6 的
+         * 交付验证均以此形态反复失败）。测试产物不是应用的一部分，一律不 watch。
+         */
+        watch: {
+            ignored: [
+                '**/test-results/**',
+                '**/test-results-*/**',
+                '**/doc/testdoc/**',
+                '**/tests/e2e/evidence/**',
+            ],
+        },
     },
     // 构建配置
     build: {
