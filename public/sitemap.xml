@@ -2,14 +2,14 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
         xmlns:xhtml="http://www.w3.org/1999/xhtml">
   <url>
-    <loc>https://gantt-task-editor.vercel.app/</loc>
+    <loc>https://gantt-task-editor.pages.dev/</loc>
     <lastmod>2026-02-24</lastmod>
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
-    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://gantt-task-editor.vercel.app/?lang=zh-CN"/>
-    <xhtml:link rel="alternate" hreflang="en-US" href="https://gantt-task-editor.vercel.app/?lang=en-US"/>
-    <xhtml:link rel="alternate" hreflang="ja-JP" href="https://gantt-task-editor.vercel.app/?lang=ja-JP"/>
-    <xhtml:link rel="alternate" hreflang="ko-KR" href="https://gantt-task-editor.vercel.app/?lang=ko-KR"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://gantt-task-editor.vercel.app/"/>
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://gantt-task-editor.pages.dev/?lang=zh-CN"/>
+    <xhtml:link rel="alternate" hreflang="en-US" href="https://gantt-task-editor.pages.dev/?lang=en-US"/>
+    <xhtml:link rel="alternate" hreflang="ja-JP" href="https://gantt-task-editor.pages.dev/?lang=ja-JP"/>
+    <xhtml:link rel="alternate" hreflang="ko-KR" href="https://gantt-task-editor.pages.dev/?lang=ko-KR"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://gantt-task-editor.pages.dev/"/>
   </url>
 </urlset>

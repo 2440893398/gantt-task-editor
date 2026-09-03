@@ -39,6 +39,22 @@ describe('build configuration', () => {
         expect(configSource).toContain('https://gantt-share.ch451314.workers.dev');
     });
 
+    it('points every public URL at the one origin we actually deploy', () => {
+        // 2026-09-03：Vercel 国际站退役后，canonical/og:url/hreflang/sitemap 仍指着
+        // vercel.app——搜索引擎会把一个不再更新的站点当正主。对外 URL 只能是我们
+        // 真在部署的那个 origin，且不得再出现已退役的域名。
+        const deployedOrigin = 'https://gantt-task-editor.pages.dev';
+        for (const file of ['index.html', 'public/robots.txt', 'public/sitemap.xml']) {
+            const source = readRootFile(file);
+            expect(source).not.toContain('gantt-task-editor.vercel.app');
+        }
+        const html = readRootFile('index.html');
+        expect(html).toContain(`<link rel="canonical" href="${deployedOrigin}/">`);
+        expect(html).toContain(`<meta property="og:url" content="${deployedOrigin}/">`);
+        expect(readRootFile('public/sitemap.xml')).toContain(`${deployedOrigin}/`);
+        expect(readRootFile('public/robots.txt')).toContain(`${deployedOrigin}/sitemap.xml`);
+    });
+
     it('deploys the Pages build explicitly to the production branch', () => {
         const packageJson = JSON.parse(readRootFile('package.json'));
 
