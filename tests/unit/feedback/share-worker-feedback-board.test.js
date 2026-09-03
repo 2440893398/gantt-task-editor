@@ -13084,6 +13084,70 @@ describe('feedback workbench V2 run creation and manifest verification', () => {
         return Object.assign(env, overrides);
     }
 
+    it('[SCN-FWB-038] cycle 预算撞顶落 needs_human + 决策卡，不把 Issue 丢在 queued', async () => {
+        // 坏行为画像（二次评审 中-1）：撞顶只写 terminal_reason。Issue 停在
+        // queued（工作台永远显示「已排队」）、时间线零可见、无活跃 HumanAction——
+        // owner 的下一条评论因 canAnswerFinishedWait 要求 needs_human 而永远降级成
+        // record，开不出新 generation，只有管理员评论能救。与本场景修过的
+        // 「编排已死而卡片仍在等」是同一种谎报。
+        const env = createDispatchEnv();
+        const instanceId = workflowInstanceId(feedbackKey, 1);
+        const step = {
+            async do(name, configOrCallback, maybeCallback) {
+                const callback =
+                    typeof configOrCallback === 'function' ? configOrCallback : maybeCallback;
+                return callback();
+            },
+            // waiting_human ↔ resume 交替把 cycle 转到预算顶：这正是「人答复 →
+            // resume → 新 Run」这条没有单独预算的路。
+            async waitForEvent(name, options) {
+                if (options.type === 'feedback-run-result') {
+                    const runId = Array.from(env.FEEDBACK_DB.tables.feedback_runs.keys()).at(-1);
+                    return {
+                        type: options.type,
+                        payload: { runId, callbackType: 'agent.waiting_human' },
+                    };
+                }
+                // 真实的 resume 来自评论投影，届时上一轮 Run 已被收尾；这里
+                // 模拟那一步，否则写入型的单活跃约束会在 cycle 2 就拦下测试。
+                for (const row of env.FEEDBACK_DB.tables.feedback_runs.values()) {
+                    if (!['succeeded', 'failed', 'cancelled', 'timed_out'].includes(row.status)) {
+                        row.status = 'succeeded';
+                    }
+                }
+                return {
+                    type: options.type,
+                    payload: {
+                        issueId: feedbackKey,
+                        eventId: 'evt_resume',
+                        eventType: 'comment.added',
+                    },
+                };
+            },
+        };
+
+        const result = await new FeedbackWorkflow({}, env).run(
+            { instanceId, payload: { issueId: feedbackKey, generation: 1, contextVersion: 1 } },
+            step
+        );
+
+        expect(result.workflowStatus).toBe('terminated');
+        expect(env.FEEDBACK_DB.tables.feedback_workflows.get(instanceId).terminal_reason).toBe(
+            'cycle_budget_exhausted'
+        );
+
+        // 撞顶必须走 SCN-FWB-038 (b) 的既有路径：needs_human + 活跃决策卡，
+        // owner 的下一条评论才能按 §17.3 开出 generation+1。
+        const issue = env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey);
+        expect(issue.status).toBe('needs_human');
+        expect(issue.active_human_action_id).toBeTruthy();
+        const action = env.FEEDBACK_DB.tables.feedback_human_actions.get(
+            issue.active_human_action_id
+        );
+        expect(action.status).toBe('active');
+        expect(action.type).toBe('developer_fix_required');
+    });
+
     /** 执行侧钉定 base 后上报；这里直接落库模拟那一步。 */
     function pinBaseCommit(env, runId, commit = 'a'.repeat(40)) {
         env.FEEDBACK_DB.tables.feedback_runs.get(runId).base_commit = commit;

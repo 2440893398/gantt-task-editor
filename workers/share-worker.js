@@ -755,6 +755,18 @@ export class FeedbackWorkflow extends WorkflowEntrypoint {
                     reason: 'cycle_budget_exhausted',
                     stepSuffix: ` ${cycle}`,
                 });
+                // 二次评审 中-1（SCN-FWB-038 (b2)）：撞顶是终止性收尾，必须落
+                // needs_human + 决策卡。只写 terminal_reason 的话 Issue 死在
+                // `queued`：时间线零可见，owner 的下一条评论因 canAnswerFinishedWait
+                // 要求 `needs_human` 永远降级成 record，开不出新 generation——
+                // 只有管理员能救，正是 038 修过的「编排已死而卡片仍在等」。
+                await step.do(`ensure cycle budget escalation ${cycle}`, async () =>
+                    ensureFeedbackRunFailureEscalation(this.env, {
+                        issueId,
+                        runId: String(latestResult.run?.runId || ''),
+                        errorCode: 'cycle_budget_exhausted',
+                    })
+                );
                 return { ...latestResult, workflowStatus: 'terminated' };
             }
             const stepSuffix = ` ${cycle}`;
@@ -5527,6 +5539,8 @@ function describeFeedbackRunFailureAction({ errorCode, violations = [], changedF
             provider_turn_failed: '处理引擎接口故障（api_error 类），自动重试预算已用尽',
             empty_agent_response: '本轮 Agent 没有产出可见结果',
             run_timeout: '本轮处理超时',
+            cycle_budget_exhausted:
+                '连续处理轮次达到上限，本工作流实例已收尾；回复评论会从新实例继续处理',
         }[errorCode] || `处理失败（${errorCode || 'unknown'}）`;
     return {
         actionType: 'developer_fix_required',
