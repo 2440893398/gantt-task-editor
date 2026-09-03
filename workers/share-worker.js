@@ -138,11 +138,12 @@ const MAX_FEEDBACK_COMMENT_ATTACHMENT_SIZE = 4 * 1024 * 1024;
 // Comments are unbounded per issue, so the per-comment cap alone cannot bound
 // an issue's R2 footprint — the cumulative quota does.
 const MAX_FEEDBACK_ISSUE_ATTACHMENTS = 40;
-// Downloads already force attachment disposition for anything non-image, but
-// the workbench only promises images/PDF/plain-text supplements; declared or
-// data-URL types outside this list are rejected instead of stored. Files the
-// browser cannot classify arrive as application/octet-stream and are served
-// download-only.
+// Downloads already force attachment disposition for anything non-image. The
+// allowlist exists to keep active types (text/html and friends) out of storage;
+// inert media (image/*, video/* — the feedback dialog explicitly advertises
+// "截图或视频") and the supplements below pass, everything else is rejected
+// instead of stored. Files the browser cannot classify arrive as
+// application/octet-stream and are served download-only.
 const FEEDBACK_COMMENT_ATTACHMENT_TYPES = new Set([
     'application/json',
     'application/octet-stream',
@@ -1786,6 +1787,7 @@ function normalizeFeedbackCommentAttachments(rawAttachments = []) {
             .toLowerCase();
         if (
             !contentType.startsWith('image/') &&
+            !contentType.startsWith('video/') &&
             !FEEDBACK_COMMENT_ATTACHMENT_TYPES.has(contentType)
         ) {
             throw feedbackStorageError('FEEDBACK_ATTACHMENT_TYPE_NOT_ALLOWED');

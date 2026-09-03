@@ -175,9 +175,12 @@ export async function fileToAttachment(file) {
     };
 }
 
-export async function submitFeedback(feedback) {
+export async function submitFeedback(feedback, { includeReplay = true } = {}) {
     const attachments = [...(feedback.attachments || [])];
-    const replayAttachment = await createFeedbackReplayAttachment();
+    // 录像只随用户**主动**提交上传。auto_error 走 includeReplay:false——用户点
+    // 「录制复现」去重现一个会抛错的 bug 时，恰恰是抛错触发的自动上报会把他尚未
+    // 授权提交的复现段静默传走并清空，等他手动提交时只剩清空之后那几秒。
+    const replayAttachment = includeReplay ? await createFeedbackReplayAttachment() : null;
 
     if (replayAttachment) {
         attachments.push(replayAttachment);
@@ -228,8 +231,11 @@ export async function submitFeedback(feedback) {
     // 评审 §4.2：录像已经随这一条上传，缓冲就此清空。不清的话，此后每一次运行时
     // 错误的**静默**自动上报都会把这段与错误无关的录像再传一遍——用户对「这段录像
     // 随本次反馈上传」的授权被无限延伸。清空发生在服务端确认接收之后：提交失败时
-    // 录像必须留着，否则用户重试一次就只剩下点「重试」那几秒。
-    clearFeedbackReplayBuffer();
+    // 录像必须留着，否则用户重试一次就只剩下点「重试」那几秒。只有真的上传了录像
+    // 才清（超预算被整体丢弃时附件为 null，那段录像并没有离开本机，不能销毁）。
+    if (replayAttachment) {
+        clearFeedbackReplayBuffer();
+    }
 
     try {
         return await response.json();
@@ -262,17 +268,21 @@ export async function reportRuntimeError(errorInfo) {
         return null;
     }
 
-    const result = await submitFeedback({
-        type: 'auto_error',
-        sourceType: 'auto_error',
-        submittedType: 'bug',
-        title: errorInfo.message || 'Runtime error',
-        description: errorInfo.stack || errorInfo.reason || '',
-        context: {
-            error: errorInfo,
-            auto: true,
+    const result = await submitFeedback(
+        {
+            type: 'auto_error',
+            sourceType: 'auto_error',
+            submittedType: 'bug',
+            title: errorInfo.message || 'Runtime error',
+            description: errorInfo.stack || errorInfo.reason || '',
+            context: {
+                error: errorInfo,
+                auto: true,
+            },
         },
-    });
+        // 自动上报没有用户授权，任何时候都不携带录像、不触碰缓冲。
+        { includeReplay: false }
+    );
 
     // §4.5：**成功之后**才扣冷却。发送前就扣的话，第一条上报失败会连带把随后
     // 60 秒内的真实错误一起静默丢掉——最需要上报的那一刻反而最安静。

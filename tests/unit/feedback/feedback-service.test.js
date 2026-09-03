@@ -171,6 +171,32 @@ describe('feedbackService', () => {
         expect(secondBody.context.replay.eventCount).toBe(0);
     });
 
+    it('[SCN-FWB-049] 静默 auto_error 不得携带尚未提交的录像，更不得清空它', async () => {
+        // 坏行为画像：submitFeedback 无条件附上 replay 且成功后清空缓冲。用户点
+        // 「录制复现」去重现一个会抛错的 bug 时，恰恰是抛错触发的 auto_error 把他
+        // 正在录的复现段（从未授权提交）静默传进一条他不知道的 Issue 并清空缓冲；
+        // 等他手动提交时，附件里只剩清空之后那几秒。
+        const { recordFeedbackReplayEvent, getFeedbackReplayContext } =
+            await import('../../../src/features/feedback/feedbackReplay.js');
+        const { reportRuntimeError } =
+            await import('../../../src/features/feedback/feedbackService.js');
+
+        recordFeedbackReplayEvent(
+            { type: 4, timestamp: Date.now(), data: { href: 'http://localhost/#/demo' } },
+            true
+        );
+        recordFeedbackReplayEvent({ type: 2, timestamp: Date.now(), data: { node: { id: 1 } } });
+
+        await reportRuntimeError({ kind: 'error', message: 'Boom', stack: 'Error: Boom' });
+
+        const body = JSON.parse(fetch.mock.calls[0][1].body);
+        expect(body.attachments.some((item) => item.name.startsWith('feedback-rrweb-'))).toBe(
+            false
+        );
+        // 缓冲原封不动：用户随后手动提交时，复现录像必须还在。
+        expect(getFeedbackReplayContext().eventCount).toBe(2);
+    });
+
     it('[SCN-FWB-049] 提交失败时录像必须留着——否则用户重试只剩点「重试」那几秒', async () => {
         const { recordFeedbackReplayEvent, getFeedbackReplayContext } =
             await import('../../../src/features/feedback/feedbackReplay.js');

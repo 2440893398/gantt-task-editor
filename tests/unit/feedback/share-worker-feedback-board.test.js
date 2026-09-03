@@ -5439,6 +5439,50 @@ describe('feedback issue board Worker routes', () => {
         expect(d1Env.FEEDBACK_DB.tables.feedback_issues.size).toBe(0);
     });
 
+    it('[SCN-FWB-026] 匿名投递口收下视频附件，且非图片仍走下载型 disposition', async () => {
+        // 坏行为画像：前端明文承诺「附上截图或视频」（accept="image/*,video/*"），
+        // 统一校验器时白名单漏了视频——用户附一个 4MB 内的 mp4，整单 400，前端只
+        // 看到笼统的「提交失败」。白名单挡的是 text/html 一类活性类型；视频与图片
+        // 同为惰性媒体，不在防范对象内，但与其他非图片一样不得内联渲染。
+        const d1Env = createV2Env();
+        d1Env.FEEDBACK_ARTIFACTS = new MemoryR2();
+        const response = await request(
+            '/api/feedback',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    title: 'Video attachment',
+                    description: 'A short screen recording of the bug.',
+                    attachments: [
+                        {
+                            name: 'repro.mp4',
+                            type: 'video/mp4',
+                            dataUrl: 'data:video/mp4;base64,AAAAGGZ0eXBtcDQy',
+                        },
+                    ],
+                }),
+            },
+            d1Env
+        );
+        const created = await json(response);
+
+        expect(response.status).toBe(201);
+        expect(d1Env.FEEDBACK_ARTIFACTS.putCalls).toHaveLength(1);
+
+        const detailResponse = await request(
+            `/api/feedback/issues/${encodeURIComponent(created.issueId)}`,
+            { headers: { Authorization: `Bearer ${created.ownerCapability}` } },
+            d1Env
+        );
+        const detail = await json(detailResponse);
+        const url = new URL(detail.issue.attachments[0].url);
+        const download = await request(`${url.pathname}${url.search}`, {}, d1Env);
+
+        expect(download.headers.get('Content-Type')).toBe('application/octet-stream');
+        expect(download.headers.get('Content-Disposition')).toMatch(/^attachment;/);
+    });
+
     it('[SCN-FWB-018] prevents active attachment content from executing on the admin origin', async () => {
         // SVG 在白名单内（`image/` 前缀），因此它仍会被存下来——下载时的
         // octet-stream + sandbox CSP 这道防线依然要在。
