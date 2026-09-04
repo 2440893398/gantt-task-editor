@@ -145,7 +145,6 @@ describe('Storage migration v4', () => {
             'tasks',
             'links',
             'history',
-            'baselines',
             'calendar_settings',
             'calendar_holidays',
             'calendar_custom',
