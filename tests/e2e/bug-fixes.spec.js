@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-import { gotoApp } from './helpers/app-ready.js';
+import { gotoApp, waitForGanttSettle } from './helpers/app-ready.js';
 
 test.use({ locale: 'zh-CN' });
 
@@ -213,11 +213,13 @@ test.describe('Bug Fixes Verification', () => {
         });
 
         await dragTaskEdge(page, 910, 'left', -dayWidth * 2);
+        await waitForGanttSettle(page);
         const leftAfter = await getTaskSchedule(page, 910);
         expect(leftAfter.start).toBeLessThan(leftBefore.start);
         expect(leftAfter.end).toBe(leftBefore.end);
 
         await dragTaskEdge(page, 911, 'right', dayWidth * 2);
+        await waitForGanttSettle(page);
         const rightAfter = await getTaskSchedule(page, 911);
         expect(rightAfter.start).toBe(rightBefore.start);
         expect(rightAfter.end).toBeGreaterThan(rightBefore.end);
@@ -229,6 +231,7 @@ test.describe('Bug Fixes Verification', () => {
         expect(await getTaskSchedule(page, 912)).toEqual(fixedBefore);
 
         await dragTaskProgress(page, 913, dayWidth * 2);
+        await waitForGanttSettle(page);
         expect(await getTaskProgress(page, 913)).toBeGreaterThan(progressBefore);
         expect(await getTaskSchedule(page, 913)).toEqual(progressScheduleBefore);
     });
