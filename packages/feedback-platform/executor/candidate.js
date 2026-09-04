@@ -231,6 +231,10 @@ export function diffGitMetadata(before, after) {
  * 而不是父提交：修复预算允许 3 轮，第二次恢复时父提交是上一个候选而非链的基线，
  * 用父提交会让 base..HEAD 只剩最后一轮增量——changedFiles/门禁/manifest 全部缩水，
  * 管理员看到的清单比合并实际带入的少，SCN-FWB-039 推导的授权范围随之漏授。
+ *
+ * 2026-09-04 收紧：默认分支已前移时，先把**整条链**重放到新头上，baseCommit 随之
+ * 取新头（`base..HEAD` 依旧是全量，上一段那条约束因此原样成立）。只在分支没动时
+ * 才等于 merge-base。理由见下方实现处的注释——不重放会把基线钉死在首轮开工那天。
  */
 export async function prepareCandidateWorkspace({
     runId,
@@ -246,21 +250,57 @@ export async function prepareCandidateWorkspace({
     let baseCommit = '';
     let startPoint = '';
     let resumedFrom = '';
+    const candidateRef = candidateRefFor(runId);
+    const defaultHead = (await git('rev-parse', defaultBranch)).stdout.trim();
     if (resumeFromCommit) {
         try {
             await git('cat-file', '-e', `${resumeFromCommit}^{commit}`);
-            baseCommit = (await git('merge-base', defaultBranch, resumeFromCommit)).stdout.trim();
-            startPoint = resumeFromCommit;
-            resumedFrom = resumeFromCommit;
+            const chainBase = (
+                await git('merge-base', defaultBranch, resumeFromCommit)
+            ).stdout.trim();
+            if (chainBase === defaultHead) {
+                baseCommit = chainBase;
+                startPoint = resumeFromCommit;
+                resumedFrom = resumeFromCommit;
+            } else {
+                // 默认分支已前移（SCN-FWB-040，2026-09-04 收紧）：把整条链重放到新头上，
+                // 而不是继续挂在旧基线下面。不重放的话基线会**钉死在首轮开工那天**——
+                // #czi9c6 的链恢复了 7 轮，基线在 2026-08-25，交付时 master 已前进 30+
+                // 提交，撞出一个无法自动消解的冲突。链越长基线越旧，冲突概率单调上升。
+                //
+                // 重放成功后 baseCommit 是**新的分支头**：`base..HEAD` 仍然是整条链的
+                // 全量改动，SCN-FWB-039 从全量 diff 推导的授权范围不缩水（那正是当初
+                // 选 merge-base 而非父提交的理由，这里靠「base 随链一起前移」等价保住）。
+                await git('checkout', '-B', candidateRef, defaultHead);
+                try {
+                    await git(
+                        'cherry-pick',
+                        '--allow-empty',
+                        '--keep-redundant-commits',
+                        `${chainBase}..${resumeFromCommit}`
+                    );
+                    baseCommit = defaultHead;
+                    startPoint = (await git('rev-parse', 'HEAD')).stdout.trim();
+                    resumedFrom = resumeFromCommit;
+                } catch {
+                    try {
+                        await git('cherry-pick', '--abort');
+                    } catch {
+                        // 没有进行中的 cherry-pick 时 abort 会失败，忽略。
+                    }
+                    // 链重放不干净：回落全新开工，与「候选提交不在工作区」同一处置——
+                    // 恢复是优化不是正确性前提。关键是**实施授权不受影响**，否则这种
+                    // Issue 只能靠 `reanalyze` 断链，而那会把它打回只读分析并作废授权。
+                }
+            }
         } catch {
             // 候选提交不在本工作区：按全新开工处理。
         }
     }
     if (!startPoint) {
-        baseCommit = (await git('rev-parse', defaultBranch)).stdout.trim();
-        startPoint = baseCommit;
+        baseCommit = defaultHead;
+        startPoint = defaultHead;
     }
-    const candidateRef = candidateRefFor(runId);
     await git('checkout', '-B', candidateRef, startPoint);
     return { baseCommit, candidateRef, resumedFrom };
 }

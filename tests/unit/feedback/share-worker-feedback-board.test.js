@@ -285,6 +285,60 @@ class MemoryD1 {
                 ],
             };
         }
+        // SCN-FWB-051 的不变式扫描。必须排在通用 feedback_issues 分支之前：那条
+        // 把任何带 `updated_at < ?` 的语句当成队列分页游标，会拿 ISO 时间串去比 rank
+        // 数字，于是这条扫描恒返回空——单测显示「一条都没捞到」而生产是捞得到的。
+        if (
+            normalized.startsWith(
+                'select i.id as issue_id, i.status, i.active_workflow_id, i.last_run_id'
+            )
+        ) {
+            const deadline = values[0];
+            const aliveWorkflow = new Set(['queued', 'running', 'waiting']);
+            const liveRelease = new Set(['integrating', 'merged', 'deploying', 'smoke_testing']);
+            const terminalRun = new Set([
+                'succeeded',
+                'failed',
+                'cancelled',
+                'timed_out',
+                'executor_lost',
+            ]);
+            const rows = Array.from(this.tables.feedback_issues.values())
+                .filter((issue) => !['resolved', 'closed'].includes(issue.status))
+                .filter((issue) => !issue.active_human_action_id)
+                .filter((issue) => String(issue.updated_at) < String(deadline))
+                .filter((issue) => {
+                    const workflow = issue.active_workflow_id
+                        ? this.tables.feedback_workflows.get(issue.active_workflow_id)
+                        : null;
+                    return !(workflow && aliveWorkflow.has(workflow.status));
+                })
+                .filter(
+                    (issue) =>
+                        !Array.from(this.tables.feedback_releases.values()).some(
+                            (rel) => rel.issue_id === issue.id && liveRelease.has(rel.status)
+                        )
+                )
+                .filter(
+                    (issue) =>
+                        !Array.from(this.tables.feedback_runs.values()).some(
+                            (run) => run.issue_id === issue.id && !terminalRun.has(run.status)
+                        )
+                )
+                .sort((left, right) =>
+                    String(left.updated_at).localeCompare(String(right.updated_at))
+                )
+                .slice(0, 25);
+            return {
+                success: true,
+                results: rows.map((issue) => ({
+                    issue_id: issue.id,
+                    status: issue.status,
+                    active_workflow_id: issue.active_workflow_id ?? null,
+                    last_run_id: issue.last_run_id ?? null,
+                })),
+            };
+        }
         if (normalized.startsWith('select') && normalized.includes('from feedback_issues')) {
             if (normalized.includes('where id = ?')) {
                 const row = this.tables.feedback_issues.get(values[0]);
@@ -1163,6 +1217,7 @@ class MemoryD1 {
                 runId,
                 guardEventId,
                 guardEventIssueId,
+                unchangedStatus,
             } = eventInsert;
             const issue = this.tables.feedback_issues.get(issueId);
             const action = actionId ? this.tables.feedback_human_actions.get(actionId) : null;
@@ -1176,6 +1231,7 @@ class MemoryD1 {
                     (!run ||
                         ['succeeded', 'failed', 'cancelled', 'timed_out'].includes(run.status))) ||
                 (guardEventId && guardEvent?.issue_id !== guardEventIssueId) ||
+                (unchangedStatus !== undefined && issue.status === unchangedStatus) ||
                 this.tables.feedback_events.has(row.id)
             ) {
                 if (
@@ -1266,6 +1322,17 @@ class MemoryD1 {
                     ['verification_failed', 'provider_turn_failed'].includes(row.error_code)
             ).length;
             return ok([{ failures }]);
+        }
+        // 同上，必须排在通用 `from feedback_runs where id = ?` 之前——那条无视
+        // status 过滤直接回行，会把一条 succeeded 的 Run 当成失败 Run 交出去。
+        if (
+            normalized.includes('from feedback_runs where id = ?') &&
+            normalized.includes("status in ('failed', 'timed_out', 'executor_lost')")
+        ) {
+            const row = this.tables.feedback_runs.get(values[0]);
+            const matched =
+                row && ['failed', 'timed_out', 'executor_lost'].includes(row.status) ? row : null;
+            return ok(matched ? [{ id: matched.id, error_code: matched.error_code ?? null }] : []);
         }
         if (normalized.includes('from feedback_runs where id = ?')) {
             const row = this.tables.feedback_runs.get(values[0]);
@@ -1525,6 +1592,46 @@ class MemoryD1 {
             this.tables.feedback_candidates.set(candidateId, { ...current, ...patch.columns });
             return ok([], 1);
         }
+        // SCN-FWB-023：遗留 Release 的终结扫描（巡检）。仓库级交付锁认 active 四态，
+        // 一条被遗弃的 Release 会挡住全仓交付，所以这条查询必须被替身认出来。
+        if (
+            normalized.startsWith(
+                'select rel.id, rel.candidate_id, rel.error_code from feedback_releases rel'
+            )
+        ) {
+            const rows = Array.from(this.tables.feedback_releases.values()).filter((row) => {
+                if (!['integrating', 'merged', 'deploying', 'smoke_testing'].includes(row.status)) {
+                    return false;
+                }
+                const issue = this.tables.feedback_issues.get(row.issue_id);
+                if (!issue || issue.status === 'testing') return false;
+                return row.lease_expires_at == null || String(row.lease_expires_at) <= values[0];
+            });
+            return ok(
+                rows.slice(0, 25).map((row) => ({
+                    id: row.id,
+                    candidate_id: row.candidate_id,
+                    error_code: row.error_code ?? null,
+                }))
+            );
+        }
+        // 认领路径按可重领时刻取用（SCN-FWB-023）：退避中的 Release 不得挡住后面的。
+        if (
+            normalized.startsWith('select * from feedback_releases') &&
+            normalized.includes('lease_expires_at is null or lease_expires_at <= ?') &&
+            normalized.includes('order by started_at limit 25')
+        ) {
+            const rows = Array.from(this.tables.feedback_releases.values())
+                .filter(
+                    (row) =>
+                        ['integrating', 'merged', 'deploying', 'smoke_testing'].includes(
+                            row.status
+                        ) &&
+                        (row.lease_expires_at == null || String(row.lease_expires_at) <= values[0])
+                )
+                .sort((a, b) => String(a.started_at).localeCompare(String(b.started_at)));
+            return ok(rows.slice(0, 25).map((row) => ({ ...row })));
+        }
         if (normalized.includes('from feedback_releases where id = ?')) {
             const row = this.tables.feedback_releases.get(values[0]);
             return ok(row ? [{ ...row }] : []);
@@ -1782,6 +1889,11 @@ class MemoryD1 {
 
         const tail = match[3];
         let valueCursor = cursor + 1;
+        // SCN-FWB-050 的状态事件带 `AND status <> ?`（「变更才留痕」）。这一位不认就会
+        // 让下面每一道闸的取值整体错位一格——上一版把状态字面量当成了 guard eventId，
+        // 于是事件被静默丢弃、单测显示「没发事件」而生产是发的。
+        const hasStatusGuard = tail.includes('status <> ?');
+        const unchangedStatus = hasStatusGuard ? values[valueCursor++] : undefined;
         const hasVersionGuard = tail.includes('version = ?');
         const expectedVersion = hasVersionGuard ? values[valueCursor++] : undefined;
         const hasActionGuard = tail.includes('from feedback_human_actions');
@@ -1804,6 +1916,7 @@ class MemoryD1 {
             runId,
             guardEventId,
             guardEventIssueId,
+            unchangedStatus,
         };
     }
 }
@@ -10418,17 +10531,34 @@ describe('feedback workbench V2 Run and Callback', () => {
         expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe('needs_human');
 
         const events = Array.from(env.FEEDBACK_DB.tables.feedback_events.values());
+        // SCN-FWB-050：Run 回调投影出的状态转移与 Run 事件同批落库，所以时间线末尾
+        // 多一条 `status.changed`。它是 system 发的、不挂 run_id——下面两条 every()
+        // 因此收窄到 Agent 上报的那三条，而不是放宽成 some()。
         expect(events.map((event) => event.type)).toEqual([
             'run.started',
+            'status.changed',
             'agent.message',
             'run.completed',
+            'status.changed',
         ]);
-        expect(events.every((event) => event.actor_type === 'agent')).toBe(true);
-        expect(events.every((event) => event.run_id === run.id)).toBe(true);
+        const agentEvents = events.filter((event) => event.type !== 'status.changed');
+        expect(agentEvents.every((event) => event.actor_type === 'agent')).toBe(true);
+        expect(agentEvents.every((event) => event.run_id === run.id)).toBe(true);
+        // 恰好两条：两次真实转移（queued→in_progress、in_progress→needs_human）。
+        // `agent.message` 不投影状态，所以它旁边没有——这正是 `status <> ?` 那道闸
+        // 在挡的东西：状态没变就不该在时间线上说「它变了」。
+        const statusEvents = events.filter((event) => event.type === 'status.changed');
+        expect(statusEvents.every((event) => event.actor_type === 'system')).toBe(true);
+        expect(statusEvents.map((event) => JSON.parse(event.body_json).changes.status)).toEqual([
+            [null, 'in_progress'],
+            [null, 'needs_human'],
+        ]);
         // §15.3: the provider's raw status is metadata, never the UI status.
-        expect(JSON.parse(events[1].metadata_json).providerRawStatus).toBe('in_progress');
-        expect(events[0].visibility).toBe('internal');
-        expect(events[1].visibility).toBe('public');
+        // 按 agentEvents 下标而不是 events 下标——时间线里夹了 `status.changed` 之后，
+        // 绝对位置断言测的就不再是「Agent 上报的第二条」了。
+        expect(JSON.parse(agentEvents[1].metadata_json).providerRawStatus).toBe('in_progress');
+        expect(agentEvents[0].visibility).toBe('internal');
+        expect(agentEvents[1].visibility).toBe('public');
     });
 
     it('[SCN-FWB-006] preserves structured verification and artifact evidence in the timeline', async () => {
@@ -11440,7 +11570,12 @@ describe('feedback workbench V2 Run and Callback', () => {
         const retried = await json(await postCallback(env, run.id, callback, token));
         expect(retried.designId).toBeTruthy();
         expect(retried.humanActionId).toBeTruthy();
-        expect(env.FEEDBACK_DB.tables.feedback_events.size).toBe(2);
+        // SCN-FWB-050：第三条是 `queued → needs_human` 的 `status.changed`，与 Design
+        // 和 HumanAction 同批——原子性不变，全成立或全不成立（上面首次失败时仍是 0）。
+        expect(env.FEEDBACK_DB.tables.feedback_events.size).toBe(3);
+        expect(
+            Array.from(env.FEEDBACK_DB.tables.feedback_events.values()).map((row) => row.type)
+        ).toContain('status.changed');
         expect(env.FEEDBACK_DB.tables.feedback_designs.size).toBe(1);
         expect(env.FEEDBACK_DB.tables.feedback_human_actions.size).toBe(1);
         expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe('needs_human');
@@ -14487,8 +14622,22 @@ describe('feedback workbench V2 Candidate and Release', () => {
         );
         expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe('testing');
 
-        const summary = await worker.scheduled(
+        // SCN-FWB-023（2026-09-04 收紧）：可恢复失败进入 1/5/15 分钟退避，第一次失败后
+        // 立刻扫是**不该**重试的。先断言退避确实记上了，再把时钟推过退避点。
+        const stages = JSON.parse(
+            env.FEEDBACK_DB.tables.feedback_releases.get(release.releaseId).verification_json
+        );
+        expect(stages._recovery.attempts).toBe(1);
+        expect(Date.parse(stages._recovery.nextAttemptAt)).toBeGreaterThan(Date.now());
+        const tooEarly = await worker.scheduled(
             { scheduledTime: Date.now(), cron: '0 3 * * *' },
+            env,
+            { waitUntil: () => {} }
+        );
+        expect(tooEarly.resumedReleases).toBe(0);
+
+        const summary = await worker.scheduled(
+            { scheduledTime: Date.parse(stages._recovery.nextAttemptAt) + 1000, cron: '0 3 * * *' },
             env,
             { waitUntil: () => {} }
         );
@@ -14678,6 +14827,9 @@ describe('feedback workbench V2 Candidate and Release', () => {
 });
 
 describe('feedback workbench V2 reconcile sweep', () => {
+    // 「此刻」——SCN-FWB-051 的静置窗口按真实时钟算，fixture 得跟上。
+    const NOW_ISO = new Date().toISOString();
+
     async function adminHeaders(env) {
         const session = await json(
             await request(
@@ -14700,7 +14852,15 @@ describe('feedback workbench V2 reconcile sweep', () => {
     }
 
     it('[SCN-FWB-002] does nothing and creates no Run when nothing is stuck', async () => {
-        const env = createV2Env({}, { feedback_issues: [createD1IssueRow({ status: 'open' })] });
+        // SCN-FWB-051：fixture 的 `updated_at` 必须落在静置窗口内。原来用的是
+        // `createD1IssueRow` 的默认值（2026-07-28），那是一条五周前、没有 Workflow、
+        // 没有 Run、没有决策卡的 `open` Issue——它恰恰**是**卡死的（NC-12：派发在入口
+        // 被吞掉），拿它当「健康 Issue」等于把这条断言建在一个坏形状上。
+        // 换成刚刚更新过的 Issue，「巡检不碰健康 Issue」才是真在被验证。
+        const env = createV2Env(
+            {},
+            { feedback_issues: [createD1IssueRow({ status: 'open', updated_at: NOW_ISO })] }
+        );
 
         const summary = await runScheduled(env);
 
@@ -14708,9 +14868,12 @@ describe('feedback workbench V2 reconcile sweep', () => {
         expect(summary.runCount).toBe(0);
         expect(summary.expiredWaits).toBe(0);
         expect(summary.clearedWorkflowMappings).toBe(0);
+        expect(summary.repairedStalledIssues).toBe(0);
+        expect(summary.clearedDanglingWorkflowPointers).toBe(0);
         // A healthy Issue is never touched by the sweep.
         expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe('open');
         expect(env.FEEDBACK_DB.tables.feedback_runs.size).toBe(0);
+        expect(env.FEEDBACK_DB.tables.feedback_human_actions.size).toBe(0);
     });
 
     it('[SCN-FWB-038] repairs a stranded issue: terminal failed run, dead workflow, no card', async () => {
@@ -15427,5 +15590,256 @@ describe('[SCN-FWB-017] CORS 来源', () => {
         const response = await optionsFrom('https://gantt-task-editor.pages.dev', env());
         expect(response.status).toBe(204);
         expect(response.headers.get('Access-Control-Max-Age')).toBe('86400');
+    });
+});
+
+/**
+ * [SCN-FWB-051] 非终态 Issue 必须有推进力，没有就补决策卡。
+ *
+ * 这一组在什么坏行为下会失败：巡检只按「上一代事故的形状」捞人。既有 6 条扫描各自
+ * 硬编码一种组合（僵尸认 `last_run_id` 那条 Run 的状态、pendingCandidates 认
+ * `NOT EXISTS release`、retryableCandidates 只认 drift），于是任何新形状的卡死都
+ * 没人管。下面四条各是一种**既有扫描结构上照不到**的形状，全部来自
+ * `doc/root/STATE_MACHINE-Feedback闭环分析-2026-09-04.md` 的状态机穷举。
+ *
+ * 判据统一是「补出了活跃决策卡」而不是「状态变成 X」：卡片才是人能点的东西，
+ * 状态只是它的影子。
+ */
+describe('[SCN-FWB-051] 不变式巡检：非终态 Issue 必有推进力', () => {
+    function runScheduledAt(env, scheduledTime = Date.parse('2026-09-04T03:00:00.000Z')) {
+        return worker.scheduled({ scheduledTime, cron: '0 3 * * *' }, env, { waitUntil: () => {} });
+    }
+
+    function activeCards(env) {
+        return Array.from(env.FEEDBACK_DB.tables.feedback_human_actions.values()).filter(
+            (row) => row.status === 'active'
+        );
+    }
+
+    it('[SCN-FWB-051] NC-02：ready_for_deploy 但 Release 已失败——三条既有扫描的守卫全部错过', async () => {
+        const env = createV2Env(
+            {},
+            {
+                feedback_issues: [
+                    createD1IssueRow({ status: 'ready_for_deploy', active_workflow_id: null }),
+                ],
+                feedback_candidates: [
+                    {
+                        id: 'cnd_stuck',
+                        issue_id: feedbackKey,
+                        run_id: null,
+                        repository: 'acme/gantt-task-editor',
+                        base_ref: 'master',
+                        base_commit: 'a'.repeat(40),
+                        candidate_ref: 'feedback/candidate/run_x',
+                        change_commit: 'b'.repeat(40),
+                        changed_files_json: '[]',
+                        diff_manifest_sha256: 'c'.repeat(64),
+                        verification_json: '{}',
+                        evidence_artifact_ids_json: '[]',
+                        review_focus: '',
+                        status: 'approved',
+                        created_at: '2026-09-01T00:00:00.000Z',
+                    },
+                ],
+                feedback_releases: [
+                    {
+                        id: 'rel_stuck',
+                        issue_id: feedbackKey,
+                        candidate_id: 'cnd_stuck',
+                        repository: 'acme/gantt-task-editor',
+                        status: 'failed',
+                        integration_strategy: 'rebase',
+                        remote_default_branch: 'master',
+                        deployment_required: 0,
+                        verification_json: '{}',
+                        artifact_hashes_json: '{}',
+                        smoke_urls_json: '[]',
+                        smoke_result_json: '{}',
+                        started_at: '2026-09-01T00:00:00.000Z',
+                        error_code: 'review_required',
+                        lease_epoch: 1,
+                    },
+                ],
+            }
+        );
+
+        const summary = await runScheduledAt(env);
+
+        expect(summary.repairedStalledIssues).toBe(1);
+        expect(activeCards(env)).toHaveLength(1);
+        expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe('needs_human');
+    });
+
+    it('[SCN-FWB-051] NC-04：test_failed 且 last_run_id 指向成功的 Run——僵尸巡检的 JOIN 条件照不到', async () => {
+        const env = createV2Env(
+            {},
+            {
+                feedback_issues: [
+                    createD1IssueRow({
+                        status: 'test_failed',
+                        active_workflow_id: null,
+                        last_run_id: 'run_ok',
+                    }),
+                ],
+                feedback_runs: [
+                    {
+                        id: 'run_ok',
+                        issue_id: feedbackKey,
+                        workflow_id: 'wf_1',
+                        policy: 'implement_and_verify',
+                        delivery_mode: 'candidate_review',
+                        provider: 'claude',
+                        runner_type: 'executor',
+                        status: 'succeeded',
+                        attempt: 1,
+                        error_code: null,
+                    },
+                ],
+            }
+        );
+
+        const summary = await runScheduledAt(env);
+
+        expect(summary.repairedStalledIssues).toBe(1);
+        expect(activeCards(env)).toHaveLength(1);
+    });
+
+    it('[SCN-FWB-051] NC-12：open 且什么都没挂上——派发在入口被吞，6 条扫描没有一条扫 open', async () => {
+        const env = createV2Env(
+            {},
+            { feedback_issues: [createD1IssueRow({ status: 'open', active_workflow_id: null })] }
+        );
+
+        const summary = await runScheduledAt(env);
+
+        expect(summary.repairedStalledIssues).toBe(1);
+        expect(activeCards(env)).toHaveLength(1);
+    });
+
+    it('[SCN-FWB-051] NC-13：active_workflow_id 指向不存在的 workflow 行——必须把指针清空，否则救不回来', async () => {
+        // 悬挂指针是全清单里唯一「手改 D1 才能救」的格子：`ensureFeedbackWorkflowForEvent`
+        // 会在 CAS 之前提前返回 WORKFLOW_STARTING，评论 resume 也被 canStartWorkflow 判假。
+        // 所以这里断言的重点不是补卡，而是**指针被清空**——不清空的话，补出来的卡
+        // 就算管理员点了 `queued` 也照样派发不出去。
+        const env = createV2Env(
+            {},
+            {
+                feedback_issues: [
+                    createD1IssueRow({
+                        status: 'queued',
+                        active_workflow_id: 'feedback-wf-orphan-3',
+                    }),
+                ],
+            }
+        );
+
+        const summary = await runScheduledAt(env);
+
+        expect(summary.clearedDanglingWorkflowPointers).toBe(1);
+        expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).active_workflow_id).toBe(
+            null
+        );
+        expect(activeCards(env)).toHaveLength(1);
+    });
+
+    it('[SCN-FWB-023] Release 仍在 active 四态而 Issue 已离开交付态：终结它，把仓库级交付锁放掉', async () => {
+        // NC-05 的另一半：`blocked_external` 的决策卡被以通用 `queued` 结案时，那条路
+        // 不清理 Release 与 Candidate，两者双双留在 `integrating`。交付锁按
+        // `repository + 默认分支` 认 active 四态且无 TTL——一条被遗弃的 Release
+        // 会让**全仓**所有 Issue 的交付一律 409，爆炸半径不是单条 Issue。
+        const env = createV2Env(
+            {},
+            {
+                feedback_issues: [
+                    createD1IssueRow({
+                        status: 'queued',
+                        active_workflow_id: null,
+                        updated_at: '2026-08-01T00:00:00.000Z',
+                    }),
+                ],
+                feedback_candidates: [
+                    {
+                        id: 'cnd_orphan',
+                        issue_id: feedbackKey,
+                        run_id: null,
+                        repository: 'acme/gantt-task-editor',
+                        base_ref: 'master',
+                        base_commit: 'a'.repeat(40),
+                        candidate_ref: 'feedback/candidate/run_x',
+                        change_commit: 'b'.repeat(40),
+                        changed_files_json: '[]',
+                        diff_manifest_sha256: 'c'.repeat(64),
+                        verification_json: '{}',
+                        evidence_artifact_ids_json: '[]',
+                        review_focus: '',
+                        status: 'integrating',
+                        created_at: '2026-08-01T00:00:00.000Z',
+                    },
+                ],
+                feedback_releases: [
+                    {
+                        id: 'rel_orphan',
+                        issue_id: feedbackKey,
+                        candidate_id: 'cnd_orphan',
+                        repository: 'acme/gantt-task-editor',
+                        status: 'integrating',
+                        integration_strategy: 'rebase',
+                        remote_default_branch: 'master',
+                        deployment_required: 0,
+                        verification_json: '{}',
+                        artifact_hashes_json: '{}',
+                        smoke_urls_json: '[]',
+                        smoke_result_json: '{}',
+                        started_at: '2026-08-01T00:00:00.000Z',
+                        error_code: 'blocked_external',
+                        lease_epoch: 1,
+                    },
+                ],
+            }
+        );
+
+        const summary = await runScheduledAt(env);
+
+        expect(summary.terminatedOrphanReleases).toBe(1);
+        expect(env.FEEDBACK_DB.tables.feedback_releases.get('rel_orphan').status).toBe('failed');
+        expect(env.FEEDBACK_DB.tables.feedback_candidates.get('cnd_orphan').status).toBe(
+            'abandoned'
+        );
+    });
+
+    it('[SCN-FWB-051] 健康 Issue 一条都不碰：有活跃卡 / 有在跑 Run / 刚变过状态', async () => {
+        const env = createV2Env(
+            {},
+            {
+                feedback_issues: [
+                    createD1IssueRow({
+                        status: 'in_progress',
+                        active_workflow_id: null,
+                        last_run_id: 'run_live',
+                    }),
+                ],
+                feedback_runs: [
+                    {
+                        id: 'run_live',
+                        issue_id: feedbackKey,
+                        workflow_id: 'wf_1',
+                        policy: 'analyze',
+                        delivery_mode: 'no_delivery',
+                        provider: 'claude',
+                        runner_type: 'executor',
+                        status: 'running',
+                        attempt: 1,
+                        error_code: null,
+                    },
+                ],
+            }
+        );
+
+        const summary = await runScheduledAt(env);
+
+        expect(summary.repairedStalledIssues).toBe(0);
+        expect(activeCards(env)).toHaveLength(0);
+        expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe('in_progress');
     });
 });

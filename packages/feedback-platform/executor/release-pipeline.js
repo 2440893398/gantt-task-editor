@@ -217,7 +217,9 @@ export function createReleasePipeline({
 
             await post('integration.started');
 
-            // 集成：base 未动用候选提交本身；动了则 cherry-pick 重放。
+            // 集成：base 未动用候选提交本身（它已经带着整条链）；动了则把整条链
+            // `base..change` 重放到新头上。两条路带入的改动集合必须相同——差别只在
+            // 「要不要重放」，不在「重放多少」。
             const releaseBranch = `feedback/release/${sanitizeCandidateRunId(releaseId)}`;
             let integrationCommit;
             // 代码评审 2026-09-02 §3.9：**先看这次交付是不是已经推上去了**。
@@ -244,7 +246,26 @@ export function createReleasePipeline({
             } else {
                 await git('checkout', '-B', releaseBranch, originHead);
                 try {
-                    await git('cherry-pick', payload.changeCommit);
+                    // SCN-FWB-023：重放的是**整条链**（`base..change`），不是链尾一个提交。
+                    //
+                    // 候选经 SCN-FWB-040 恢复过就是多提交的，而 `baseCommit` 取的是链基线
+                    // （merge-base，见 candidate.js 的说明——授权范围要从 base..HEAD 全量
+                    // 推导）。对链尾单提交做 cherry-pick 有两种错法，都发生过：
+                    //   1. 链尾是恢复轮的 `--allow-empty` 标记提交 → git 以「now empty」
+                    //      退出 1 → 被兜成 `review_required`，报一个根本不存在的冲突。
+                    //      生产实录 #czi9c6 2026-09-03。
+                    //   2. 链尾非空 → 只带入末轮增量，前几轮改动静默丢失，交付出去的
+                    //      比管理员在候选上审过的少。这一种没报过错，因为它不报错。
+                    //
+                    // `--allow-empty` 收下本来就空的提交（形态 1），
+                    // `--keep-redundant-commits` 收下重放后变空的提交（改动已在 master 上，
+                    // 典型是两条候选改了同一处）。少任一个都会让一条无害的链中途退出 1。
+                    await git(
+                        'cherry-pick',
+                        '--allow-empty',
+                        '--keep-redundant-commits',
+                        `${payload.baseCommit}..${payload.changeCommit}`
+                    );
                 } catch (error) {
                     try {
                         await git('cherry-pick', '--abort');

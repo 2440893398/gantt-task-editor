@@ -109,6 +109,11 @@ const FEEDBACK_DEFAULT_RESPONSES_ENDPOINT = 'https://api.openai.com/v1/responses
 const FEEDBACK_SIGNATURE_HEADER = 'X-Feedback-Signature-256';
 const FEEDBACK_HOOK_TIMEOUT_MS = 10_000;
 const FEEDBACK_RECONCILE_JOB_ID = 'feedback-reconcile';
+// SCN-FWB-051：不变式巡检的静置窗口。只用来避开「状态已改、附属行还没插进去」的
+// 毫秒级窗口——真正在跑的活由「有非终态 Run / 有在跑 Release / 有活跃 Workflow」
+// 三个条件保护，不靠这个时长兜。巡检本身每天只跑一次，窗口取多长在实际节奏上等价，
+// 取 1 小时是为了对时钟偏移留足余量。
+const FEEDBACK_STALLED_ISSUE_GRACE_MS = 60 * 60 * 1000;
 // §17.3: `needs_human` waits up to 7 days, then the instance terminates while
 // the Issue stays open.
 const FEEDBACK_HUMAN_WAIT_TIMEOUT_SECONDS = 7 * 24 * 60 * 60;
@@ -269,6 +274,34 @@ const FEEDBACK_RELEASE_ACTIVE_STATUSES = new Set([
 // （真机上十几分钟起步），所以 TTL 取 30 分钟：宁可让崩溃后的重新认领多等一会儿，
 // 也不能在交付跑到一半时把租约让出去——那正是并发 push 的成因。
 const FEEDBACK_RELEASE_LEASE_SECONDS = 30 * 60;
+// SCN-FWB-023：可恢复交付失败的重试预算与退避（NC-05/NC-06）。
+//
+// 「可恢复」此前等于「无限重跑」：失败把 `lease_expires_at` 置空，而认领查询正是
+// `lease_expires_at IS NULL OR <= now`，于是下一轮轮询立刻重领，再烧一遍
+// npm ci + 全量测试 + 构建，再以同样的外部原因失败。全程 Release 停在 active 四态，
+// 而仓库级交付锁认的就是这四态——**全仓**所有 Issue 的交付一律 409。
+//
+// 唯一看起来存在的那道退避（`verification_json._dispatch.nextAttemptAt`）是死代码：
+// 全仓只有一处读、零处写，`Number.isFinite(NaN)` 恒假。现在状态写在 `_recovery` 里，
+// 并且**认领路径**也读它——只在每日巡检里退避拦不住执行器，它走的是自己的查询。
+const FEEDBACK_RELEASE_RECOVERY_MAX_ATTEMPTS = 4;
+// 与 §17.2 的投递重试同一节奏：1 / 5 / 15 分钟。
+const FEEDBACK_RELEASE_RECOVERY_BACKOFF_MS = [60_000, 5 * 60_000, 15 * 60_000];
+
+function feedbackReleaseRecoveryState(verificationJson) {
+    const state = parseStoredJson(verificationJson, {})._recovery;
+    return {
+        attempts: Number(state?.attempts) || 0,
+        nextAttemptAt: String(state?.nextAttemptAt || ''),
+    };
+}
+
+/** 退避未到的 Release 不该被认领——认领了也只会原样再失败一次。 */
+function feedbackReleaseRecoveryReady(verificationJson, nowMs) {
+    const { nextAttemptAt } = feedbackReleaseRecoveryState(verificationJson);
+    const parsed = Date.parse(nextAttemptAt);
+    return !Number.isFinite(parsed) || parsed <= nowMs;
+}
 // §15.4 Release event contract.
 const FEEDBACK_RELEASE_EVENT_TYPES = new Set([
     'integration.started',
@@ -4330,6 +4363,67 @@ async function recordFeedbackDispatchUsage(env, issueId, usageDate) {
         .run();
 }
 
+/**
+ * SCN-FWB-050：Issue 状态写入与 `status.changed` 同源。
+ *
+ * 返回一条**待入 batch** 的 INSERT。调用方必须把它与那条
+ * `UPDATE feedback_issues SET status = ...` 放进同一个 `batch()`——两者要么一起成立、
+ * 要么一起不成立。分开写就等于给「库里已经换了状态、时间线还停在上一个状态」留了窗口。
+ *
+ * 为什么非补不可：此前 16 处状态写入只有 5 处发事件，而那条分界线正好是
+ * 「人触发 vs 系统触发」——交付阶段三条（resolved / test_failed / needs_human）、
+ * Run 回调投影、僵尸补卡、`executor_lost` 租约回收、`blocked_external` 重试、
+ * `auto_deliver` 批准全部静默。后果有两层：用户看到的状态是错的（生产实录
+ * #tvrcd55pws 成功闭环后时间线止于 `release.completed`、#czi9c6 交付失败后界面停在
+ * 「验证中」），以及订阅 `status.changed` 的外部通知收不到任何交付结果。
+ *
+ * `from` 允许为 null：调用点不总是读过旧状态，而「不知道从哪来」比「不记这件事」诚实
+ * 得多——取消 Run 的既有发射点用的就是 `[null, 'open']`，此处沿用同一口径。
+ *
+ * `guardEventId`：调用方的状态 UPDATE 常带幂等闸（`EXISTS (SELECT 1 FROM
+ * feedback_events WHERE id = ?)`）。事件插入必须挂**同一道**闸，否则重复回调会让状态
+ * 纹丝不动、时间线却多出一条「它变了」。闸写成 `issue_id = ?` 而不是相关子查询
+ * `issue_id = feedback_issues.id`：MemoryD1 只按前者的字面量认这道闸，写成后者它会
+ * **静默忽略**整个 guard（SCN-FWB-018 的「失配必须炸而不是改道」在这条路径上不成立，
+ * 因为 tail 不匹配只是少走一个分支），于是单测里带闸与不带闸行为一致、生产里不一致。
+ *
+ * `status <> ?`：契约是「状态的每一次**变更**留痕」，不是「每一次写入」。`run.started`
+ * 与 `run.phase_changed` 都会把 Issue 投影成同一个状态，不设这道闸时间线上会出现
+ * 「testing → testing」这种什么都没说的条目。
+ *
+ * **调用方必须把本语句排在那条状态 UPDATE 之前**：`status <> ?` 读的是**旧**状态，
+ * 排在 UPDATE 之后它永远为假，事件就一条都发不出来。
+ */
+function prepareFeedbackStatusChangedEvent(
+    env,
+    { issueId, from = null, to, occurredAt, visibility = 'public', body = {}, guardEventId = '' }
+) {
+    const guard = guardEventId
+        ? 'AND EXISTS (SELECT 1 FROM feedback_events WHERE id = ? AND issue_id = ?)'
+        : '';
+    return env.FEEDBACK_DB.prepare(
+        `INSERT INTO feedback_events (
+            id, issue_id, sequence, type, actor_type, actor_id, visibility,
+            run_id, occurred_at, body_json, metadata_json, legacy_hash
+        )
+        SELECT
+            ?, id,
+            (SELECT COALESCE(MAX(sequence), 0) + 1
+             FROM feedback_events WHERE issue_id = feedback_issues.id),
+            'status.changed', 'system', NULL, ?, NULL, ?, ?, '{}', NULL
+        FROM feedback_issues
+        WHERE id = ? AND status <> ? ${guard}`
+    ).bind(
+        `evt_status_${crypto.randomUUID()}`,
+        visibility,
+        occurredAt,
+        JSON.stringify({ changes: { status: [from ?? null, to] }, ...body }),
+        issueId,
+        to,
+        ...(guardEventId ? [guardEventId, issueId] : [])
+    );
+}
+
 async function appendFeedbackSystemEvent(env, issueId, { type, visibility, body }) {
     const eventId = `evt_${crypto.randomUUID()}`;
     await env.FEEDBACK_DB.prepare(
@@ -5678,6 +5772,22 @@ function describeFeedbackRunFailureAction({ errorCode, violations = [], changedF
             ],
         };
     }
+    // SCN-FWB-051：不变式巡检捞到的「谁都没在推进它」和「跑过并且失败了」是两回事。
+    // 复用下面那句「已停止自动重试」会对着一条从未派发成功的 Issue 说谎——它一次都没跑过。
+    if (errorCode === 'stalled_without_progress') {
+        return {
+            actionType: 'developer_fix_required',
+            requestedAction:
+                '这条反馈停住了：既没有在跑的处理任务，也没有等你回答的问题。请决定：重新排队处理，或关闭。',
+            evidence: [
+                feedbackEvidenceItem(
+                    '停住的原因',
+                    '自动处理没有接上——可能是派发在入口失败、配额用尽，或上一轮交付失败后没有留下决策卡。每日巡检发现后补了这张卡。',
+                    { detectedBy: FEEDBACK_RECONCILE_JOB_ID }
+                ),
+            ],
+        };
+    }
     const reasonLabel =
         {
             verification_failed: '定向测试/构建/浏览器验证未通过，失败输出在时间线里',
@@ -5726,13 +5836,20 @@ async function ensureFeedbackRunFailureEscalation(env, { issueId, runId, errorCo
                 : [],
         }),
     });
+    const escalatedAt = new Date().toISOString();
     await env.FEEDBACK_DB.batch([
         ...prepared.statements,
+        prepareFeedbackStatusChangedEvent(env, {
+            issueId,
+            to: 'needs_human',
+            occurredAt: escalatedAt,
+            body: { humanActionId: prepared.actionId, runId: runId || '', actorType: 'system' },
+        }),
         env.FEEDBACK_DB.prepare(
             `UPDATE feedback_issues
              SET status = 'needs_human', updated_at = ?, version = version + 1
              WHERE id = ?`
-        ).bind(new Date().toISOString(), issueId),
+        ).bind(escalatedAt, issueId),
     ]);
     return { actionId: prepared.actionId, created: true };
 }
@@ -6183,6 +6300,17 @@ async function appendFeedbackCallbackEvent(env, runId, body) {
         );
     }
     if (projection.issueStatus) {
+        // SCN-FWB-050：挂同一道幂等闸。重复回调必须让状态与时间线**一起**纹丝不动，
+        // 少挂这道闸就会出现「状态没变、时间线却说它变了」。
+        statements.push(
+            prepareFeedbackStatusChangedEvent(env, {
+                issueId: run.issue_id,
+                to: projection.issueStatus,
+                occurredAt: callback.occurredAt,
+                guardEventId: eventId,
+                body: { runId: run.id, actorType: 'system' },
+            })
+        );
         statements.push(
             env.FEEDBACK_DB.prepare(
                 `UPDATE feedback_issues
@@ -6881,6 +7009,17 @@ async function markFeedbackCandidateForReview(
         env.FEEDBACK_DB.prepare(
             "UPDATE feedback_candidates SET status = 'awaiting_review' WHERE id = ?"
         ).bind(candidateId),
+        prepareFeedbackStatusChangedEvent(env, {
+            issueId: run.issue_id,
+            to: 'needs_human',
+            occurredAt: now,
+            body: {
+                humanActionId: preparedAction.actionId,
+                candidateId,
+                runId: run.id,
+                actorType: 'system',
+            },
+        }),
         env.FEEDBACK_DB.prepare(
             `UPDATE feedback_issues
              SET status = 'needs_human', updated_at = ?, version = version + 1
@@ -7065,6 +7204,13 @@ async function retryBlockedFeedbackRelease(env, releaseId) {
              SET status = 'resolved', resolved_at = ?
              WHERE candidate_id = ? AND status = 'active'`
         ).bind(now, candidate.id),
+        prepareFeedbackStatusChangedEvent(env, {
+            issueId: release.issue_id,
+            from: 'needs_human',
+            to: 'testing',
+            occurredAt: now,
+            body: { releaseId: release.id, candidateId: candidate.id, actorType: 'admin' },
+        }),
         env.FEEDBACK_DB.prepare(
             `UPDATE feedback_issues
              SET status = 'testing', active_human_action_id = NULL,
@@ -7122,6 +7268,17 @@ async function routeFeedbackAutoDeliveryCandidate(env, { run, candidate, gate, v
         env.FEEDBACK_DB.prepare(
             "UPDATE feedback_candidates SET status = 'approved', approved_at = ? WHERE id = ?"
         ).bind(approvedAt, candidate.candidateId),
+        prepareFeedbackStatusChangedEvent(env, {
+            issueId: run.issue_id,
+            to: 'ready_for_deploy',
+            occurredAt: approvedAt,
+            body: {
+                candidateId: candidate.candidateId,
+                runId: run.id,
+                deliveryMode: 'auto_deliver',
+                actorType: 'system',
+            },
+        }),
         env.FEEDBACK_DB.prepare(
             `UPDATE feedback_issues
              SET status = 'ready_for_deploy', updated_at = ?, version = version + 1
@@ -7304,6 +7461,17 @@ async function deliverFeedbackCandidate(env, candidateId, { actorType }) {
             env.FEEDBACK_DB.prepare(
                 "UPDATE feedback_candidates SET status = 'awaiting_review' WHERE id = ?"
             ).bind(candidateId),
+            prepareFeedbackStatusChangedEvent(env, {
+                issueId: candidate.issue_id,
+                to: 'needs_human',
+                occurredAt: now,
+                body: {
+                    humanActionId: preparedAction.actionId,
+                    candidateId,
+                    reason: 'FEEDBACK_MULTIPLE_DEPLOYMENT_TARGETS',
+                    actorType: 'system',
+                },
+            }),
             env.FEEDBACK_DB.prepare(
                 `UPDATE feedback_issues
                  SET status = 'needs_human', updated_at = ?, version = version + 1
@@ -7537,7 +7705,28 @@ async function appendFeedbackReleaseEvent(env, releaseId, body) {
         type === 'release.failed' && payload.errorCode === 'blocked_external';
     const reviewRequiredFailure =
         type === 'release.failed' && payload.errorCode === 'review_required';
-    const resumableReleaseFailure = retryableReleaseFailure || blockedExternalFailure;
+    // SCN-FWB-023：可恢复不等于可无限重跑。预算耗尽后这次失败按**不可恢复**处理——
+    // Release 落终态、仓库级交付锁随之放掉、补决策卡交给人。
+    const recoverableErrorCode = retryableReleaseFailure || blockedExternalFailure;
+    const priorRecovery = feedbackReleaseRecoveryState(release.verification_json);
+    const recoveryAttempts = recoverableErrorCode
+        ? priorRecovery.attempts + 1
+        : priorRecovery.attempts;
+    const recoveryBudgetLeft = recoveryAttempts < FEEDBACK_RELEASE_RECOVERY_MAX_ATTEMPTS;
+    const resumableReleaseFailure = recoverableErrorCode && recoveryBudgetLeft;
+    if (recoverableErrorCode) {
+        stages._recovery = {
+            attempts: recoveryAttempts,
+            lastErrorCode: limitText(payload.errorCode, 80),
+            nextAttemptAt: resumableReleaseFailure
+                ? new Date(
+                      Date.now() +
+                          (FEEDBACK_RELEASE_RECOVERY_BACKOFF_MS[recoveryAttempts - 1] ??
+                              FEEDBACK_RELEASE_RECOVERY_BACKOFF_MS.at(-1))
+                  ).toISOString()
+                : '',
+        };
+    }
 
     if (type === 'release.completed') {
         const check = verifyFeedbackReleaseCompletion({
@@ -7563,33 +7752,56 @@ async function appendFeedbackReleaseEvent(env, releaseId, body) {
         ? release.status
         : resolveFeedbackReleaseStatus(type, release.status);
     const now = new Date().toISOString();
-    const issueState =
-        type === 'release.completed'
-            ? await env.FEEDBACK_DB.prepare(
-                  'SELECT active_workflow_id FROM feedback_issues WHERE id = ?'
-              )
-                  .bind(release.issue_id)
-                  .first()
-            : null;
-    const activeWorkflowId = issueState?.active_workflow_id || '';
+    // SCN-FWB-050：旧状态无条件读一次。此前这条 SELECT 只在 `release.completed` 时执行，
+    // 于是交付失败那两条转移连「从哪来」都拿不到。多一次读换整个交付阶段的时间线可见性。
+    // `activeWorkflowId` 仍只在 `release.completed` 时取值——终止编排是终态才该做的事，
+    // 这里不顺手扩大它的语义。
+    const issueState = await env.FEEDBACK_DB.prepare(
+        'SELECT status, active_workflow_id FROM feedback_issues WHERE id = ?'
+    )
+        .bind(release.issue_id)
+        .first();
+    const previousIssueStatus = issueState?.status || null;
+    const activeWorkflowId =
+        type === 'release.completed' ? issueState?.active_workflow_id || '' : '';
+    const statusChangedEvent = (to) =>
+        prepareFeedbackStatusChangedEvent(env, {
+            issueId: release.issue_id,
+            from: previousIssueStatus,
+            to,
+            occurredAt: now,
+            body: { releaseId, candidateId: release.candidate_id, actorType: 'system' },
+        });
+    // SCN-FWB-023：预算耗尽也必须落一张卡。少了它，`default_branch_drift` 打光预算后
+    // Issue 会停在 `test_failed` 且无卡——那是 NC-04 的死格形状，只能等第二天的
+    // 不变式巡检来救，白等一整天。
+    const recoveryExhausted = recoverableErrorCode && !recoveryBudgetLeft;
     const failureAction =
-        blockedExternalFailure || reviewRequiredFailure
+        blockedExternalFailure || reviewRequiredFailure || recoveryExhausted
             ? prepareFeedbackHumanAction(env, {
                   issueId: release.issue_id,
                   runId: null,
                   payload: {
-                      actionType: blockedExternalFailure ? 'blocked_external' : 'review_required',
+                      actionType: blockedExternalFailure
+                          ? 'blocked_external'
+                          : reviewRequiredFailure
+                            ? 'review_required'
+                            : 'developer_fix_required',
                       candidateId: release.candidate_id,
                       requestedAction: blockedExternalFailure
                           ? 'Release 被外部凭据或部署连接阻断，请修复连接后重新排队。'
-                          : 'Candidate 无法安全集成到当前基线，请审核准确候选和冲突证据。',
+                          : reviewRequiredFailure
+                            ? 'Candidate 无法安全集成到当前基线，请审核准确候选和冲突证据。'
+                            : `交付连续 ${recoveryAttempts} 次以同一类可恢复错误失败，已停止自动重试。请决定：修掉外部原因后重新排队，或关闭。`,
                       evidence: [
                           feedbackEvidenceItem(
                               '失败于',
                               blockedExternalFailure
                                   ? `外部凭据或部署连接（${payload.errorCode || 'unknown'}）`
-                                  : `集成到当前基线（${payload.errorCode || 'unknown'}）`,
-                              { errorCode: payload.errorCode }
+                                  : reviewRequiredFailure
+                                    ? `集成到当前基线（${payload.errorCode || 'unknown'}）`
+                                    : `自动重试用尽（${payload.errorCode || 'unknown'}，共 ${recoveryAttempts} 次）`,
+                              { errorCode: payload.errorCode, attempts: recoveryAttempts }
                           ),
                           feedbackEvidenceItem(
                               '受影响的交付',
@@ -7667,6 +7879,8 @@ async function appendFeedbackReleaseEvent(env, releaseId, body) {
     );
 
     if (type === 'release.completed') {
+        // SCN-FWB-050：事件排在状态 UPDATE 之前——它的 `status <> ?` 闸读的是旧状态。
+        statements.push(statusChangedEvent('resolved'));
         statements.push(
             env.FEEDBACK_DB.prepare(
                 "UPDATE feedback_candidates SET status = 'integrated', integrated_at = ? WHERE id = ?"
@@ -7695,7 +7909,8 @@ async function appendFeedbackReleaseEvent(env, releaseId, body) {
                 release.candidate_id
             )
         );
-        if (!reviewRequiredFailure) {
+        if (!reviewRequiredFailure && !failureAction) {
+            statements.push(statusChangedEvent('test_failed'));
             statements.push(
                 env.FEEDBACK_DB.prepare(
                     `UPDATE feedback_issues
@@ -7705,8 +7920,9 @@ async function appendFeedbackReleaseEvent(env, releaseId, body) {
             );
         }
     }
-    if (blockedExternalFailure || reviewRequiredFailure) {
+    if (failureAction) {
         statements.push(...failureAction.statements);
+        statements.push(statusChangedEvent('needs_human'));
         statements.push(
             env.FEEDBACK_DB.prepare(
                 `UPDATE feedback_issues
@@ -9454,6 +9670,10 @@ async function runFeedbackReconcile(env, now = new Date()) {
         deadLetterCount: 0,
         repairedZombieIssues: 0,
         zombieRepairFailures: 0,
+        repairedStalledIssues: 0,
+        clearedDanglingWorkflowPointers: 0,
+        stalledRepairFailures: 0,
+        terminatedOrphanReleases: 0,
         runCount: 0,
     };
     if (!env.FEEDBACK_DB) return summary;
@@ -9573,9 +9793,10 @@ async function runFeedbackReconcile(env, now = new Date()) {
             .bind(candidate.id)
             .first();
         if (!isRetryableFeedbackReleaseDispatchError(release?.error_code)) continue;
-        const dispatchState = parseStoredJson(release?.verification_json, {})._dispatch || {};
-        const nextAttemptAt = Date.parse(dispatchState.nextAttemptAt || '');
-        if (Number.isFinite(nextAttemptAt) && nextAttemptAt > now.getTime()) continue;
+        // SCN-FWB-023：这里原本读的是 `_recovery` 的前身 `_dispatch`——全仓只有这一处读、
+        // 零处写，`Date.parse(undefined)` 得 NaN、`Number.isFinite(NaN)` 恒假，于是这道
+        // 退避闸从来没拦下过任何东西。改读真正被写入的那个键。
+        if (!feedbackReleaseRecoveryReady(release?.verification_json, now.getTime())) continue;
 
         const run = candidate.run_id
             ? await env.FEEDBACK_DB.prepare('SELECT * FROM feedback_runs WHERE id = ?')
@@ -9664,6 +9885,134 @@ async function runFeedbackReconcile(env, now = new Date()) {
         ]);
         summary.reapedRunTimeouts += 1;
         summary.clearedWorkflowMappings += 1;
+    }
+
+    // SCN-FWB-023：终结「Release 还在 active 四态、但它的 Issue 已经离开交付态」的遗留。
+    //
+    // 仓库级交付锁认的就是这四态，且没有 TTL、没有租约条件——一条被遗弃在 active 态的
+    // Release 会让**全仓**所有 Issue 的交付一律 409，爆炸半径不是单条 Issue。典型成因：
+    // `blocked_external` 的决策卡被以通用 `queued` 结案，而那条路不清理 Release 与
+    // Candidate（它们的正规恢复入口是 `retryFeedbackRelease`，要求候选仍是 `integrating`）。
+    //
+    // 判据是「Issue 已经不在 `testing` 了」而不是任何时长：交付进行中的 Issue 必然停在
+    // `testing`，不在就说明这条 Release 已经没有任何东西在推它。
+    const orphanReleases = await env.FEEDBACK_DB.prepare(
+        `SELECT rel.id, rel.candidate_id, rel.error_code FROM feedback_releases rel
+         JOIN feedback_issues i ON i.id = rel.issue_id
+         WHERE rel.status IN ('integrating', 'merged', 'deploying', 'smoke_testing')
+           AND i.status <> 'testing'
+           AND (rel.lease_expires_at IS NULL OR rel.lease_expires_at <= ?)
+         LIMIT 25`
+    )
+        .bind(summary.ranAt)
+        .all();
+    for (const orphan of orphanReleases.results || []) {
+        // 候选只在它确实还停在 `integrating` 时才作废：这条 Release 被遗弃不代表候选
+        // 也一定停在半路（比如它可能已经被另一条路径 integrated）。
+        const orphanCandidate = orphan.candidate_id
+            ? await env.FEEDBACK_DB.prepare('SELECT status FROM feedback_candidates WHERE id = ?')
+                  .bind(orphan.candidate_id)
+                  .first()
+            : null;
+        const statements = [
+            env.FEEDBACK_DB.prepare(
+                `UPDATE feedback_releases
+                 SET status = 'failed', finished_at = ?, error_code = ?
+                 WHERE id = ?`
+            ).bind(
+                summary.ranAt,
+                limitText(orphan.error_code, 80) || 'release_abandoned',
+                orphan.id
+            ),
+        ];
+        if (orphanCandidate?.status === 'integrating') {
+            statements.push(
+                env.FEEDBACK_DB.prepare(
+                    "UPDATE feedback_candidates SET status = 'abandoned' WHERE id = ?"
+                ).bind(orphan.candidate_id)
+            );
+        }
+        await env.FEEDBACK_DB.batch(statements);
+        summary.terminatedOrphanReleases += 1;
+    }
+
+    // SCN-FWB-051：形状无关的兜底不变式。
+    //
+    // 上面每一条扫描都是照着一次具体事故的形状写的（僵尸认 `last_run_id` 那条 Run 的
+    // 状态、pendingCandidates 认 `NOT EXISTS release`、retryableCandidates 只认 drift），
+    // 于是每出一种新形状就要再加一条——而没被想到的形状永远没人管。这一条反过来问：
+    // **这个 Issue 还有人在推它吗？** 非终态却四样皆无（活跃 Workflow / 活跃决策卡 /
+    // 在跑 Release / 未终态 Run）就是卡死，不必先知道它是怎么卡的。
+    //
+    // 它排在最后：上面那些扫描能产出更准的卡（带失败证据、能重新派发交付），先让它们
+    // 处理；`ensureFeedbackRunFailureEscalation` 见到活跃卡就返回，所以这里不会重复补。
+    //
+    // `w.instance_id = i.active_workflow_id` 写成 NOT EXISTS 而不是 JOIN：既有四条扫描
+    // 全是 JOIN，因此**结构上**照不到「指针指着一行不存在的 workflow」——那恰好是最硬的
+    // 死格（NC-13：派发在 CAS 之前就返回 WORKFLOW_STARTING，评论 resume 也被判假，
+    // 只剩手改 D1）。NOT EXISTS 对「没有指针」「指针悬空」「指针指向已终态」一视同仁。
+    const stalledDeadline = new Date(now.getTime() - FEEDBACK_STALLED_ISSUE_GRACE_MS).toISOString();
+    const stalledIssues = await env.FEEDBACK_DB.prepare(
+        `SELECT i.id AS issue_id, i.status, i.active_workflow_id, i.last_run_id
+         FROM feedback_issues i
+         WHERE i.status NOT IN ('resolved', 'closed')
+           AND (i.active_human_action_id IS NULL OR i.active_human_action_id = '')
+           AND i.updated_at < ?
+           AND NOT EXISTS (
+               SELECT 1 FROM feedback_workflows w
+               WHERE w.instance_id = i.active_workflow_id
+                 AND w.status IN ('queued', 'running', 'waiting')
+           )
+           AND NOT EXISTS (
+               SELECT 1 FROM feedback_releases rel
+               WHERE rel.issue_id = i.id
+                 AND rel.status IN ('integrating', 'merged', 'deploying', 'smoke_testing')
+           )
+           AND NOT EXISTS (
+               SELECT 1 FROM feedback_runs r
+               WHERE r.issue_id = i.id
+                 AND r.status NOT IN
+                     ('succeeded', 'failed', 'cancelled', 'timed_out', 'executor_lost')
+           )
+         ORDER BY i.updated_at
+         LIMIT 25`
+    )
+        .bind(stalledDeadline)
+        .all();
+
+    for (const stalled of stalledIssues.results || []) {
+        try {
+            // 先清指针再补卡，顺序不能反：指针不清空，补出来的卡就算管理员点了「重新
+            // 排队」也照样派发不出去——那张卡会变成第二个死格。
+            if (stalled.active_workflow_id) {
+                await env.FEEDBACK_DB.prepare(
+                    'UPDATE feedback_issues SET active_workflow_id = NULL WHERE id = ? AND active_workflow_id = ?'
+                )
+                    .bind(stalled.issue_id, stalled.active_workflow_id)
+                    .run();
+                summary.clearedDanglingWorkflowPointers += 1;
+                summary.clearedWorkflowMappings += 1;
+            }
+            const failedRun = stalled.last_run_id
+                ? await env.FEEDBACK_DB.prepare(
+                      "SELECT id, error_code FROM feedback_runs WHERE id = ? AND status IN ('failed', 'timed_out', 'executor_lost')"
+                  )
+                      .bind(stalled.last_run_id)
+                      .first()
+                : null;
+            const repaired = await ensureFeedbackRunFailureEscalation(env, {
+                issueId: stalled.issue_id,
+                runId: failedRun?.id || '',
+                // 跑过并且失败了 → 用它自己的错误码，卡上说得出真原因；从未跑成过 →
+                // `stalled_without_progress`，不冒充「已停止自动重试」。
+                errorCode: failedRun
+                    ? String(failedRun.error_code || '')
+                    : 'stalled_without_progress',
+            });
+            if (repaired.created) summary.repairedStalledIssues += 1;
+        } catch {
+            summary.stalledRepairFailures += 1;
+        }
     }
 
     // §18.2: artifacts past their retention are unreachable; drop the rows so
@@ -10087,6 +10436,17 @@ async function expireFeedbackExecutorLeases(env, now = new Date()) {
                  WHERE id = ? AND status NOT IN
                     ('succeeded', 'failed', 'cancelled', 'timed_out', 'executor_lost')`
             ).bind(nowIso, lease.run_id),
+            prepareFeedbackStatusChangedEvent(env, {
+                issueId: lease.issue_id,
+                to: 'needs_human',
+                occurredAt: nowIso,
+                body: {
+                    humanActionId: actionId,
+                    runId: lease.run_id,
+                    reason: 'executor_lost',
+                    actorType: 'system',
+                },
+            }),
             env.FEEDBACK_DB.prepare(
                 `UPDATE feedback_issues
                  SET status = 'needs_human', active_human_action_id = ?, updated_at = ?
@@ -10322,14 +10682,25 @@ async function claimFeedbackExecutorRelease(env, body = {}) {
     const executorId = normalizeFeedbackExecutorId(body?.executorId) || 'executor-unknown';
     const nowIso = new Date().toISOString();
 
-    const releaseRow = await env.FEEDBACK_DB.prepare(
+    // SCN-FWB-023：退避必须在**这里**生效。可恢复失败会把 `lease_expires_at` 置空，
+    // 而上面那两个条件正好都成立，于是执行器下一轮轮询立刻重领、原样再失败一次。
+    // 每日巡检里的退避管不到这条路——它走的是自己的查询。
+    //
+    // 取多行再在 JS 里筛：退避时刻存在 `verification_json._recovery` 里（沿用
+    // `_dispatch` 那套「状态挂 verification_json」的先例，不为此加一列迁移）。
+    // 顺带解掉队头阻塞：原来的 `LIMIT 1` 会让最老那条退避中的 Release 挡住后面的。
+    const claimable = await env.FEEDBACK_DB.prepare(
         `SELECT * FROM feedback_releases
          WHERE status IN ('integrating', 'merged', 'deploying', 'smoke_testing')
            AND (lease_expires_at IS NULL OR lease_expires_at <= ?)
-         ORDER BY started_at LIMIT 1`
+         ORDER BY started_at LIMIT 25`
     )
         .bind(nowIso)
-        .first();
+        .all();
+    const nowMs = Date.parse(nowIso);
+    const releaseRow = (claimable.results || []).find((row) =>
+        feedbackReleaseRecoveryReady(row.verification_json, nowMs)
+    );
     if (!releaseRow) return null;
 
     const candidate = await env.FEEDBACK_DB.prepare(

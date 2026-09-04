@@ -539,14 +539,18 @@ describe('[SCN-FWB-035] Release 租约：破坏力最大的一步也要有互斥
         expect(noEpoch.response.status).toBe(409);
     });
 
-    it('可恢复失败（default_branch_drift）放掉租约——下一轮立刻可重领，不必等 TTL', async () => {
+    it('[SCN-FWB-023] 可恢复失败进入退避——放掉租约但不立刻可重领，否则就是无界重跑', async () => {
+        // 坏行为下会红的形态：放掉租约后 `lease_expires_at IS NULL` 让认领查询立刻命中，
+        // 执行器下一轮就重领，再烧一遍 npm ci + 全量测试 + 构建，再以同样的外部原因失败。
+        // 全仓唯一那道看起来存在的退避（`verification_json._dispatch.nextAttemptAt`）
+        // 是死代码：只有一处读、零处写，`Number.isFinite(NaN)` 恒假。
         const sqlite = applyMigrations();
         seedClaimable(sqlite);
         const env = createEnv(sqlite);
         const { payload: claim } = await post(env, '/api/executor/release', {
             executorId: 'executor-a',
         });
-        const failed = await post(
+        await post(
             env,
             '/api/feedback/releases/rel_1/events',
             {
@@ -557,10 +561,209 @@ describe('[SCN-FWB-035] Release 租约：破坏力最大的一步也要有互斥
             },
             { token: claim.releaseToken }
         );
-        expect(failed.response.status).toBe(201);
 
+        const row = sqlite
+            .prepare('SELECT verification_json, lease_expires_at, status FROM feedback_releases')
+            .get();
+        // 租约确实放掉了（不必等 30 分钟 TTL）——变的是「立刻」而不是「放掉」。
+        expect(row.lease_expires_at).toBeNull();
+        expect(row.status).toBe('integrating');
+        const recovery = JSON.parse(row.verification_json)._recovery;
+        expect(recovery.attempts).toBe(1);
+        expect(Date.parse(recovery.nextAttemptAt)).toBeGreaterThan(Date.now());
+
+        // 退避未到：认领拿不到东西，执行器不空转。
+        const tooEarly = await post(env, '/api/executor/release', { executorId: 'executor-a' });
+        expect(tooEarly.response.status).toBe(204);
+
+        // 退避到点后可重领，epoch 递增（原契约「不必等 TTL」在这里兑现）。
+        const stages = JSON.parse(row.verification_json);
+        stages._recovery.nextAttemptAt = new Date(Date.now() - 1000).toISOString();
+        sqlite
+            .prepare('UPDATE feedback_releases SET verification_json = ? WHERE id = ?')
+            .run(JSON.stringify(stages), 'rel_1');
         const retaken = await post(env, '/api/executor/release', { executorId: 'executor-a' });
         expect(retaken.response.status).toBe(200);
         expect(retaken.payload.leaseEpoch).toBe(claim.leaseEpoch + 1);
+    });
+
+    it('[SCN-FWB-023] attempt 预算耗尽：Release 落终态并放掉仓库级交付锁 + 补决策卡', async () => {
+        // 交付锁按 `repository + 默认分支` 认 active 四态，没有 TTL、没有租约条件。
+        // 一条被无限重试的 Release 会让**全仓**所有 Issue 的交付一律 409——爆炸半径
+        // 不是单条 Issue，所以预算耗尽必须落终态把锁放掉。
+        const sqlite = applyMigrations();
+        seedClaimable(sqlite);
+        const env = createEnv(sqlite);
+
+        let epoch = 0;
+        for (let attempt = 1; attempt <= 5; attempt += 1) {
+            sqlite
+                .prepare(
+                    "UPDATE feedback_releases SET lease_expires_at = NULL, verification_json = json_remove(verification_json, '$._recovery.nextAttemptAt') WHERE id = 'rel_1'"
+                )
+                .run();
+            const claimed = await post(env, '/api/executor/release', { executorId: 'executor-a' });
+            if (claimed.response.status !== 200) break;
+            epoch = claimed.payload.leaseEpoch;
+            await post(
+                env,
+                '/api/feedback/releases/rel_1/events',
+                {
+                    type: 'release.failed',
+                    eventId: `drift-${attempt}`,
+                    leaseEpoch: epoch,
+                    payload: { ...IDENTITY, errorCode: 'default_branch_drift', passed: false },
+                },
+                { token: claimed.payload.releaseToken }
+            );
+        }
+
+        const release = sqlite.prepare('SELECT status FROM feedback_releases').get();
+        expect(release.status).toBe('failed');
+        // 锁已放掉：active 四态里一条都不剩。
+        const held = sqlite
+            .prepare(
+                "SELECT COUNT(*) AS n FROM feedback_releases WHERE status IN ('integrating','merged','deploying','smoke_testing')"
+            )
+            .get();
+        expect(held.n).toBe(0);
+        // 不是静默放弃：人得到一张能点的卡。
+        const card = sqlite
+            .prepare("SELECT type FROM feedback_human_actions WHERE status = 'active'")
+            .get();
+        expect(card).toBeTruthy();
+        expect(
+            sqlite.prepare('SELECT status FROM feedback_issues WHERE id = ?').get('issue_rel_1')
+                .status
+        ).toBe('needs_human');
+    });
+});
+
+/**
+ * [SCN-FWB-050] 状态写入与 `status.changed` 同源。
+ *
+ * 这三条在什么坏行为下会失败：交付阶段直接 `UPDATE feedback_issues SET status = ...`
+ * 而不在同一个 batch 里产出 `status.changed`。那正是 2026-09-04 之前的实现——
+ * 生产上 #tvrcd55pws 成功闭环后时间线止于 `release.completed`（`testing→resolved`
+ * 零事件），#czi9c6 交付失败后界面停在「验证中」而库里已是 `needs_human`。
+ * 断言故意读时间线而不是读 `feedback_issues.status`：状态本身一直是对的，
+ * 坏掉的是「外面看得见的那一份」。
+ */
+describe('[SCN-FWB-050] 交付阶段的状态变更必须在时间线上留痕', () => {
+    function statusChangedEvents(sqlite, issueId = 'issue_rel_1') {
+        return sqlite
+            .prepare(
+                `SELECT body_json, sequence FROM feedback_events
+                 WHERE issue_id = ? AND type = 'status.changed' ORDER BY sequence`
+            )
+            .all(issueId)
+            .map((row) => ({ ...JSON.parse(row.body_json), sequence: row.sequence }));
+    }
+
+    async function claimRelease(env) {
+        const { payload } = await post(env, '/api/executor/release', {});
+        return payload;
+    }
+
+    it('[SCN-FWB-050] release.completed → resolved 发出 status.changed', async () => {
+        const sqlite = applyMigrations();
+        seedProject(sqlite);
+        // Release 已被认领 = 派发早已发生，而派发那一步会把 Issue 置为 `testing`
+        //（dispatchFeedbackCreatedRelease）。fixture 必须忠实于这个前置，否则
+        // 断言里的 `from` 会是一个生产上不可能出现的取值。
+        seedDeliverableCandidate(sqlite, { issueStatus: 'testing' });
+        seedActiveRelease(sqlite);
+        const env = createEnv(sqlite);
+        const claim = await claimRelease(env);
+        const integrationCommit = 'e'.repeat(40);
+        for (const [type, eventId, extra] of [
+            ['integration.started', 's1', {}],
+            ['integration.rebased', 's2', { integrationCommit }],
+            ['integration.verification_completed', 's3', { passed: true, integrationCommit }],
+            ['integration.merged', 's4', { integrationCommit }],
+            ['release.completed', 's5', { integrationCommit, passed: true }],
+        ]) {
+            const r = await post(
+                env,
+                '/api/feedback/releases/rel_1/events',
+                { type, eventId, leaseEpoch: claim.leaseEpoch, payload: { ...IDENTITY, ...extra } },
+                { token: claim.releaseToken }
+            );
+            expect(r.response.status, `${type}: ${JSON.stringify(r.payload)}`).toBe(201);
+        }
+
+        const events = statusChangedEvents(sqlite);
+        expect(events).toHaveLength(1);
+        expect(events[0].changes.status).toEqual(['testing', 'resolved']);
+    });
+
+    it('[SCN-FWB-050] release.failed(其它错误码) → test_failed 发出 status.changed', async () => {
+        const sqlite = applyMigrations();
+        seedProject(sqlite);
+        // Release 已被认领 = 派发早已发生，而派发那一步会把 Issue 置为 `testing`
+        //（dispatchFeedbackCreatedRelease）。fixture 必须忠实于这个前置，否则
+        // 断言里的 `from` 会是一个生产上不可能出现的取值。
+        seedDeliverableCandidate(sqlite, { issueStatus: 'testing' });
+        seedActiveRelease(sqlite);
+        const env = createEnv(sqlite);
+        const claim = await claimRelease(env);
+
+        const failed = await post(
+            env,
+            '/api/feedback/releases/rel_1/events',
+            {
+                type: 'release.failed',
+                eventId: 'f1',
+                leaseEpoch: claim.leaseEpoch,
+                payload: {
+                    ...IDENTITY,
+                    errorCode: 'integration_verification_failed',
+                    passed: false,
+                },
+            },
+            { token: claim.releaseToken }
+        );
+        expect(failed.response.status).toBe(201);
+
+        expect(
+            sqlite.prepare('SELECT status FROM feedback_issues WHERE id = ?').get('issue_rel_1')
+                .status
+        ).toBe('test_failed');
+        const events = statusChangedEvents(sqlite);
+        expect(events).toHaveLength(1);
+        expect(events[0].changes.status).toEqual(['testing', 'test_failed']);
+    });
+
+    it('[SCN-FWB-050] release.failed(review_required) → needs_human 发出 status.changed', async () => {
+        const sqlite = applyMigrations();
+        seedProject(sqlite);
+        // Release 已被认领 = 派发早已发生，而派发那一步会把 Issue 置为 `testing`
+        //（dispatchFeedbackCreatedRelease）。fixture 必须忠实于这个前置，否则
+        // 断言里的 `from` 会是一个生产上不可能出现的取值。
+        seedDeliverableCandidate(sqlite, { issueStatus: 'testing' });
+        seedActiveRelease(sqlite);
+        const env = createEnv(sqlite);
+        const claim = await claimRelease(env);
+
+        const failed = await post(
+            env,
+            '/api/feedback/releases/rel_1/events',
+            {
+                type: 'release.failed',
+                eventId: 'f2',
+                leaseEpoch: claim.leaseEpoch,
+                payload: { ...IDENTITY, errorCode: 'review_required', passed: false },
+            },
+            { token: claim.releaseToken }
+        );
+        expect(failed.response.status).toBe(201);
+
+        expect(
+            sqlite.prepare('SELECT status FROM feedback_issues WHERE id = ?').get('issue_rel_1')
+                .status
+        ).toBe('needs_human');
+        const events = statusChangedEvents(sqlite);
+        expect(events).toHaveLength(1);
+        expect(events[0].changes.status).toEqual(['testing', 'needs_human']);
     });
 });

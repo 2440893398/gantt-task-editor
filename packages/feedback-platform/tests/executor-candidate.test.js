@@ -141,11 +141,12 @@ describe('[SCN-FWB-032] prepareCandidateWorkspace', () => {
         ]);
     });
 
-    it('[SCN-FWB-040] 有上一轮候选提交时建在它之上，baseCommit 取候选链与默认分支的 merge-base', async () => {
+    it('[SCN-FWB-040] 默认分支没动时建在上一轮候选之上，baseCommit 即链基线', async () => {
+        // 分支未前移（merge-base === 分支头）时无需重放，行为与收紧前一致。
         const resume = 'b'.repeat(40);
         const git = fakeGit({
             [`merge-base master ${resume}`]: 'a'.repeat(40) + '\n',
-            'rev-parse master': 'f'.repeat(40) + '\n',
+            'rev-parse master': 'a'.repeat(40) + '\n',
         });
         const result = await prepareCandidateWorkspace({
             runId: 'run_2',
@@ -159,6 +160,8 @@ describe('[SCN-FWB-032] prepareCandidateWorkspace', () => {
         // 上一轮的 36 个文件全部丢掉，权威门禁与 manifest 都在审一个空集。
         expect(result.baseCommit).toBe('a'.repeat(40));
         expect(result.resumedFrom).toBe(resume);
+        // 分支没动就不该有重放动作。
+        expect(git.calls.some((call) => call.startsWith('cherry-pick'))).toBe(false);
     });
 
     it('[SCN-FWB-040] 链式恢复（恢复轮再失败再恢复）时 baseCommit 不缩水到上一个候选提交', async () => {
@@ -173,6 +176,7 @@ describe('[SCN-FWB-032] prepareCandidateWorkspace', () => {
         const git = fakeGit({
             [`rev-parse ${c2}^`]: c1 + '\n',
             [`merge-base master ${c2}`]: m + '\n',
+            'rev-parse master': m + '\n',
         });
         const result = await prepareCandidateWorkspace({
             runId: 'run_3',
@@ -182,6 +186,75 @@ describe('[SCN-FWB-032] prepareCandidateWorkspace', () => {
         });
         expect(result.baseCommit).toBe(m);
         expect(result.resumedFrom).toBe(c2);
+    });
+
+    /**
+     * 下面两条用真 git：默认分支前移后的行为全部落在 git 自己的重放语义上，
+     * 桩里 `cherry-pick` 永远成功，测不出「撞冲突该回落」这半边。
+     */
+    function seedChainRepo({ conflicting }) {
+        const dir = makeRealRepo();
+        writeFileSync(join(dir, 'base.txt'), 'base\n');
+        realGit(dir, ['add', '-A']);
+        realGit(dir, ['commit', '-qm', 'base']);
+        const chainBase = realGit(dir, ['rev-parse', 'HEAD']).stdout.trim();
+
+        // 候选链：两轮，第二轮是 SCN-FWB-040 的零改动标记提交。
+        realGit(dir, ['checkout', '-qB', 'chain', chainBase]);
+        writeFileSync(join(dir, 'round-one.txt'), 'round one\n');
+        realGit(dir, ['add', '-A']);
+        realGit(dir, ['commit', '-qm', 'round 1']);
+        realGit(dir, ['commit', '-q', '--allow-empty', '-m', 'round 2 (no edits)']);
+        const resume = realGit(dir, ['rev-parse', 'HEAD']).stdout.trim();
+
+        // 默认分支前移；conflicting 时改的是候选也改过的那个文件。
+        realGit(dir, ['checkout', '-qB', 'master', chainBase]);
+        writeFileSync(
+            join(dir, conflicting ? 'round-one.txt' : 'unrelated.txt'),
+            conflicting ? 'master version\n' : 'unrelated\n'
+        );
+        realGit(dir, ['add', '-A']);
+        realGit(dir, ['commit', '-qm', 'master moves on']);
+        const head = realGit(dir, ['rev-parse', 'HEAD']).stdout.trim();
+        realGit(dir, ['checkout', '-q', 'chain']);
+        return { dir, chainBase, resume, head };
+    }
+
+    it('[SCN-FWB-040] 默认分支前移时整条链重放到新头，baseCommit 跟着走且全量 diff 不缩水', async () => {
+        // 坏行为下会红的形态：baseCommit 停在链基线（收紧前的实现）。那样基线会钉死在
+        // 首轮开工那天——#czi9c6 因此在 9 天陈旧基线上撞出无法自动消解的集成冲突。
+        const { dir, resume, head } = seedChainRepo({ conflicting: false });
+        const result = await prepareCandidateWorkspace({
+            runId: 'run_rebased',
+            defaultBranch: 'master',
+            git: realGitRunner(dir),
+            resumeFromCommit: resume,
+        });
+
+        expect(result.baseCommit).toBe(head);
+        expect(result.resumedFrom).toBe(resume);
+        // base..HEAD 必须仍然覆盖链上**全部**改动，否则 SCN-FWB-039 的授权范围漏授。
+        const diff = realGit(dir, ['diff', '--name-only', `${head}..HEAD`]).stdout.trim();
+        expect(diff.split('\n').filter(Boolean)).toEqual(['round-one.txt']);
+        // master 自己那条也在工作区里——重放是接到新头上，不是把它顶掉。
+        expect(realGit(dir, ['cat-file', '-e', 'HEAD:unrelated.txt']).status).toBe(0);
+    });
+
+    it('[SCN-FWB-040] 链重放撞冲突时回落全新开工，且不把仓库留在 cherry-pick 中途', async () => {
+        // 这是 #czi9c6 的实际处境。回落到当前 master 全新开工才是唯一能自动前进的出路，
+        // 而且**实施授权不受影响**——靠 reanalyze 断链会把 Issue 打回只读分析并作废授权。
+        const { dir, resume, head } = seedChainRepo({ conflicting: true });
+        const result = await prepareCandidateWorkspace({
+            runId: 'run_fallback',
+            defaultBranch: 'master',
+            git: realGitRunner(dir),
+            resumeFromCommit: resume,
+        });
+
+        expect(result.baseCommit).toBe(head);
+        expect(result.resumedFrom).toBe('');
+        expect(realGit(dir, ['rev-parse', 'HEAD']).stdout.trim()).toBe(head);
+        expect(realGit(dir, ['status', '--porcelain']).stdout.trim()).toBe('');
     });
 
     it('[SCN-FWB-040] 候选提交不在本工作区时静默回落全新开工——恢复是优化不是正确性前提', async () => {

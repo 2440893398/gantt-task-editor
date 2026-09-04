@@ -182,7 +182,16 @@ describe('[SCN-FWB-033] docs-only 交付（deploymentRequired=false）', () => {
         expect(
             git.calls.some((c) => c.startsWith(`checkout -B feedback/release/rel_x1 ${moved}`))
         ).toBe(true);
-        expect(git.calls.some((c) => c.startsWith(`cherry-pick ${CHANGE}`))).toBe(true);
+        // SCN-FWB-023：重放的是整条链 `base..change`，不是链尾一个提交。这里只能验
+        // 命令形状（git 是桩）；「两轮改动是否都进了集成提交」「链尾空提交不算冲突」
+        // 由 executor-release-chain-replay.test.js 用真 git 验。
+        expect(
+            git.calls.some((c) =>
+                c.startsWith(
+                    `cherry-pick --allow-empty --keep-redundant-commits ${BASE}..${CHANGE}`
+                )
+            )
+        ).toBe(true);
         expect(events[1].payload.integrationCommit).toBe(PICKED);
         expect(git.calls).toContain(`push origin ${PICKED}:refs/heads/master`);
     });

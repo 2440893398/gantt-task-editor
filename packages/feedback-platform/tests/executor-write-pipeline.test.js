@@ -314,8 +314,15 @@ describe('[SCN-FWB-032] visualEvidence.present 只认本轮产出（C3）', () =
 describe('[SCN-FWB-040] prepare 把候选恢复与证据清场接进 git 工作区', () => {
     it('context.previousAttempt.changeCommit 存在时建在其上，并总是 -x 清场证据目录', async () => {
         const resume = 'd'.repeat(40);
+        // SCN-FWB-040（2026-09-04 收紧）：默认分支前移时恢复轮会先把整条链重放到新头。
+        // 这条用例验的是「恢复建在上一轮之上 + 证据目录清场」，与重放无关，所以把
+        // 分支头钉成链基线（= 没前移）。重放与冲突回落由 executor-candidate.test.js
+        // 的真 git 用例覆盖。
         const { pipeline, git } = makePipeline({
-            gitOutputs: { [`merge-base master ${resume}`]: `${BASE}\n` },
+            gitOutputs: {
+                [`merge-base master ${resume}`]: `${BASE}\n`,
+                'rev-parse master': `${BASE}\n`,
+            },
         });
         const prepResult = await pipeline.prepare({
             runId: 'run_w1',
