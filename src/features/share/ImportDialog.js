@@ -264,10 +264,6 @@ export async function applySnapshot(snapshot, mode) {
 
     await applyCalendarSnapshot(snapshot.calendar);
 
-    if (snapshot.baseline) {
-        await scope.saveBaseline(snapshot.baseline);
-    }
-
     if (targetProjectId === state.currentProjectId && typeof gantt !== 'undefined') {
         gantt.clearAll();
         gantt.parse({ data: snapshot.tasks || [], links: snapshot.links || [] });

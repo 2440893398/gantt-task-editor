@@ -31,7 +31,6 @@ import undoManager from './history/undoManager.js';
 import { loadColumnWidthPrefs, saveColumnWidthPref } from './column-widths.js';
 
 import { showSummaryPopover, hideSummaryPopover } from '../../utils/dom.js';
-import { initBaseline, handleSaveBaseline, handleToggleBaseline } from './baseline.js';
 import { detectResourceConflicts } from './resource-conflict.js';
 import { exportCurrentView, exportFullGantt } from './export-image.js';
 import { exportToExcel } from '../config/configIO.js';
@@ -425,25 +424,6 @@ export function initGantt() {
         lines.push(
             `<div class="gantt-tooltip-row">⏱️ <span class="gantt-tooltip-label">${i18n.t('tooltip.duration')}:</span> ${durationText}</div>`
         );
-
-        // Baseline deviation
-        if (task.baseline_end && localStorage.getItem('show_baseline') === 'true') {
-            const actualEnd = new Date(task.end_date);
-            const baselineEnd = new Date(task.baseline_end);
-            const diffDays = (actualEnd - baselineEnd) / (1000 * 60 * 60 * 24);
-
-            if (Math.abs(diffDays) > 0.01) {
-                if (diffDays > 0) {
-                    lines.push(
-                        `<div class="gantt-tooltip-row" style="color: #f59e0b;">⚠️ <span class="gantt-tooltip-label">${i18n.t('baseline.delayed')}:</span> ${formatDuration(diffDays)}</div>`
-                    );
-                } else {
-                    lines.push(
-                        `<div class="gantt-tooltip-row" style="color: #10b981;">✅ <span class="gantt-tooltip-label">${i18n.t('baseline.ahead')}:</span> ${formatDuration(Math.abs(diffDays))}</div>`
-                    );
-                }
-            }
-        }
 
         // 优先级
         if (task.priority) {
@@ -1006,9 +986,6 @@ export function initGantt() {
     // 初始化关键路径模块
     initCriticalPath();
 
-    // 初始化基线功能
-    initBaseline();
-
     // Init Smart Snapping (Phase 5)
     initSnapping();
 
@@ -1157,21 +1134,6 @@ export function setupGlobalEvents() {
 
     // 初始化 Resizer
     initResizer();
-
-    // Baseline UI Events
-    document.getElementById('save-baseline-btn')?.addEventListener('click', handleSaveBaseline);
-    document.getElementById('show-baseline-toggle')?.addEventListener('change', (e) => {
-        handleToggleBaseline(e.target.checked);
-    });
-
-    // Restore baseline toggle state
-    try {
-        const showBaseline = localStorage.getItem('show_baseline') === 'true';
-        const toggle = document.getElementById('show-baseline-toggle');
-        if (toggle) toggle.checked = showBaseline;
-    } catch (e) {
-        console.warn('Failed to restore baseline toggle state:', e);
-    }
 }
 
 // ========================================

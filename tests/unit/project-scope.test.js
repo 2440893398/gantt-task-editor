@@ -9,10 +9,9 @@ import {
 } from '../../src/core/storage.js';
 
 async function clearProjectTables() {
-    await db.transaction('rw', [db.tasks, db.links, db.baselines], async () => {
+    await db.transaction('rw', [db.tasks, db.links], async () => {
         await db.tasks.clear();
         await db.links.clear();
-        await db.baselines.clear();
     });
 }
 
@@ -120,33 +119,6 @@ describe('projectScope storage isolation', () => {
         expect(betaLinks[0].id).toBe(11);
         expect(betaLinks[0].source).toBe(1);
         expect(betaLinks[0].target).toBe(2);
-    });
-
-    it('stores project-scoped baseline ids to avoid collisions', async () => {
-        const alphaScope = projectScope('project_alpha');
-        const betaScope = projectScope('project_beta');
-
-        await alphaScope.saveBaseline({
-            id: 'shared-baseline-id',
-            snapshot: { data: [], links: [] },
-        });
-        await betaScope.saveBaseline({
-            id: 'shared-baseline-id',
-            snapshot: { data: [], links: [] },
-        });
-
-        const [rawRows, alphaBaseline, betaBaseline] = await Promise.all([
-            db.baselines.orderBy('project_id').toArray(),
-            alphaScope.getBaseline(),
-            betaScope.getBaseline(),
-        ]);
-
-        expect(rawRows).toHaveLength(2);
-        expect(rawRows[0].id).toContain('baseline_project_alpha_');
-        expect(rawRows[1].id).toContain('baseline_project_beta_');
-        expect(rawRows[0].id).not.toBe(rawRows[1].id);
-        expect(alphaBaseline.id).toContain('baseline_project_alpha_');
-        expect(betaBaseline.id).toContain('baseline_project_beta_');
     });
 
     it('keeps top-level APIs working for default project', async () => {

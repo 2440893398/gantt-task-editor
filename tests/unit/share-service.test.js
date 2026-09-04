@@ -14,7 +14,6 @@ const mockScope = {
         links: [{ id: 10, source: 1, target: 2, type: '0' }],
     })),
     saveGanttData: vi.fn(async () => {}),
-    getBaseline: vi.fn(async () => ({ snapshot: { data: [{ id: 1 }], links: [] } })),
 };
 
 const mockProjectScope = vi.fn(() => mockScope);
@@ -59,7 +58,6 @@ describe('shareService', () => {
         expect(snapshot.customFields).toHaveLength(1);
         expect(snapshot.fieldOrder).toEqual(['text', 'cf_1']);
         expect(snapshot.systemFieldSettings.enabled.status).toBe(true);
-        expect(snapshot.baseline).toEqual({ data: [{ id: 1 }], links: [] });
         expect(snapshot.calendar.settings.timezone).toBe('UTC');
         expect(snapshot.calendar.customDays).toHaveLength(1);
         expect(snapshot.calendar.leaves).toHaveLength(1);

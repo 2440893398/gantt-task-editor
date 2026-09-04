@@ -121,15 +121,6 @@ export async function exportFullBackup() {
         // 获取所有数据
         const ganttData = gantt.serialize();
 
-        // 获取 baseline 数据（按当前项目隔离）
-        let baselineData = null;
-        try {
-            const baseline = await projectScope(state.currentProjectId).getBaseline();
-            baselineData = baseline ? baseline.snapshot : null;
-        } catch (error) {
-            console.warn('[Backup] Could not load baseline:', error);
-        }
-
         // 构建单一备份数据结构
         const backup = {
             version: BACKUP_SCHEMA_VERSION,
@@ -145,7 +136,6 @@ export async function exportFullBackup() {
                 customFields: state.customFields,
                 fieldOrder: state.fieldOrder,
                 systemFieldSettings: state.systemFieldSettings,
-                baseline: baselineData,
                 preferences: {
                     locale: localStorage.getItem('gantt_locale'),
                     viewMode: state.viewMode,
@@ -301,18 +291,6 @@ export async function importFullBackup(file) {
         persistCustomFields();
         persistSystemFieldSettings();
         notifyProjectSnapshotChanged(state.currentProjectId);
-
-        // 还原 baseline（如果存在，按当前项目隔离）
-        if (backup.data.baseline) {
-            try {
-                await projectScope(state.currentProjectId).saveBaseline({
-                    snapshot: backup.data.baseline,
-                    savedAt: new Date().toISOString(),
-                });
-            } catch (error) {
-                console.warn('[Backup] Could not restore baseline:', error);
-            }
-        }
 
         // 还原偏好设置
         if (backup.data.preferences) {

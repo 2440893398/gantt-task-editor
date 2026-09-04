@@ -22,13 +22,20 @@ test.describe('Gantt v1.5 Features', () => {
         await expect(page.locator('#gantt_here')).toBeVisible();
     });
 
-    test('Toolbar has Baseline and Export buttons', async ({ page }) => {
-        // Check Baseline buttons
-        await expect(page.locator('#save-baseline-btn')).toBeVisible();
-        await expect(page.locator('label:has(#show-baseline-toggle)')).toBeVisible();
-        await expect(page.locator('#show-baseline-toggle')).toBeAttached();
+    test('[SCN-GUI-012] Baseline feature is removed', async ({ page }) => {
+        // Verify baseline controls are NOT in the DOM
+        const saveBaselineBtn = page.locator('#save-baseline-btn');
+        const showBaselineToggle = page.locator('#show-baseline-toggle');
 
-        // Check Export dropdown trigger
+        await expect(saveBaselineBtn).not.toBeAttached();
+        await expect(showBaselineToggle).not.toBeAttached();
+
+        // Verify no baseline-bar style elements are rendered in the gantt timeline
+        await page.waitForSelector('.gantt_task_line');
+        const baselineBars = page.locator('.baseline-bar');
+        await expect(baselineBars).toHaveCount(0);
+
+        // Check Export dropdown trigger still exists
         await expect(page.locator('button[data-i18n-title="export.title"]')).toBeVisible();
     });
 

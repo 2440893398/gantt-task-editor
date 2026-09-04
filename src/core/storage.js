@@ -104,6 +104,11 @@ db.version(7).stores({
     calendar_meta: 'year',
 });
 
+// v8: 移除基线功能表（用户采用度低，全为孤立数据）
+db.version(8).stores({
+    baselines: null,
+});
+
 // ========================================
 // 常量导出
 // ========================================
@@ -507,15 +512,6 @@ function decodeLinkForProject(link, projectId) {
     return decoded;
 }
 
-function buildScopedBaselineId(projectId, savedAt) {
-    const parsed = new Date(savedAt);
-    const datePart = Number.isNaN(parsed.getTime())
-        ? new Date().toISOString().slice(0, 10)
-        : parsed.toISOString().slice(0, 10);
-
-    return `baseline_${projectId}_${datePart}`;
-}
-
 function withProjectId(record, projectId) {
     return {
         ...record,
@@ -544,7 +540,7 @@ function serializeTaskDates(task) {
 }
 
 /**
- * 创建项目作用域存储 API（任务/依赖/基线隔离）
+ * 创建项目作用域存储 API（任务/依赖隔离）
  * @param {string} projectId
  * @returns {Object}
  */
@@ -691,53 +687,6 @@ export function projectScope(projectId = DEFAULT_PROJECT_ID) {
             }
         },
 
-        async getBaseline() {
-            try {
-                const baselines = await db.baselines
-                    .where('project_id')
-                    .equals(scopedProjectId)
-                    .toArray();
-                return baselines.length > 0 ? baselines[0] : null;
-            } catch (e) {
-                console.error('[Storage] Failed to load baseline:', e);
-                return null;
-            }
-        },
-
-        async saveBaseline(baseline) {
-            try {
-                const savedAt = baseline?.savedAt ?? new Date().toISOString();
-                const baselineRecord = withProjectId(
-                    {
-                        ...baseline,
-                        savedAt,
-                        id: buildScopedBaselineId(scopedProjectId, savedAt),
-                    },
-                    scopedProjectId
-                );
-
-                await db.transaction('rw', db.baselines, async () => {
-                    await db.baselines.where('project_id').equals(scopedProjectId).delete();
-                    await db.baselines.put(baselineRecord);
-                });
-            } catch (e) {
-                console.error('[Storage] Failed to save baseline:', e);
-                throw e;
-            }
-        },
-
-        async hasBaseline() {
-            try {
-                const count = await db.baselines
-                    .where('project_id')
-                    .equals(scopedProjectId)
-                    .count();
-                return count > 0;
-            } catch (e) {
-                console.error('[Storage] Failed to check baseline:', e);
-                return false;
-            }
-        },
     };
 }
 
@@ -829,7 +778,6 @@ export async function clearAllCache() {
                 db.links,
                 db.history,
                 db.projects,
-                db.baselines,
                 db.calendar_settings,
                 db.calendar_holidays,
                 db.calendar_custom,
@@ -841,7 +789,6 @@ export async function clearAllCache() {
                 await db.links.clear();
                 await db.history.clear();
                 await db.projects.clear();
-                await db.baselines.clear();
                 await db.calendar_settings.clear();
                 await db.calendar_holidays.clear();
                 await db.calendar_custom.clear();

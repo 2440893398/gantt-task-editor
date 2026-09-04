@@ -60,8 +60,6 @@ export async function serializeProject(projectId) {
         ganttData = await scope.getGanttData();
     }
 
-    const baseline = await scope.getBaseline();
-
     const [calendarSettings, customDays, leaves] = await Promise.all([
         getCalendarSettings(),
         getAllCustomDays(),
@@ -81,7 +79,6 @@ export async function serializeProject(projectId) {
         customFields: cloneSnapshotData(state.customFields) ?? [],
         fieldOrder: cloneSnapshotData(state.fieldOrder) ?? [],
         systemFieldSettings: cloneSnapshotData(state.systemFieldSettings) ?? {},
-        baseline: baseline?.snapshot ?? null,
         calendar: {
             settings: calendarSettings ?? null,
             customDays,

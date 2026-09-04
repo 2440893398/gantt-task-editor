@@ -7,10 +7,12 @@ test.describe('Gantt v1.5 Features', () => {
         await gotoApp(page);
     });
 
-    test('Baseline and export controls exist', async ({ page }) => {
-        await expect(page.locator('#save-baseline-btn')).toBeVisible();
-        await expect(page.locator('label:has(#show-baseline-toggle)')).toBeVisible();
-        await expect(page.locator('#show-baseline-toggle')).toBeAttached();
+    test('Export controls exist and baseline removed', async ({ page }) => {
+        // Baseline controls should not be present
+        await expect(page.locator('#save-baseline-btn')).not.toBeAttached();
+        await expect(page.locator('#show-baseline-toggle')).not.toBeAttached();
+
+        // Export controls should still work
         await expect(page.locator('button[data-i18n-title="export.title"]')).toBeVisible();
 
         await page.locator('button[data-i18n-title="export.title"]').click();
