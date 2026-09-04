@@ -182,7 +182,10 @@ async function fileOnOriginMaster(origin, path) {
     }
 }
 
-describe('[SCN-FWB-023] base 漂移时候选链必须整条重放', () => {
+// 显式 30s：每条用例要建两个真仓库、跑十几次 git，再走完整条交付管线，单跑约 3 秒，
+// 但全量并跑时会顶破 vitest 默认的 5s（实测两次假红，报的都是 `Test timed out in
+// 5000ms` 而非断言失败）。只放宽这一组——调全局超时会把别处真正的卡死一起盖掉。
+describe('[SCN-FWB-023] base 漂移时候选链必须整条重放', { timeout: 30_000 }, () => {
     it('[SCN-FWB-023] 多提交候选链：每一轮的改动都要进集成提交，不能只带末轮', async () => {
         const { origin, work, baseCommit, changeCommit } = await seedRepo({
             chainCommits: [
