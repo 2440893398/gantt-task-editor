@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { TextDecoder } from 'node:util';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import worker, { FeedbackWorkflow } from '../../../workers/share-worker.js';
 import { createTurnNormalizer } from '../../../packages/feedback-platform/executor/normalize.js';
 import {
@@ -15841,5 +15843,139 @@ describe('[SCN-FWB-051] 不变式巡检：非终态 Issue 必有推进力', () =
         expect(summary.repairedStalledIssues).toBe(0);
         expect(activeCards(env)).toHaveLength(0);
         expect(env.FEEDBACK_DB.tables.feedback_issues.get(feedbackKey).status).toBe('in_progress');
+    });
+});
+
+/**
+ * [SCN-FWB-001] 时间线的事件词表必须覆盖 Worker 能写入的每一种事件。
+ *
+ * 这四条在什么坏行为下会失败：Worker 侧新增（或改名）一种事件类型，而客户端的
+ * 文案表没跟上。事件照样进库、照样进时间线，只是每一条都掉进 `eventStatusText`
+ * 的最后一档兜底，渲染成一句「该事件已记录。」——页面上看不出是哪一步、也看不出
+ * 发生了什么，只看得出「系统好像在刷屏」。
+ *
+ * 生产实录 2026-09-08（管理员视角）：一次成功交付的流水线阶段（integration /
+ * deployment / smoke / release 共 9 种）在客户端一个文案都没有，于是「状态改为
+ * 验证中」与「状态改为已解决」之间躺着 8 张一模一样的「系统 回复了 · 该事件已
+ * 记录。」。同一份词表漂移还有另一半：客户端把等待人工的事件类型写成
+ * `waiting_human`，而 Worker 落库的是 `agent.waiting_human`（`waiting_human` 在
+ * Worker 里是 **Run 状态**，从来不是事件类型），于是「需要你处理」这个高亮
+ * 从来没亮过。
+ *
+ * 类型清单不在本文件里手抄——从 Worker 源码的 `FEEDBACK_RELEASE_EVENT_TYPES`
+ * 现取。Worker 加一个阶段而客户端不跟，这里立刻红。
+ */
+describe('[SCN-FWB-001] 时间线不出现无名事件', () => {
+    const FALLBACK_TEXT = '该事件已记录。';
+
+    /** Worker §15.4 的 Release 事件契约——客户端词表必须覆盖它的每一项。 */
+    const releaseEventTypes = (() => {
+        const source = readFileSync(
+            resolve(import.meta.dirname, '../../../workers/share-worker.js'),
+            'utf8'
+        );
+        const block = /const FEEDBACK_RELEASE_EVENT_TYPES = new Set\(\[([\s\S]*?)\]\);/.exec(
+            source
+        );
+        expect(block, 'FEEDBACK_RELEASE_EVENT_TYPES 没找到——常量被改名或改形了').not.toBeNull();
+        const types = Array.from(block[1].matchAll(/'([^']+)'/g)).map((match) => match[1]);
+        expect(types.length).toBeGreaterThan(0);
+        return types;
+    })();
+
+    function timelineEvents(entries) {
+        return entries.map(([type, extra], index) => ({
+            id: `evt_vocab_${index}`,
+            sequence: index + 1,
+            type,
+            actorType: 'system',
+            visibility: 'internal',
+            occurredAt: '2026-09-08T08:00:00.000Z',
+            text: '',
+            changes: {},
+            ...extra,
+        }));
+    }
+
+    async function renderTimeline(entries) {
+        const dom = await openWorkbench(createV2Env(), {
+            url: `https://worker.test/feedback#issue=${encodeURIComponent(
+                feedbackKey
+            )}&capability=owner-token`,
+            routes: ownerWorkbenchRoutes({ events: timelineEvents(entries) }),
+        });
+        const timeline = dom.window.document.getElementById('timeline');
+        // 按条目数等，不按 children 数——空态本身也是一个子节点，用 children.length
+        // 等单条事件会在空态上直接放行。
+        await waitFor(() =>
+            expect(timeline.querySelectorAll('.timeline-entry')).toHaveLength(entries.length)
+        );
+        return timeline;
+    }
+
+    it('每一种 Release 事件都渲染出自己的说明，没有一条落到兜底句', async () => {
+        const timeline = await renderTimeline(releaseEventTypes.map((type) => [type]));
+
+        for (const type of releaseEventTypes) {
+            // 类型名本身不该出现在页面上——它是协议词，不是人话。
+            expect(timeline.textContent, `${type} 把类型名漏到了页面上`).not.toContain(type);
+        }
+        expect(timeline.textContent).not.toContain(FALLBACK_TEXT);
+
+        // 每一步的说明还必须**互不相同**：九条一样的话和九条兜底句一样没用。
+        const lines = Array.from(timeline.children).map((entry) => entry.textContent);
+        expect(new Set(lines).size).toBe(releaseEventTypes.length);
+    });
+
+    it('中途阶段是一行事件，不再是「系统 回复了」的评论卡', async () => {
+        const timeline = await renderTimeline([
+            ['integration.merged'],
+            ['deployment.completed'],
+            ['smoke.completed'],
+        ]);
+
+        expect(timeline.querySelectorAll('.event-row')).toHaveLength(3);
+        expect(timeline.querySelectorAll('.comment-card')).toHaveLength(0);
+        // 生产实录里的那张脸：系统事件顶着「你」的头像说「回复了」。
+        expect(timeline.textContent).not.toContain('回复了');
+    });
+
+    it('release.completed 的交付摘要仍然按正文渲染，没被一行事件吃掉', async () => {
+        const timeline = await renderTimeline([
+            [
+                'release.completed',
+                { text: '已合并 3 个文件并部署到 pages。', visibility: 'public' },
+            ],
+        ]);
+
+        expect(timeline.querySelectorAll('.comment-card')).toHaveLength(1);
+        expect(timeline.textContent).toContain('已合并 3 个文件并部署到 pages。');
+        // 交付结果不是「记录了一次处理进展」——它是这条 Issue 的结论，抬头要说清。
+        expect(timeline.textContent).toContain('发布了交付结果');
+        expect(timeline.textContent).not.toContain(FALLBACK_TEXT);
+    });
+
+    it('agent.waiting_human 亮起「需要你处理」——词表漂移的另一半', async () => {
+        const timeline = await renderTimeline([
+            [
+                'agent.waiting_human',
+                { actorType: 'agent', visibility: 'public', text: '请补充复现步骤。' },
+            ],
+        ]);
+
+        expect(timeline.querySelectorAll('.comment-card.attention')).toHaveLength(1);
+        expect(timeline.textContent).toContain('需要你处理');
+        expect(timeline.textContent).toContain('请补充复现步骤。');
+    });
+
+    it('automation.retry 与 run.cancelled 同样有确定文案', async () => {
+        const timeline = await renderTimeline([
+            ['automation.retry', { visibility: 'admin' }],
+            ['run.cancelled', { actorType: 'agent' }],
+        ]);
+
+        expect(timeline.textContent).not.toContain(FALLBACK_TEXT);
+        expect(timeline.textContent).not.toContain('automation.retry');
+        expect(timeline.textContent).not.toContain('run.cancelled');
     });
 });

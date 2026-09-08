@@ -68,6 +68,20 @@
         'issue.reopened': '重新打开了这条反馈',
         'classification.changed': '更新了 AI 分类',
         'status.changed': '更新了状态',
+        // SCN-FWB-001：Worker §15.4 的 Release 事件契约在这里必须逐项有文案。
+        // 交付一路要发 7~8 条阶段事件，少一条文案就是页面上多一句「该事件已记录」——
+        // 生产实录 2026-09-08：管理员视角下，「验证中」到「已解决」之间躺着 8 条
+        // 一模一样的「系统 回复了 · 该事件已记录。」，看着像刷屏，其实是词表全缺。
+        'integration.started': '开始把候选实现集成到默认分支',
+        'integration.rebased': '把候选实现重放到最新的默认分支',
+        'integration.merged': '已合并到默认分支',
+        'integration.verification_completed': '完成合并后的集成验证',
+        'deployment.started': '开始部署',
+        'deployment.completed': '部署完成',
+        'smoke.completed': '完成生产环境冒烟验证',
+        // 修复轮是**自动**决定的，账要记在明面上：不写清是第几次、为什么重试，
+        // 用户看到的就只是同一条 Issue 反复动而没有解释。
+        'automation.retry': '自动重试本轮处理',
     };
     var ICON_CHECK =
         '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m5 12 4 4L19 6"></path></svg>';
@@ -855,11 +869,27 @@
         });
     }
 
+    /* 只有一行字的信息量、且不带正文的事件走紧凑事件行。交付的中途阶段属于这一类:
+       它们的详情已经在「交付进度」卡里按阶段列着，时间线只需要留一条「什么时候走到哪」。
+       `release.completed` / `release.failed` 不在其中——它们带执行器回传的交付摘要，
+       那是正文，值一张卡。 */
+    var EVENT_ROW_TYPES = [
+        'status.changed',
+        'issue.updated',
+        'issue.reopened',
+        'classification.changed',
+        'integration.started',
+        'integration.rebased',
+        'integration.merged',
+        'integration.verification_completed',
+        'deployment.started',
+        'deployment.completed',
+        'smoke.completed',
+        'automation.retry',
+    ];
+
     function renderTimelineEntry(event, issue) {
-        var isEventRow =
-            ['status.changed', 'issue.updated', 'issue.reopened', 'classification.changed'].indexOf(
-                event.type
-            ) !== -1;
+        var isEventRow = EVENT_ROW_TYPES.indexOf(event.type) !== -1;
 
         if (isEventRow) {
             var changeText = Object.keys(event.changes || {})
@@ -906,10 +936,14 @@
         }
 
         var isAgent = event.actorType === 'agent';
+        var isSystem = event.actorType === 'system';
         var isCreation = event.type === 'issue.created';
-        var needsAttention = event.type === 'waiting_human';
-        var avatarClass = isAgent ? 'avatar ai' : 'avatar';
-        var avatarText = isAgent ? 'AI' : event.actorType === 'admin' ? '管' : '你';
+        // 落库的类型是 `agent.waiting_human`（`waiting_human` 在 Worker 里是 **Run
+        // 状态**，从来不是事件类型）。这里原本比的是 `waiting_human`，于是「需要你
+        // 处理」这个高亮从来没亮过——等待人工的卡片和普通回复长得一模一样。
+        var needsAttention = event.type === 'agent.waiting_human';
+        var avatarClass = isAgent ? 'avatar ai' : isSystem ? 'avatar event' : 'avatar';
+        var avatarText = isAgent ? 'AI' : isSystem ? '' : event.actorType === 'admin' ? '管' : '你';
         var badge = isCreation
             ? '<span class="badge blue">作者</span>'
             : needsAttention
@@ -925,9 +959,15 @@
               ? '需要你补充信息'
               : event.type === 'artifact.created'
                 ? '发布了验证证据'
-                : isAgent
-                  ? '发布了处理结果'
-                  : '回复了';
+                : event.type === 'release.completed' || event.type === 'release.failed'
+                  ? '发布了交付结果'
+                  : isAgent
+                    ? '发布了处理结果'
+                    // 系统不「回复」。这几个分支原本都没有 system，于是系统事件顶着
+                    // 一个「你」的头像说「回复了」——生产实录 2026-09-08 的那张脸。
+                    : isSystem
+                      ? '记录了一次处理进展'
+                      : '回复了';
         // 只有 `issue.created` 那一条要算这个。此前它写在每条事件的渲染里，而它自己
         // 又要扫一遍整条时间线——47 条事件跑 47 遍全表扫描。数量级上是 O(n²)，只是
         // 时间线还短的时候量不出来。
@@ -990,11 +1030,15 @@
             'run.started': '处理任务已启动，正在读取上下文并执行。',
             'run.completed': '处理任务已完成，请核对下方结果与验证证据。',
             'run.failed': '处理任务未完成，请查看下方失败原因与验证结果。',
+            'run.cancelled': '处理任务已取消。',
             'agent.message': '处理者未返回可显示的回复。',
-            waiting_human: '处理暂停，需要你补充信息后才能继续。',
+            'agent.waiting_human': '处理暂停，需要你补充信息后才能继续。',
             'artifact.created': '已保存本次处理的验证证据。',
             'automation.suppressed': '本次自动处理被规则或配额阻止。',
             'security.blocked': '本次操作被安全策略阻止。',
+            // 执行器没回传交付摘要时的兜底。这两条是公开事件，用户看得见。
+            'release.completed': '交付完成，改动已合并到默认分支并按需部署。',
+            'release.failed': '交付未完成，失败原因见「交付进度」卡。',
         };
         return labels[event.type] || EVENT_FALLBACK_TEXT[event.type] || '该事件已记录。';
     }
